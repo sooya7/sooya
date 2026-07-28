@@ -45,7 +45,18 @@ export const ProviderKindSchema = z.enum([
 ]);
 export type ProviderKind = z.infer<typeof ProviderKindSchema>;
 
+/**
+ * `environment` preserves the original deployment behaviour: environment
+ * variables may override the JSON file. Once a section is saved through the
+ * admin panel it becomes `panel` managed, so the values the user just saved
+ * are the values used at runtime and after a restart. Secrets may still be
+ * supplied through environment variables in either mode.
+ */
+export const ModelConfigSourceSchema = z.enum(['environment', 'panel']).default('environment');
+export type ModelConfigSource = z.infer<typeof ModelConfigSourceSchema>;
+
 export const ChatModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: ProviderKindSchema.default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
@@ -64,6 +75,7 @@ export const ChatModelSchema = z.object({
 export type ChatModelConfig = z.infer<typeof ChatModelSchema>;
 
 export const EmbeddingModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-embeddings', 'openai-compatible', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
@@ -77,6 +89,7 @@ export const EmbeddingModelSchema = z.object({
 export type EmbeddingModelConfig = z.infer<typeof EmbeddingModelSchema>;
 
 export const ImageModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-images', 'openai-compatible', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
@@ -89,6 +102,7 @@ export const ImageModelSchema = z.object({
 export type ImageModelConfig = z.infer<typeof ImageModelSchema>;
 
 export const TtsModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-tts', 'openai-compatible', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
@@ -103,6 +117,7 @@ export const TtsModelSchema = z.object({
 export type TtsModelConfig = z.infer<typeof TtsModelSchema>;
 
 export const SttModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-transcriptions', 'openai-compatible', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
