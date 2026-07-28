@@ -96,11 +96,11 @@ export interface ModelDirectives {
 const MARKER_RE = /\[\[\s*(sticker|image|voice|voice-only|sticker-only)\s*(?::\s*([^\]]*))?\]\]/gi;
 
 /**
- * An unterminated marker at the very end of the output, e.g. when the stream
- * was cut off mid-marker ("...[[sticker:开"). It must be removed too, otherwise
- * the raw marker text would be shown to the user and stored in the database.
+ * An unterminated marker at the very end, such as "...[[sticker:开".
+ * Any unmatched opening marker is buffered/removed, so a partial protocol
+ * marker is never shown to the user.
  */
-const TRAILING_PARTIAL_RE = /\[\[\s*(?:s(?:t(?:i(?:c(?:k(?:e(?:r(?:-(?:o(?:n(?:l(?:y)?)?)?)?)?)?)?)?)?)?|i(?:m(?:a(?:g(?:e)?)?)?)?|v(?:o(?:i(?:c(?:e(?:-(?:o(?:n(?:l(?:y)?)?)?)?)?)?)?)?)?)?[^\]]*$/i;
+const TRAILING_PARTIAL_RE = /\[\[[^\]]*$/;
 
 export interface StripResult {
   text: string;
