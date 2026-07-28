@@ -1,0 +1,161 @@
+import { useEffect, useRef, useState } from 'react';
+import { mediaUrl } from '../lib/api.js';
+import type { MessagePart } from '../lib/types.js';
+
+const SPEEDS = [1, 1.5, 2];
+
+function formatTime(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+interface Props {
+  part: MessagePart;
+  mine: boolean;
+}
+
+export function AudioBubble({ part, mine }: Props) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [speedIdx, setSpeedIdx] = useState(0);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  // Prefer the server-measured duration; fall back to the element's own value.
+  const [elementDuration, setElementDuration] = useState<number | null>(null);
+  const duration = part.duration ?? part.media?.duration ?? elementDuration ?? 0;
+  const transcript = part.transcript ?? part.media?.transcript ?? null;
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.playbackRate = SPEEDS[speedIdx] ?? 1;
+  }, [speedIdx]);
+
+  if (part.status === 'failed') {
+    return (
+      <div className={`bubble bubble-audio failed ${mine ? 'mine' : 'theirs'}`}>
+        <span className="failed-text">语音发送失败{part.error ? `：${part.error}` : ''}</span>
+      </div>
+    );
+  }
+
+  if (!part.media) {
+    return (
+      <div className={`bubble bubble-audio pending ${mine ? 'mine' : 'theirs'}`}>
+        <span className="failed-text">语音生成中…</span>
+      </div>
+    );
+  }
+
+  const src = mediaUrl(part.media.url);
+  const progress = duration > 0 ? Math.min(current / duration, 1) : 0;
+  // Width scales with length, like a familiar messenger voice bubble.
+  const width = Math.min(70 + Math.min(duration, 60) * 3.2, 260);
+
+  const toggle = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (playing) {
+      audio.pause();
+    } else {
+      void audio.play().catch(() => setLoadError(true));
+    }
+  };
+
+  const seek = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    const audio = audioRef.current;
+    if (!audio || duration <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clientX = 'touches' in e ? (e.touches[0]?.clientX ?? 0) : e.clientX;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    audio.currentTime = ratio * duration;
+    setCurrent(audio.currentTime);
+  };
+
+  return (
+    <div className="audio-wrap">
+      <div className={`bubble bubble-audio ${mine ? 'mine' : 'theirs'}`} style={{ width }}>
+        <button
+          type="button"
+          className="audio-play"
+          onClick={toggle}
+          aria-label={playing ? '暂停语音' : '播放语音'}
+          data-testid="audio-play"
+        >
+          {playing ? (
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <rect x="6" y="5" width="4" height="14" rx="1.2" fill="currentColor" />
+              <rect x="14" y="5" width="4" height="14" rx="1.2" fill="currentColor" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M8 5.5v13l11-6.5-11-6.5z" fill="currentColor" />
+            </svg>
+          )}
+        </button>
+
+        <div
+          className="audio-track"
+          onClick={seek}
+          role="slider"
+          tabIndex={0}
+          aria-label="语音进度"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(duration)}
+          aria-valuenow={Math.round(current)}
+          onKeyDown={(e) => {
+            const audio = audioRef.current;
+            if (!audio) return;
+            if (e.key === 'ArrowRight') audio.currentTime = Math.min(duration, audio.currentTime + 3);
+            if (e.key === 'ArrowLeft') audio.currentTime = Math.max(0, audio.currentTime - 3);
+          }}
+        >
+          <div className="audio-track-fill" style={{ width: `${progress * 100}%` }} />
+        </div>
+
+        <span className="audio-time" data-testid="audio-duration">
+          {formatTime(playing || current > 0 ? current : duration)}
+        </span>
+
+        <button
+          type="button"
+          className="audio-speed"
+          onClick={() => setSpeedIdx((i) => (i + 1) % SPEEDS.length)}
+          aria-label="切换播放速度"
+        >
+          {SPEEDS[speedIdx]}×
+        </button>
+
+        <audio
+          ref={audioRef}
+          src={src}
+          preload="metadata"
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onEnded={() => {
+            setPlaying(false);
+            setCurrent(0);
+          }}
+          onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
+          onLoadedMetadata={(e) => {
+            const d = e.currentTarget.duration;
+            if (Number.isFinite(d) && d > 0) setElementDuration(d);
+          }}
+          onError={() => setLoadError(true)}
+        />
+      </div>
+
+      {transcript && (
+        <button type="button" className="audio-transcript-toggle" onClick={() => setShowTranscript((v) => !v)}>
+          {showTranscript ? '收起文字' : '查看文字'}
+        </button>
+      )}
+      {showTranscript && transcript && <div className="audio-transcript">{transcript}</div>}
+      {loadError && <div className="audio-transcript error">音频加载失败</div>}
+    </div>
+  );
+}

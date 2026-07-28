@@ -1,0 +1,7 @@
+{
+  "name": "sooya",
+  "version": "1.0.0",
+  "builtAt": "2026-07-28T13:32:18.861Z",
+  "node": "v20.20.2",
+  "contents": "source only (build with: npm ci && npm run build)"
+}

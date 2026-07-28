@@ -1,0 +1,128 @@
+[
+  {
+    "name": "happy",
+    "file": "happy.png",
+    "emotion": "开心",
+    "tags": [
+      "开心",
+      "高兴",
+      "笑",
+      "哈哈",
+      "happy"
+    ]
+  },
+  {
+    "name": "speechless",
+    "file": "speechless.png",
+    "emotion": "无语",
+    "tags": [
+      "无语",
+      "尴尬",
+      "沉默",
+      "汗",
+      "speechless"
+    ]
+  },
+  {
+    "name": "angry",
+    "file": "angry.png",
+    "emotion": "生气",
+    "tags": [
+      "生气",
+      "愤怒",
+      "哼",
+      "angry"
+    ]
+  },
+  {
+    "name": "comfort",
+    "file": "comfort.png",
+    "emotion": "安慰",
+    "tags": [
+      "安慰",
+      "抱抱",
+      "摸头",
+      "别难过",
+      "comfort"
+    ]
+  },
+  {
+    "name": "coy",
+    "file": "coy.png",
+    "emotion": "撒娇",
+    "tags": [
+      "撒娇",
+      "求求",
+      "卖萌",
+      "coy"
+    ]
+  },
+  {
+    "name": "shy",
+    "file": "shy.png",
+    "emotion": "害羞",
+    "tags": [
+      "害羞",
+      "不好意思",
+      "脸红",
+      "shy"
+    ]
+  },
+  {
+    "name": "confused",
+    "file": "confused.png",
+    "emotion": "疑惑",
+    "tags": [
+      "疑惑",
+      "问号",
+      "不懂",
+      "？",
+      "confused"
+    ]
+  },
+  {
+    "name": "sad",
+    "file": "sad.png",
+    "emotion": "难过",
+    "tags": [
+      "难过",
+      "伤心",
+      "哭",
+      "sad"
+    ]
+  },
+  {
+    "name": "smug",
+    "file": "smug.png",
+    "emotion": "得意",
+    "tags": [
+      "得意",
+      "骄傲",
+      "嘿嘿",
+      "smug"
+    ]
+  },
+  {
+    "name": "goodnight",
+    "file": "goodnight.png",
+    "emotion": "晚安",
+    "tags": [
+      "晚安",
+      "睡觉",
+      "困",
+      "安",
+      "goodnight"
+    ]
+  },
+  {
+    "name": "laugh",
+    "file": "laugh.gif",
+    "emotion": "开心",
+    "tags": [
+      "大笑",
+      "哈哈",
+      "开心",
+      "laugh"
+    ]
+  }
+]

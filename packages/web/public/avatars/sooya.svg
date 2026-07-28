@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="SOOYA">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7ec8ff"/>
+      <stop offset="100%" stop-color="#3aa1ff"/>
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="64" fill="url(#g)"/>
+  <circle cx="64" cy="58" r="34" fill="#ffffff" opacity="0.16"/>
+  <ellipse cx="50" cy="58" rx="5.5" ry="7.5" fill="#ffffff"/>
+  <ellipse cx="78" cy="58" rx="5.5" ry="7.5" fill="#ffffff"/>
+  <path d="M50 78c4.5 5 9 7.4 14 7.4S73.5 83 78 78" fill="none" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round"/>
+  <circle cx="36" cy="72" r="6" fill="#ffffff" opacity="0.28"/>
+  <circle cx="92" cy="72" r="6" fill="#ffffff" opacity="0.28"/>
+</svg>

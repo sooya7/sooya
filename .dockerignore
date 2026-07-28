@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+data
+release
+e2e/test-results
+playwright-report
+.git
+.env
+.env.*
+!.env.example
+*.log
+**/dist

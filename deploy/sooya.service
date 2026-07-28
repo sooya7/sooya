@@ -1,0 +1,50 @@
+[Unit]
+Description=SOOYA private AI chat
+Documentation=https://github.com/your/sooya
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sooya
+Group=sooya
+WorkingDirectory=/opt/sooya/current
+EnvironmentFile=/opt/sooya/shared/.env
+Environment=NODE_ENV=production
+Environment=DATA_DIR=/opt/sooya/shared/data
+Environment=CONFIG_DIR=/opt/sooya/shared/config
+Environment=WEB_DIR=/opt/sooya/current/public
+Environment=SOOYA_ASSETS_DIR=/opt/sooya/current/assets/stickers
+ExecStart=/usr/bin/node /opt/sooya/current/packages/server/dist/main.js
+
+# Graceful shutdown: the app flushes the database and finishes running jobs.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sooya
+
+# ------------------------------- hardening ---------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+# Only these paths are writable.
+ReadWritePaths=/opt/sooya/shared
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Suitable for a 2 GB host.
+MemoryMax=1200M
+CPUQuota=180%
+
+[Install]
+WantedBy=multi-user.target

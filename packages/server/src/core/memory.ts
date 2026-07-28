@@ -1,0 +1,324 @@
+import type { MemoryRepo, MemoryKind } from '../db/repos/memory.repo.js';
+import { cosineSimilarity, normalizeMemoryText } from '../db/repos/memory.repo.js';
+import type { CapabilityRegistry } from './capabilities.js';
+import type { MemoryRecord } from './types.js';
+import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
+
+export interface MemoryCandidate {
+  kind: MemoryKind;
+  content: string;
+  importance: number;
+  confidence: number;
+  expiresAt?: string | null;
+}
+
+export interface RecallResult {
+  memories: MemoryRecord[];
+  strategy: 'embedding' | 'fts' | 'none';
+  /** Populated when embeddings were expected but unavailable. */
+  fallbackReason?: string;
+  embeddingCoverage: { withEmbedding: number; total: number; ratio: number };
+}
+
+const EXTRACTION_PROMPT = `你是记忆抽取器。判断下面这轮对话里是否有值得长期记住的信息。
+只记录稳定、以后还会用到的事实，不要记录闲聊、寒暄、临时情绪、你自己说过的话。
+输出严格 JSON：{"worth":true|false,"items":[{"kind":"profile|preference|relationship|project|event","content":"一句话，中文，第三人称描述用户","importance":0~1,"confidence":0~1,"expiresInDays":可选数字}]}
+kind 含义：profile=用户稳定信息(姓名/城市/职业)，preference=偏好口味习惯，relationship=你们之间的关系经历，project=项目与任务，event=近期事件(通常带 expiresInDays)。
+没有值得记的就返回 {"worth":false,"items":[]}。不要输出解释。`;
+
+/**
+ * Long-term memory: extraction -> dedupe/merge -> persist -> embed -> recall.
+ * Every step degrades safely; failures never break the chat.
+ */
+export class MemoryService {
+  constructor(
+    private readonly repo: MemoryRepo,
+    private readonly capabilities: CapabilityRegistry,
+    private readonly errorLog: ErrorLogRepo,
+    private readonly opts: { disabled?: boolean } = {}
+  ) {}
+
+  get disabled(): boolean {
+    return this.opts.disabled === true;
+  }
+
+  /** Cheap pre-filter so we don't call the model for "嗯"/"哈哈". */
+  worthConsidering(text: string): boolean {
+    const t = text.trim();
+    if (t.length < 4) return false;
+    if (/^(嗯+|哦+|好的?|哈+|ok|okay|谢谢|在吗|你好|hi|hello|晚安|早安)[。.!！~\s]*$/i.test(t)) return false;
+    return true;
+  }
+
+  async extractCandidates(userText: string, assistantText: string, signal?: AbortSignal): Promise<MemoryCandidate[]> {
+    if (this.disabled) return [];
+    if (!this.worthConsidering(userText)) return [];
+    const provider = this.capabilities.summaryProvider();
+    if (!provider.configured) return this.heuristicCandidates(userText);
+    try {
+      const result = await provider.complete({
+        system: EXTRACTION_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: `用户说：${userText}\n\n你回复：${assistantText || '(无)'}` }]
+          }
+        ],
+        maxTokens: 500,
+        temperature: 0,
+        jsonMode: true,
+        signal
+      });
+      return parseCandidates(result.text);
+    } catch (err) {
+      this.errorLog.add('memory.extract', (err as Error).message);
+      return this.heuristicCandidates(userText);
+    }
+  }
+
+  /** Offline fallback: a few high-precision patterns only. */
+  heuristicCandidates(userText: string): MemoryCandidate[] {
+    const out: MemoryCandidate[] = [];
+    const t = userText.trim();
+    const push = (kind: MemoryKind, content: string, importance = 0.6, confidence = 0.55) =>
+      out.push({ kind, content, importance, confidence });
+
+    const name = /(?:我叫|我的名字是|你可以叫我|我是)\s*([\u4e00-\u9fa5A-Za-z][\u4e00-\u9fa5A-Za-z0-9_·\- ]{0,18})/.exec(t);
+    if (name?.[1]) push('profile', `用户的名字/称呼是「${name[1].trim()}」`, 0.9, 0.75);
+
+    const live = /(?:我住在|我在)\s*([\u4e00-\u9fa5]{2,12}?)(?:市|区|县)?(?:住|工作|生活|上班)/.exec(t);
+    if (live?.[1]) push('profile', `用户所在城市/地点：${live[1]}`, 0.8, 0.65);
+
+    const job = /(?:我是(?:一名|一个)?|我的职业是|我做)\s*([\u4e00-\u9fa5A-Za-z]{2,14}?)(?:的)?(?:工作|工程师|开发|设计师|老师|学生|医生|律师)/.exec(t);
+    if (job) push('profile', `用户的职业相关信息：${job[0].replace(/^我是(一名|一个)?/, '')}`, 0.7, 0.6);
+
+    const like = /(?:我(?:很)?喜欢|我爱|我最喜欢)\s*([^，。,.!！?？\n]{2,30})/.exec(t);
+    if (like?.[1]) push('preference', `用户喜欢${like[1].trim()}`, 0.6, 0.6);
+
+    const dislike = /(?:我(?:很)?讨厌|我不喜欢|我受不了)\s*([^，。,.!！?？\n]{2,30})/.exec(t);
+    if (dislike?.[1]) push('preference', `用户不喜欢${dislike[1].trim()}`, 0.6, 0.6);
+
+    const project = /(?:我(?:在|正在)(?:做|开发|写|搞)|我的项目(?:是|叫))\s*([^，。,.!！?？\n]{2,40})/.exec(t);
+    if (project?.[1]) push('project', `用户正在进行的项目：${project[1].trim()}`, 0.7, 0.6);
+
+    return out;
+  }
+
+  /**
+   * Store candidates with dedupe + semantic merge.
+   * Similar memories (normalized equality or high cosine similarity) are merged
+   * instead of duplicated.
+   */
+  async remember(candidates: MemoryCandidate[], sourceMessageId: string): Promise<{ stored: number; merged: number }> {
+    if (this.disabled || candidates.length === 0) return { stored: 0, merged: 0 };
+    let stored = 0;
+    let merged = 0;
+    for (const c of candidates) {
+      const content = c.content.trim();
+      if (content.length < 3 || content.length > 500) continue;
+      const semantic = await this.findSemanticDuplicate(content);
+      if (semantic) {
+        this.repo.upsert({
+          kind: semantic.kind,
+          content: semantic.content,
+          importance: Math.max(semantic.importance, c.importance),
+          confidence: Math.max(semantic.confidence, c.confidence),
+          sourceMessageId
+        });
+        merged++;
+        continue;
+      }
+      const { record, merged: wasMerged } = this.repo.upsert({
+        kind: c.kind,
+        content,
+        importance: clamp01(c.importance),
+        confidence: clamp01(c.confidence),
+        expiresAt: c.expiresAt ?? null,
+        sourceMessageId
+      });
+      if (wasMerged) merged++;
+      else stored++;
+      await this.embedOne(record.id, record.content);
+    }
+    return { stored, merged };
+  }
+
+  private async findSemanticDuplicate(content: string): Promise<MemoryRecord | null> {
+    const normalized = normalizeMemoryText(content);
+    // Exact-normalized duplicates are handled by the repo's unique index.
+    const embedder = this.capabilities.embeddingProvider();
+    if (!embedder.configured) {
+      // Cheap lexical containment check as a fallback.
+      const candidates = this.repo.searchFts(content, 5);
+      for (const m of candidates) {
+        const n = normalizeMemoryText(m.content);
+        if (n === normalized) return m;
+        if (n.length > 8 && (n.includes(normalized) || normalized.includes(n))) return m;
+      }
+      return null;
+    }
+    try {
+      const { vectors, dimensions } = await embedder.embed([content]);
+      const vec = vectors[0];
+      if (!vec) return null;
+      const existing = this.repo.activeWithEmbeddings(dimensions);
+      let best: { record: MemoryRecord; score: number } | null = null;
+      for (const e of existing) {
+        const score = cosineSimilarity(vec, e.vector);
+        if (!best || score > best.score) best = { record: this.repo.toRecord(e.row), score };
+      }
+      if (best && best.score >= 0.92) return best.record;
+      return null;
+    } catch (err) {
+      this.errorLog.add('memory.dedupe', (err as Error).message);
+      return null;
+    }
+  }
+
+  async embedOne(memoryId: string, content: string): Promise<boolean> {
+    const embedder = this.capabilities.embeddingProvider();
+    if (!embedder.configured) return false;
+    try {
+      const { vectors, model, dimensions } = await embedder.embed([content]);
+      const vec = vectors[0];
+      if (!vec || vec.length !== dimensions) return false;
+      this.repo.setEmbedding(memoryId, vec, model);
+      return true;
+    } catch (err) {
+      this.errorLog.add('memory.embed', (err as Error).message);
+      return false;
+    }
+  }
+
+  /** Backfill embeddings for memories stored while the embedder was down. */
+  async backfillEmbeddings(limit = 20): Promise<number> {
+    const embedder = this.capabilities.embeddingProvider();
+    if (!embedder.configured) return 0;
+    const pending = this.repo.list({ limit: 500 }).filter((m) => !m.hasEmbedding).slice(0, limit);
+    let done = 0;
+    for (const m of pending) {
+      if (await this.embedOne(m.id, m.content)) done++;
+    }
+    return done;
+  }
+
+  /**
+   * Recall relevant memories. Uses embeddings when available and falls back to
+   * FTS, always reporting which strategy was used and why.
+   */
+  async recall(query: string, limit = 8): Promise<RecallResult> {
+    const total = this.repo.count(true);
+    const withEmbedding = this.repo.countWithEmbeddings();
+    const coverage = { withEmbedding, total, ratio: total === 0 ? 0 : withEmbedding / total };
+    if (this.disabled || total === 0) {
+      return { memories: [], strategy: 'none', embeddingCoverage: coverage, fallbackReason: total === 0 ? 'no memories stored' : 'memory disabled' };
+    }
+    const embedder = this.capabilities.embeddingProvider();
+    if (embedder.configured) {
+      try {
+        const { vectors, dimensions } = await embedder.embed([query]);
+        const vec = vectors[0];
+        const dim = this.capabilities.embeddingDimensions() ?? dimensions;
+        if (vec && vec.length === dim) {
+          const pool = this.repo.activeWithEmbeddings(dim);
+          if (pool.length > 0) {
+            const scored = pool
+              .map((p) => ({ record: this.repo.toRecord(p.row), score: cosineSimilarity(vec, p.vector) }))
+              .filter((s) => s.score >= 0.2)
+              .sort((a, b) => b.score - a.score || b.record.importance - a.record.importance)
+              .slice(0, limit);
+            this.repo.bumpHits(scored.map((s) => s.record.id));
+            return { memories: scored.map((s) => s.record), strategy: 'embedding', embeddingCoverage: coverage };
+          }
+          const fts = this.repo.searchFts(query, limit);
+          this.repo.bumpHits(fts.map((m) => m.id));
+          return {
+            memories: fts,
+            strategy: 'fts',
+            fallbackReason: 'no memories carry embeddings of the current dimension',
+            embeddingCoverage: coverage
+          };
+        }
+        const fts = this.repo.searchFts(query, limit);
+        return {
+          memories: fts,
+          strategy: 'fts',
+          fallbackReason: `embedding dimension mismatch (expected ${dim}, got ${vec?.length ?? 0})`,
+          embeddingCoverage: coverage
+        };
+      } catch (err) {
+        this.errorLog.add('memory.recall', (err as Error).message);
+        const fts = this.repo.searchFts(query, limit);
+        this.repo.bumpHits(fts.map((m) => m.id));
+        return {
+          memories: fts,
+          strategy: 'fts',
+          fallbackReason: `embedding provider failed: ${(err as Error).message}`,
+          embeddingCoverage: coverage
+        };
+      }
+    }
+    const fts = this.repo.searchFts(query, limit);
+    this.repo.bumpHits(fts.map((m) => m.id));
+    return { memories: fts, strategy: 'fts', fallbackReason: 'embedding provider not configured', embeddingCoverage: coverage };
+  }
+
+  /** Drop memories whose expiry has passed. Returns the number removed. */
+  purgeExpired(): number {
+    return this.repo.purgeExpired();
+  }
+
+  clearAll(): { memories: number; summaries: number } {
+    return this.repo.clearAll();
+  }
+
+  stats(): { total: number; withEmbedding: number; coverage: number; byKind: Record<string, number> } {
+    const total = this.repo.count(true);
+    const withEmbedding = this.repo.countWithEmbeddings();
+    const byKind: Record<string, number> = {};
+    for (const m of this.repo.list({ limit: 500 })) byKind[m.kind] = (byKind[m.kind] ?? 0) + 1;
+    return { total, withEmbedding, coverage: total === 0 ? 0 : withEmbedding / total, byKind };
+  }
+}
+
+function clamp01(v: number): number {
+  if (!Number.isFinite(v)) return 0.5;
+  return Math.max(0, Math.min(1, v));
+}
+
+export function parseCandidates(raw: string): MemoryCandidate[] {
+  const text = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    const m = /\{[\s\S]*\}/.exec(text);
+    if (!m) return [];
+    try {
+      parsed = JSON.parse(m[0]);
+    } catch {
+      return [];
+    }
+  }
+  const obj = parsed as { worth?: boolean; items?: unknown };
+  if (obj.worth === false) return [];
+  if (!Array.isArray(obj.items)) return [];
+  const valid: MemoryKind[] = ['profile', 'preference', 'relationship', 'project', 'event', 'summary'];
+  const out: MemoryCandidate[] = [];
+  for (const item of obj.items) {
+    const it = item as { kind?: string; content?: string; importance?: number; confidence?: number; expiresInDays?: number };
+    if (typeof it.content !== 'string' || it.content.trim().length < 3) continue;
+    const kind = (valid as string[]).includes(it.kind ?? '') ? (it.kind as MemoryKind) : 'event';
+    out.push({
+      kind,
+      content: it.content.trim(),
+      importance: clamp01(typeof it.importance === 'number' ? it.importance : 0.5),
+      confidence: clamp01(typeof it.confidence === 'number' ? it.confidence : 0.6),
+      expiresAt:
+        typeof it.expiresInDays === 'number' && it.expiresInDays > 0
+          ? new Date(Date.now() + it.expiresInDays * 86400_000).toISOString()
+          : null
+    });
+  }
+  return out.slice(0, 8);
+}

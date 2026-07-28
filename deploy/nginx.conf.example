@@ -1,0 +1,107 @@
+# =============================================================================
+# SOOYA — Nginx reverse proxy example.
+#
+# Key points for this app:
+#   * /api/stream is Server-Sent Events: buffering MUST be off and the read
+#     timeout long, otherwise replies appear only after a refresh.
+#   * uploads can be up to MAX_UPLOAD_BYTES (25 MB by default).
+#   * /health/* is left reachable from localhost so deploy scripts can probe it.
+# =============================================================================
+
+upstream sooya_backend {
+    server 127.0.0.1:8788;
+    keepalive 16;
+}
+
+# Redirect plain HTTP to HTTPS.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name sooya.example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name sooya.example.com;
+
+    # --- TLS (certbot paths shown; adjust to your setup) --------------------
+    ssl_certificate     /etc/letsencrypt/live/sooya.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sooya.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # --- security headers ---------------------------------------------------
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options    "nosniff" always;
+    add_header X-Frame-Options           "SAMEORIGIN" always;
+    add_header Referrer-Policy           "strict-origin-when-cross-origin" always;
+    # The app loads only same-origin assets; media is served from /api/media.
+    add_header Content-Security-Policy   "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; manifest-src 'self'; frame-ancestors 'self'" always;
+
+    # Must be >= MAX_UPLOAD_BYTES.
+    client_max_body_size 26m;
+    client_body_timeout  120s;
+
+    # --- SSE stream: no buffering, long timeout -----------------------------
+    location /api/stream {
+        proxy_pass              http://sooya_backend;
+        proxy_http_version      1.1;
+        proxy_set_header        Connection "";
+        proxy_set_header        Host              $host;
+        proxy_set_header        X-Real-IP         $remote_addr;
+        proxy_set_header        X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header        X-Forwarded-Proto $scheme;
+
+        proxy_buffering         off;
+        proxy_cache             off;
+        gzip                    off;
+        chunked_transfer_encoding on;
+        proxy_read_timeout      1h;
+        proxy_send_timeout      1h;
+    }
+
+    # --- media: cacheable, immutable ----------------------------------------
+    location /api/media/ {
+        proxy_pass         http://sooya_backend;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   Range             $http_range;
+        proxy_set_header   If-Range          $http_if_range;
+        proxy_buffering    on;
+    }
+
+    # --- health checks: localhost only --------------------------------------
+    location /health/ {
+        allow 127.0.0.1;
+        allow ::1;
+        deny all;
+        access_log off;
+        proxy_pass       http://sooya_backend;
+        proxy_set_header Host $host;
+    }
+
+    # --- everything else ----------------------------------------------------
+    location / {
+        proxy_pass         http://sooya_backend;
+        proxy_http_version 1.1;
+        proxy_set_header   Connection "";
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+}
