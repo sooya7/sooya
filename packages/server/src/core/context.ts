@@ -141,7 +141,7 @@ function plainText(msg: ChatMessage): string {
 
 function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): string {
   const lines: string[] = [];
-  lines.push('你可以在回复里混合使用文字、表情包、图片和语音。使用下面的标记来触发非文字内容，标记本身不会显示给用户：');
+  lines.push('你可以在回复里混合使用文字、表情包、图片和语音。非文字内容由你根据气氛主动决定，不要一直等用户明确要求。使用下面的标记触发，标记本身不会显示给用户：');
   if (persona.stickerPolicy.enabled) {
     lines.push(`· [[sticker:情绪]] 发一个表情包。可用表情：${opts.stickerCatalogue}`);
     lines.push('· [[sticker-only:情绪]] 这一条只发表情包，不发文字。');
@@ -151,9 +151,11 @@ function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): st
     lines.push('· [[voice]] 把这条文字同时用语音发出来。');
     lines.push('· [[voice-only]] 这一条只发语音，不显示文字（文字会作为语音文稿保留）。');
   }
+  lines.push('主动选择建议：情绪回应、调侃、晚安、安慰和短互动适合表情包；需要温度、亲密感或语气表达时适合语音；用户在描述、想象、设计或需要直观看效果时适合图片。');
+  lines.push('不要机械等待关键词，也不要为了展示能力强行添加媒体。通常一条回复主动选择一种最合适的媒体即可，除非同时使用确实更自然。');
   lines.push(
-    `使用频率：表情包=${persona.stickerPolicy.frequency}，图片=${persona.imagePolicy.frequency}，语音=${persona.voicePolicy.frequency}。` +
-      '不要每条都加，只在真的合适时使用；用户明确要求时必须照做。标记要写在回复的最后。'
+    `当前主动频率：表情包=${persona.stickerPolicy.frequency}，图片=${persona.imagePolicy.frequency}，语音=${persona.voicePolicy.frequency}。` +
+      '频率含义：high=经常在合适时主动使用；medium=每隔几轮遇到自然机会就主动使用；low=只在明显合适时偶尔主动使用；never=不要主动使用。用户明确要求时仍必须照做。标记写在回复最后。'
   );
   return lines.join('\n');
 }
