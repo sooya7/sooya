@@ -1,0 +1,99 @@
+name: Comprehensive Test
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: comprehensive-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Typecheck, build and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.10.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
+  e2e:
+    name: Browser end-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.10.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-diagnostics
+          path: |
+            test-results
+            playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release-and-container:
+    name: Release package and container smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.10.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run package
+      - run: npm run verify:release
+      - run: docker build -t sooya:ci .
+      - name: Start container and verify readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name sooya-ci -p 8788:8788 sooya:ci
+          cleanup() {
+            docker logs sooya-ci || true
+            docker rm -f sooya-ci >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8788/health/ready; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'SOOYA container did not become ready' >&2
+          exit 1
+
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.10.0'
+          cache: npm
+      - run: npm audit --audit-level=high
