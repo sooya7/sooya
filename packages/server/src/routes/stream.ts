@@ -32,7 +32,7 @@ export function registerStreamRoutes(app: SooyaApp): void {
 
     let closed = false;
     let heartbeat: NodeJS.Timeout | null = null;
-    let unsubscribe = () => undefined;
+    let unsubscribe: () => void = () => {};
     let sentSeq = lastSeq ?? 0;
     let replaying = true;
     const pendingLive: StreamEvent[] = [];
