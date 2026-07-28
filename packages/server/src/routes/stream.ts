@@ -31,25 +31,64 @@ export function registerStreamRoutes(app: SooyaApp): void {
     reply.raw.write(': sooya stream open\n\n');
 
     let closed = false;
-    const write = (event: StreamEvent) => {
+    let heartbeat: NodeJS.Timeout | null = null;
+    let unsubscribe = () => undefined;
+    let sentSeq = lastSeq ?? 0;
+    let replaying = true;
+    const pendingLive: StreamEvent[] = [];
+
+    const cleanup = () => {
       if (closed) return;
+      closed = true;
+      if (heartbeat) clearInterval(heartbeat);
+      unsubscribe();
       try {
-        reply.raw.write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(serialize(event))}\n\n`);
+        reply.raw.end();
       } catch {
-        closed = true;
+        /* ignore */
       }
     };
+
+    const write = (event: StreamEvent) => {
+      if (closed || event.seq <= sentSeq) return;
+      try {
+        reply.raw.write(`id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(serialize(event))}\n\n`);
+        sentSeq = event.seq;
+      } catch {
+        cleanup();
+      }
+    };
+
+    req.raw.on('close', cleanup);
+    req.raw.on('error', cleanup);
+    reply.raw.on('error', cleanup);
+
+    // Subscribe before reading the durable log. Any event published while replay
+    // is being queried is buffered, then de-duplicated by seq after replay. This
+    // closes the old replay -> subscribe window where one event could disappear.
+    unsubscribe = services.bus.subscribe((event) => {
+      if (replaying) pendingLive.push(event);
+      else write(event);
+    });
 
     // 1. Replay anything missed.
     let replayed = 0;
     if (lastSeq !== null) {
-      for (const e of services.bus.replay(lastSeq, 1000)) {
-        write(e);
+      for (const event of services.bus.replay(lastSeq, 1000)) {
+        write(event);
         replayed++;
       }
     }
 
-    // 2. Tell the client where it stands so it can reconcile via REST if the
+    // 2. Flush events that arrived during replay. Sorting is defensive: the bus
+    // is synchronous today, but ordering by durable seq keeps this correct if its
+    // implementation changes later.
+    replaying = false;
+    pendingLive.sort((a, b) => a.seq - b.seq);
+    for (const event of pendingLive) write(event);
+    pendingLive.length = 0;
+
+    // 3. Tell the client where it stands so it can reconcile via REST if the
     //    event log had already been pruned past its position.
     const currentSeq = services.bus.lastSeq();
     const oldestSeq = services.bus.oldestSeq();
@@ -68,32 +107,16 @@ export function registerStreamRoutes(app: SooyaApp): void {
       })}\n\n`
     );
 
-    // 3. Live events.
-    const unsubscribe = services.bus.subscribe(write);
-    const heartbeat = setInterval(() => {
+    // 4. Keep the live connection healthy.
+    heartbeat = setInterval(() => {
       if (closed) return;
       try {
         reply.raw.write(`: ping ${Date.now()}\n\n`);
       } catch {
-        closed = true;
+        cleanup();
       }
     }, HEARTBEAT_MS);
     heartbeat.unref?.();
-
-    const cleanup = () => {
-      if (closed) return;
-      closed = true;
-      clearInterval(heartbeat);
-      unsubscribe();
-      try {
-        reply.raw.end();
-      } catch {
-        /* ignore */
-      }
-    };
-    req.raw.on('close', cleanup);
-    req.raw.on('error', cleanup);
-    reply.raw.on('error', cleanup);
 
     // Keep the handler alive; Fastify must not send its own response.
     await new Promise<void>((resolve) => {
