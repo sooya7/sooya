@@ -8,8 +8,7 @@ import { toMediaRef } from '../db/repos/media.repo.js';
 import { dirSize } from '../util/fsx.js';
 
 /**
- * Admin API. No UI ships in v1 — these endpoints exist so a management panel
- * can be built later without touching the chat system. Every write requires
+ * Admin API used by the built-in management panel. Every write requires
  * ADMIN_API_TOKEN (fail-closed when the token is not configured).
  */
 export function registerAdminRoutes(app: SooyaApp): void {
@@ -276,7 +275,12 @@ export function registerAdminRoutes(app: SooyaApp): void {
   server.post('/api/admin/chat/clear', guard, async () => {
     repos.messages.clearAll();
     repos.events.clear();
-    services.bus.publish('system.notice', { notice: 'chat cleared' });
+    services.bus.publish('system.notice', {
+      notice: 'chat cleared',
+      reason: 'chat-cleared',
+      action: 'reload',
+      lastMessageSeq: 0
+    });
     return { cleared: true, messages: repos.messages.count() };
   });
 
