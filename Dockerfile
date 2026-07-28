@@ -4,10 +4,29 @@
 # Target: a 2 vCPU / 2 GB Linux box. No orchestrator, no external services.
 # ============================================================================
 
+# ------------------------------------------------------ production deps only --
+# Install runtime dependencies from the lockfile in an isolated stage. Pruning
+# the full workspace tree can incorrectly remove hoisted workspace dependencies
+# such as better-sqlite3, so the runtime layer is built cleanly instead.
+FROM node:20-bookworm-slim AS prod-deps
+WORKDIR /prod
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+COPY packages/server/package.json packages/server/
+COPY packages/web/package.json packages/web/
+RUN npm ci --omit=dev --build-from-source=better-sqlite3 \
+  && npm cache clean --force
+
+# ----------------------------------------------------------------- builder --
 FROM node:20-bookworm-slim AS builder
 WORKDIR /build
 
-# better-sqlite3 is compiled from source so the binary matches the runtime.
+# better-sqlite3 is compiled from source so tests/builds use the same ABI as the
+# final Node 20 runtime image.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
   && rm -rf /var/lib/apt/lists/*
@@ -24,9 +43,6 @@ COPY scripts ./scripts
 
 RUN npm run build -w @sooya/server \
   && npm run build -w @sooya/web
-
-# Prune to production dependencies only while retaining workspace runtime deps.
-RUN npm prune --omit=dev --workspaces --include-workspace-root
 
 # ----------------------------------------------------------------- runtime --
 FROM node:20-bookworm-slim AS runtime
@@ -46,8 +62,8 @@ ENV NODE_ENV=production \
     WEB_DIR=/app/public \
     SOOYA_ASSETS_DIR=/app/assets/stickers
 
-COPY --from=builder /build/node_modules ./node_modules
-COPY --from=builder /build/package.json ./package.json
+COPY --from=prod-deps /prod/node_modules ./node_modules
+COPY --from=prod-deps /prod/package.json ./package.json
 COPY --from=builder /build/packages/server/dist ./packages/server/dist
 COPY --from=builder /build/packages/server/package.json ./packages/server/package.json
 COPY --from=builder /build/packages/web/dist ./public
