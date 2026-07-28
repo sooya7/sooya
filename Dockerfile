@@ -25,8 +25,8 @@ COPY scripts ./scripts
 RUN npm run build -w @sooya/server \
   && npm run build -w @sooya/web
 
-# Prune to production dependencies only.
-RUN npm prune --omit=dev
+# Prune to production dependencies only while retaining workspace runtime deps.
+RUN npm prune --omit=dev --workspaces --include-workspace-root
 
 # ----------------------------------------------------------------- runtime --
 FROM node:20-bookworm-slim AS runtime
