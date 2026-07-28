@@ -16,6 +16,9 @@ export interface ConfigStoreOptions {
   onLog?: (level: 'warn' | 'info' | 'error', msg: string, extra?: Record<string, unknown>) => void;
 }
 
+type ModelSection = 'chat' | 'vision' | 'summary' | 'embedding' | 'image' | 'tts' | 'stt';
+const MODEL_SECTIONS: ModelSection[] = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'stt'];
+
 /**
  * Persona + model configuration, persisted as JSON files under CONFIG_DIR.
  * API keys can come from the file or from environment variables; they are
@@ -88,7 +91,12 @@ export class ConfigStore {
     return this.applyEnvOverrides(parsed.data);
   }
 
-  /** Env vars win over file values so secrets can stay out of the config file. */
+  /**
+   * Environment variables configure untouched sections and always remain a
+   * safe source for API keys. Once a section has been saved through the admin
+   * panel (`configSource: panel`), its provider, URL, model and tuning values
+   * come from models.json instead of being silently replaced by old env vars.
+   */
   private applyEnvOverrides(models: ModelsConfig): ModelsConfig {
     const e = this.env;
     const next: ModelsConfig = JSON.parse(JSON.stringify(models)) as ModelsConfig;
@@ -99,56 +107,69 @@ export class ConfigStore {
       }
       return undefined;
     };
+    const panelManaged = (section: ModelSection): boolean => next[section]?.configSource === 'panel';
 
+    // Secrets may still come from the environment even when the visible model
+    // settings are panel-managed. This keeps API keys out of models.json.
     const chatKey = pick(next.chat.apiKeyEnv ?? '', 'SOOYA_CHAT_API_KEY', 'OPENAI_API_KEY');
     if (chatKey) next.chat.apiKey = chatKey;
-    const chatBase = pick('SOOYA_CHAT_BASE_URL', 'OPENAI_BASE_URL');
-    if (chatBase) next.chat.baseUrl = chatBase;
-    const chatModel = pick('SOOYA_CHAT_MODEL');
-    if (chatModel) next.chat.model = chatModel;
-    const chatProvider = pick('SOOYA_CHAT_PROVIDER');
-    if (chatProvider) next.chat.provider = chatProvider as ModelsConfig['chat']['provider'];
+    if (!panelManaged('chat')) {
+      const chatBase = pick('SOOYA_CHAT_BASE_URL', 'OPENAI_BASE_URL');
+      if (chatBase) next.chat.baseUrl = chatBase;
+      const chatModel = pick('SOOYA_CHAT_MODEL');
+      if (chatModel) next.chat.model = chatModel;
+      const chatProvider = pick('SOOYA_CHAT_PROVIDER');
+      if (chatProvider) next.chat.provider = chatProvider as ModelsConfig['chat']['provider'];
+    }
 
     const embKey = pick(next.embedding.apiKeyEnv ?? '', 'SOOYA_EMBEDDING_API_KEY', 'OPENAI_API_KEY');
     if (embKey) next.embedding.apiKey = embKey;
-    const embBase = pick('SOOYA_EMBEDDING_BASE_URL');
-    if (embBase) next.embedding.baseUrl = embBase;
-    const embModel = pick('SOOYA_EMBEDDING_MODEL');
-    if (embModel) {
-      next.embedding.model = embModel;
-      if (next.embedding.provider === 'none') next.embedding.provider = 'openai-embeddings';
+    if (!panelManaged('embedding')) {
+      const embBase = pick('SOOYA_EMBEDDING_BASE_URL');
+      if (embBase) next.embedding.baseUrl = embBase;
+      const embModel = pick('SOOYA_EMBEDDING_MODEL');
+      if (embModel) {
+        next.embedding.model = embModel;
+        if (next.embedding.provider === 'none') next.embedding.provider = 'openai-embeddings';
+      }
     }
 
     const imgKey = pick(next.image.apiKeyEnv ?? '', 'SOOYA_IMAGE_API_KEY', 'OPENAI_API_KEY');
     if (imgKey) next.image.apiKey = imgKey;
-    const imgBase = pick('SOOYA_IMAGE_BASE_URL');
-    if (imgBase) next.image.baseUrl = imgBase;
-    const imgModel = pick('SOOYA_IMAGE_MODEL');
-    if (imgModel) {
-      next.image.model = imgModel;
-      if (next.image.provider === 'none') next.image.provider = 'openai-images';
+    if (!panelManaged('image')) {
+      const imgBase = pick('SOOYA_IMAGE_BASE_URL');
+      if (imgBase) next.image.baseUrl = imgBase;
+      const imgModel = pick('SOOYA_IMAGE_MODEL');
+      if (imgModel) {
+        next.image.model = imgModel;
+        if (next.image.provider === 'none') next.image.provider = 'openai-images';
+      }
     }
 
     const ttsKey = pick(next.tts.apiKeyEnv ?? '', 'SOOYA_TTS_API_KEY', 'OPENAI_API_KEY');
     if (ttsKey) next.tts.apiKey = ttsKey;
-    const ttsBase = pick('SOOYA_TTS_BASE_URL');
-    if (ttsBase) next.tts.baseUrl = ttsBase;
-    const ttsModel = pick('SOOYA_TTS_MODEL');
-    if (ttsModel) {
-      next.tts.model = ttsModel;
-      if (next.tts.provider === 'none') next.tts.provider = 'openai-tts';
+    if (!panelManaged('tts')) {
+      const ttsBase = pick('SOOYA_TTS_BASE_URL');
+      if (ttsBase) next.tts.baseUrl = ttsBase;
+      const ttsModel = pick('SOOYA_TTS_MODEL');
+      if (ttsModel) {
+        next.tts.model = ttsModel;
+        if (next.tts.provider === 'none') next.tts.provider = 'openai-tts';
+      }
+      const ttsVoice = pick('SOOYA_TTS_VOICE');
+      if (ttsVoice) next.tts.voice = ttsVoice;
     }
-    const ttsVoice = pick('SOOYA_TTS_VOICE');
-    if (ttsVoice) next.tts.voice = ttsVoice;
 
     const sttKey = pick(next.stt.apiKeyEnv ?? '', 'SOOYA_STT_API_KEY', 'OPENAI_API_KEY');
     if (sttKey) next.stt.apiKey = sttKey;
-    const sttBase = pick('SOOYA_STT_BASE_URL');
-    if (sttBase) next.stt.baseUrl = sttBase;
-    const sttModel = pick('SOOYA_STT_MODEL');
-    if (sttModel) {
-      next.stt.model = sttModel;
-      if (next.stt.provider === 'none') next.stt.provider = 'openai-transcriptions';
+    if (!panelManaged('stt')) {
+      const sttBase = pick('SOOYA_STT_BASE_URL');
+      if (sttBase) next.stt.baseUrl = sttBase;
+      const sttModel = pick('SOOYA_STT_MODEL');
+      if (sttModel) {
+        next.stt.model = sttModel;
+        if (next.stt.provider === 'none') next.stt.provider = 'openai-transcriptions';
+      }
     }
     return next;
   }
@@ -176,7 +197,18 @@ export class ConfigStore {
   }
 
   setModels(patch: unknown): ModelsConfig {
-    const incoming = (patch ?? {}) as Record<string, unknown>;
+    const incoming = JSON.parse(JSON.stringify(patch ?? {})) as Record<string, unknown>;
+
+    // Saving a section through the management API means the user explicitly
+    // chose these values. Mark the whole edited section as panel-managed so an
+    // old deployment environment variable cannot silently undo the save.
+    for (const section of MODEL_SECTIONS) {
+      const value = incoming[section];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        incoming[section] = { ...(value as Record<string, unknown>), configSource: 'panel' };
+      }
+    }
+
     // Merge onto the on-disk baseline, never onto the env-resolved config:
     // using the resolved config as the base would copy environment secrets
     // into the file on the next unrelated edit.
