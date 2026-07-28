@@ -22,7 +22,13 @@ export interface UserDirectives {
   anotherSticker?: boolean;
 }
 
-const STICKER_PATTERNS = [/发(?:个|一个|张|一张)?表情/, /来(?:个|一个|张)?表情/, /表情包/, /send.*sticker/i, /斗图/];
+const STICKER_PATTERNS = [
+  /发(?:个|一个|张|一张)?(?:.{0,12})?表情/,
+  /来(?:个|一个|张)?(?:.{0,12})?表情/,
+  /表情包/,
+  /send.*sticker/i,
+  /斗图/
+];
 const STICKER_ONLY_PATTERNS = [/只发表情/, /光发表情/, /只要表情/, /sticker only/i];
 const ANOTHER_STICKER_PATTERNS = [/换(?:一)?个表情/, /再来(?:一)?个表情/, /换个表情包/, /another sticker/i, /换一张/];
 const NO_STICKER_PATTERNS = [/不要(?:发)?表情/, /别发表情/, /不用表情/, /no sticker/i, /别斗图/];
@@ -94,7 +100,7 @@ const MARKER_RE = /\[\[\s*(sticker|image|voice|voice-only|sticker-only)\s*(?::\s
  * was cut off mid-marker ("...[[sticker:开"). It must be removed too, otherwise
  * the raw marker text would be shown to the user and stored in the database.
  */
-const TRAILING_PARTIAL_RE = /\[\[\s*(?:s(?:t(?:i(?:c(?:k(?:e(?:r(?:-(?:o(?:n(?:l(?:y)?)?)?)?)?)?)?)?)?)?)?|i(?:m(?:a(?:g(?:e)?)?)?)?|v(?:o(?:i(?:c(?:e(?:-(?:o(?:n(?:l(?:y)?)?)?)?)?)?)?)?)?)?[^\]]*$/i;
+const TRAILING_PARTIAL_RE = /\[\[\s*(?:s(?:t(?:i(?:c(?:k(?:e(?:r(?:-(?:o(?:n(?:l(?:y)?)?)?)?)?)?)?)?)?)?|i(?:m(?:a(?:g(?:e)?)?)?)?|v(?:o(?:i(?:c(?:e(?:-(?:o(?:n(?:l(?:y)?)?)?)?)?)?)?)?)?)?[^\]]*$/i;
 
 export interface StripResult {
   text: string;
