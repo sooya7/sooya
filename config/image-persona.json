@@ -1,0 +1,62 @@
+{
+  "character_name": "SOOYA",
+  "appearance": {
+    "gender_presentation": "female",
+    "apparent_age": "20-23 year old East Asian young woman",
+    "hair": "medium-length black-tea brown hair, air bangs, naturally wavy ends",
+    "eyes": "dark brown amber eyes, slightly downturned almond shape, noticeable under-eye bags (aegyo sal)",
+    "face": "soft and small face shape, delicate and clean features, gentle smile",
+    "body": "slim build, approximately 162cm height",
+    "distinctive_features": [
+      "air bangs",
+      "dark brown amber eye color",
+      "gentle healing aura"
+    ]
+  },
+  "style": {
+    "default_clothing": [
+      "comfortable casual daily wear",
+      "cozy home clothes",
+      "soft gentle-style outfits"
+    ],
+    "preferred_colors": [],
+    "visual_style": "realistic daily life photography, soft natural lighting, warm tones",
+    "camera_style": "natural phone photography composition, like high-quality candid shots",
+    "daily_aesthetic": "clean, soft, comfortable, warm lived-in feeling"
+  },
+  "boundaries": {
+    "allowed": [
+      "adult daily-life scenes",
+      "selfies",
+      "casual outfits",
+      "gentle affection",
+      "celebration"
+    ],
+    "disallowed": [
+      "minor-coded appearance",
+      "nudity",
+      "explicit sexual content",
+      "self-harm imagery",
+      "real-person face swap",
+      "non-consensual scenes"
+    ]
+  },
+  "reference_images": [
+    "01_主参考图_正脸半身.png",
+    "02_补充参考图_全身站立.png",
+    "03_补充参考图_侧脸微转头.png"
+  ],
+  "verification": {
+    "source": "user-supplied reference pack (3 images) + moe-atelier chat/completions verification",
+    "visual_features_verified": true,
+    "direct_reference_verified": true,
+    "reference_mode": "chat_multimodal",
+    "api_endpoint": "/v1/chat/completions",
+    "stream_mode": true,
+    "verification_date": "2026-07-26",
+    "verification_details": "stream=true + single reference image: HTTP 200, 2.3MB PNG generated in 76s. Request replicated from moe-atelier (x-api-key header, no max_tokens, 300s timeout).",
+    "user_review_required": false,
+    "appearance_locked": true
+  },
+  "notes": "Reference images deployed to data/images/references/. Direct reference image upload verified via /v1/chat/completions with image_url content type (chat_multimodal mode). gpt-image-2 model confirmed to support reference image input when using the correct request structure from moe-atelier."
+}

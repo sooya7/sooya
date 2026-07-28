@@ -1,0 +1,37 @@
+{
+  "selfie": {
+    "description": "角色自拍照片",
+    "prompt_suffix": "selfie angle, close-up, looking at camera, natural pose",
+    "camera": "selfie perspective, slightly above eye level"
+  },
+  "daily_life": {
+    "description": "日常生活照",
+    "prompt_suffix": "candid photo, natural daily life scene, relaxed atmosphere",
+    "camera": "natural perspective, eye level"
+  },
+  "outfit": {
+    "description": "穿搭展示",
+    "prompt_suffix": "full body shot, showing outfit details, fashion photography style",
+    "camera": "full body, slightly low angle"
+  },
+  "activity": {
+    "description": "活动场景",
+    "prompt_suffix": "engaged in activity, dynamic pose, natural environment",
+    "camera": "action perspective, capturing the moment"
+  },
+  "environment": {
+    "description": "环境氛围照",
+    "prompt_suffix": "environmental shot, atmospheric, showing surroundings",
+    "camera": "wide angle, environmental perspective"
+  },
+  "memory_scene": {
+    "description": "回忆场景",
+    "prompt_suffix": "nostalgic mood, soft focus, warm tones, memory-like atmosphere",
+    "camera": "artistic perspective, dreamy quality"
+  },
+  "celebration": {
+    "description": "庆祝场景",
+    "prompt_suffix": "festive mood, bright colors, joyful expression, celebration atmosphere",
+    "camera": "dynamic angle, capturing excitement"
+  }
+}

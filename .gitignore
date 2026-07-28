@@ -22,4 +22,3 @@ release/
 *.tsbuildinfo
 .DS_Store
 test-results/
-.superpowers/
