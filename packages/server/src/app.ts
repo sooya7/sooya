@@ -26,6 +26,7 @@ import { Replier } from './core/replier.js';
 import { WorldEngine } from './core/world.js';
 import { PushService } from './core/push.js';
 import { StorageService } from './core/storage.js';
+import { maintenanceCoordinator } from './core/maintenance.js';
 import { EventBus } from './events/bus.js';
 import { JobWorker, registerDefaultJobs } from './core/jobs.js';
 import { BackupService } from './backup/service.js';
@@ -131,7 +132,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE });
   const world = new WorldEngine(repos.world, capabilities, repos.errors, repos.messages);
   const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, opts.fetchImpl);
-  const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors);
+  const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
   const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, world);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
@@ -145,6 +146,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     backupDir: env.backupDir,
     mediaDir: env.mediaDir,
     keep: env.BACKUP_KEEP,
+    maintenance: maintenanceCoordinator,
     closeForRestore: () => closeDatabase(dbHandle.raw),
     reopenAfterRestore: () => {
       const reopened = openDatabase({ file: dbFile, backupDir: env.backupDir, onLog: (level, msg, extra) => logger[level]({ ...extra }, msg) });
