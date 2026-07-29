@@ -147,7 +147,11 @@ export class StorageService {
       }
     }
     const allMediaFiles = await walkFiles(this.env.mediaDir);
-    const orphanFiles = allMediaFiles.filter((file) => !knownPaths.has(path.resolve(file.path)) && !file.path.includes(`${path.sep}tmp${path.sep}`));
+    const tempRoot = path.resolve(this.env.mediaDirs.tmp);
+    const orphanFiles = allMediaFiles.filter((file) => {
+      const resolved = path.resolve(file.path);
+      return !knownPaths.has(resolved) && !resolved.startsWith(`${tempRoot}${path.sep}`);
+    });
     const unreferencedMedia = this.media.listUnreferenced(1000)
       .filter((row) => !avatarIds.has(row.id))
       .map((row) => ({ id: row.id, bytes: row.bytes }));
