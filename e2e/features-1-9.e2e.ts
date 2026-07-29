@@ -80,6 +80,69 @@ test.describe('SOOYA 1-9 user flows', () => {
     await expect(page.getByText('清理预览已生成，尚未删除任何内容')).toBeVisible();
   });
 
+  test('storage cleanup report summarizes and paginates thousands of candidates', async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as typeof window & { __cleanupDownloads: Array<{ href: string; download: string }> }).__cleanupDownloads = [];
+      HTMLAnchorElement.prototype.click = function captureCleanupDownload() {
+        (window as typeof window & { __cleanupDownloads: Array<{ href: string; download: string }> }).__cleanupDownloads.push({
+          href: this.href,
+          download: this.download
+        });
+      };
+    });
+    const candidates = Array.from({ length: 2_000 }, (_, index) => ({
+      path: `orphan/candidate-${String(index).padStart(4, '0')}.bin`,
+      bytes: index + 1,
+      mtimeMs: 1_700_000_000_000 + index
+    }));
+    await page.route('**/api/admin/storage/cleanup', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          applied: false,
+          report: {
+            reportId: 'cleanup_large_report_123456',
+            generatedAt: new Date().toISOString(),
+            policyHash: 'policy',
+            candidateHash: 'candidates',
+            candidates: {
+              expiredTrash: [],
+              missingRecords: [],
+              orphanFiles: candidates,
+              unreferencedMedia: [],
+              tempFiles: [],
+              oldBackups: []
+            },
+            reclaimableBytes: candidates.reduce((sum, item) => sum + item.bytes, 0)
+          },
+          deleted: {},
+          skipped: [],
+          releasedBytes: 0,
+          deletedBytes: 0,
+          skippedBytes: 0
+        })
+      });
+    });
+
+    await installAdminToken(page);
+    await page.goto('/admin/features');
+    await page.getByRole('button', { name: '存储治理' }).click();
+    await page.getByRole('button', { name: '预览清理' }).click();
+
+    const summary = page.getByTestId('cleanup-report-summary');
+    await expect(summary).toContainText('2,000 项');
+    await expect(page.getByTestId('cleanup-report-row')).toHaveCount(50);
+    await expect(page.locator('body')).not.toContainText('candidate-1999.bin');
+    await page.getByRole('button', { name: '下一页清理明细' }).click();
+    await expect(page.getByTestId('cleanup-report-row').first()).toContainText('candidate-0050.bin');
+    await page.getByRole('button', { name: '下载完整清理报告' }).click();
+    await expect.poll(() => page.evaluate(() =>
+      (window as typeof window & { __cleanupDownloads: Array<{ href: string; download: string }> }).__cleanupDownloads
+    )).toEqual([{ href: expect.stringMatching(/^blob:/), download: 'cleanup_large_report_123456.json' }]);
+  });
+
   test('gallery supports favorite, recycle bin, restore and zoom viewer', async ({ page, request }) => {
     await page.addInitScript(() => {
       (window as typeof window & { __sooyaDownloads: Array<{ href: string; download: string }> }).__sooyaDownloads = [];

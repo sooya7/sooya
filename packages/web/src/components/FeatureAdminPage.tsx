@@ -187,6 +187,73 @@ function WorldEditor({ onNotice }: { onNotice: (s: string) => void }) {
   );
 }
 
+const CLEANUP_PAGE_SIZE = 50;
+const CLEANUP_CATEGORY_LABELS: Record<string, string> = {
+  expiredTrash: '过期回收站',
+  missingRecords: '缺失文件记录',
+  orphanFiles: '孤立文件',
+  unreferencedMedia: '未引用媒体',
+  tempFiles: '临时文件',
+  oldBackups: '旧备份'
+};
+
+function cleanupTarget(item: Record<string, unknown>): string {
+  return String(item.path ?? item.relPath ?? item.id ?? '未知项目');
+}
+
+function CleanupReportView({ result }: { result: Record<string, any> }) {
+  const report = (result.report ?? result) as Record<string, any>;
+  const [page, setPage] = useState(0);
+  const categories = useMemo(() =>
+    Object.entries(report.candidates ?? {}).map(([category, raw]) => {
+      const items = Array.isArray(raw) ? raw as Array<Record<string, unknown>> : [];
+      return {
+        category,
+        label: CLEANUP_CATEGORY_LABELS[category] ?? category,
+        items,
+        bytes: items.reduce((sum, item) => sum + Number(item.bytes ?? 0), 0)
+      };
+    }), [report]
+  );
+  const details = useMemo(() =>
+    categories.flatMap((group) => group.items.map((item) => ({
+      category: group.category,
+      label: group.label,
+      target: cleanupTarget(item),
+      bytes: Number(item.bytes ?? 0)
+    }))), [categories]
+  );
+  const pages = Math.max(1, Math.ceil(details.length / CLEANUP_PAGE_SIZE));
+  const safePage = Math.min(page, pages - 1);
+  const visible = details.slice(safePage * CLEANUP_PAGE_SIZE, (safePage + 1) * CLEANUP_PAGE_SIZE);
+  useEffect(() => setPage(0), [result]);
+
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${String(report.reportId ?? 'cleanup-report')}.json`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  return (
+    <section className="admin-card admin-form-wide" data-testid="cleanup-report-summary">
+      <div className="admin-card-heading"><h2>清理报告摘要</h2><button type="button" onClick={download}>下载完整清理报告</button></div>
+      <p>{details.length.toLocaleString('en-US')} 项 · 可释放 {bytes(Number(report.reclaimableBytes ?? result.releasedBytes ?? 0))}</p>
+      {report.reportId && <small>报告 ID：{String(report.reportId)}</small>}
+      <div className="admin-summary">
+        {categories.map((group) => <div className="admin-summary-tile" key={group.category}><span>{group.label}</span><strong>{group.items.length.toLocaleString('en-US')}</strong><small>{bytes(group.bytes)}</small></div>)}
+      </div>
+      <div>
+        {visible.map((item, index) => <div className="admin-list-row" data-testid="cleanup-report-row" key={`${item.category}:${item.target}:${index}`}><span><strong>{item.label}</strong> · {item.target}</span><small>{bytes(item.bytes)}</small></div>)}
+        {details.length === 0 && <div className="admin-empty">没有可清理候选</div>}
+      </div>
+      {pages > 1 && <div className="admin-actions"><button type="button" aria-label="上一页清理明细" disabled={safePage === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>上一页</button><span>{safePage + 1} / {pages}</span><button type="button" aria-label="下一页清理明细" disabled={safePage >= pages - 1} onClick={() => setPage((value) => Math.min(pages - 1, value + 1))}>下一页</button></div>}
+    </section>
+  );
+}
+
 function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [data, setData] = useState<Record<string, any> | null>(null);
   const [report, setReport] = useState<Record<string, any> | null>(null);
@@ -215,7 +282,7 @@ function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
       <label>临时文件保留小时<input type="number" value={Number(policy.tempRetentionHours ?? 24)} onChange={(event) => setPolicy('tempRetentionHours', Number(event.target.value))} /></label>
       <label>备份保留份数<input type="number" value={Number(policy.backupKeep ?? 7)} onChange={(event) => setPolicy('backupKeep', Number(event.target.value))} /></label>
       <div className="admin-actions"><button type="button" onClick={() => void featureApi.updateStorage(policy).then(() => { void load(); onNotice('存储策略已保存'); }).catch((error) => onNotice(errorText(error)))}>保存策略</button><button type="button" onClick={() => void preview(false)}>预览清理</button><button type="button" className="admin-danger" disabled={!report || report.applied} onClick={() => { if (window.confirm('只会删除预览报告中仍满足安全条件的项目，确认执行？')) void preview(true); }}>执行安全清理</button></div>
-      {report && <pre style={{ maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{JSON.stringify(report.report ?? report, null, 2)}</pre>}
+      {report && <CleanupReportView result={report} />}
     </section>
   );
 }
