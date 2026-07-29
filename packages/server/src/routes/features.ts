@@ -176,9 +176,17 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       reply.code(409);
       return { error: 'media_is_referenced', references, avatar };
     }
-    const deleted = await services.mediaStore.delete(id);
-    repos.audit.add('media', 'permanently.deleted', id, { bytes: row.bytes });
-    return { deleted };
+    try {
+      const deleted = await services.mediaStore.delete(id);
+      if (!deleted) throw new Error('media deletion did not complete');
+      repos.audit.add('media', 'permanently.deleted', id, { bytes: row.bytes });
+      return { deleted: true };
+    } catch (error) {
+      repos.errors.add('media.delete', (error as Error).message, { mediaId: id });
+      repos.audit.add('media', 'permanent.delete_failed', id, { bytes: row.bytes });
+      reply.code(500);
+      return { error: 'media_delete_failed', deleted: false, message: '媒体文件删除失败，数据库记录已保留，请稍后重试' };
+    }
   });
 
   server.post('/api/admin/media/batch', adminGuard, async (req, reply) => {
@@ -190,7 +198,12 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'bad_request', issues: parsed.error.issues };
     }
-    const result = { changed: 0, blocked: [] as Array<{ id: string; reason: string }>, missing: [] as string[] };
+    const result = {
+      changed: 0,
+      blocked: [] as Array<{ id: string; reason: string }>,
+      missing: [] as string[],
+      failed: [] as Array<{ id: string; reason: string }>
+    };
     for (const id of [...new Set(parsed.data.ids)]) {
       const row = repos.media.get(id);
       if (!row) { result.missing.push(id); continue; }
@@ -204,7 +217,12 @@ export function registerFeatureRoutes(app: SooyaApp): void {
           result.blocked.push({ id, reason: 'referenced' });
           continue;
         }
-        result.changed += await services.mediaStore.delete(id) ? 1 : 0;
+        try {
+          result.changed += await services.mediaStore.delete(id) ? 1 : 0;
+        } catch (error) {
+          repos.errors.add('media.delete', (error as Error).message, { mediaId: id, batch: true });
+          result.failed.push({ id, reason: 'delete_failed' });
+        }
       }
     }
     repos.audit.add('media', `batch.${parsed.data.action}`, null, result as unknown as Record<string, unknown>);

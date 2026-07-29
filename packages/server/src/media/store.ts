@@ -199,11 +199,9 @@ export class MediaStore {
   async delete(id: string): Promise<boolean> {
     const row = this.repo.get(id);
     if (!row) return false;
-    try {
-      await fsp.rm(this.absolutePath(row), { force: true });
-    } catch {
-    }
-    return this.repo.delete(id);
+    await fsp.rm(this.absolutePath(row), { force: true });
+    if (!this.repo.delete(id)) throw new Error('media database record deletion failed');
+    return true;
   }
 
   async collectOrphans(minAgeMs = 2 * 60 * 60 * 1000): Promise<string[]> {
@@ -211,11 +209,9 @@ export class MediaStore {
     const rows = this.repo.listOrphanUploads(cutoff, 500);
     const removed: string[] = [];
     for (const row of rows) {
-      try {
-        await fsp.rm(this.absolutePath(row), { force: true });
-      } catch {
-      }
-      if (this.repo.delete(row.id)) removed.push(row.id);
+      await fsp.rm(this.absolutePath(row), { force: true });
+      if (!this.repo.delete(row.id)) throw new Error('orphan media database record deletion failed');
+      removed.push(row.id);
     }
     return removed;
   }
