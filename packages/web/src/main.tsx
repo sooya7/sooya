@@ -8,10 +8,10 @@ import { NotificationBridge } from './components/NotificationBridge.js';
 import './styles.css';
 import './components/AdminPanel.css';
 import './components/overlays.css';
+import './components/FeatureEnhancements.css';
 
 const container = document.getElementById('root');
 if (!container) throw new Error('root container missing');
-
 const galleryRoute = window.location.pathname === '/gallery' || window.location.pathname === '/gallery/';
 const featureAdminRoute = window.location.pathname === '/admin/features' || window.location.pathname === '/admin/features/';
 
@@ -23,11 +23,6 @@ createRoot(container).render(
   </StrictMode>
 );
 
-// Register the service worker for offline shell + installability + Web Push.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
-      /* PWA is optional; the app works without it */
-    });
-  });
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => { /* PWA is optional */ }); });
 }
