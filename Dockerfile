@@ -5,10 +5,10 @@
 # ============================================================================
 
 # ------------------------------------------------------ production deps only --
-# Install runtime dependencies from the lockfile in an isolated stage. npm may
-# place workspace dependencies either at the root or inside the server workspace;
-# merge both locations into one deterministic runtime tree and verify the native
-# database module before the final image is assembled.
+# Install the production dependency graph for the workspaces from the lockfile.
+# npm only installs workspace dependencies reliably here when `--workspaces` is
+# explicit. Preserve both the hoisted root tree and the server-local tree so
+# Node resolves packages exactly as it did during installation.
 FROM node:20-bookworm-slim AS prod-deps
 WORKDIR /prod
 
@@ -19,11 +19,9 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
-RUN npm ci --omit=dev --build-from-source=better-sqlite3 \
-  && mkdir -p /runtime-node_modules \
-  && cp -a node_modules/. /runtime-node_modules/ \
-  && if [ -d packages/server/node_modules ]; then cp -a packages/server/node_modules/. /runtime-node_modules/; fi \
-  && node -e "require(require.resolve('better-sqlite3', { paths: ['/runtime-node_modules'] })); console.log('better-sqlite3 runtime dependency verified')" \
+RUN npm ci --omit=dev --workspaces --include-workspace-root --build-from-source=better-sqlite3 \
+  && mkdir -p packages/server/node_modules \
+  && node -e "const p=require.resolve('better-sqlite3',{paths:['/prod/packages/server']}); require(p); console.log('better-sqlite3 production dependency verified:',p)" \
   && npm cache clean --force
 
 # ----------------------------------------------------------------- builder --
@@ -67,7 +65,8 @@ ENV NODE_ENV=production \
     WEB_DIR=/app/public \
     SOOYA_ASSETS_DIR=/app/assets/stickers
 
-COPY --from=prod-deps /runtime-node_modules ./node_modules
+COPY --from=prod-deps /prod/node_modules ./node_modules
+COPY --from=prod-deps /prod/packages/server/node_modules ./packages/server/node_modules
 COPY --from=prod-deps /prod/package.json ./package.json
 COPY --from=builder /build/packages/server/dist ./packages/server/dist
 COPY --from=builder /build/packages/server/package.json ./packages/server/package.json
@@ -75,7 +74,7 @@ COPY --from=builder /build/packages/web/dist ./public
 COPY --from=builder /build/assets ./assets
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
-  && node -e "require('better-sqlite3'); console.log('better-sqlite3 available in final image')"
+  && node -e "const p=require.resolve('better-sqlite3',{paths:['/app/packages/server']}); require(p); console.log('better-sqlite3 available in final image:',p)"
 
 # Data and config are mounted volumes; create them so a bare `docker run` works.
 RUN mkdir -p /app/data /app/config \
