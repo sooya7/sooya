@@ -109,6 +109,11 @@
   transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
 }
 
+.admin-side-nav-plain button {
+  /* No icon is rendered in this nav, so the label must not sit in the icon column. */
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .admin-side-nav button:hover {
   color: var(--admin-text);
   background: var(--admin-surface-soft);
@@ -1017,4 +1022,99 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---- Model library ---------------------------------------------------- */
+
+.admin-model-library {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.admin-preset-group {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-preset-group > h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7688;
+}
+
+.admin-preset-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e6e9f0;
+  border-radius: 12px;
+}
+
+.admin-preset-row.active {
+  border-color: #7a8cff;
+  box-shadow: 0 0 0 2px rgba(122, 140, 255, 0.14);
+}
+
+.admin-preset-copy strong {
+  display: block;
+  font-size: 14px;
+}
+
+.admin-preset-copy small {
+  display: block;
+  color: #78839a;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.admin-preset-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.admin-preset-actions button {
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid #dfe3ec;
+  border-radius: 9px;
+  background: #f7f8fc;
+  cursor: pointer;
+}
+
+.admin-preset-actions button.primary {
+  color: #fff;
+  background: #4c5fd7;
+  border-color: #4c5fd7;
+}
+
+.admin-preset-actions button.danger {
+  color: #b4342c;
+}
+
+.admin-preset-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  padding: 14px;
+  background: #f8f9fd;
+  border: 1px solid #e6e9f0;
+  border-radius: 12px;
+}
+
+.admin-preset-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #57617a;
+}
+
+.admin-preset-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
 }

@@ -1,6 +1,19 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../lib/api.js';
 import {
+  emptyPreset,
+  MODEL_SLOTS,
+  presetsBySlot,
+  removePreset,
+  SLOT_LABELS,
+  SLOT_PROVIDERS,
+  suggestId,
+  upsertPreset,
+  validatePreset,
+  type ModelPreset,
+  type ModelSlot
+} from '../lib/modelPresets.js';
+import {
   adminApi,
   clearAdminToken,
   getAdminToken,
@@ -161,6 +174,127 @@ function PersonaPanel({ onNotice }: { onNotice: (v: string) => void }) {
   );
 }
 
+/**
+ * The saved model library. The seven capability slots are fixed, so this is the
+ * only place an operator can add a model rather than overwrite one; applying a
+ * preset is what actually assigns it to its slot on the server.
+ */
+function ModelLibrary({ onNotice, onApplied }: { onNotice: (v: string) => void; onApplied: (models: AdminModels) => void }) {
+  const [presets, setPresets] = useState<ModelPreset[] | null>(null);
+  const [draft, setDraft] = useState<ModelPreset | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void adminApi.modelPresets().then((r) => setPresets(r.presets)).catch((e) => onNotice(errorText(e)));
+  }, [onNotice]);
+
+  const commit = async (next: ModelPreset[], message: string) => {
+    setBusy(true);
+    try {
+      const saved = await adminApi.saveModelPresets(next);
+      setPresets(saved.presets);
+      setDraft(null);
+      setEditingId(null);
+      onNotice(message);
+    } catch (e) {
+      onNotice(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = () => {
+    if (!draft || !presets) return;
+    const problem = validatePreset(draft, presets, editingId);
+    if (problem) {
+      onNotice(problem);
+      return;
+    }
+    void commit(upsertPreset(presets, draft, editingId), editingId ? '预设已更新' : '预设已添加');
+  };
+
+  const apply = async (preset: ModelPreset) => {
+    setBusy(true);
+    try {
+      const result = await adminApi.applyModelPreset(preset.id);
+      onApplied(result.models);
+      onNotice(`已把「${preset.name}」指派给${SLOT_LABELS[preset.slot]}`);
+    } catch (e) {
+      onNotice(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const update = (patch: Partial<ModelPreset>) => setDraft((prev) => {
+    if (!prev) return prev;
+    const next = { ...prev, ...patch };
+    // A slot change can strand the provider on something that slot rejects.
+    if (patch.slot && !SLOT_PROVIDERS[patch.slot].includes(next.provider)) {
+      next.provider = SLOT_PROVIDERS[patch.slot][0] ?? '';
+    }
+    return next;
+  });
+
+  if (!presets) return <p className="admin-muted">正在读取模型库…</p>;
+  const groups = presetsBySlot(presets);
+
+  return (
+    <section className="admin-model-library" data-testid="admin-model-library">
+      <PanelHeading title="模型库" description="保存任意多个模型预设，随时指派给某项能力。预设只记录密钥的环境变量名，不保存密钥本身。" />
+      {groups.length === 0 && <p className="admin-muted">还没有预设。添加一个，就能在不同模型之间随时切换。</p>}
+      {groups.map(([slot, items]) => (
+        <div className="admin-preset-group" key={slot}>
+          <h3>{SLOT_LABELS[slot]}</h3>
+          {items.map((preset) => (
+            <div className={editingId === preset.id ? 'admin-preset-row active' : 'admin-preset-row'} key={preset.id} data-testid={`admin-preset-${preset.id}`}>
+              <div className="admin-preset-copy">
+                <strong>{preset.name}</strong>
+                <small>{preset.model} · {preset.provider}{preset.baseUrl ? ` · ${preset.baseUrl}` : ''}{preset.apiKeyEnv ? ` · 密钥取自 ${preset.apiKeyEnv}` : ''}</small>
+                {preset.notes && <small>{preset.notes}</small>}
+              </div>
+              <div className="admin-preset-actions">
+                <button type="button" className="primary" disabled={busy} onClick={() => void apply(preset)}>指派</button>
+                <button type="button" disabled={busy} onClick={() => { setDraft(preset); setEditingId(preset.id); }}>编辑</button>
+                <button type="button" className="danger" disabled={busy} onClick={() => void commit(removePreset(presets, preset.id), '预设已删除')}>删除</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+
+      {draft ? (
+        <div className="admin-preset-form" data-testid="admin-preset-form">
+          <label>预设名称<input value={draft.name} onChange={(e) => {
+            const name = e.target.value;
+            update(editingId ? { name } : { name, id: draft.id || suggestId(name) });
+          }} /></label>
+          <label>预设 ID<input value={draft.id} disabled={Boolean(editingId)} onChange={(e) => update({ id: e.target.value })} /></label>
+          <label>指派能力<select value={draft.slot} onChange={(e) => update({ slot: e.target.value as ModelSlot })}>
+            {MODEL_SLOTS.map((slot) => <option key={slot} value={slot}>{SLOT_LABELS[slot]}</option>)}
+          </select></label>
+          <label>接口协议<select value={draft.provider} onChange={(e) => update({ provider: e.target.value })}>
+            {SLOT_PROVIDERS[draft.slot].map((provider) => <option key={provider} value={provider}>{provider}</option>)}
+          </select></label>
+          <label>模型名<input value={draft.model} onChange={(e) => update({ model: e.target.value })} /></label>
+          <label>接口地址<input value={draft.baseUrl} placeholder="留空则用默认地址" onChange={(e) => update({ baseUrl: e.target.value })} /></label>
+          <label>密钥环境变量<input value={draft.apiKeyEnv} placeholder="例如 GLM_API_KEY" onChange={(e) => update({ apiKeyEnv: e.target.value })} /></label>
+          <label>备注<input value={draft.notes} onChange={(e) => update({ notes: e.target.value })} /></label>
+          <div className="admin-preset-form-actions">
+            <button type="button" className="admin-primary" disabled={busy} onClick={submit}>{editingId ? '保存修改' : '添加到模型库'}</button>
+            <button type="button" disabled={busy} onClick={() => { setDraft(null); setEditingId(null); }}>取消</button>
+          </div>
+        </div>
+      ) : (
+        <div className="admin-preset-form-actions">
+          <button type="button" className="admin-primary" data-testid="admin-preset-add" onClick={() => { setDraft(emptyPreset()); setEditingId(null); }}>添加模型</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [models, setModels] = useState<AdminModels | null>(null);
   const [selected, setSelected] = useState<string>('chat');
@@ -201,6 +335,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
       </aside>
       <div className="admin-form-card">
         <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description="编辑当前能力使用的真实服务端配置。" />
+        <ModelLibrary onNotice={onNotice} onApplied={setModels} />
         <label>接口协议<select value={String(config.provider ?? 'none')} onChange={(e) => update('provider', e.target.value)}>
           <option value="none">未配置</option>
           <option value="openai-chat">OpenAI Chat Completions</option>
