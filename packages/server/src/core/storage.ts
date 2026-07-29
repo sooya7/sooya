@@ -7,6 +7,7 @@ import type { MediaRepo } from '../db/repos/media.repo.js';
 import type { SettingsRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { AuditRepo, StorageSampleRepo } from '../db/repos/feature.repo.js';
 import type { MediaStore } from '../media/store.js';
+import type { MaintenanceCoordinator } from './maintenance.js';
 import { dirSize } from '../util/fsx.js';
 
 export interface StoragePolicy {
@@ -50,12 +51,14 @@ export class StorageService {
     private readonly audit: AuditRepo,
     private readonly samples: StorageSampleRepo,
     private readonly config: ConfigStore,
-    private readonly errors: ErrorLogRepo
+    private readonly errors: ErrorLogRepo,
+    private readonly maintenance: MaintenanceCoordinator
   ) {
     const originalSave = mediaStore.save.bind(mediaStore);
     mediaStore.save = async (input) => {
-      if (this.maintenanceRunning) {
-        const error = new Error('storage maintenance is running; media writes are temporarily paused') as Error & { code?: string };
+      if (this.maintenance.isWriteBlocked()) {
+        const current = this.maintenance.state();
+        const error = new Error(`maintenance operation ${current?.operation ?? 'unknown'} is running; media writes are temporarily paused`) as Error & { code?: string };
         error.code = 'STORAGE_MAINTENANCE';
         throw error;
       }
@@ -112,6 +115,7 @@ export class StorageService {
       policy,
       warning: mediaBytes >= policy.hardLimitBytes ? 'hard' : mediaBytes >= policy.softLimitBytes ? 'soft' : null,
       maintenanceRunning: this.maintenanceRunning,
+      maintenance: this.maintenance.state(),
       activeWrites: this.activeWrites,
       trend: this.samples.list(48)
     };
@@ -185,7 +189,8 @@ export class StorageService {
   }
 
   async cleanup(input: { apply?: boolean; categories?: string[] } = {}): Promise<{ applied: boolean; report: CleanupReport; deleted: Record<string, number>; releasedBytes: number }> {
-    if (this.maintenanceRunning || this.activeWrites > 0) throw new Error(this.maintenanceRunning ? 'storage maintenance is already running' : 'media write is in progress; retry cleanup shortly');
+    if (this.activeWrites > 0) throw new Error('media write is in progress; retry cleanup shortly');
+    const release = this.maintenance.begin('storage.cleanup', { blocksWrites: true });
     this.maintenanceRunning = true;
     try {
       const report = await this.report();
@@ -197,14 +202,20 @@ export class StorageService {
       if (categories.has('expiredTrash')) {
         for (const item of report.candidates.expiredTrash) {
           if (item.references > 0) continue;
-          if (await this.mediaStore.delete(item.id)) { deleted.expiredTrash = (deleted.expiredTrash ?? 0) + 1; releasedBytes += item.bytes; }
+          if (await this.mediaStore.delete(item.id)) {
+            deleted.expiredTrash = (deleted.expiredTrash ?? 0) + 1;
+            releasedBytes += item.bytes;
+          }
         }
       }
       if (categories.has('unreferencedMedia')) {
         for (const item of report.candidates.unreferencedMedia) {
           const row = this.media.get(item.id);
           if (!row || !row.deleted_at || this.media.references(item.id).total > 0) continue;
-          if (await this.mediaStore.delete(item.id)) { deleted.unreferencedMedia = (deleted.unreferencedMedia ?? 0) + 1; releasedBytes += item.bytes; }
+          if (await this.mediaStore.delete(item.id)) {
+            deleted.unreferencedMedia = (deleted.unreferencedMedia ?? 0) + 1;
+            releasedBytes += item.bytes;
+          }
         }
       }
       for (const category of ['orphanFiles', 'tempFiles', 'oldBackups'] as const) {
@@ -223,11 +234,12 @@ export class StorageService {
       }
       this.audit.add('storage', 'cleanup.applied', null, { deleted, releasedBytes, generatedAt: report.generatedAt });
       return { applied: true, report, deleted, releasedBytes };
-    } catch (err) {
-      this.errors.add('storage.cleanup', (err as Error).message);
-      throw err;
+    } catch (error) {
+      this.errors.add('storage.cleanup', (error as Error).message);
+      throw error;
     } finally {
       this.maintenanceRunning = false;
+      release();
     }
   }
 
@@ -271,7 +283,11 @@ async function walkFiles(root: string): Promise<Array<{ path: string; bytes: num
   while (queue.length > 0) {
     const dir = queue.pop()!;
     let entries: fs.Dirent[] = [];
-    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { continue; }
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) queue.push(full);
@@ -279,7 +295,9 @@ async function walkFiles(root: string): Promise<Array<{ path: string; bytes: num
         try {
           const stat = await fsp.stat(full);
           out.push({ path: full, bytes: stat.size, mtimeMs: stat.mtimeMs });
-        } catch { /* raced with cleanup */ }
+        } catch {
+          /* raced with cleanup */
+        }
       }
     }
   }
