@@ -101,6 +101,10 @@ export type StreamEventType =
   | 'reply.failed'
   | 'message.updated'
   | 'memory.updated'
+  | 'persona.updated'
+  | 'world.updated'
+  | 'push.updated'
+  | 'storage.updated'
   | 'system.notice'
   | 'ping';
 
