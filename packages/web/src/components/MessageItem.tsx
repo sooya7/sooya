@@ -17,21 +17,29 @@ function formatBytes(n: number): string {
 
 function ImagePart({ part, onOpen }: { part: MessagePart; onOpen?: (mediaId: string) => void }) {
   const [failed, setFailed] = useState(false);
-  if (part.status === 'failed') {
-    return <div className="bubble bubble-note">图片没有发出去{part.error ? `：${part.error}` : ''}</div>;
-  }
+  if (part.status === 'failed') return <div className="bubble bubble-note">图片没有发出去{part.error ? `：${part.error}` : ''}</div>;
   if (part.status === 'pending' || !part.media) return <div className="bubble bubble-note pulsing">图片生成中…</div>;
   if (failed) return <div className="bubble bubble-note">图片加载失败</div>;
+
   const ratio = part.media.width && part.media.height ? part.media.width / part.media.height : undefined;
+  const src = mediaUrl(part.media.url);
+  const alt = part.media.name ?? '图片';
+  const open = () => {
+    if (onOpen) onOpen(part.media!.id);
+    else window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id: part.media!.id } }));
+  };
+
   return (
-    <button className="image-part" type="button" onClick={() => onOpen?.(part.media!.id)} aria-label="查看大图">
-      <img
-        src={mediaUrl(part.media.url)}
-        alt={part.media.name ?? '图片'}
-        loading="lazy"
-        style={ratio ? { aspectRatio: String(ratio) } : undefined}
-        onError={() => setFailed(true)}
-      />
+    <button
+      className="image-part"
+      type="button"
+      onClick={open}
+      aria-label="查看大图"
+      data-media-id={part.media.id}
+      data-src={src}
+      data-alt={alt}
+    >
+      <img src={src} alt={alt} loading="lazy" style={ratio ? { aspectRatio: String(ratio) } : undefined} onError={() => setFailed(true)} />
     </button>
   );
 }
@@ -69,9 +77,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   const visible = message.content.filter((p) => p.type !== 'system');
   const failedMessage = message.status === 'failed';
 
-  if (message.role === 'system') {
-    return <div className="system-row"><span>{message.content.map((p) => p.text).filter(Boolean).join(' ')}</span></div>;
-  }
+  if (message.role === 'system') return <div className="system-row"><span>{message.content.map((p) => p.text).filter(Boolean).join(' ')}</span></div>;
 
   return (
     <div className={`msg-row ${mine ? 'mine' : 'theirs'}`} data-role={message.role} data-status={message.status} data-testid="message">
