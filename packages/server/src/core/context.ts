@@ -1,12 +1,12 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
-import type { SummaryRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
+import type { SummaryRepo } from '../db/repos/misc.repo.js';
 import type { MemoryService } from './memory.js';
-import type { CapabilityRegistry } from './capabilities.js';
 import type { Persona } from '../config/schema.js';
 import type { ChatMessage } from './types.js';
 import type { ChatTurn, ChatContentPart } from '../providers/types.js';
 import type { MediaStore } from '../media/store.js';
 import type { MediaRepo } from '../db/repos/media.repo.js';
+import type { WorldEngine } from './world.js';
 
 export interface BuiltContext {
   system: string;
@@ -17,6 +17,7 @@ export interface BuiltContext {
   summaryCount: number;
   recentCount: number;
   visionUsed: boolean;
+  worldEntries: number;
 }
 
 export interface ContextOptions {
@@ -34,16 +35,17 @@ export class ContextBuilder {
     private readonly summaries: SummaryRepo,
     private readonly memory: MemoryService,
     private readonly mediaRepo: MediaRepo,
-    private readonly mediaStore: MediaStore
+    private readonly mediaStore: MediaStore,
+    private readonly world?: WorldEngine
   ) {}
 
   async build(persona: Persona, latestUserText: string, opts: ContextOptions): Promise<BuiltContext> {
     const recent = this.messages.recent(opts.recentMessages);
-    // `active()` already filters on active = 1, which is exactly what
-    // coveredUpTo() is derived from, so every returned row is in range.
     const activeSummaries = this.summaries.active(4);
 
-    const recall = await this.memory.recall(latestUserText || recent.map(plainText).join('\n').slice(-500), opts.memoryLimit);
+    const recallQuery = latestUserText || recent.map(plainText).join('\n').slice(-500);
+    const recall = await this.memory.recall(recallQuery, opts.memoryLimit);
+    const worldContext = this.world?.contextFor(recallQuery, 18) ?? '';
 
     const systemParts: string[] = [];
     systemParts.push(persona.systemPrompt.trim());
@@ -64,6 +66,7 @@ export class ContextBuilder {
       const text = recall.memories.map((m) => `· [${m.kind}] ${m.content}`).join('\n');
       systemParts.push(`关于用户你已经知道的事：\n${text}`);
     }
+    if (worldContext) systemParts.push(worldContext);
     if (opts.capabilityNotes.length > 0) {
       systemParts.push(`当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`);
     }
@@ -87,7 +90,8 @@ export class ContextBuilder {
       memoryFallbackReason: recall.fallbackReason,
       summaryCount: activeSummaries.length,
       recentCount: recent.length,
-      visionUsed
+      visionUsed,
+      worldEntries: worldContext ? worldContext.split('\n').filter((line) => line.startsWith('· ')).length : 0
     };
   }
 
