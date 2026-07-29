@@ -8,14 +8,14 @@
 | M-004 | 已被后续提交修复 | `3cb4640` 抽取统一语音参数解析链路；试听与正式回复都读取已保存映射，自动情绪别名映射到 UI 预设，缺失预设安全回退中性。 |
 | M-005 | 已被后续提交修复 | `14eb215` 按模型 context window、输出上限和安全余量建立统一输入预算；摘要、记忆、世界事实和近期消息按预算纳入，高权威世界事实优先，预算与 dropped counts 持久化。 |
 | M-006 | 已被后续提交修复 | `4a65013` 限制自动删除为 404/410；500、503、网络、DNS、TLS 临时失败只累计诊断计数，不删除订阅，成功后计数归零。 |
-| M-007 | 已被后续提交修复 | 当前 ImageViewer 使用 Pointer Capture；仍需真机异常释放验证。 |
+| M-007 | 已被后续提交修复 | `898bb0a` 用同步 drag ref 消除快速 pointermove→pointerup 读取旧 React state 的竞态；真实 CDP touch 连续 3/3、双端功能 10/10、完整 E2E 66/66。物理设备惯性、系统返回与异常 capture 释放仍待真机。 |
 | M-008 | 已被后续提交修复 | `d044681` 为清理预览生成持久化 reportId、策略/候选 hash；管理端 apply 必须提交已确认报告，只处理快照候选并逐项二次校验。 |
 | M-009 | 已被后续提交修复 | `c03c6c2` 不再吞掉媒体文件删除错误；单删、批量删和孤立上传收集失败均保留 DB 记录并返回/记录明确失败。 |
 | M-010 | 已被后续提交修复 | `7afd647` 移除普通/管理媒体及 SSE 的长期 query token，改用分作用域 Bearer fetch + Blob URL；受保护媒体 network-only。相关自动化通过，完整 Server 聚合命令仍无汇总超时，原生移动端 Web Share 待真机验证。 |
 | M-011 | 已被后续提交修复 | `13286b1` 将世界数据媒体引用从模糊 `LIKE` 改为 `json_tree` 对 `mediaId/media_id` 文本值的精确匹配，并同步引用统计、未引用清理和孤立上传扫描。 |
 | M-012 | 报告误判 | 唯一清单要求“批量导出与选择一致”，未要求 ZIP 格式；当前逐项安全 Blob 下载已由 M-010 自动化覆盖，不新增 ZIP 范围。 |
 | M-013 | 已被后续提交修复 | `7afd647` 后受保护媒体全部 network-only，Service Worker 不再建立忽略 `?v=` 的媒体缓存键；激活时清理旧敏感缓存。 |
-| M-014 | 测试不足 | 当前查看器 E2E 只覆盖 Escape 关闭，尚未覆盖已有 history state、多次开关、切图及浏览器返回键；不能因 Browser 基线全绿判定通过。 |
+| M-014 | 报告误判 | 新增双端 E2E 证明已有 history state 被保留；打开只增加一个 viewer entry；Desktop 按钮/Mobile 真实 touch 切图不增加条目；浏览器返回、关闭按钮及再次打开均恢复原 state，未复现历史污染。 |
 | M-015 | 已被后续提交修复 | `5192ccb` 将触摸长按统一为可取消 press session；父级/窗口 scroll、位移阈值、pointerup、pointercancel、lostpointercapture、页面隐藏、失焦和 unmount 均对称清理，过期 timer 不再打开菜单。真实 Pointer Events 自动化通过，iOS/Android 真机滚动手感仍待验收。 |
 | M-016 | 报告误判 | 当前实现并非报告假定的 touchmove passive 路径。 |
 | M-017 | 已被后续提交修复 | `b852e3b` 将世界管理搜索和 Context 相关性搜索统一改为 `LIKE ? ESCAPE '\'`，`\`、`%`、`_` 通过共享 helper 字面转义。 |
@@ -78,6 +78,23 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - `npm run test:e2e -- --reporter=list`：Desktop 32/32、Mobile 32/32，共 64/64，2.2 分钟正常退出。
 
 限制：自动化使用 Chromium 的真实 Pointer Events 路径，但不能替代 iOS Safari 与 Android Chrome 的物理滚动惯性和系统手势验收。
+
+## M-007 / M-014 查看器手势与历史复核
+
+提交：`898bb0a fix(gallery): stabilize fast swipe gestures`。
+
+M-014 复核覆盖页面预先存在自定义 history state、打开查看器、切换图片、浏览器返回、再次打开和关闭按钮。Desktop 与 Mobile 均证明 viewer 只使用一个附加条目，图片切换数量不影响 history.length，关闭后原 state 完整恢复。因此 M-014 记为报告误判，不实现额外 history 管理器。
+
+复核中确认 M-007 的独立竞态：pointermove 通过 `setDrag()` 异步更新位移，紧随其后的 pointerup 从旧 render 闭包读取 `drag=0`，快速滑动可能不切图。修复用同步 `dragRef` 记录本次 gesture 的最终位移，reset/finish 同步归零；渲染 state 只负责动画展示。
+
+验证：
+
+- Mobile 使用 Chromium `Input.dispatchTouchEvent` 产生真实 touchStart/touchMove/touchEnd，连续 3/3 通过。
+- `npx playwright test e2e/features-1-9.e2e.ts --reporter=list`：Desktop/Mobile 10/10。
+- `npm run test:e2e -- --reporter=list`：Desktop 33/33、Mobile 33/33，共 66/66，2.2 分钟正常退出。
+- Web unit 17/17、typecheck、production build 通过。
+
+限制：iOS Safari/Android Chrome 物理设备的系统返回键、惯性、双指和异常 pointer capture 释放仍按真机矩阵验收。
 
 ## Windows 本地环境阻塞
 
