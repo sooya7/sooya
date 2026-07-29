@@ -16,7 +16,7 @@
 | M-012 | 报告误判 | 唯一清单要求“批量导出与选择一致”，未要求 ZIP 格式；当前逐项安全 Blob 下载已由 M-010 自动化覆盖，不新增 ZIP 范围。 |
 | M-013 | 已被后续提交修复 | `7afd647` 后受保护媒体全部 network-only，Service Worker 不再建立忽略 `?v=` 的媒体缓存键；激活时清理旧敏感缓存。 |
 | M-014 | 测试不足 | 当前查看器 E2E 只覆盖 Escape 关闭，尚未覆盖已有 history state、多次开关、切图及浏览器返回键；不能因 Browser 基线全绿判定通过。 |
-| M-015 | 高可信存在 | 当前长按只在 pointer 位移超过 9px、pointerup、pointercancel 时清理；未监听父级 scroll、lostpointercapture、visibilitychange，也无 unmount teardown，继续按真实 Pointer Events 路径补失败测试和修复。 |
+| M-015 | 已被后续提交修复 | `5192ccb` 将触摸长按统一为可取消 press session；父级/窗口 scroll、位移阈值、pointerup、pointercancel、lostpointercapture、页面隐藏、失焦和 unmount 均对称清理，过期 timer 不再打开菜单。真实 Pointer Events 自动化通过，iOS/Android 真机滚动手感仍待验收。 |
 | M-016 | 报告误判 | 当前实现并非报告假定的 touchmove passive 路径。 |
 | M-017 | 已被后续提交修复 | `b852e3b` 将世界管理搜索和 Context 相关性搜索统一改为 `LIKE ? ESCAPE '\'`，`\`、`%`、`_` 通过共享 helper 字面转义。 |
 | M-018 | 已被后续提交修复 | `b852e3b` 新增持久化 Unicode identity key、迁移回填/重复 winner 选择及活动 canonical 部分唯一索引。 |
@@ -55,6 +55,29 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - `npm run test:e2e -- --reporter=list`：62/62 通过，Desktop 31/31、Mobile 31/31，耗时 2.0 分钟，正常退出，无 skip/fixme。
 
 因此本地 Browser 自动化基线已恢复；只有最新 Head 的 Linux Actions 成功后，才可把 CI 门槛记为完成。
+
+## M-015 修复与验证
+
+提交：`5192ccb fix(chat): cancel long press on scroll`。
+
+失败证据：Mobile Playwright 对真实消息派发 touch `pointerdown`，父滚动容器随后触发 `scroll` 且没有额外 `pointermove`；旧实现等待 650ms 后仍错误显示消息操作菜单，定向测试 1/1 失败。
+
+修复后：
+
+- 每次 pointerdown 先取消旧 press session，timer 回调只接受当前 pointerId，旧回调不能打开菜单。
+- 位移超过 9px、任意捕获阶段 scroll、pointerup、pointercancel、lostpointercapture、window blur、document hidden 统一取消。
+- effect teardown 移除全局监听并取消 timer，组件卸载后无迟到菜单或 page error。
+- 正常静止长按仍会在 520ms 后打开菜单，防回归测试不是通过永久禁用长按伪造。
+
+验证：
+
+- RED：`npx playwright test e2e/features-1-9.e2e.ts --project=mobile --grep "scrolling cancels" --reporter=list`，菜单实际 visible、预期 hidden。
+- GREEN：同一命令 1/1 通过。
+- 功能回归：`npx playwright test e2e/features-1-9.e2e.ts --reporter=list`，Desktop/Mobile 8/8 通过。
+- `npm run test -w @sooya/web`：17/17；Web typecheck、production build 通过。
+- `npm run test:e2e -- --reporter=list`：Desktop 32/32、Mobile 32/32，共 64/64，2.2 分钟正常退出。
+
+限制：自动化使用 Chromium 的真实 Pointer Events 路径，但不能替代 iOS Safari 与 Android Chrome 的物理滚动惯性和系统手势验收。
 
 ## Windows 本地环境阻塞
 

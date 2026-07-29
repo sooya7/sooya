@@ -530,7 +530,7 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 
 | 阻塞项 | 证据 | 影响 | 处理方式 |
 |---|---|---|---|
-| 最新 Head 尚无 Linux Browser E2E 成功结果 | `772c2a4` 本地根命令 Desktop/Mobile 62/62；旧 Head Run `30445900732` 为 49/62 | 本地自动化已恢复，但不能替代最终 Actions success | 推送后检查最新 Head 的 Linux Job；失败则按 artifact 定向修复 |
+| 最新 Head 尚无 Linux Browser E2E 成功结果 | `5192ccb` 本地根命令 Desktop/Mobile 64/64；旧 Head Run `30445900732` 为 49/62 | 本地自动化已恢复，但不能替代最终 Actions success | 推送后检查最新 Head 的 Linux Job；失败则按 artifact 定向修复 |
 | iOS 真机验收缺失 | 尚无设备、系统、浏览器和录屏证据 | 头像、手势、Push、TTS 验收框不能勾选 | 使用真实 iPhone 完成矩阵并记录证据 |
 | Android 真机验收缺失 | 尚无设备、系统、浏览器和录屏证据 | 同上 | 使用真实 Android 完成矩阵并记录证据 |
 | PWA 完全关闭通知缺少实际证据 | 自动化不能完全代替系统级推送验证 | Web Push 不能完成 | 在已安装 PWA 的 iOS/Android 上测试 |
@@ -558,6 +558,7 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | M-009 媒体永久删除一致性 | `c03c6c2` | 文件删除失败不再继续删 DB；单删明确 500 并审计，批量隔离失败项，孤立收集向维护 Job 抛错。RED 实际假成功 200；修复后相关 10/10、reliability 21/21、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-008 清理预览报告绑定 | `d044681` | 预览持久化 reportId、策略/候选 hash；apply 必须提交同一报告，仅处理快照并复核引用、路径、大小、mtime。RED 无 reportId 且 apply 可直接执行；修复后相关 13/13、Web 17/17、双端 typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | Browser E2E 基线恢复 | `772c2a4` | 旧 Head Run `30445900732` 为 49/62；当前 Head 本地根命令 62/62，无 skip/fixme。Web unit 17/17、typecheck、production build 同步通过 | 本地自动化通过；Linux Actions 待确认 |
+| 2026-07-29 | M-015 滚动取消长按 | `5192ccb` | 统一 press session 在 scroll、位移、pointerup/cancel、lostpointercapture、隐藏、失焦、卸载时清理；RED 滚动后菜单误开，修复后定向 1/1、功能 8/8、完整 E2E 64/64 | 自动化验证通过；iOS/Android 真机手势待验收 |
 | 2026-07-29 | M-012 / M-013 范围与缓存复核 | `7afd647` / 核验记录 | 清单未要求 ZIP，现有选择一致的安全 Blob 批量下载保留；受保护媒体已 network-only，旧媒体缓存由 `sooya-v6` 清理 | M-012 报告误判；M-013 已被后续提交修复 |
 | 2026-07-29 | M-017 / M-018 世界搜索与 identity | `b852e3b` | LIKE 通配符统一字面转义；NFKC Unicode identity key 持久化，v5 回填重复 winner 并用部分唯一索引保护。RED `100%` 误返 2 条且 Unicode 未合并；修复后相关 12/12、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-019 清理空间口径 | `006a0d6` | 活动未引用媒体不再计入本次可释放；回收站候选的 preview/released/deleted bytes 一致，安全跳过另计 skippedBytes。RED 活动媒体被错误计入；修复后相关 14/14、Server typecheck/build 通过 | 自动化验证通过 |
