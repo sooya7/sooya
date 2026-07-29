@@ -6,7 +6,7 @@
 | M-002 | 确定存在 | Run 30435357087 的 E2E 连续超时，35 分钟 job timeout 后取消；诊断因 cancelled 被跳过。 |
 | M-003 | 报告误判 | 模拟运行时超出唯一范围；事实库功能另按第 8 项核验。 |
 | M-004 | 已被后续提交修复 | `3cb4640` 抽取统一语音参数解析链路；试听与正式回复都读取已保存映射，自动情绪别名映射到 UI 预设，缺失预设安全回退中性。 |
-| M-005 | 测试不足 | 待按 ContextBuilder 实际预算路径补充核验。 |
+| M-005 | 已被后续提交修复 | `14eb215` 按模型 context window、输出上限和安全余量建立统一输入预算；摘要、记忆、世界事实和近期消息按预算纳入，高权威世界事实优先，预算与 dropped counts 持久化。 |
 | M-006 | 已被后续提交修复 | `4a65013` 限制自动删除为 404/410；500、503、网络、DNS、TLS 临时失败只累计诊断计数，不删除订阅，成功后计数归零。 |
 | M-007 | 已被后续提交修复 | 当前 ImageViewer 使用 Pointer Capture；仍需真机异常释放验证。 |
 | M-008 | 无法确认 | 待核验预览与 apply 的报告绑定路径。 |
@@ -137,3 +137,30 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - `npm --workspace packages/server run typecheck`、`npm --workspace packages/server run build`：通过。
 
 限制：本项相关自动化已通过；清单第 7 项仍包含移动端真实试听体验，需随整体验收在真机确认，不能据此宣布功能 1–9 全部验收完成。
+
+## M-005 修复与验证
+
+提交：`14eb215 fix(context): enforce model input token budgets`。
+
+失败证据：
+
+- 首次 RED：小上下文窗口测试得到 `built.inputBudget === undefined`，确认原实现只按固定条数取 4 个摘要、`memoryLimit` 条记忆、18 条世界事实和 `recentMessages` 条消息。
+- 第二个 RED：3000 字的最新用户消息在小窗口下被整个丢弃，`built.turns` 实际长度为 0、预期为 1。
+
+修复后：
+
+- Replier 从实际聊天/视觉模型配置读取 `contextWindow` 与 `maxTokens`，为输出和 128-token 安全余量预留空间；请求输出上限不会超过当前实际使用 provider 的配置。
+- ContextBuilder 对中日韩文字和其他文本采用保守估算，图片按固定高成本计入；最终 `estimatedInputTokens <= inputBudget`。
+- Persona 保留最高基础份额；近期消息从最新向前纳入；摘要、召回记忆和世界事实逐项检查预算；世界事实继续沿用 authority、confidence、relevance 排序。
+- 18 条超长世界事实在 972-token 输入预算下只纳入可容纳的前几条，用户明确设定优先保留；禁用或冲突条目仍不进入上下文。
+- 超长最新用户消息会转换为仍包含请求开头的有界文本，不会因单条超预算而整轮消失。
+- 助手消息 `meta.contextBudget` 持久化输入预算、估算使用量、请求输出上限及摘要/记忆/世界/近期消息 dropped counts，便于后续诊断。
+
+验证：
+
+- `npm --workspace packages/server test -- --run test/context-budget.test.ts --reporter=verbose`：3/3 通过，约 9.9 秒，正常退出。
+- `npm --workspace packages/server test -- --run test/context-budget.test.ts test/features-1-9.test.ts test/memory.test.ts --reporter=verbose`：3 files、25/25 通过，约 84.7 秒，正常退出。
+- `npm --workspace packages/server test -- --run test/chat.test.ts --reporter=verbose`：1 file、37/37 通过，约 112.8 秒，正常退出。
+- `npm --workspace packages/server run typecheck`、`npm --workspace packages/server run build`：通过。
+
+限制：预算使用跨 provider 的保守估算而非绑定单一厂商 tokenizer；128-token 安全余量用于降低不同模型分词差异造成的溢出风险。模型服务仍应返回并监控实际 usage。
