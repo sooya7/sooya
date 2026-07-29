@@ -50,6 +50,15 @@ describe('public error helpers', () => {
       expect(diagnostic).not.toContain(secret);
     }
   });
+
+  it('preserves useful diagnostic context after a redacted path delimiter', () => {
+    const diagnostic = redactDiagnostic(
+      new Error('open /opt/sooya/My Project/database.sqlite; EACCES database locked')
+    );
+    expect(diagnostic).not.toContain('/opt/sooya/My Project/database.sqlite');
+    expect(diagnostic).toContain('EACCES');
+    expect(diagnostic).toContain('database locked');
+  });
 });
 
 describe('Fastify error boundary', () => {
@@ -78,6 +87,30 @@ describe('Fastify error boundary', () => {
     expect(JSON.stringify(diagnostic)).toContain('route exploded');
     expect(JSON.stringify(diagnostic)).not.toContain('sk-secret-upstream');
     expect(JSON.stringify(diagnostic)).not.toContain('/opt/sooya/private/route.ts');
+  });
+
+  it('still returns the sanitized incident response when error persistence fails', async () => {
+    h = await createHarness();
+    h.app.repos.errors.add = (() => {
+      throw new Error('error log unavailable sk-persistence-secret');
+    }) as typeof h.app.repos.errors.add;
+    h.app.server.get('/api/test-error-log-outage', async () => {
+      throw new Error(
+        'upstream sk-original-secret https://user:pass@example.test/private from C:\\private\\route.ts'
+      );
+    });
+
+    const response = await h.app.server.inject({ method: 'GET', url: '/api/test-error-log-outage' });
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({
+      error: 'internal_error',
+      message: '服务器暂时无法处理请求，请稍后重试。',
+      incidentId: expect.stringMatching(/^inc_/)
+    });
+    expect(response.body).not.toContain('sk-original-secret');
+    expect(response.body).not.toContain('sk-persistence-secret');
+    expect(response.body).not.toContain('example.test');
+    expect(response.body).not.toContain('C:\\private\\route.ts');
   });
 
   it('preserves status, code, and message for explicitly safe thrown application errors', async () => {

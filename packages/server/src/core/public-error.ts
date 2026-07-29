@@ -63,8 +63,8 @@ export function redactDiagnostic(error: unknown): string {
       '$1[REDACTED]'
     )
     .replace(/file:\/\/\/[^\s)"']+/gi, '[PATH]')
-    .replace(/\b[A-Za-z]:[\\/][^\r\n)"']+?(?::\d+:\d+)?(?=[)\r\n]|$)/g, '[PATH]')
-    .replace(/(^|[\s("'=])\/(?:[^/\r\n)"']+\/)+[^)\r\n"']+?(?::\d+:\d+)?(?=[)\r\n]|$)/gm, '$1[PATH]')
+    .replace(/\b[A-Za-z]:[\\/][^,;\r\n)"']+?(?::\d+:\d+)?(?=[,;)\r\n]|$)/g, '[PATH]')
+    .replace(/(^|[\s("'=])\/(?:[^/,;\r\n)"']+\/)+[^,;)\r\n"']+?(?::\d+:\d+)?(?=[,;)\r\n]|$)/gm, '$1[PATH]')
     .slice(0, 4000);
 }
 

@@ -232,13 +232,28 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     }
     const failure = publicFailure('internal_error');
     const diagnostic = redactDiagnostic(error);
-    repos.errors.add('http.unexpected', failure.code, { incidentId: failure.incidentId, diagnostic });
-    server.log.error({ incidentId: failure.incidentId, diagnostic }, 'unexpected request failure');
     void reply.code(500).send({
       error: failure.code,
       message: failure.message,
       incidentId: failure.incidentId
     });
+    try {
+      repos.errors.add('http.unexpected', failure.code, { incidentId: failure.incidentId, diagnostic });
+    } catch (persistenceError) {
+      try {
+        server.log.error(
+          { incidentId: failure.incidentId, diagnostic: redactDiagnostic(persistenceError) },
+          'failed to persist unexpected request failure'
+        );
+      } catch {
+        // Logging must never replace the already-sanitized client response.
+      }
+    }
+    try {
+      server.log.error({ incidentId: failure.incidentId, diagnostic }, 'unexpected request failure');
+    } catch {
+      // Logging is best-effort during an error boundary.
+    }
   });
   const allowedOrigins = new Set(env.CORS_ALLOWED_ORIGINS);
   await server.register(cors, {

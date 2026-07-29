@@ -418,6 +418,63 @@ describe('history pagination', () => {
 });
 
 describe('model failures', () => {
+  it('never exposes provider-controlled error names in chat degradation state or events', async () => {
+    const sensitive = 'sk-provider-name https://provider.example.test C:\\private\\provider.ts';
+    const providerError = new Error(`message ${sensitive}`);
+    providerError.name = `ProviderFailure ${sensitive}`;
+    h = await createHarness();
+    h.setChatError(providerError);
+
+    const { res, body } = await sendText(h.app, '触发模型错误', 'provider-name-chat');
+    const completed = h.app.services.bus.replay(0).find((event) => event.type === 'reply.completed');
+    const publicSurfaces = [
+      res.body,
+      JSON.stringify(body.reply.content),
+      JSON.stringify(body.outcome.degraded),
+      JSON.stringify(completed?.payload)
+    ];
+    for (const surface of publicSurfaces) {
+      expect(surface).not.toContain('sk-provider-name');
+      expect(surface).not.toContain('provider.example.test');
+      expect(surface).not.toContain('C:\\private\\provider.ts');
+    }
+    expect(body.outcome.degraded).toEqual(['chat:provider_unavailable']);
+    expect(completed?.payload.degraded).toEqual(['chat:provider_unavailable']);
+  });
+
+  it('uses stable image and audio degradation values for provider-controlled errors', async () => {
+    const sensitive = 'sk-media-name https://media.example.test /opt/private/provider.ts';
+    const providerError = new Error(`message ${sensitive}`);
+    providerError.name = `MediaFailure ${sensitive}`;
+    h = await createHarness({
+      image: 'ok',
+      tts: 'ok',
+      chat: { script: [['安全回复[[image:cat]][[voice]]']] }
+    });
+    (h.app.services.capabilities.imageProvider() as any).generate = async () => {
+      throw providerError;
+    };
+    (h.app.services.capabilities.ttsProvider() as any).synthesize = async () => {
+      throw providerError;
+    };
+
+    const { res, body } = await sendText(h.app, '生成图片和语音', 'provider-name-media');
+    const completed = h.app.services.bus.replay(0).find((event) => event.type === 'reply.completed');
+    const publicSurfaces = [
+      res.body,
+      JSON.stringify(body.reply.content),
+      JSON.stringify(body.outcome.degraded),
+      JSON.stringify(completed?.payload)
+    ];
+    for (const surface of publicSurfaces) {
+      expect(surface).not.toContain('sk-media-name');
+      expect(surface).not.toContain('media.example.test');
+      expect(surface).not.toContain('/opt/private/provider.ts');
+    }
+    expect(body.outcome.degraded).toEqual(['image:provider_unavailable', 'audio:provider_unavailable']);
+    expect(completed?.payload.degraded).toEqual(['image:provider_unavailable', 'audio:provider_unavailable']);
+  });
+
   it('contains unexpected reply failure details on every client-visible surface', async () => {
     const sensitive =
       'upstream failure Bearer sk-secret-upstream at https://user:pass@api.example.test/v1?api_key=sk-secret-upstream in C:\\sooya\\private\\provider.ts';

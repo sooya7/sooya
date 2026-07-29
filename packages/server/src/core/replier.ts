@@ -172,9 +172,9 @@ export class Replier {
                 ? '（模型响应超时了，稍后再试一次吧。）'
                 : `（${failure.message}）`;
             pushDelta(note);
-            degraded.push(`chat:${e.name}`);
+            degraded.push('chat:provider_unavailable');
           } else {
-            degraded.push(`chat-partial:${e.name}`);
+            degraded.push('chat:provider_unavailable');
           }
         }
       } else {
@@ -279,7 +279,7 @@ export class Replier {
             incidentId: failure.incidentId,
             diagnostic: redactDiagnostic(e)
           });
-          degraded.push(`image:${e.name}`);
+          degraded.push('image:provider_unavailable');
           // Never lose the text: add an explanatory note instead.
           if (!finalText) {
             this.deps.messages.appendPart(shell.id, {
@@ -349,7 +349,7 @@ export class Replier {
             incidentId: failure.incidentId,
             diagnostic: redactDiagnostic(e)
           });
-          degraded.push(`tts:${e.name}`);
+          degraded.push('audio:provider_unavailable');
           // TTS failure falls back to text — which is already present. When it
           // is not, restore the FULL text rather than the clip that would have
           // been spoken, otherwise a TTS outage silently truncates the reply.
