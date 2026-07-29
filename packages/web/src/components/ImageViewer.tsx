@@ -66,6 +66,7 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }): num
 export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ startX: number; startY: number; panX: number; panY: number; scale: number; pinchDistance: number } | null>(null);
+  const dragRef = useRef({ x: 0, y: 0 });
   const [drag, setDrag] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -77,7 +78,7 @@ export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
     return { x: Math.max(-maxX, Math.min(maxX, x)), y: Math.max(-maxY, Math.min(maxY, y)) };
   }, [scale]);
 
-  const reset = useCallback(() => { setScale(1); setPan({ x: 0, y: 0 }); setDrag({ x: 0, y: 0 }); }, []);
+  const reset = useCallback(() => { dragRef.current = { x: 0, y: 0 }; setScale(1); setPan({ x: 0, y: 0 }); setDrag({ x: 0, y: 0 }); }, []);
   const previous = useCallback(() => { reset(); onIndexChange((index - 1 + images.length) % images.length); }, [images.length, index, onIndexChange, reset]);
   const next = useCallback(() => { reset(); onIndexChange((index + 1) % images.length); }, [images.length, index, onIndexChange, reset]);
   const setZoom = useCallback((value: number) => {
@@ -122,11 +123,13 @@ export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
 
   const finishGesture = () => {
     if (pointers.current.size > 0) return;
+    const movement = dragRef.current;
     if (scale === 1) {
-      if (Math.abs(drag.y) >= CLOSE_Y && Math.abs(drag.y) > Math.abs(drag.x)) requestClose();
-      else if (images.length > 1 && drag.x <= -SWIPE_X) next();
-      else if (images.length > 1 && drag.x >= SWIPE_X) previous();
+      if (Math.abs(movement.y) >= CLOSE_Y && Math.abs(movement.y) > Math.abs(movement.x)) requestClose();
+      else if (images.length > 1 && movement.x <= -SWIPE_X) next();
+      else if (images.length > 1 && movement.x >= SWIPE_X) previous();
     }
+    dragRef.current = { x: 0, y: 0 };
     setDrag({ x: 0, y: 0 });
     gesture.current = null;
   };
@@ -166,7 +169,9 @@ export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
         } else if (scale > 1) {
           setPan(clampPan(start.panX + event.clientX - start.startX, start.panY + event.clientY - start.startY));
         } else {
-          setDrag({ x: event.clientX - start.startX, y: event.clientY - start.startY });
+          const movement = { x: event.clientX - start.startX, y: event.clientY - start.startY };
+          dragRef.current = movement;
+          setDrag(movement);
         }
       }}
       onPointerUp={(event) => { pointers.current.delete(event.pointerId); finishGesture(); }}

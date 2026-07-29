@@ -153,6 +153,59 @@ test.describe('SOOYA 1-9 user flows', () => {
     await expect(page.locator(`.gallery-item[data-media-id="${mediaId}"]`)).toBeVisible();
   });
 
+  test('image viewer preserves existing history state without growing entries while switching', async ({ page, request }, testInfo) => {
+    const mediaIds: string[] = [];
+    for (const slot of ['assistant', 'user']) {
+      const uploaded = await request.post(`/api/admin/persona/avatar/${slot}`, {
+        headers: { 'x-admin-token': ADMIN_TOKEN },
+        multipart: { file: { name: `${slot}-history.png`, mimeType: 'image/png', buffer: PNG } }
+      });
+      expect(uploaded.ok()).toBeTruthy();
+      mediaIds.push((await uploaded.json() as { media: { id: string } }).media.id);
+    }
+
+    await installAdminToken(page);
+    await page.goto('/gallery');
+    const firstCard = page.locator(`.gallery-item[data-media-id="${mediaIds[0]}"]`);
+    const secondCard = page.locator(`.gallery-item[data-media-id="${mediaIds[1]}"]`);
+    await expect(firstCard).toBeVisible();
+    await expect(secondCard).toBeVisible();
+    const baseline = await page.evaluate(() => {
+      history.replaceState({ existing: 'preserved' }, '');
+      return history.length;
+    });
+
+    await firstCard.locator('.gallery-thumb').click();
+    const viewer = page.getByRole('dialog', { name: '图片查看器' });
+    await expect(viewer).toBeVisible();
+    await expect.poll(() => page.evaluate(() => history.state)).toMatchObject({ existing: 'preserved', sooyaImageViewer: true });
+    expect(await page.evaluate(() => history.length)).toBe(baseline + 1);
+
+    if (testInfo.project.name === 'mobile') {
+      const countBefore = await viewer.locator('.image-viewer-count').textContent();
+      const client = await page.context().newCDPSession(page);
+      await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 330, y: 500, id: 51 }] });
+      await client.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 180, y: 500, id: 51 }] });
+      await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await client.detach();
+      await expect.poll(() => viewer.locator('.image-viewer-count').textContent()).not.toBe(countBefore);
+    } else {
+      await viewer.getByRole('button', { name: '下一张' }).click();
+    }
+    expect(await page.evaluate(() => history.length)).toBe(baseline + 1);
+
+    await page.goBack();
+    await expect(viewer).toBeHidden();
+    expect(await page.evaluate(() => history.state)).toEqual({ existing: 'preserved' });
+
+    await secondCard.locator('.gallery-thumb').click();
+    await expect(viewer).toBeVisible();
+    expect(await page.evaluate(() => history.length)).toBe(baseline + 1);
+    await viewer.getByRole('button', { name: '关闭图片' }).click();
+    await expect(viewer).toBeHidden();
+    expect(await page.evaluate(() => history.state)).toEqual({ existing: 'preserved' });
+  });
+
   test('message menu supports quote, resend-safe reply target and placeholder withdraw', async ({ page }) => {
     const firstText = `E2E 引用源 ${Date.now()}`;
     const replyText = `E2E 引用回复 ${Date.now()}`;
