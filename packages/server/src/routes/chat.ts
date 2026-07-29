@@ -35,7 +35,16 @@ export function registerChatRoutes(app: SooyaApp): void {
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
     const { limit, before, since } = parsed.data;
     const cursorBefore = services.bus.lastSeq();
-    if (since !== undefined) return { messages: repos.messages.since(since, limit), hasMore: false, lastEventSeq: cursorBefore, lastMessageSeq: repos.messages.maxSeq() };
+    if (since !== undefined) {
+      const catchUp = repos.messages.pageSince(since, limit);
+      return {
+        messages: catchUp.messages,
+        hasMore: catchUp.hasMore,
+        nextSince: catchUp.nextSince,
+        lastEventSeq: cursorBefore,
+        lastMessageSeq: repos.messages.maxSeq(),
+      };
+    }
     const page = repos.messages.page(limit, before ?? null);
     return { messages: page.messages, hasMore: page.hasMore, lastEventSeq: cursorBefore, lastMessageSeq: repos.messages.maxSeq(), oldestSeq: page.messages[0]?.seq ?? null };
   });

@@ -291,6 +291,22 @@ export class MessageRepo {
     return this.hydrate(rows);
   }
 
+  /**
+   * Oldest-first page of messages strictly after `seq`, for bounded reconnect
+   * catch-up. Reads one extra row to decide `hasMore` without a second query.
+   * `nextSince` is the cursor the client should send to fetch the next page.
+   */
+  pageSince(seq: number, limit = 200): { messages: ChatMessage[]; hasMore: boolean; nextSince: number } {
+    const capped = Math.max(1, Math.min(limit, 200));
+    const rows = this.db
+      .prepare('SELECT * FROM messages WHERE conversation_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?')
+      .all(CONVERSATION_ID, seq, capped + 1) as MessageRow[];
+    const hasMore = rows.length > capped;
+    const page = rows.slice(0, capped);
+    const nextSince = page[page.length - 1]?.seq ?? seq;
+    return { messages: this.hydrate(page), hasMore, nextSince };
+  }
+
   range(fromSeq: number, toSeq: number): ChatMessage[] {
     const rows = this.db
       .prepare('SELECT * FROM messages WHERE conversation_id = ? AND seq >= ? AND seq <= ? ORDER BY seq ASC')
