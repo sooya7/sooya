@@ -57,13 +57,18 @@ export function registerChatRoutes(app: SooyaApp): void {
     if (validation) { reply.code(400); return validation; }
     const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
     const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
-    const { message, created } = repos.messages.create({
-      role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-      parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
-      meta: { directives }
+    const tx = app.db.transaction(() => {
+      const created = repos.messages.createInTransaction({
+        role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
+        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
+        meta: { directives }
+      });
+      const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
+      return { ...created, event };
     });
+    const { message, created, event } = tx();
     if (!created) return { message, duplicate: true, replyPending: false };
-    services.bus.publish('message.received', { message });
+    services.bus.fanout(event!);
     void lock.run(async () => {
       const outcome = await services.replier.reply(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
       enqueuePostReply(app, message.id, outcome.messageId);
@@ -81,13 +86,18 @@ export function registerChatRoutes(app: SooyaApp): void {
     if (validation) { reply.code(400); return validation; }
     const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
     const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
-    const { message, created } = repos.messages.create({
-      role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-      parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
-      meta: { directives }
+    const tx = app.db.transaction(() => {
+      const created = repos.messages.createInTransaction({
+        role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
+        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
+        meta: { directives }
+      });
+      const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
+      return { ...created, event };
     });
+    const { message, created, event } = tx();
     if (!created) return { message, duplicate: true, reply: findReply(app, message.id) };
-    services.bus.publish('message.received', { message });
+    services.bus.fanout(event!);
     const outcome = await lock.run(() => services.replier.reply(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }));
     enqueuePostReply(app, message.id, outcome.messageId);
     return { message, duplicate: false, reply: repos.messages.get(outcome.messageId), outcome };

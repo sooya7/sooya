@@ -65,13 +65,25 @@ export class MessageRepo {
    * returned untouched (and `created` is false).
    */
   create(input: CreateMessageInput): { message: ChatMessage; created: boolean } {
+    return this.inTransaction(() => this.createInTransaction(input));
+  }
+
+  inTransaction<T>(operation: () => T): T {
+    return this.db.transaction(operation)();
+  }
+
+  /**
+   * Create within a transaction already coordinated by the caller.
+   * This deliberately does not start another transaction.
+   */
+  createInTransaction(input: CreateMessageInput): { message: ChatMessage; created: boolean } {
     if (input.clientMsgId) {
       const existing = this.getByClientId(input.clientMsgId);
       if (existing) return { message: existing, created: false };
     }
     const id = input.id ?? newMessageId();
     const ts = nowIso();
-    const tx = this.db.transaction(() => {
+    try {
       const seq = nextSeq(this.db, 'message_seq');
       this.db
         .prepare(
@@ -91,11 +103,6 @@ export class MessageRepo {
           JSON.stringify(input.meta ?? {})
         );
       input.parts.forEach((p, idx) => this.insertPart(id, idx, p));
-      return seq;
-    });
-
-    try {
-      tx();
     } catch (err) {
       // Unique index race on client_msg_id -> return the winner.
       if (input.clientMsgId) {

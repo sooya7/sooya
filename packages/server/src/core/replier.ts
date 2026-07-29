@@ -6,7 +6,7 @@ import type { ContextBuilder } from './context.js';
 import type { EventBus } from '../events/bus.js';
 import type { ConfigStore } from '../config/store.js';
 import type { ErrorLogRepo, SettingsRepo } from '../db/repos/misc.repo.js';
-import type { ChatMessage } from './types.js';
+import type { ChatMessage, StreamEventType } from './types.js';
 import {
   parseUserDirectives,
   stripModelDirectives,
@@ -78,14 +78,23 @@ export class Replier {
     const userDirectives = mergeDirectives(parseUserDirectives(userText), userMessage.meta?.directives as UserDirectives);
 
     // 1. Create the assistant shell message up front.
-    const { message: shell } = this.deps.messages.create({
-      role: 'assistant',
-      status: 'sending',
-      replyTo: userMessage.id,
-      parts: [],
-      meta: { replyTo: userMessage.id }
-    });
-    this.deps.bus.publish('reply.thinking', { messageId: shell.id, replyTo: userMessage.id });
+    let shell: ChatMessage;
+    try {
+      shell = this.stableBoundary(
+        () => this.deps.messages.createInTransaction({
+          role: 'assistant',
+          status: 'sending',
+          replyTo: userMessage.id,
+          parts: [],
+          meta: { replyTo: userMessage.id }
+        }).message,
+        'reply.thinking',
+        (message) => ({ messageId: message.id, replyTo: userMessage.id })
+      );
+    } catch (error) {
+      this.active = false;
+      throw error;
+    }
 
     try {
       const caps = this.deps.capabilities;
@@ -370,23 +379,24 @@ export class Replier {
       }
 
       // 4. Guarantee a non-empty message.
-      let finalMessage = this.deps.messages.get(shell.id)!;
-      const visibleParts = finalMessage.content.filter((p) => p.status !== 'failed');
-      if (visibleParts.length === 0) {
-        this.deps.messages.appendPart(shell.id, {
-          type: 'text',
-          text: '（这次没能生成内容，再说一次好吗？）',
-          status: 'sent'
-        });
-        producedParts.push('text');
-        degraded.push('empty-reply-guard');
-        finalMessage = this.deps.messages.get(shell.id)!;
-      }
+      this.stableBoundary(() => {
+        const current = this.deps.messages.get(shell.id)!;
+        const visibleParts = current.content.filter((p) => p.status !== 'failed');
+        if (visibleParts.length === 0) {
+          this.deps.messages.appendPart(shell.id, {
+            type: 'text',
+            text: '（这次没能生成内容，再说一次好吗？）',
+            status: 'sent'
+          });
+          producedParts.push('text');
+          degraded.push('empty-reply-guard');
+        }
 
-      this.deps.messages.setStatus(shell.id, 'sent', degraded.length ? degraded.join(',') : null);
-      finalMessage = this.deps.messages.get(shell.id)!;
-      this.deps.bus.publish('reply.content.done', { messageId: shell.id, parts: producedParts });
-      this.deps.bus.publish('reply.completed', { message: finalMessage, degraded });
+        this.deps.messages.setStatus(shell.id, 'sent', degraded.length ? degraded.join(',') : null);
+        return this.deps.messages.get(shell.id)!;
+      }, 'reply.completed', (message) => ({ message, degraded }), () => [
+        { type: 'reply.content.done', payload: { messageId: shell.id, parts: producedParts } }
+      ]);
       return { messageId: shell.id, ok: true, parts: producedParts, degraded };
     } catch (err) {
       const e = err as Error;
@@ -395,28 +405,49 @@ export class Replier {
         incidentId: failure.incidentId,
         diagnostic: redactDiagnostic(e)
       });
-      this.deps.messages.setStatus(shell.id, 'failed', failure.message);
-      this.deps.messages.updateMeta(shell.id, { failure });
-      const failed = this.deps.messages.get(shell.id);
-      if (failed && failed.content.length === 0) {
-        this.deps.messages.appendPart(shell.id, {
-          type: 'text',
-          text: `（${failure.message} 事件编号：${failure.incidentId}）`,
-          status: 'sent',
-          meta: { failure }
-        });
-      }
-      this.deps.bus.publish('reply.failed', {
+      this.stableBoundary(() => {
+        this.deps.messages.setStatus(shell.id, 'failed', failure.message);
+        this.deps.messages.updateMeta(shell.id, { failure });
+        const failed = this.deps.messages.get(shell.id);
+        if (failed && failed.content.length === 0) {
+          this.deps.messages.appendPart(shell.id, {
+            type: 'text',
+            text: `（${failure.message} 事件编号：${failure.incidentId}）`,
+            status: 'sent',
+            meta: { failure }
+          });
+        }
+        return this.deps.messages.get(shell.id)!;
+      }, 'reply.failed', (message) => ({
         messageId: shell.id,
         code: failure.code,
         error: failure.message,
         incidentId: failure.incidentId,
-        message: this.deps.messages.get(shell.id)
-      });
+        message
+      }));
       return { messageId: shell.id, ok: false, parts: producedParts, degraded, error: failure };
     } finally {
       this.active = false;
     }
+  }
+
+  private stableBoundary<T>(
+    mutation: () => T,
+    type: StreamEventType,
+    payload: (value: T) => Record<string, unknown>,
+    preceding: (value: T) => Array<{ type: StreamEventType; payload: Record<string, unknown> }> = () => []
+  ): T {
+    let events: Array<ReturnType<EventBus['persist']>> = [];
+    const value = this.deps.messages.inTransaction(() => {
+      const result = mutation();
+      events = [
+        ...preceding(result).map((spec) => this.deps.bus.persist(spec.type, spec.payload)),
+        this.deps.bus.persist(type, payload(result))
+      ];
+      return result;
+    });
+    for (const event of events) this.deps.bus.fanout(event);
+    return value;
   }
 
   private recentStickerIds(window: number): string[] {
