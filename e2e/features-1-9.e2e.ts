@@ -190,4 +190,58 @@ test.describe('SOOYA 1-9 user flows', () => {
     await page.getByRole('menuitem', { name: '撤回（保留占位）' }).click();
     await expect(page.locator('.msg-row.mine').filter({ hasText: '[消息已撤回]' }).last()).toBeVisible();
   });
+
+  test('scrolling cancels a touch long-press before the message menu opens', async ({ page }) => {
+    const text = `E2E 滚动取消长按 ${Date.now()}`;
+    await page.goto('/');
+    await page.getByTestId('composer-input').fill(text);
+    const sendCompleted = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/messages' &&
+      response.request().method() === 'POST' &&
+      response.ok()
+    );
+    await page.getByTestId('btn-send').click();
+    await sendCompleted;
+
+    const message = page.locator('.msg-row.mine').filter({ hasText: text }).last();
+    const startPress = (pointerId: number) =>
+      message.dispatchEvent('pointerdown', { pointerType: 'touch', pointerId, clientX: 160, clientY: 320 });
+    const menu = page.getByRole('menu', { name: '消息操作' });
+
+    await startPress(41);
+    await page.getByTestId('scroller').dispatchEvent('scroll');
+    await page.waitForTimeout(650);
+    await expect(menu).toBeHidden();
+
+    await startPress(42);
+    await message.dispatchEvent('pointercancel', { pointerType: 'touch', pointerId: 42 });
+    await page.waitForTimeout(650);
+    await expect(menu).toBeHidden();
+
+    await startPress(43);
+    await message.dispatchEvent('lostpointercapture', { pointerType: 'touch', pointerId: 43 });
+    await page.waitForTimeout(650);
+    await expect(menu).toBeHidden();
+
+    await startPress(44);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    });
+    await page.waitForTimeout(650);
+    await expect(menu).toBeHidden();
+
+    await startPress(45);
+    await expect(menu).toBeVisible({ timeout: 1_500 });
+    await page.keyboard.press('Escape');
+
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await startPress(46);
+    await page.goto('/admin/features');
+    await page.waitForTimeout(650);
+    await expect(menu).toBeHidden();
+    expect(pageErrors).toEqual([]);
+  });
 });

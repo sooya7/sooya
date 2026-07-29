@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { getToken } from '../lib/api.js';
 import { fetchAuthenticatedMedia, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
@@ -53,7 +53,26 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   const failedMessage = message.status === 'failed';
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const press = useRef<{ timer: number; x: number; y: number } | null>(null);
+  const press = useRef<{ timer: number; pointerId: number; x: number; y: number } | null>(null);
+  const cancelPress = useCallback(() => {
+    const current = press.current;
+    if (!current) return;
+    window.clearTimeout(current.timer);
+    press.current = null;
+  }, []);
+
+  useEffect(() => {
+    const cancelOnHidden = () => { if (document.visibilityState !== 'visible') cancelPress(); };
+    window.addEventListener('scroll', cancelPress, true);
+    window.addEventListener('blur', cancelPress);
+    document.addEventListener('visibilitychange', cancelOnHidden);
+    return () => {
+      window.removeEventListener('scroll', cancelPress, true);
+      window.removeEventListener('blur', cancelPress);
+      document.removeEventListener('visibilitychange', cancelOnHidden);
+      cancelPress();
+    };
+  }, [cancelPress]);
 
   useEffect(() => {
     if (!menu) return;
@@ -75,9 +94,19 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   return (
     <div className={`msg-row ${mine ? 'mine' : 'theirs'}`} data-role={message.role} data-status={message.status} data-testid="message"
       onContextMenu={(event) => { event.preventDefault(); openMenu(event.clientX, event.clientY); }}
-      onPointerDown={(event) => { if (event.pointerType === 'mouse') return; press.current = { timer: window.setTimeout(() => openMenu(event.clientX, event.clientY), 520), x: event.clientX, y: event.clientY }; }}
-      onPointerMove={(event) => { const current = press.current; if (current && Math.hypot(event.clientX - current.x, event.clientY - current.y) > 9) { clearTimeout(current.timer); press.current = null; } }}
-      onPointerUp={() => { if (press.current) clearTimeout(press.current.timer); press.current = null; }} onPointerCancel={() => { if (press.current) clearTimeout(press.current.timer); press.current = null; }}>
+      onPointerDown={(event) => {
+        if (event.pointerType === 'mouse') return;
+        cancelPress();
+        const pointerId = event.pointerId;
+        const timer = window.setTimeout(() => {
+          if (press.current?.pointerId !== pointerId) return;
+          press.current = null;
+          openMenu(event.clientX, event.clientY);
+        }, 520);
+        press.current = { timer, pointerId, x: event.clientX, y: event.clientY };
+      }}
+      onPointerMove={(event) => { const current = press.current; if (current?.pointerId === event.pointerId && Math.hypot(event.clientX - current.x, event.clientY - current.y) > 9) cancelPress(); }}
+      onPointerUp={cancelPress} onPointerCancel={cancelPress} onLostPointerCapture={cancelPress}>
       <div className="avatar-slot">{showAvatar && <AuthenticatedImage className="avatar" path={mine ? userAvatar : avatar} scope="user" alt={mine ? '我' : personaName} draggable={false} />}</div>
       <div className="msg-body">
         {message.replyTo && <div className="message-reply-preview">回复消息 · {message.replyTo.slice(-8)}</div>}
