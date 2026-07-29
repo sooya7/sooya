@@ -5,7 +5,8 @@ import {
   createPrivateKey,
   generateKeyPairSync,
   randomBytes,
-  sign
+  sign,
+  type JsonWebKey
 } from 'node:crypto';
 import type { SettingsRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { PushSubscriptionRepo, PushSubscriptionRow } from '../db/repos/feature.repo.js';
