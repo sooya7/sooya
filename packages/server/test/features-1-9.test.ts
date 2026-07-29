@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createECDH, randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
+import { maintenanceCoordinator } from '../src/core/maintenance.js';
 import { createHarness, sendText, TEST_PNG, type Harness } from './helpers/harness.js';
 
 let harness: Harness | null = null;
@@ -76,6 +77,28 @@ describe('SOOYA 1-9 feature regressions', () => {
     await expect(harness.app.services.storage.assertWritable(20 * 1024 * 1024)).rejects.toMatchObject({ code: 'STORAGE_HARD_LIMIT' });
     const text = await sendText(harness.app, '空间不足时文本仍可聊天', 'c_text_under_quota');
     expect(text.res.statusCode).toBe(200);
+  });
+
+  it('serializes backup, restore and cleanup while pausing writes only for destructive maintenance', async () => {
+    harness = await createHarness();
+    const releaseBackup = maintenanceCoordinator.begin('backup.create');
+    try {
+      const duringBackup = await sendText(harness.app, '备份期间仍可聊天', 'c_during_backup');
+      expect(duringBackup.res.statusCode).toBe(200);
+      await expect(harness.app.services.storage.cleanup({ apply: false })).rejects.toMatchObject({ code: 'MAINTENANCE_BUSY' });
+    } finally {
+      releaseBackup();
+    }
+
+    const releaseRestore = maintenanceCoordinator.begin('backup.restore', { blocksWrites: true });
+    try {
+      const duringRestore = await sendText(harness.app, '恢复期间应暂停写入', 'c_during_restore');
+      expect(duringRestore.res.statusCode).toBe(503);
+      expect(duringRestore.body.error).toBe('maintenance_in_progress');
+      await expect(harness.app.services.mediaStore.save({ kind: 'image', origin: 'upload', data: TEST_PNG, declaredMime: 'image/png', filename: 'blocked.png' })).rejects.toMatchObject({ code: 'STORAGE_MAINTENANCE' });
+    } finally {
+      releaseRestore();
+    }
   });
 
   it('removes invalid push endpoints after 404 and previews TTS without polluting chat history', async () => {
