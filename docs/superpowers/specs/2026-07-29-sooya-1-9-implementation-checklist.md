@@ -552,3 +552,4 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | M-010 统一媒体鉴权 | `7afd647` | 普通/管理媒体及 SSE 改用 Bearer Header；DOM/下载/分享使用 Blob URL；Service Worker network-only 并清理旧缓存。Web 17/17、相关 Server 118/118、定向 E2E 5/5，双端 typecheck/build 通过 | 实现与相关自动化完成；完整 Server 聚合超时、真机 Web Share 待验证 |
 | 2026-07-29 | M-011 精确媒体引用保护 | `13286b1` | 世界数据从 `%媒体ID%` 模糊 LIKE 改为 `json_tree` 精确结构字段；消息、贴纸、双方头像、世界数据、禁用/损坏 JSON、解除引用后删除均覆盖。RED 实际 2/预期 0；修复后相关 7/7、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-006 Push 订阅失效判定 | `4a65013` | 仅 404/410 自动删除；500/503/网络/DNS/TLS 连续失败保留订阅并累计计数，成功后归零。RED 第 6 次误删 5 个；修复后相关 7/7、Server typecheck/build 通过 | 自动化验证通过 |
+| 2026-07-29 | M-004 正式语音情绪映射 | `3cb4640` | 试听与正式回复共用 `resolveVoiceDelivery()`，每次读取已保存映射；覆盖别名、缺失预设回退、正式音频持久化。RED 正式调用 options 为 `undefined`；修复后相关 13/13、聊天 37/37、Server typecheck/build 通过 | 相关自动化通过；移动端真实试听待真机验收 |

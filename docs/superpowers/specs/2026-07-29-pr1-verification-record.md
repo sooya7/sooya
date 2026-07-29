@@ -5,7 +5,7 @@
 | M-001 | 已被后续提交修复 | 构建阻断已修复，完整测试仍受其他问题影响。原始 Head `bd2db8b` 缺失 `media/store.ts`、`media/stickers.ts`；`09ac980` 仅同步必要模块，`9456767` 修复测试夹具的跨平台 `file:` URL 转换。 |
 | M-002 | 确定存在 | Run 30435357087 的 E2E 连续超时，35 分钟 job timeout 后取消；诊断因 cancelled 被跳过。 |
 | M-003 | 报告误判 | 模拟运行时超出唯一范围；事实库功能另按第 8 项核验。 |
-| M-004 | 确定存在 | 正式回复直接 `synthesize(clipped)`，未读取保存的情绪映射。 |
+| M-004 | 已被后续提交修复 | `3cb4640` 抽取统一语音参数解析链路；试听与正式回复都读取已保存映射，自动情绪别名映射到 UI 预设，缺失预设安全回退中性。 |
 | M-005 | 测试不足 | 待按 ContextBuilder 实际预算路径补充核验。 |
 | M-006 | 已被后续提交修复 | `4a65013` 限制自动删除为 404/410；500、503、网络、DNS、TLS 临时失败只累计诊断计数，不删除订阅，成功后计数归零。 |
 | M-007 | 已被后续提交修复 | 当前 ImageViewer 使用 Pointer Capture；仍需真机异常释放验证。 |
@@ -111,3 +111,28 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - GREEN：同一命令 1/1 通过。
 - 回归：`npm run test -w @sooya/server -- --run test/push-retry.test.ts test/features-1-9.test.ts`，2 files、7/7 通过。
 - `npm run typecheck -w @sooya/server`、`npm run build -w @sooya/server`：通过。
+
+## M-004 修复与验证
+
+提交：`3cb4640 fix(tts): apply saved emotion mappings to replies`。
+
+失败证据：新增集成测试首次运行时，试听调用携带已保存的 `happy` 参数 `{ emotion: 'happy', instructions: '保存的开心指令', speed: 1.23 }`，正式机器人语音却调用 `synthesize('哈哈，太好了！', undefined)`，证明两条路径未共享保存的映射。
+
+修复后：
+
+- 新增 `core/voice.ts`，集中维护默认预设、自动检测情绪到 UI 保存键的别名映射及最终参数解析。
+- 管理端试听和正式回复均通过 `resolveVoiceDelivery()` 解析 `emotion`、`instructions`、`speed`，不再维护两套参数链路。
+- 正式回复在每次生成语音前从 `SettingsRepo` 读取 `voice.emotions`，保存后无需重启即可生效。
+- `happy` / `playful` 映射到 `happy`，`comforting` / `sleepy` / `warm` 映射到 `gentle`，其余受支持情绪映射到对应预设或 `neutral`。
+- 明确请求未知预设、或自动检测到的预设未保存时，情绪键和参数同时回退 `neutral`，不会出现“情绪名与中性参数不一致”。
+- 最终状态断言验证正式回复和持久化消息中的音频部分均为 `sent`，并带有真实 `mediaId`；既有 TTS 失败、voice-only、禁用语音和媒体持久化回归继续通过。
+
+验证：
+
+- 首次 RED：`npm --workspace packages/server test -- --run test/voice-mapping.test.ts --reporter=verbose`，正式回复的第二次 TTS 调用 options 实际为 `undefined`。
+- 回退异常路径 RED：同一测试中，缺失 `happy` 预设时曾返回 `emotion: happy` 配中性参数；修复后情绪键与参数统一回退。
+- GREEN 与相关回归：`npm --workspace packages/server test -- --run test/voice-mapping.test.ts test/features-1-9.test.ts test/tts-expression.test.ts --reporter=verbose`，3 files、13/13 通过，约 24.5 秒，正常退出。
+- 完整聊天回归：`npm --workspace packages/server test -- --run test/chat.test.ts --reporter=verbose`，1 file、37/37 通过，约 117.4 秒，正常退出。
+- `npm --workspace packages/server run typecheck`、`npm --workspace packages/server run build`：通过。
+
+限制：本项相关自动化已通过；清单第 7 项仍包含移动端真实试听体验，需随整体验收在真机确认，不能据此宣布功能 1–9 全部验收完成。
