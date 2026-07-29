@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../lib/api.js';
+import { AvatarEditor, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js';
 import {
   emptyPreset,
   MODEL_SLOTS,
@@ -30,7 +31,16 @@ import {
   type AdminSystemStatus
 } from '../lib/admin.js';
 
-type Tab = 'overview' | 'persona' | 'models' | 'content' | 'operations';
+type Tab =
+  | 'overview'
+  | 'persona'
+  | 'avatar'
+  | 'voice'
+  | 'world'
+  | 'models'
+  | 'content'
+  | 'storage'
+  | 'operations';
 type Dashboard = { system: AdminSystemStatus; capabilities: AdminCapabilities; backups: AdminBackup[] };
 type IconName = 'overview' | 'persona' | 'models' | 'content' | 'operations' | 'message' | 'cpu' | 'storage' | 'backup' | 'lock';
 
@@ -48,7 +58,11 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: I
   { id: 'overview', label: '概览', description: '运行状态与资源', icon: 'overview' },
   { id: 'persona', label: '助手配置', description: '人设与表达方式', icon: 'persona' },
   { id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
+  { id: 'avatar', label: '双方头像', description: '助手与用户头像', icon: 'persona' },
+  { id: 'voice', label: '情绪语音', description: '语气与语音合成', icon: 'message' },
+  { id: 'world', label: '世界引擎', description: '世界设定与检索', icon: 'cpu' },
   { id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
+  { id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
   { id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' }
 ];
 
@@ -56,7 +70,11 @@ const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
   overview: { title: '系统概览', description: '查看 SOOYA 当前运行状态和资源使用情况。' },
   persona: { title: '助手配置', description: '调整助手身份、语气和关系设定。' },
   models: { title: '模型配置', description: '管理每项能力对应的接口与模型。' },
+  avatar: { title: '双方头像', description: '上传助手与用户头像，聊天页面即时生效。' },
+  voice: { title: '情绪语音', description: '配置语音合成的情绪、语速与表达方式。' },
+  world: { title: '世界引擎', description: '维护世界设定条目，供对话检索引用。' },
   content: { title: '内容管理', description: '管理长期记忆、表情包、媒体和聊天记录。' },
+  storage: { title: '存储治理', description: '预览并执行媒体清理，回收磁盘空间。' },
   operations: { title: '运维与备份', description: '检查错误与后台任务，并管理数据备份。' }
 };
 
@@ -486,6 +504,16 @@ function OperationsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   );
 }
 
+/** Loads the persona the avatar editor edits, which the old page shell owned. */
+function AvatarPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [persona, setPersona] = useState<AdminPersona | null>(null);
+  useEffect(() => {
+    void adminApi.persona().then((r) => setPersona(r.persona)).catch((e) => onNotice(errorText(e)));
+  }, [onNotice]);
+  if (!persona) return <p className="admin-muted">正在读取头像设置…</p>;
+  return <AvatarEditor persona={persona} onPersona={setPersona} onNotice={onNotice} />;
+}
+
 function TabButtons({ tab, setTab, mobile }: { tab: Tab; setTab: (tab: Tab) => void; mobile: boolean }) {
   return (
     <nav className={mobile ? 'admin-mobile-tabs' : 'admin-side-nav'} aria-label="管理面板导航">
@@ -521,10 +549,10 @@ function Overview({ data, counts, onRefresh }: { data: Dashboard; counts: { avai
   </>;
 }
 
-export default function AdminPanel() {
+export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: Tab } = {}) {
   const [token, setToken] = useState(() => getAdminToken());
   const [tokenInput, setTokenInput] = useState('');
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [data, setData] = useState<Dashboard | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -593,11 +621,19 @@ export default function AdminPanel() {
     ? <Overview data={data} counts={counts} onRefresh={() => void loadOverview()} />
     : tab === 'persona'
       ? <PersonaPanel onNotice={setNotice} />
-      : tab === 'models'
-        ? <ModelsPanel onNotice={setNotice} />
-        : tab === 'content'
-          ? <ContentPanel onNotice={setNotice} />
-          : <OperationsPanel onNotice={setNotice} />;
+      : tab === 'avatar'
+        ? <AvatarPanel onNotice={setNotice} />
+        : tab === 'voice'
+          ? <VoiceEditor onNotice={setNotice} />
+          : tab === 'world'
+            ? <WorldEditor onNotice={setNotice} />
+            : tab === 'models'
+              ? <ModelsPanel onNotice={setNotice} />
+              : tab === 'content'
+                ? <ContentPanel onNotice={setNotice} />
+                : tab === 'storage'
+                  ? <StorageEditor onNotice={setNotice} />
+                  : <OperationsPanel onNotice={setNotice} />;
 
   return (
     <main className="admin-page admin-v2" data-testid="admin-dashboard">

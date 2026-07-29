@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { adminApi, getAdminToken, setAdminToken, type AdminPersona } from '../lib/admin.js';
+import type { AdminPersona } from '../lib/admin.js';
 import { adminMediaUrl, featureApi, type WorldEntry } from '../lib/features.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 
 const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'gentle'] as const;
-const FEATURE_TABS = [
-  { id: 'avatar', label: '双方头像' },
-  { id: 'voice', label: '情绪语音' },
-  { id: 'world', label: '世界引擎' },
-  { id: 'storage', label: '存储治理' }
-] as const;
 const EMOTION_LABELS: Record<string, string> = { neutral: '中性', happy: '开心', sad: '难过', angry: '生气', gentle: '温柔' };
 const WORLD_KINDS = [
   ['entity', '实体'],
@@ -33,7 +27,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : '操作失败';
 }
 
-function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona; onPersona: (p: AdminPersona) => void; onNotice: (s: string) => void }) {
+export function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona; onPersona: (p: AdminPersona) => void; onNotice: (s: string) => void }) {
   const assistantMedia = useAuthenticatedMedia(persona.avatar, 'admin', 'image');
   const userMedia = useAuthenticatedMedia(persona.userAvatar, 'admin', 'image');
   persona = { ...persona, avatar: assistantMedia.url ?? '', userAvatar: userMedia.url ?? '' };
@@ -58,7 +52,7 @@ function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona;
   );
 }
 
-function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
+export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [data, setData] = useState<Record<string, any> | null>(null);
   const [text, setText] = useState('你好呀，我是 SOOYA。');
   const [emotion, setEmotion] = useState('neutral');
@@ -120,7 +114,7 @@ function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
   );
 }
 
-function WorldEditor({ onNotice }: { onNotice: (s: string) => void }) {
+export function WorldEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [entries, setEntries] = useState<WorldEntry[]>([]);
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<WorldDraft>({ kind: 'fact', subject: '', predicate: '', object: '' });
@@ -254,7 +248,7 @@ function CleanupReportView({ result }: { result: Record<string, any> }) {
   );
 }
 
-function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
+export function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [data, setData] = useState<Record<string, any> | null>(null);
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const load = () => featureApi.storage().then(setData).catch((error) => onNotice(errorText(error)));
@@ -284,25 +278,5 @@ function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
       <div className="admin-actions"><button type="button" onClick={() => void featureApi.updateStorage(policy).then(() => { void load(); onNotice('存储策略已保存'); }).catch((error) => onNotice(errorText(error)))}>保存策略</button><button type="button" onClick={() => void preview(false)}>预览清理</button><button type="button" className="admin-danger" disabled={!report || report.applied} onClick={() => { if (window.confirm('只会删除预览报告中仍满足安全条件的项目，确认执行？')) void preview(true); }}>执行安全清理</button></div>
       {report && <CleanupReportView result={report} />}
     </section>
-  );
-}
-
-export default function FeatureAdminPage() {
-  const [token, setTokenState] = useState(() => getAdminToken() ?? '');
-  const [authorized, setAuthorized] = useState(() => Boolean(getAdminToken()));
-  const [persona, setPersona] = useState<AdminPersona | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<'avatar' | 'voice' | 'world' | 'storage'>('avatar');
-  useEffect(() => { if (authorized) void adminApi.persona().then((result) => setPersona(result.persona)).catch((error) => setNotice(errorText(error))); }, [authorized]);
-  const title = useMemo(() => ({ avatar: '头像', voice: '情绪语音', world: '世界引擎', storage: '存储治理' }[tab]), [tab]);
-  if (!authorized) return <main className="admin-page admin-v2 admin-lock-page"><form className="admin-lock-card" data-testid="admin-lock" onSubmit={(event) => { event.preventDefault(); if (!token.trim()) return; setAdminToken(token.trim()); setAuthorized(true); }}><h1>SOOYA 功能中心</h1><p>输入管理令牌以管理 1–9 功能。</p><input type="password" value={token} onChange={(event) => setTokenState(event.target.value)} /><button type="submit">进入</button></form></main>;
-  return (
-    <main className="admin-page admin-v2">
-      <div className="admin-shell">
-        <aside className="admin-sidebar"><div className="admin-brand"><span className="admin-brand-mark">S</span><span className="admin-brand-copy"><strong>SOOYA</strong><small>1–9 功能中心</small></span></div><nav className="admin-side-nav admin-side-nav-plain">{FEATURE_TABS.map((item) => <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><span className="admin-nav-copy"><strong>{item.label}</strong></span></button>)}</nav><div className="admin-sidebar-footer"><a className="admin-side-action" href="/gallery">图库与回收站</a><a className="admin-side-action" href="/admin">基础管理面板</a><a className="admin-side-action" href="/">返回聊天</a></div></aside>
-        <header className="admin-mobile-header"><div className="admin-mobile-brand"><span className="admin-mobile-icon">S</span><div><strong>SOOYA 功能中心</strong><small>{title}</small></div></div><a className="admin-return" href="/">返回对话</a></header>
-        <section className="admin-main"><nav className="admin-mobile-tabs" aria-label="功能中心导航">{FEATURE_TABS.map((item) => <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</nav><header className="admin-topbar"><div><span className="admin-eyebrow">SOOYA 1–9</span><h1>{title}</h1></div></header>{notice && <div className="admin-inline-error" role="status">{notice}</div>}<div className="admin-content-area">{tab === 'avatar' && persona && <AvatarEditor persona={persona} onPersona={setPersona} onNotice={setNotice} />}{tab === 'voice' && <VoiceEditor onNotice={setNotice} />}{tab === 'world' && <WorldEditor onNotice={setNotice} />}{tab === 'storage' && <StorageEditor onNotice={setNotice} />}</div></section>
-      </div>
-    </main>
   );
 }
