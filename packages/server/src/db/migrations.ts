@@ -1,4 +1,5 @@
 import type BetterSqlite3 from 'better-sqlite3';
+import { worldIdentityKey } from './world-key.js';
 
 export interface Migration {
   version: number;
@@ -287,6 +288,59 @@ export const MIGRATIONS: Migration[] = [
           free_bytes  INTEGER
         );
         CREATE INDEX idx_storage_samples_created ON storage_samples(created_at DESC);
+      `);
+    }
+  },
+  {
+    version: 5,
+    name: 'world_identity_keys',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE world_entries ADD COLUMN subject_key TEXT NOT NULL DEFAULT '';
+        ALTER TABLE world_entries ADD COLUMN predicate_key TEXT NOT NULL DEFAULT '';
+      `);
+      const rows = db.prepare(`
+        SELECT id, subject, predicate, authority, confidence, active, conflict_of, updated_at
+        FROM world_entries
+      `).all() as Array<{
+        id: string;
+        subject: string;
+        predicate: string;
+        authority: 'model' | 'user' | 'admin';
+        confidence: number;
+        active: number;
+        conflict_of: string | null;
+        updated_at: string;
+      }>;
+      const updateKeys = db.prepare('UPDATE world_entries SET subject_key = ?, predicate_key = ? WHERE id = ?');
+      for (const row of rows) updateKeys.run(worldIdentityKey(row.subject), worldIdentityKey(row.predicate), row.id);
+
+      const authorityRank = { model: 1, user: 2, admin: 3 } as const;
+      const groups = new Map<string, typeof rows>();
+      for (const row of rows.filter((item) => item.active === 1 && item.conflict_of === null)) {
+        const key = `${worldIdentityKey(row.subject)}\u0000${worldIdentityKey(row.predicate)}`;
+        const group = groups.get(key) ?? [];
+        group.push(row);
+        groups.set(key, group);
+      }
+      for (const group of groups.values()) {
+        if (group.length < 2) continue;
+        group.sort((a, b) =>
+          authorityRank[b.authority] - authorityRank[a.authority] ||
+          b.confidence - a.confidence ||
+          b.updated_at.localeCompare(a.updated_at) ||
+          a.id.localeCompare(b.id)
+        );
+        const winner = group[0]!;
+        for (const duplicate of group.slice(1)) {
+          db.prepare('UPDATE world_entries SET active = 0, conflict_of = ? WHERE id = ?').run(winner.id, duplicate.id);
+        }
+      }
+      db.exec(`
+        CREATE INDEX idx_world_identity_keys ON world_entries(subject_key, predicate_key, active);
+        CREATE UNIQUE INDEX idx_world_one_active_identity
+          ON world_entries(subject_key, predicate_key)
+          WHERE active = 1 AND conflict_of IS NULL;
       `);
     }
   }

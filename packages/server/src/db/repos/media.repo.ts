@@ -1,4 +1,5 @@
 import type { DbLike } from '../handle.js';
+import { literalContainsPattern } from '../like.js';
 import type { MediaRef } from '../../core/types.js';
 import { newMediaId, nowIso } from '../../util/ids.js';
 
@@ -223,7 +224,7 @@ function galleryWhere(input: GalleryQuery): { where: string[]; values: unknown[]
         WHERE p.media_id = m.id AND (p.text LIKE ? ESCAPE '\\' OR p.transcript LIKE ? ESCAPE '\\' OR msg.meta_json LIKE ? ESCAPE '\\')
       )
     )`);
-    const q = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
+    const q = literalContainsPattern(search);
     values.push(q, q, q, q, q, q, q);
   }
   return { where, values };
