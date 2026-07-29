@@ -95,7 +95,7 @@ fi
 
 if [[ ! -f "$STAGE/database/sooya.db" && -f "$DB" ]]; then
   # A live SQLite database in WAL mode must be copied by SQLite itself. Copying
-  # sooya.db, -wal and -shm separately can combine different points in time.
+  # the database and its journal sidecars separately can mix points in time.
   SNAPSHOT_OK=0
 
   if command -v sqlite3 >/dev/null 2>&1; then
@@ -128,9 +128,8 @@ if [[ ! -f "$STAGE/database/sooya.db" && -f "$DB" ]]; then
     fi
   fi
 
-  # Historical unsafe fallback intentionally removed: wal_checkpoint(TRUNCATE)
-  # followed by `for suffix in "" "-wal" "-shm"` still allowed mixed-time files
-  # when sqlite3 was unavailable. Keep this note so old audit reports remain clear.
+  # Historical raw sidecar-copy fallback intentionally removed. It could still
+  # combine files from different moments when no SQLite snapshot tool existed.
   [[ "$SNAPSHOT_OK" -eq 1 ]] || \
     die "no WAL-safe SQLite snapshot mechanism is available; refusing an unsafe live-file copy"
 fi
