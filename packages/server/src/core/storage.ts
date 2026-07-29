@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { AppEnv } from '../config/env.js';
 import type { ConfigStore } from '../config/store.js';
-import type { MediaRepo, MediaRow } from '../db/repos/media.repo.js';
+import type { MediaRepo } from '../db/repos/media.repo.js';
 import type { SettingsRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { AuditRepo, StorageSampleRepo } from '../db/repos/feature.repo.js';
 import type { MediaStore } from '../media/store.js';
@@ -40,6 +40,7 @@ const DEFAULT_POLICY: StoragePolicy = {
 
 export class StorageService {
   private maintenanceRunning = false;
+  private activeWrites = 0;
 
   constructor(
     private readonly env: AppEnv,
@@ -50,7 +51,23 @@ export class StorageService {
     private readonly samples: StorageSampleRepo,
     private readonly config: ConfigStore,
     private readonly errors: ErrorLogRepo
-  ) {}
+  ) {
+    const originalSave = mediaStore.save.bind(mediaStore);
+    mediaStore.save = async (input) => {
+      if (this.maintenanceRunning) {
+        const error = new Error('storage maintenance is running; media writes are temporarily paused') as Error & { code?: string };
+        error.code = 'STORAGE_MAINTENANCE';
+        throw error;
+      }
+      this.activeWrites++;
+      try {
+        await this.assertWritable(input.data.byteLength);
+        return await originalSave(input);
+      } finally {
+        this.activeWrites--;
+      }
+    };
+  }
 
   policy(): StoragePolicy {
     return normalizePolicy(this.settings.get<Partial<StoragePolicy>>('storage.policy', DEFAULT_POLICY));
@@ -94,6 +111,8 @@ export class StorageService {
       categories,
       policy,
       warning: mediaBytes >= policy.hardLimitBytes ? 'hard' : mediaBytes >= policy.softLimitBytes ? 'soft' : null,
+      maintenanceRunning: this.maintenanceRunning,
+      activeWrites: this.activeWrites,
       trend: this.samples.list(48)
     };
   }
@@ -162,7 +181,7 @@ export class StorageService {
   }
 
   async cleanup(input: { apply?: boolean; categories?: string[] } = {}): Promise<{ applied: boolean; report: CleanupReport; deleted: Record<string, number>; releasedBytes: number }> {
-    if (this.maintenanceRunning) throw new Error('storage maintenance is already running');
+    if (this.maintenanceRunning || this.activeWrites > 0) throw new Error(this.maintenanceRunning ? 'storage maintenance is already running' : 'media write is in progress; retry cleanup shortly');
     this.maintenanceRunning = true;
     try {
       const report = await this.report();
