@@ -121,8 +121,13 @@ export function openDatabase(opts: OpenDbOptions): OpenDbResult {
 
   const tryOpen = (): Db => {
     const db = new Database(file);
-    applyPragmas(db);
-    return db;
+    try {
+      applyPragmas(db);
+      return db;
+    } catch (error) {
+      try { db.close(); } catch { /* preserve the original open failure */ }
+      throw error;
+    }
   };
 
   let db: Db | null = null;
