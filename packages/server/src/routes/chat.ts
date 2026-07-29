@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import type { FastifyReply } from 'fastify';
 import type { SooyaApp } from '../app.js';
 import { requireChatToken } from './auth.js';
 import { SendMessageSchema, type ChatMessage } from '../core/types.js';
 import { parseUserDirectives } from '../core/directives.js';
+import { maintenanceCoordinator } from '../core/maintenance.js';
 import { nowIso } from '../util/ids.js';
 
 const HistoryQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30), before: z.coerce.number().int().min(0).optional(), since: z.coerce.number().int().min(0).optional() });
@@ -46,16 +48,18 @@ export function registerChatRoutes(app: SooyaApp): void {
   });
 
   server.post('/api/messages', { preHandler: auth }, async (req, reply) => {
+    const blocked = rejectBlockedWrite(reply);
+    if (blocked) return blocked;
     const parsed = SendMessageSchema.safeParse(req.body);
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
     const input = parsed.data;
     const validation = validateInput(app, input.content, input.replyTo);
     if (validation) { reply.code(400); return validation; }
-    const text = input.content.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
+    const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
     const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
     const { message, created } = repos.messages.create({
       role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-      parts: input.content.map((p) => ({ type: p.type, text: p.type === 'text' ? p.text : null, mediaId: 'mediaId' in p ? p.mediaId : null, status: 'sent', duration: p.type === 'audio' ? p.duration ?? null : null, transcript: p.type === 'audio' ? p.transcript ?? null : null })),
+      parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
       meta: { directives }
     });
     if (!created) return { message, duplicate: true, replyPending: false };
@@ -68,16 +72,18 @@ export function registerChatRoutes(app: SooyaApp): void {
   });
 
   server.post('/api/messages/sync', { preHandler: auth }, async (req, reply) => {
+    const blocked = rejectBlockedWrite(reply);
+    if (blocked) return blocked;
     const parsed = SendMessageSchema.safeParse(req.body);
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
     const input = parsed.data;
     const validation = validateInput(app, input.content, input.replyTo);
     if (validation) { reply.code(400); return validation; }
-    const text = input.content.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
+    const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
     const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
     const { message, created } = repos.messages.create({
       role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-      parts: input.content.map((p) => ({ type: p.type, text: p.type === 'text' ? p.text : null, mediaId: 'mediaId' in p ? p.mediaId : null, status: 'sent', duration: p.type === 'audio' ? p.duration ?? null : null, transcript: p.type === 'audio' ? p.transcript ?? null : null })),
+      parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
       meta: { directives }
     });
     if (!created) return { message, duplicate: true, reply: findReply(app, message.id) };
@@ -88,6 +94,8 @@ export function registerChatRoutes(app: SooyaApp): void {
   });
 
   server.post('/api/messages/:id/withdraw', { preHandler: auth }, async (req, reply) => {
+    const blocked = rejectBlockedWrite(reply);
+    if (blocked) return blocked;
     const id = (req.params as { id: string }).id;
     const message = repos.messages.get(id);
     if (!message) { reply.code(404); return { error: 'not_found' }; }
@@ -106,7 +114,14 @@ export function registerChatRoutes(app: SooyaApp): void {
     return { message: updated };
   });
 
-  server.get('/api/stickers', { preHandler: auth }, async () => ({ stickers: services.stickerLibrary.available().map((s) => ({ id: s.id, name: s.name, emotion: s.emotion, tags: s.tags, url: s.url, mediaId: s.mediaId })) }));
+  server.get('/api/stickers', { preHandler: auth }, async () => ({ stickers: services.stickerLibrary.available().map((sticker) => ({ id: sticker.id, name: sticker.name, emotion: sticker.emotion, tags: sticker.tags, url: sticker.url, mediaId: sticker.mediaId })) }));
+}
+
+function rejectBlockedWrite(reply: FastifyReply): Record<string, unknown> | null {
+  if (!maintenanceCoordinator.isWriteBlocked()) return null;
+  const state = maintenanceCoordinator.state();
+  reply.code(503).header('retry-after', '1');
+  return { error: 'maintenance_in_progress', operation: state?.operation ?? 'maintenance', message: '系统正在执行恢复或清理，请稍后重试' };
 }
 
 function validateInput(app: SooyaApp, content: Array<{ type: string; mediaId?: string }>, replyTo?: string): Record<string, unknown> | null {
@@ -121,7 +136,9 @@ function enqueuePostReply(app: SooyaApp, userMessageId: string, assistantMessage
     app.repos.jobs.enqueue('world.extract', { userMessageId, assistantMessageId }, { maxAttempts: 3 });
     app.repos.jobs.enqueue('push.reply', { messageId: assistantMessageId }, { maxAttempts: 3 });
     if (app.services.summarizer.needsSummary()) app.repos.jobs.enqueue('summary.build', {});
-  } catch (err) { app.repos.errors.add('post-reply-jobs', (err as Error).message); }
+  } catch (error) {
+    app.repos.errors.add('post-reply-jobs', (error as Error).message);
+  }
 }
 
 function findReply(app: SooyaApp, userMessageId: string): ChatMessage | null {
