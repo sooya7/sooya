@@ -3,7 +3,7 @@
 | 编号 | 当前核验状态 | 证据与处理决定 |
 |---|---|---|
 | M-001 | 已被后续提交修复 | 构建阻断已修复，完整测试仍受其他问题影响。原始 Head `bd2db8b` 缺失 `media/store.ts`、`media/stickers.ts`；`09ac980` 仅同步必要模块，`9456767` 修复测试夹具的跨平台 `file:` URL 转换。 |
-| M-002 | 确定存在 | Run 30435357087 的 E2E 连续超时，35 分钟 job timeout 后取消；诊断因 cancelled 被跳过。 |
+| M-002 | 已被后续提交修复 | Run 30435357087 的 E2E 连续超时并耗尽 35 分钟；`772c2a4` 修复测试直连 API 缺少 Bearer、静默忽略非 2xx、功能中心移动导航缺失、旧路由/图标定位契约及乐观消息竞态。本地根命令 62/62 通过，最新 Head 的 Linux Actions 仍待确认。 |
 | M-003 | 报告误判 | 模拟运行时超出唯一范围；事实库功能另按第 8 项核验。 |
 | M-004 | 已被后续提交修复 | `3cb4640` 抽取统一语音参数解析链路；试听与正式回复都读取已保存映射，自动情绪别名映射到 UI 预设，缺失预设安全回退中性。 |
 | M-005 | 已被后续提交修复 | `14eb215` 按模型 context window、输出上限和安全余量建立统一输入预算；摘要、记忆、世界事实和近期消息按预算纳入，高权威世界事实优先，预算与 dropped counts 持久化。 |
@@ -15,8 +15,8 @@
 | M-011 | 已被后续提交修复 | `13286b1` 将世界数据媒体引用从模糊 `LIKE` 改为 `json_tree` 对 `mediaId/media_id` 文本值的精确匹配，并同步引用统计、未引用清理和孤立上传扫描。 |
 | M-012 | 报告误判 | 唯一清单要求“批量导出与选择一致”，未要求 ZIP 格式；当前逐项安全 Blob 下载已由 M-010 自动化覆盖，不新增 ZIP 范围。 |
 | M-013 | 已被后续提交修复 | `7afd647` 后受保护媒体全部 network-only，Service Worker 不再建立忽略 `?v=` 的媒体缓存键；激活时清理旧敏感缓存。 |
-| M-014 | 真机待验证 | 历史状态需 E2E 复现。 |
-| M-015 | 真机待验证 | 移动端滚动长按需复现。 |
+| M-014 | 测试不足 | 当前查看器 E2E 只覆盖 Escape 关闭，尚未覆盖已有 history state、多次开关、切图及浏览器返回键；不能因 Browser 基线全绿判定通过。 |
+| M-015 | 高可信存在 | 当前长按只在 pointer 位移超过 9px、pointerup、pointercancel 时清理；未监听父级 scroll、lostpointercapture、visibilitychange，也无 unmount teardown，继续按真实 Pointer Events 路径补失败测试和修复。 |
 | M-016 | 报告误判 | 当前实现并非报告假定的 touchmove passive 路径。 |
 | M-017 | 已被后续提交修复 | `b852e3b` 将世界管理搜索和 Context 相关性搜索统一改为 `LIKE ? ESCAPE '\'`，`\`、`%`、`_` 通过共享 helper 字面转义。 |
 | M-018 | 已被后续提交修复 | `b852e3b` 新增持久化 Unicode identity key、迁移回填/重复 winner 选择及活动 canonical 部分唯一索引。 |
@@ -36,6 +36,25 @@
 ## M-002 取证
 
 GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每次超时 60 秒并重试；08:59:33 输出 `The operation was canceled`。工作流 job 配置 `timeout-minutes: 35`，时间线符合 job 超时。并发策略虽启用 `cancel-in-progress`，但没有后继 run 覆盖该 run 的证据。
+
+后续 Run `30445900732` 在旧 Head `600c542` 上形成真实失败结论：Browser E2E 为 49/62 通过、11 失败、2 flaky；依赖审计、独立代码验证、发布包和容器验证均成功。失败并非 Runner 中断或人工取消。
+
+`772c2a4 fix(web): stabilize authenticated browser flows` 完成以下闭环：
+
+- E2E 服务端直连消息请求携带 `Authorization: Bearer`，并对所有非 2xx 立即报错；旧测试此前静默忽略 401，最终表现为页面无消息和 15 秒 locator 超时。
+- 历史分页、阅读位置保持和断线补偿在 Desktop/Mobile 均通过。
+- 功能入口断言与 `/admin/features` 真实路由一致，恢复锁页、未读提示和六齿图标稳定语义定位。
+- 功能中心补齐移动端四项导航；世界事实夹具按 Playwright project 唯一化，避免 Desktop 数据污染 Mobile。
+- 引用/撤回测试等待每次消息 POST 成功及最终 sent 状态，不再把正确的防重复提交锁误判为 UI 卡死。
+
+验证：
+
+- `npm run test -w @sooya/web`：2 files、17/17 通过。
+- `npm run typecheck -w @sooya/web`：通过。
+- `npm run build -w @sooya/web`：production build 通过。
+- `npm run test:e2e -- --reporter=list`：62/62 通过，Desktop 31/31、Mobile 31/31，耗时 2.0 分钟，正常退出，无 skip/fixme。
+
+因此本地 Browser 自动化基线已恢复；只有最新 Head 的 Linux Actions 成功后，才可把 CI 门槛记为完成。
 
 ## Windows 本地环境阻塞
 

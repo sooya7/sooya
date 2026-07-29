@@ -530,7 +530,7 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 
 | 阻塞项 | 证据 | 影响 | 处理方式 |
 |---|---|---|---|
-| Browser E2E 尚无最终成功结果 | 第 108 次 Comprehensive Test 的 `npm run test:e2e` 被取消，当前已重跑 | 无法满足最终完整 Actions success | 等待重跑真实结果；失败则按日志修复，取消则排查 CI 原因 |
+| 最新 Head 尚无 Linux Browser E2E 成功结果 | `772c2a4` 本地根命令 Desktop/Mobile 62/62；旧 Head Run `30445900732` 为 49/62 | 本地自动化已恢复，但不能替代最终 Actions success | 推送后检查最新 Head 的 Linux Job；失败则按 artifact 定向修复 |
 | iOS 真机验收缺失 | 尚无设备、系统、浏览器和录屏证据 | 头像、手势、Push、TTS 验收框不能勾选 | 使用真实 iPhone 完成矩阵并记录证据 |
 | Android 真机验收缺失 | 尚无设备、系统、浏览器和录屏证据 | 同上 | 使用真实 Android 完成矩阵并记录证据 |
 | PWA 完全关闭通知缺少实际证据 | 自动化不能完全代替系统级推送验证 | Web Push 不能完成 | 在已安装 PWA 的 iOS/Android 上测试 |
@@ -544,7 +544,7 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | 独立代码验证 | Comprehensive Test #108 | TypeScript、Build、Server Tests 均成功 | 完成 |
 | 2026-07-29 | 发布与容器验证 | Comprehensive Test #108 | ZIP/TAR、Docker build、readiness 成功 | 完成 |
 | 2026-07-29 | 依赖审计 | Comprehensive Test #108 | `npm audit --audit-level=high` 成功 | 完成 |
-| 2026-07-29 | Browser E2E | Comprehensive Test #108 / 重跑 Job | 原 Job 在 `npm run test:e2e` 被取消，重跑中 | 实现完成，待自动化验收 |
+| 2026-07-29 | Browser E2E | `772c2a4` | 修复测试 API 鉴权、非 2xx 静默失败、移动功能导航、稳定语义定位及消息最终状态竞态；`npm run test:e2e -- --reporter=list` Desktop 31/31、Mobile 31/31，共 62/62，2.0 分钟正常退出 | 本地自动化通过，待最新 Head Actions |
 | 2026-07-29 | PWA 与真机验收 | 尚无完整实际设备证据 | 清单要求的头像、手势、通知和语音试听 | 未开始 |
 | 2026-07-29 | 最终完整验收 | 尚未取得可接受的最终 success Run | 需在所有问题修复与真机验证后执行 | 未开始 |
 | 2026-07-29 | PR #1 独立 Head 核验 | `09ac980`、`9456767` | 原始 Head 缺少 `media/store.ts` 和 `media/stickers.ts`；构建阻断已修复。`fileURLToPath()` 消除 Windows `C:\C:\...`，unit 35/35；regression 25/26，剩余 Bash 检查为 Windows/WSL 本地环境阻塞 | 构建阻断已修复，完整测试仍受其他问题影响 |
@@ -557,6 +557,7 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | Windows 数据库恢复基线 | `6632637` | 损坏库在 pragma 失败后关闭 SQLite 句柄，解除 Windows 文件锁；reliability 从 19/21 恢复为 21/21，Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-009 媒体永久删除一致性 | `c03c6c2` | 文件删除失败不再继续删 DB；单删明确 500 并审计，批量隔离失败项，孤立收集向维护 Job 抛错。RED 实际假成功 200；修复后相关 10/10、reliability 21/21、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-008 清理预览报告绑定 | `d044681` | 预览持久化 reportId、策略/候选 hash；apply 必须提交同一报告，仅处理快照并复核引用、路径、大小、mtime。RED 无 reportId 且 apply 可直接执行；修复后相关 13/13、Web 17/17、双端 typecheck/build 通过 | 自动化验证通过 |
+| 2026-07-29 | Browser E2E 基线恢复 | `772c2a4` | 旧 Head Run `30445900732` 为 49/62；当前 Head 本地根命令 62/62，无 skip/fixme。Web unit 17/17、typecheck、production build 同步通过 | 本地自动化通过；Linux Actions 待确认 |
 | 2026-07-29 | M-012 / M-013 范围与缓存复核 | `7afd647` / 核验记录 | 清单未要求 ZIP，现有选择一致的安全 Blob 批量下载保留；受保护媒体已 network-only，旧媒体缓存由 `sooya-v6` 清理 | M-012 报告误判；M-013 已被后续提交修复 |
 | 2026-07-29 | M-017 / M-018 世界搜索与 identity | `b852e3b` | LIKE 通配符统一字面转义；NFKC Unicode identity key 持久化，v5 回填重复 winner 并用部分唯一索引保护。RED `100%` 误返 2 条且 Unicode 未合并；修复后相关 12/12、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-019 清理空间口径 | `006a0d6` | 活动未引用媒体不再计入本次可释放；回收站候选的 preview/released/deleted bytes 一致，安全跳过另计 skippedBytes。RED 活动媒体被错误计入；修复后相关 14/14、Server typecheck/build 通过 | 自动化验证通过 |
