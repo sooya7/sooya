@@ -9,7 +9,7 @@
 | M-005 | 已被后续提交修复 | `14eb215` 按模型 context window、输出上限和安全余量建立统一输入预算；摘要、记忆、世界事实和近期消息按预算纳入，高权威世界事实优先，预算与 dropped counts 持久化。 |
 | M-006 | 已被后续提交修复 | `4a65013` 限制自动删除为 404/410；500、503、网络、DNS、TLS 临时失败只累计诊断计数，不删除订阅，成功后计数归零。 |
 | M-007 | 已被后续提交修复 | 当前 ImageViewer 使用 Pointer Capture；仍需真机异常释放验证。 |
-| M-008 | 无法确认 | 待核验预览与 apply 的报告绑定路径。 |
+| M-008 | 已被后续提交修复 | `d044681` 为清理预览生成持久化 reportId、策略/候选 hash；管理端 apply 必须提交已确认报告，只处理快照候选并逐项二次校验。 |
 | M-009 | 已被后续提交修复 | `c03c6c2` 不再吞掉媒体文件删除错误；单删、批量删和孤立上传收集失败均保留 DB 记录并返回/记录明确失败。 |
 | M-010 | 已被后续提交修复 | `7afd647` 移除普通/管理媒体及 SSE 的长期 query token，改用分作用域 Bearer fetch + Blob URL；受保护媒体 network-only。相关自动化通过，完整 Server 聚合命令仍无汇总超时，原生移动端 Web Share 待真机验证。 |
 | M-011 | 已被后续提交修复 | `13286b1` 将世界数据媒体引用从模糊 `LIKE` 改为 `json_tree` 对 `mediaId/media_id` 文本值的精确匹配，并同步引用统计、未引用清理和孤立上传扫描。 |
@@ -193,3 +193,29 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - GREEN：同一命令 3/3 通过，覆盖单删、批量部分失败、孤立上传收集失败及最终 DB/文件状态。
 - 回归：`npm --workspace packages/server test -- --run test/media-delete-consistency.test.ts test/features-1-9.test.ts test/media-references.test.ts --reporter=verbose`，3 files、10/10 通过，约 32.5 秒，正常退出。
 - `test/reliability.test.ts` 21/21 通过；Server typecheck/build 通过。
+
+## M-008 修复与验证
+
+提交：`d044681 fix(storage): bind cleanup apply to confirmed reports`。
+
+失败证据：
+
+- 预览响应没有 reportId，测试实际得到 `undefined`。
+- 管理 API 直接提交 `{ apply:true }` 返回 200 并重新生成候选，预期应拒绝未确认的正式清理。
+
+修复后：
+
+- 每份预览生成并持久化 `reportId`、`generatedAt`、策略 SHA-256、候选 SHA-256、候选快照和可释放字节数；历史快照有数量与一小时有效期限制。
+- 管理 API 的 apply 必须提交合法 reportId；缺失、过期、策略变化或候选 hash 不一致均返回 409，要求重新预览。
+- 管理页面保存预览响应并在二次确认后把同一 reportId 传给 apply，不再只发送 `apply:true`。
+- apply 只遍历快照中的候选；预览后新增 orphan 不会被旧报告删除。
+- 删除前重新检查媒体引用、双方头像、删除状态、记录大小/路径，以及文件实际路径、大小、mtime；新增引用或文件变化进入带原因的 `skipped`。
+- preview 与 apply 审计均记录 reportId、策略/候选 hash；apply 额外记录 deleted、skipped、releasedBytes。
+- 定时维护显式使用内部即时报告路径，不伪装成用户确认清理。
+
+验证：
+
+- 首次 RED：`npm --workspace packages/server test -- --run test/storage-cleanup-report.test.ts --reporter=verbose`，2/2 失败（无 reportId、无报告 apply 假成功）。
+- GREEN：同一文件 4/4 通过，覆盖旧快照不删除新增 orphan、无 reportId 拒绝、文件变化跳过、媒体新增引用后跳过及审计 reportId。
+- 回归：`npm --workspace packages/server test -- --run test/storage-cleanup-report.test.ts test/media-delete-consistency.test.ts test/features-1-9.test.ts --reporter=verbose`，3 files、13/13 通过，约 40.2 秒，正常退出。
+- Web 测试 17/17；Server/Web typecheck 与 production build 均通过。
