@@ -25,7 +25,7 @@
 | M-021 | 已被后续提交修复 | `36a0543` 用分类摘要和每页 50 条明细替换完整 JSON `<pre>`；完整原始报告按需下载。2000 候选双端 E2E 证明 DOM 只渲染当前页、翻页正确、下载 Blob/文件名正确。 |
 | M-022 | 确定存在，已修复 | `WorldEngine.import()` 原先逐条调用 `WorldRepo.apply()`，后续失败会留下此前已提交条目；`8a733be` 改为单一批量事务，并覆盖 2000 条、回滚、合并、冲突和禁用计数。 |
 | M-023 | 确定存在，已修复 | `NotificationBridge` 原先永久吞掉 visibility 同步失败；`a4a9fdc` 增加有限重试、最新状态补偿、重新读取鉴权和卸载清理。系统级 Push 仍待真机。 |
-| M-024 | 测试不足 | 待 UI 选择态验证。 |
+| M-024 | 确定存在，已修复 | `MessageItem` 原先以全文作为空选择 fallback；`07c1dff` 只接受当前消息内部的明确 Range，无选择时禁用动作。Desktop/Mobile 与完整 E2E 通过。 |
 
 ## M-001 取证
 
@@ -399,3 +399,27 @@ E2E 在 Desktop/Mobile 均记录 voice GET 次数，保存后要求至少两次�
 - `npm run typecheck`、`npm run build`（`packages/web`）：通过。
 
 限制：桌面自动化没有真实浏览器 PushManager 和系统通知通道；前台重复通知的最终系统级行为仍列入 iOS/Android PWA 真机验收。
+
+## M-024 修复与验证
+
+提交：`07c1dff fix(chat): require an explicit text selection`。
+
+失败证据：
+
+- 原实现执行 `window.getSelection()?.toString().trim() || text`，没有选择时明确回退整条消息。
+- RED：Desktop 浏览器用例打开无选择菜单后，预期“复制选中文本”禁用，实际为 enabled，等待 15 秒后失败。
+
+修复后：
+
+- 打开菜单时捕获 Range；只有非折叠且 `commonAncestorContainer` 属于当前消息节点的选择才有效。
+- 无选择或选择不属于当前消息时，“复制选中文本”保持禁用，不写剪贴板。
+- 点击动作只复制菜单打开时捕获的片段，不再读取可能变化的全局选择，也不回退全文。
+- 测试使用真实“消息操作”按钮路径；撤回了未能解释失败的 portal 实验，没有使用 `force` 点击。
+
+验证：
+
+- 定向：`npx playwright test e2e/features-1-9.e2e.ts --grep "copy selected text" --reporter=list`，Desktop/Mobile 2/2 通过。
+- 功能回归：`npx playwright test e2e/features-1-9.e2e.ts --reporter=list`，14/14 通过，约 33.6 秒。
+- 完整 E2E：`npm run test:e2e -- --reporter=list`，Desktop 35/35、Mobile 35/35，总计 70/70，约 2.3 分钟。
+- Web 单元：`npm test -w @sooya/web`，3 files、22/22 通过。
+- Web typecheck 与 production build：通过。
