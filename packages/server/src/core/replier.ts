@@ -94,12 +94,37 @@ export class Replier {
       if (this.deps.stickers.count() === 0) capabilityNotes.push('没有可用表情包');
 
       const allowVision = caps.visionProvider() !== null;
+      const chatModel = this.deps.config.chatModelFor('chat');
+      const visionModel = allowVision ? this.deps.config.chatModelFor('vision') : chatModel;
+      const contextWindow = Math.min(chatModel.contextWindow, visionModel.contextWindow);
+      const maxOutputTokens = Math.max(
+        16,
+        Math.min(Math.max(chatModel.maxTokens, visionModel.maxTokens), contextWindow - 384)
+      );
       const built = await this.deps.context.build(persona, userText, {
         recentMessages: opts.recentMessages,
         memoryLimit: opts.memoryLimit,
         allowVision,
         stickerCatalogue: this.deps.stickers.catalogueForPrompt(),
-        capabilityNotes
+        capabilityNotes,
+        contextWindow,
+        maxOutputTokens
+      });
+      const requestMaxTokens = Math.min(
+        built.visionUsed ? visionModel.maxTokens : chatModel.maxTokens,
+        maxOutputTokens
+      );
+      this.deps.messages.updateMeta(shell.id, {
+        contextBudget: {
+          inputBudget: built.inputBudget,
+          estimatedInputTokens: built.estimatedInputTokens,
+          maxOutputTokens,
+          requestMaxTokens,
+          droppedSummaries: built.droppedSummaries,
+          droppedMemories: built.droppedMemories,
+          droppedWorldEntries: built.droppedWorldEntries,
+          droppedRecentMessages: built.droppedRecentMessages
+        }
       });
 
       // 2. Stream the text.
@@ -128,7 +153,7 @@ export class Replier {
             {
               system: built.system,
               messages: built.turns,
-              maxTokens: undefined,
+              maxTokens: requestMaxTokens,
               temperature: undefined
             },
             (chunk) => pushDelta(chunk.delta)

@@ -18,6 +18,12 @@ export interface BuiltContext {
   recentCount: number;
   visionUsed: boolean;
   worldEntries: number;
+  inputBudget: number;
+  estimatedInputTokens: number;
+  droppedSummaries: number;
+  droppedMemories: number;
+  droppedWorldEntries: number;
+  droppedRecentMessages: number;
 }
 
 export interface ContextOptions {
@@ -27,6 +33,8 @@ export interface ContextOptions {
   allowVision: boolean;
   stickerCatalogue: string;
   capabilityNotes: string[];
+  contextWindow: number;
+  maxOutputTokens: number;
 }
 
 export class ContextBuilder {
@@ -46,52 +54,69 @@ export class ContextBuilder {
     const recallQuery = latestUserText || recent.map(plainText).join('\n').slice(-500);
     const recall = await this.memory.recall(recallQuery, opts.memoryLimit);
     const worldContext = this.world?.contextFor(recallQuery, 18) ?? '';
+    const worldLines = worldContext.split('\n').filter((line) => line.startsWith('· '));
+    const inputBudget = Math.max(256, opts.contextWindow - opts.maxOutputTokens - 128);
 
     const systemParts: string[] = [];
-    systemParts.push(persona.systemPrompt.trim());
-    if (persona.speakingStyle) systemParts.push(`说话风格：${persona.speakingStyle}`);
-    if (persona.relationshipContext) systemParts.push(`你们的关系：${persona.relationshipContext}`);
+    systemParts.push(trimToTokenEstimate(persona.systemPrompt.trim(), Math.max(96, Math.floor(inputBudget * 0.4))));
+    tryAddSystemPart(systemParts, [], `说话风格：${persona.speakingStyle}`, inputBudget);
+    tryAddSystemPart(systemParts, [], `你们的关系：${persona.relationshipContext}`, inputBudget);
 
-    systemParts.push(buildMultimediaInstructions(persona, opts));
-
-    if (activeSummaries.length > 0) {
-      const text = activeSummaries
-        .slice()
-        .sort((a, b) => a.from_seq - b.from_seq)
-        .map((s) => `· ${s.content}`)
-        .join('\n');
-      systemParts.push(`以前聊过的重点（阶段摘要）：\n${text}`);
-    }
-    if (recall.memories.length > 0) {
-      const text = recall.memories.map((m) => `· [${m.kind}] ${m.content}`).join('\n');
-      systemParts.push(`关于用户你已经知道的事：\n${text}`);
-    }
-    if (worldContext) systemParts.push(worldContext);
-    if (opts.capabilityNotes.length > 0) {
-      systemParts.push(`当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`);
-    }
-    systemParts.push(`现在的时间是 ${new Date().toISOString()}。`);
-
-    const turns: ChatTurn[] = [];
-    let visionUsed = false;
+    const convertedTurns: ChatTurn[] = [];
     for (const msg of recent) {
       if (msg.role === 'system') continue;
       const content = await this.messageToParts(msg, opts.allowVision);
       if (content.length === 0) continue;
-      if (content.some((c) => c.type === 'image')) visionUsed = true;
-      turns.push({ role: msg.role === 'assistant' ? 'assistant' : 'user', content });
+      convertedTurns.push({ role: msg.role === 'assistant' ? 'assistant' : 'user', content });
     }
 
+    const turns: ChatTurn[] = [];
+    for (let index = convertedTurns.length - 1; index >= 0; index--) {
+      const candidate = convertedTurns[index]!;
+      const next = [candidate, ...turns];
+      if (estimateContextTokens(systemParts, next) <= inputBudget) turns.unshift(candidate);
+      else if (index === convertedTurns.length - 1) turns.unshift(fitLatestTurn(systemParts, candidate, inputBudget));
+    }
+    const visionUsed = turns.some((turn) => turn.content.some((part) => part.type === 'image'));
+
+    const summaryLines = activeSummaries
+      .slice()
+      .sort((a, b) => a.from_seq - b.from_seq)
+      .map((summary) => `· ${summary.content}`);
+    const usedSummaries = addBudgetedLines(systemParts, turns, '以前聊过的重点（阶段摘要）：', summaryLines, inputBudget);
+    const memoryLines = recall.memories.map((memory) => `· [${memory.kind}] ${memory.content}`);
+    const usedMemories = addBudgetedLines(systemParts, turns, '关于用户你已经知道的事：', memoryLines, inputBudget);
+    const usedWorldEntries = addBudgetedLines(
+      systemParts,
+      turns,
+      '当前世界状态（只使用仍启用且未冲突的条目；用户或管理员设定优先）：',
+      worldLines,
+      inputBudget
+    );
+
+    tryAddSystemPart(systemParts, turns, buildMultimediaInstructions(persona, opts), inputBudget);
+    if (opts.capabilityNotes.length > 0) {
+      tryAddSystemPart(systemParts, turns, `当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`, inputBudget);
+    }
+    tryAddSystemPart(systemParts, turns, `现在的时间是 ${new Date().toISOString()}。`, inputBudget);
+
+    const estimatedInputTokens = estimateContextTokens(systemParts, turns);
     return {
       system: systemParts.filter(Boolean).join('\n\n'),
       turns,
-      usedMemories: recall.memories.length,
+      usedMemories,
       memoryStrategy: recall.strategy,
       memoryFallbackReason: recall.fallbackReason,
-      summaryCount: activeSummaries.length,
-      recentCount: recent.length,
+      summaryCount: usedSummaries,
+      recentCount: turns.length,
       visionUsed,
-      worldEntries: worldContext ? worldContext.split('\n').filter((line) => line.startsWith('· ')).length : 0
+      worldEntries: usedWorldEntries,
+      inputBudget,
+      estimatedInputTokens,
+      droppedSummaries: activeSummaries.length - usedSummaries,
+      droppedMemories: recall.memories.length - usedMemories,
+      droppedWorldEntries: worldLines.length - usedWorldEntries,
+      droppedRecentMessages: convertedTurns.length - turns.length
     };
   }
 
@@ -134,6 +159,71 @@ export class ContextBuilder {
     if (textBits.length > 0) parts.unshift({ type: 'text', text: textBits.join('\n') });
     return parts;
   }
+}
+
+export function estimateTextTokens(text: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const char of text) {
+    if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(char)) cjk++;
+    else if (!/\s/u.test(char)) other++;
+  }
+  return cjk + Math.ceil(other / 4);
+}
+
+function estimateContextTokens(systemParts: string[], turns: ChatTurn[]): number {
+  let total = estimateTextTokens(systemParts.filter(Boolean).join('\n\n')) + 4;
+  for (const turn of turns) {
+    total += 4;
+    for (const part of turn.content) {
+      total += part.type === 'text' ? estimateTextTokens(part.text) : 1024;
+    }
+  }
+  return total;
+}
+
+function tryAddSystemPart(systemParts: string[], turns: ChatTurn[], part: string, budget: number): boolean {
+  if (!part.trim()) return false;
+  if (estimateContextTokens([...systemParts, part], turns) > budget) return false;
+  systemParts.push(part);
+  return true;
+}
+
+function addBudgetedLines(systemParts: string[], turns: ChatTurn[], heading: string, lines: string[], budget: number): number {
+  const accepted: string[] = [];
+  for (const line of lines) {
+    const block = `${heading}\n${[...accepted, line].join('\n')}`;
+    if (estimateContextTokens([...systemParts, block], turns) > budget) continue;
+    accepted.push(line);
+  }
+  if (accepted.length > 0) systemParts.push(`${heading}\n${accepted.join('\n')}`);
+  return accepted.length;
+}
+
+function trimToTokenEstimate(text: string, maxTokens: number): string {
+  if (estimateTextTokens(text) <= maxTokens) return text;
+  const chars = [...text];
+  let low = 0;
+  let high = chars.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (estimateTextTokens(chars.slice(0, mid).join('')) <= maxTokens) low = mid;
+    else high = mid - 1;
+  }
+  return chars.slice(0, low).join('');
+}
+
+function fitLatestTurn(systemParts: string[], turn: ChatTurn, budget: number): ChatTurn {
+  const flattened = turn.content
+    .map((part) => part.type === 'text' ? part.text : '[图片]')
+    .filter(Boolean)
+    .join('\n');
+  const shell: ChatTurn = { role: turn.role, content: [{ type: 'text', text: '' }] };
+  const available = Math.max(16, budget - estimateContextTokens(systemParts, [shell]));
+  return {
+    role: turn.role,
+    content: [{ type: 'text', text: trimToTokenEstimate(flattened, available) }]
+  };
 }
 
 function plainText(msg: ChatMessage): string {

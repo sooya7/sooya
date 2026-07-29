@@ -164,6 +164,15 @@ export class MessageRepo {
       .run(status, error ?? null, nowIso(), messageId);
   }
 
+  updateMeta(messageId: string, patch: Record<string, unknown>): void {
+    const row = this.db.prepare('SELECT meta_json FROM messages WHERE id = ?').get(messageId) as { meta_json: string } | undefined;
+    if (!row) return;
+    let current: Record<string, unknown> = {};
+    try { current = JSON.parse(row.meta_json) as Record<string, unknown>; } catch { /* replace invalid historical metadata */ }
+    this.db.prepare('UPDATE messages SET meta_json = ?, updated_at = ? WHERE id = ?')
+      .run(JSON.stringify({ ...current, ...patch }), nowIso(), messageId);
+  }
+
   touch(messageId: string): void {
     this.db.prepare('UPDATE messages SET updated_at = ? WHERE id = ?').run(nowIso(), messageId);
   }
