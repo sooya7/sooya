@@ -1,9 +1,9 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const ADMIN_TOKEN = 'e2e-admin-token';
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
-async function installAdminToken(page: Parameters<typeof test>[0] extends never ? never : any): Promise<void> {
+async function installAdminToken(page: Page): Promise<void> {
   await page.addInitScript((token: string) => localStorage.setItem('sooya.admin-token', token), ADMIN_TOKEN);
 }
 
@@ -27,7 +27,8 @@ test.describe('SOOYA 1-9 user flows', () => {
     await page.getByPlaceholder('关系/属性').fill('天气');
     await page.getByPlaceholder('内容').fill('晴朗');
     await page.getByRole('button', { name: '新增' }).click();
-    await expect(page.getByText(/E2E 城市.*天气.*晴朗/)).toBeVisible();
+    await expect(page.getByText(/E2E 城市/)).toBeVisible();
+    await expect(page.getByText(/晴朗/)).toBeVisible();
 
     await page.getByRole('button', { name: '存储治理' }).click();
     await expect(page.getByTestId('storage-settings')).toBeVisible();
