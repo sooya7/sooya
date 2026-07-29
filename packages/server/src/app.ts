@@ -23,7 +23,7 @@ import { MemoryService } from './core/memory.js';
 import { ContextBuilder } from './core/context.js';
 import { Summarizer } from './core/summarizer.js';
 import { Replier } from './core/replier.js';
-import { publicFailure, redactDiagnostic } from './core/public-error.js';
+import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
 import { WorldEngine } from './core/world.js';
 import { PushService } from './core/push.js';
 import { StorageService } from './core/storage.js';
@@ -208,6 +208,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const state = { startedAt: new Date().toISOString(), dbRecovered: opened.recovered, dbRecoveredFrom: opened.recoveredFrom, version: VERSION };
   const server: FastifyInstance = Fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, bodyLimit: env.MAX_BODY_BYTES, trustProxy: true });
   server.setErrorHandler((error, _request, reply) => {
+    if (isSafeApplicationError(error)) {
+      void reply.code(error.statusCode).send({ error: error.code, message: error.message });
+      return;
+    }
     const statusCode =
       typeof error === 'object' && error !== null && 'statusCode' in error && typeof error.statusCode === 'number'
         ? error.statusCode

@@ -21,24 +21,31 @@ describe('public error helpers', () => {
   });
 
   it('redacts credentials, secret assignments, secret URL parameters, and absolute paths', () => {
-    const diagnostic = redactDiagnostic(
-      new Error(
-        'Bearer sk-secret-upstream apiKey=sk-assignment token: tok-value secret="hidden" ' +
-          'https://user:pass@example.test/v1?api_key=sk-query&token=tok-query ' +
-          'C:\\sooya\\private\\provider.ts /opt/sooya/private/provider.ts'
-      )
+    const error = new Error(
+      'Bearer sk-secret-upstream apiKey=sk-assignment token: tok-value secret="hidden" client_secret=hunter2 ' +
+        'https://user:p@ss@example.test/path?token=abc&client_secret=hunter2'
     );
+    error.stack =
+      `${error.name}: ${error.message}\n` +
+      '    at load (C:\\Users\\name\\My Project\\provider file.ts:10:2)\n' +
+      '    at start (/opt/sooya/My Project/provider file.ts:20:4)\n' +
+      '    at esm (file:///C:/Users/name/My%20Project/file.ts:30:6)';
+    const diagnostic = redactDiagnostic(error);
+
     expect(diagnostic).toContain('[REDACTED]');
     for (const secret of [
       'sk-secret-upstream',
       'sk-assignment',
       'tok-value',
       'hidden',
-      'user:pass',
-      'sk-query',
-      'tok-query',
-      'C:\\sooya\\private\\provider.ts',
-      '/opt/sooya/private/provider.ts'
+      'hunter2',
+      'user:p@ss',
+      'ss@example.test',
+      'token=abc',
+      'client_secret=hunter2',
+      'C:\\Users\\name\\My Project\\provider file.ts',
+      '/opt/sooya/My Project/provider file.ts',
+      'file:///C:/Users/name/My%20Project/file.ts'
     ]) {
       expect(diagnostic).not.toContain(secret);
     }
@@ -73,13 +80,32 @@ describe('Fastify error boundary', () => {
     expect(JSON.stringify(diagnostic)).not.toContain('/opt/sooya/private/route.ts');
   });
 
-  it('does not alter safe explicit application error responses', async () => {
+  it('preserves status, code, and message for explicitly safe thrown application errors', async () => {
     h = await createHarness();
-    h.app.server.get('/api/test-expected-error', async (_request, reply) => {
-      return reply.code(409).send({ error: 'safe_conflict', message: '请求状态冲突' });
+    h.app.server.get('/api/test-expected-error', async () => {
+      throw Object.assign(new Error('请求状态冲突'), {
+        statusCode: 409,
+        code: 'safe_conflict',
+        sooyaPublicSafe: true
+      });
     });
     const response = await h.app.server.inject({ method: 'GET', url: '/api/test-expected-error' });
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({ error: 'safe_conflict', message: '请求状态冲突' });
+  });
+
+  it('does not trust arbitrary thrown framework 4xx messages', async () => {
+    h = await createHarness();
+    h.app.server.get('/api/test-internal-4xx', async () => {
+      throw Object.assign(new Error('internal parser detail sk-secret-upstream'), {
+        statusCode: 400,
+        code: 'FST_INTERNAL_DETAIL'
+      });
+    });
+    const response = await h.app.server.inject({ method: 'GET', url: '/api/test-internal-4xx' });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'bad_request', message: '请求格式不正确。' });
+    expect(response.body).not.toContain('sk-secret-upstream');
+    expect(response.body).not.toContain('FST_INTERNAL_DETAIL');
   });
 });
