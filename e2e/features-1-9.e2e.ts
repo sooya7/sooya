@@ -12,23 +12,35 @@ test.describe('SOOYA 1-9 user flows', () => {
     await installAdminToken(page);
     await page.goto('/admin/features');
     await expect(page.getByRole('heading', { name: '双方头像' })).toBeVisible();
-    await expect(page.getByTestId('avatar-settings')).toBeVisible();
+    const avatarSettings = page.getByTestId('avatar-settings');
+    await expect(avatarSettings).toBeVisible();
+    await avatarSettings.locator('input[type="file"]').nth(0).setInputFiles({ name: 'assistant-e2e.png', mimeType: 'image/png', buffer: PNG });
+    await expect(avatarSettings.getByAltText('SOOYA 头像预览')).toHaveAttribute('src', /\/api\/media\//);
+    await avatarSettings.locator('input[type="file"]').nth(1).setInputFiles({ name: 'user-e2e.png', mimeType: 'image/png', buffer: PNG });
+    await expect(avatarSettings.getByAltText('用户头像预览')).toHaveAttribute('src', /\/api\/media\//);
 
     await page.getByRole('button', { name: '情绪语音' }).click();
     await expect(page.getByTestId('voice-settings')).toBeVisible();
     await expect(page.getByText(/TTS 能力可用/)).toBeVisible();
+    await expect(page.getByLabel('音调')).toBeDisabled();
+    await expect(page.getByLabel('音量')).toBeDisabled();
     await page.getByRole('button', { name: '保存语音配置' }).click();
     await expect(page.getByText('情绪语音配置已保存并立即生效')).toBeVisible();
     await expect(page.getByRole('button', { name: '试听' })).toBeEnabled();
 
     await page.getByRole('button', { name: '世界引擎' }).click();
-    await expect(page.getByTestId('world-settings')).toBeVisible();
+    const worldSettings = page.getByTestId('world-settings');
+    await expect(worldSettings).toBeVisible();
     await page.getByPlaceholder('主体').fill('E2E 城市');
     await page.getByPlaceholder('关系/属性').fill('天气');
     await page.getByPlaceholder('内容').fill('晴朗');
     await page.getByRole('button', { name: '新增' }).click();
-    await expect(page.getByText(/E2E 城市/)).toBeVisible();
-    await expect(page.getByText(/晴朗/)).toBeVisible();
+    const worldRow = worldSettings.locator('.admin-list-row').filter({ hasText: 'E2E 城市' });
+    await expect(worldRow).toContainText('晴朗');
+    await worldRow.getByRole('button', { name: '编辑' }).click();
+    await page.getByLabel('编辑内容').fill('多云');
+    await page.getByRole('button', { name: '保存编辑' }).click();
+    await expect(worldSettings.locator('.admin-list-row').filter({ hasText: 'E2E 城市' })).toContainText('多云');
 
     await page.getByRole('button', { name: '存储治理' }).click();
     await expect(page.getByTestId('storage-settings')).toBeVisible();
