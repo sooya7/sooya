@@ -1,21 +1,8 @@
 import { useEffect, useState } from 'react';
-import { getToken } from '../lib/api.js';
+import { requestPushApi } from '../lib/pushApi.js';
+import { createVisibilitySynchronizer } from '../lib/visibilitySync.js';
 
 type PushState = 'unsupported' | 'prompt' | 'subscribed' | 'denied' | 'working' | 'error';
-
-function authHeaders(): Headers {
-  const headers = new Headers({ 'content-type': 'application/json' });
-  const token = getToken();
-  if (token) headers.set('x-sooya-token', token);
-  return headers;
-}
-
-async function pushRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { ...init, headers: init.headers ?? authHeaders() });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message ?? body.error ?? `通知请求失败 (${response.status})`);
-  return body as T;
-}
 
 function fromBase64Url(value: string): ArrayBuffer {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
@@ -35,14 +22,14 @@ async function subscribe(): Promise<PushSubscription> {
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') throw new Error(permission === 'denied' ? '通知权限已被浏览器拒绝' : '没有获得通知权限');
   const registration = await navigator.serviceWorker.ready;
-  const { publicKey } = await pushRequest<{ publicKey: string }>('/api/push/public-key');
+  const { publicKey } = await requestPushApi<{ publicKey: string }>('/api/push/public-key');
   const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromBase64Url(publicKey) });
-  await pushRequest('/api/push/subscribe', { method: 'POST', body: JSON.stringify(subscription.toJSON()) });
+  await requestPushApi('/api/push/subscribe', { method: 'POST', body: JSON.stringify(subscription.toJSON()) });
   return subscription;
 }
 
 async function unsubscribe(subscription: PushSubscription): Promise<void> {
-  await pushRequest('/api/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: subscription.endpoint }) });
+  await requestPushApi('/api/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: subscription.endpoint }) });
   await subscription.unsubscribe();
 }
 
@@ -65,12 +52,14 @@ export function NotificationBridge() {
 
   useEffect(() => {
     if (!subscription) return;
-    const sync = () => {
-      void pushRequest('/api/push/visibility', {
+    const synchronizer = createVisibilitySynchronizer(
+      (visible) => requestPushApi('/api/push/visibility', {
         method: 'POST',
-        body: JSON.stringify({ endpoint: subscription.endpoint, visible: document.visibilityState === 'visible' })
-      }).catch(() => undefined);
-    };
+        body: JSON.stringify({ endpoint: subscription.endpoint, visible })
+      }),
+      () => document.visibilityState === 'visible'
+    );
+    const sync = () => synchronizer.notify();
     sync();
     document.addEventListener('visibilitychange', sync);
     window.addEventListener('focus', sync);
@@ -79,6 +68,7 @@ export function NotificationBridge() {
       document.removeEventListener('visibilitychange', sync);
       window.removeEventListener('focus', sync);
       window.removeEventListener('blur', sync);
+      synchronizer.dispose();
     };
   }, [subscription]);
 
