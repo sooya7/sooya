@@ -10,6 +10,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { createHarness, sendText, type Harness } from './helpers/harness.js';
 import { ConfigStore } from '../src/config/store.js';
@@ -24,7 +25,7 @@ afterEach(async () => {
   await current.cleanup();
 });
 
-const REPO_ROOT = path.resolve(new URL('../../../', import.meta.url).pathname);
+const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const tempDirs: string[] = [];
 
 function makeTempDir(prefix: string): string {

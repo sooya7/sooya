@@ -3,11 +3,12 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ConfigStore } from '../src/config/store.js';
 import { createHarness, sendText, type Harness } from './helpers/harness.js';
 
-const REPO_ROOT = path.resolve(new URL('../../../', import.meta.url).pathname);
+const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 let harness: Harness | null = null;
 const tempDirs: string[] = [];
 

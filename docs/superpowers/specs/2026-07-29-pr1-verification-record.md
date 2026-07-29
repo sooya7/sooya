@@ -34,3 +34,7 @@
 ## M-002 取证
 
 GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每次超时 60 秒并重试；08:59:33 输出 `The operation was canceled`。工作流 job 配置 `timeout-minutes: 35`，时间线符合 job 超时。并发策略虽启用 `cancel-in-progress`，但没有后继 run 覆盖该 run 的证据。
+
+## Windows 本地环境阻塞
+
+`test/regression.test.ts` 的 Bash 语法测试在 Windows 下执行 `bash -n C:\\Users\\iulze\\Desktop\\sooya\\deploy\\backup.sh` 时失败；尝试使用 `wsl.exe wslpath -a` 也失败，WSL 实际收到 `C:UsersiulzeDesktopsooyadeploybackup.sh`。该环境无法传递 Windows 路径，未将 WSL 特例写入测试。Linux CI 仍原生执行 Bash 语法检查；此项仅标记为本机环境阻塞，不能视为通过。
