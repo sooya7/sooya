@@ -1,5 +1,6 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { MediaStore } from '../media/store.js';
+import type { MediaRow } from '../db/repos/media.repo.js';
 import type { StickerLibrary } from '../media/stickers.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ContextBuilder } from './context.js';
@@ -14,7 +15,7 @@ import {
   type ModelDirectives,
   type UserDirectives
 } from './directives.js';
-import { ProviderNotConfiguredError } from '../providers/types.js';
+import { ProviderNotConfiguredError, type GeneratedImage } from '../providers/types.js';
 import { HttpTimeoutError } from '../util/http.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from './voice.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
@@ -261,13 +262,17 @@ export class Replier {
       // 3b. Image
       if (plan.imagePrompt) {
         this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: plan.imagePrompt.slice(0, 200) });
+        const reference = await this.referenceImage(userMessage);
         const partId = this.deps.messages.appendPart(shell.id, {
           type: 'image',
           status: 'pending',
-          meta: { prompt: plan.imagePrompt.slice(0, 500) }
+          meta: {
+            prompt: plan.imagePrompt.slice(0, 500),
+            ...(reference ? { referenceMediaId: reference.row.id } : {})
+          }
         });
         try {
-          const img = await this.deps.capabilities.imageProvider().generate(plan.imagePrompt);
+          const img = await this.generateImage(plan.imagePrompt, reference);
           const media = await this.deps.media.save({
             kind: 'image',
             origin: 'generated',
@@ -448,6 +453,49 @@ export class Replier {
     });
     for (const event of events) this.deps.bus.fanout(event);
     return value;
+  }
+
+  /**
+   * An image the user attached to the message being answered. Only the current
+   * message counts: reaching further back would silently edit an unrelated
+   * picture when the prompt has nothing to do with it.
+   */
+  private async referenceImage(userMessage: ChatMessage): Promise<{ row: MediaRow; data: Buffer } | null> {
+    for (let i = userMessage.content.length - 1; i >= 0; i -= 1) {
+      const part = userMessage.content[i];
+      if (part?.type !== 'image') continue;
+      const id = part.media?.id ?? part.mediaId ?? null;
+      if (!id) continue;
+      try {
+        const found = await this.deps.media.read(id);
+        if (found) return found;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Editing the reference keeps the user's picture recognisable. A provider
+   * that rejects the edits endpoint still gets to produce something, so fall
+   * back to generating from the prompt alone.
+   */
+  private async generateImage(
+    prompt: string,
+    reference: { row: MediaRow; data: Buffer } | null
+  ): Promise<GeneratedImage> {
+    const provider = this.deps.capabilities.imageProvider();
+    if (!reference) return await provider.generate(prompt);
+    try {
+      return await provider.edit(prompt, reference.data, { mime: reference.row.mime });
+    } catch (err) {
+      if (err instanceof ProviderNotConfiguredError) throw err;
+      this.deps.errorLog.add('reply.image.edit', 'image_edit_unavailable', {
+        diagnostic: redactDiagnostic(err as Error)
+      });
+      return await provider.generate(prompt);
+    }
   }
 
   private recentStickerIds(window: number): string[] {
