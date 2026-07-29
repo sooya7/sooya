@@ -1128,9 +1128,15 @@
   color: #f5f7fc;
 }
 
-.admin-sidebar .admin-brand-copy small,
-.admin-sidebar .admin-side-action {
+.admin-sidebar .admin-brand-copy small {
   color: rgba(214, 222, 238, 0.55);
+}
+
+/* The base pill is a light surface, which is invisible on the ink sidebar. */
+.admin-sidebar .admin-side-action {
+  color: rgba(214, 222, 238, 0.62);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .admin-sidebar .admin-side-action:hover {
