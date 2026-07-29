@@ -12,7 +12,7 @@
 | M-008 | 无法确认 | 待核验预览与 apply 的报告绑定路径。 |
 | M-009 | 无法确认 | 待核验文件与数据库删除补偿路径。 |
 | M-010 | 已被后续提交修复 | `7afd647` 移除普通/管理媒体及 SSE 的长期 query token，改用分作用域 Bearer fetch + Blob URL；受保护媒体 network-only。相关自动化通过，完整 Server 聚合命令仍无汇总超时，原生移动端 Web Share 待真机验证。 |
-| M-011 | 确定存在 | 媒体仓库使用 `value_json LIKE '%id%'`。 |
+| M-011 | 已被后续提交修复 | `13286b1` 将世界数据媒体引用从模糊 `LIKE` 改为 `json_tree` 对 `mediaId/media_id` 文本值的精确匹配，并同步引用统计、未引用清理和孤立上传扫描。 |
 | M-012 | 测试不足 | 待核验 ZIP 实际内容。 |
 | M-013 | 无法确认 | 待核验 SW 缓存键版本行为。 |
 | M-014 | 真机待验证 | 历史状态需 E2E 复现。 |
@@ -66,3 +66,26 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - `npx playwright test --project=desktop --grep "generates and displays an image|playable voice message|feature center exposes|gallery supports|service worker keeps protected media" --reporter=list`：5/5 通过。断言普通/管理 Bearer Header、Blob DOM、无 token URL/DOM、Blob 生命周期、下载/分享安全降级和 Cache Storage 无受保护媒体。
 
 限制：`npm run test -w @sooya/server` 的完整聚合运行在外层 364 秒超时前未输出最终 Vitest 汇总，因此不能记为完整 Server 套件通过；上述 M-010 直接相关文件均已拆分通过。原生 iOS/Android Web Share、移动浏览器 Blob 生命周期仍标记为真机待验证。
+
+## M-011 修复与验证
+
+提交：`13286b1 fix(storage): use exact structured media references`。
+
+失败证据：新增测试首次运行时，`media_abc` 在仅有普通 JSON 文本提及和正式引用 `media_abcd` 的情况下被旧 `LIKE '%media_abc%'` 统计为 2 个世界引用，预期为 0。
+
+修复后：
+
+- `world_entries.value_json` 仅在有效 JSON 中递归查找 key 为 `mediaId` / `media_id`、type 为 text、value 与媒体 ID 完全相等的字段。
+- `media_abc` 不再匹配 `media_abcd`；普通 `note` 文本提及不算引用；嵌套正式字段精确阻止删除。
+- 消息 `message_parts.media_id`、贴纸 `stickers.media_id` 继续使用精确外键字段。
+- SOOYA 头像和用户头像继续由 Persona URL 的精确媒体 ID 解析保护；两种头像的永久删除均返回 409。
+- 禁用世界条目不计引用；损坏的历史 `value_json` 通过 `json_valid` 安全忽略，不中断清理。
+- 所有消息、贴纸、世界字段和头像引用解除后，永久删除返回 200 且媒体记录消失。
+- 同一精确逻辑覆盖 `references()`、`listUnreferenced()` 和 `listOrphanUploads()`，避免统计正确但清理路径仍误判。
+
+验证：
+
+- 首次 RED：`npm run test -w @sooya/server -- --run test/media-references.test.ts`，1 failed，实际 worldEntries=2、预期 0。
+- GREEN：同一命令 1/1 通过，正常退出。
+- 回归：`npm run test -w @sooya/server -- --run test/media-references.test.ts test/features-1-9.test.ts`，2 files、7/7 通过。
+- `npm run typecheck -w @sooya/server`、`npm run build -w @sooya/server`：通过。
