@@ -49,3 +49,6 @@ export class MaintenanceCoordinator {
     }
   }
 }
+
+/** One coordinator per server process, shared by storage, backup and chat routes. */
+export const maintenanceCoordinator = new MaintenanceCoordinator();
