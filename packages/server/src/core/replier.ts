@@ -17,6 +17,7 @@ import {
 import { ProviderNotConfiguredError } from '../providers/types.js';
 import { HttpTimeoutError } from '../util/http.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from './voice.js';
+import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
 
 export interface ReplyOptions {
   recentMessages: number;
@@ -28,7 +29,7 @@ export interface ReplyOutcome {
   ok: boolean;
   parts: string[];
   degraded: string[];
-  error?: string;
+  error?: PublicFailure;
 }
 
 const NO_MODEL_FALLBACK =
@@ -160,12 +161,16 @@ export class Replier {
           );
         } catch (err) {
           const e = err as Error;
-          this.deps.errorLog.add('reply.chat', e.message);
+          const failure = publicFailure('provider_unavailable');
+          this.deps.errorLog.add('reply.chat', failure.code, {
+            incidentId: failure.incidentId,
+            diagnostic: redactDiagnostic(e)
+          });
           if (!visibleText) {
             const note =
               e instanceof HttpTimeoutError
                 ? '（模型响应超时了，稍后再试一次吧。）'
-                : `（模型请求失败：${shortError(e)}）`;
+                : `（${failure.message}）`;
             pushDelta(note);
             degraded.push(`chat:${e.name}`);
           } else {
@@ -267,9 +272,13 @@ export class Replier {
           this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'image', mediaId: media.id });
         } catch (err) {
           const e = err as Error;
-          const reason = e instanceof ProviderNotConfiguredError ? '图片生成没有配置' : shortError(e);
-          this.deps.messages.updatePart(partId, { status: 'failed', error: reason });
-          this.deps.errorLog.add('reply.image', e.message);
+          const failure = publicFailure('provider_unavailable');
+          const reason = e instanceof ProviderNotConfiguredError ? '图片生成服务没有配置。' : failure.message;
+          this.deps.messages.updatePart(partId, { status: 'failed', error: reason, meta: { failure: { ...failure, message: reason } } });
+          this.deps.errorLog.add('reply.image', failure.code, {
+            incidentId: failure.incidentId,
+            diagnostic: redactDiagnostic(e)
+          });
           degraded.push(`image:${e.name}`);
           // Never lose the text: add an explanatory note instead.
           if (!finalText) {
@@ -333,9 +342,13 @@ export class Replier {
           this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'audio', mediaId: media.id });
         } catch (err) {
           const e = err as Error;
-          const reason = e instanceof ProviderNotConfiguredError ? '语音合成没有配置' : shortError(e);
-          this.deps.messages.updatePart(partId, { status: 'failed', error: reason });
-          this.deps.errorLog.add('reply.tts', e.message);
+          const failure = publicFailure('provider_unavailable');
+          const reason = e instanceof ProviderNotConfiguredError ? '语音合成服务没有配置。' : failure.message;
+          this.deps.messages.updatePart(partId, { status: 'failed', error: reason, meta: { failure: { ...failure, message: reason } } });
+          this.deps.errorLog.add('reply.tts', failure.code, {
+            incidentId: failure.incidentId,
+            diagnostic: redactDiagnostic(e)
+          });
           degraded.push(`tts:${e.name}`);
           // TTS failure falls back to text — which is already present. When it
           // is not, restore the FULL text rather than the clip that would have
@@ -377,18 +390,30 @@ export class Replier {
       return { messageId: shell.id, ok: true, parts: producedParts, degraded };
     } catch (err) {
       const e = err as Error;
-      this.deps.errorLog.add('reply', e.message, { stack: e.stack?.slice(0, 1000) });
-      this.deps.messages.setStatus(shell.id, 'failed', shortError(e));
+      const failure = publicFailure('reply_failed');
+      this.deps.errorLog.add('reply', failure.code, {
+        incidentId: failure.incidentId,
+        diagnostic: redactDiagnostic(e)
+      });
+      this.deps.messages.setStatus(shell.id, 'failed', failure.message);
+      this.deps.messages.updateMeta(shell.id, { failure });
       const failed = this.deps.messages.get(shell.id);
       if (failed && failed.content.length === 0) {
-        this.deps.messages.appendPart(shell.id, { type: 'text', text: `（回复失败：${shortError(e)}）`, status: 'sent' });
+        this.deps.messages.appendPart(shell.id, {
+          type: 'text',
+          text: `（${failure.message} 事件编号：${failure.incidentId}）`,
+          status: 'sent',
+          meta: { failure }
+        });
       }
       this.deps.bus.publish('reply.failed', {
         messageId: shell.id,
-        error: shortError(e),
+        code: failure.code,
+        error: failure.message,
+        incidentId: failure.incidentId,
         message: this.deps.messages.get(shell.id)
       });
-      return { messageId: shell.id, ok: false, parts: producedParts, degraded, error: shortError(e) };
+      return { messageId: shell.id, ok: false, parts: producedParts, degraded, error: failure };
     } finally {
       this.active = false;
     }
@@ -487,8 +512,4 @@ export function guessEmotion(text: string): string {
     if (re.test(text)) return emotion;
   }
   return '开心';
-}
-
-function shortError(err: Error): string {
-  return `${err.name}: ${err.message}`.slice(0, 200);
 }

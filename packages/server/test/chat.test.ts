@@ -418,6 +418,43 @@ describe('history pagination', () => {
 });
 
 describe('model failures', () => {
+  it('contains unexpected reply failure details on every client-visible surface', async () => {
+    const sensitive =
+      'upstream failure Bearer sk-secret-upstream at https://user:pass@api.example.test/v1?api_key=sk-secret-upstream in C:\\sooya\\private\\provider.ts';
+    h = await createHarness();
+    (h.app.services.context as any).build = async () => {
+      throw new Error(sensitive);
+    };
+
+    const { res, body } = await sendText(h.app, '触发失败', 'public-error-1');
+    const failedEvent = h.app.services.bus.replay(0).find((event) => event.type === 'reply.failed');
+    const publicSurfaces = [res.body, JSON.stringify(body.reply), JSON.stringify(body.outcome), JSON.stringify(failedEvent)];
+    for (const surface of publicSurfaces) {
+      expect(surface).not.toContain('sk-secret-upstream');
+      expect(surface).not.toContain('api.example.test');
+      expect(surface).not.toContain('C:\\sooya\\private\\provider.ts');
+    }
+
+    expect(body.outcome.error).toMatchObject({
+      code: 'reply_failed',
+      message: expect.any(String),
+      incidentId: expect.stringMatching(/^inc_/)
+    });
+    expect(body.reply.error).toBe(body.outcome.error.message);
+    expect(failedEvent?.payload).toMatchObject({
+      code: 'reply_failed',
+      incidentId: body.outcome.error.incidentId,
+      error: body.outcome.error.message
+    });
+
+    const diagnostic = h.app.repos.errors.list(10).find((entry) => entry.scope === 'reply');
+    expect(diagnostic).toBeTruthy();
+    expect(JSON.stringify(diagnostic)).toContain(body.outcome.error.incidentId);
+    expect(JSON.stringify(diagnostic)).toContain('upstream failure');
+    expect(JSON.stringify(diagnostic)).not.toContain('sk-secret-upstream');
+    expect(JSON.stringify(diagnostic)).not.toContain('C:\\sooya\\private\\provider.ts');
+  });
+
   it('surfaces a timeout as a visible message rather than losing the turn', async () => {
     h = await createHarness({ chat: { script: [['unused']] } });
     h.setChatError(Object.assign(new Error('model request timed out after 5000ms'), { name: 'HttpTimeoutError' }));

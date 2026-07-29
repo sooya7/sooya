@@ -23,6 +23,7 @@ import { MemoryService } from './core/memory.js';
 import { ContextBuilder } from './core/context.js';
 import { Summarizer } from './core/summarizer.js';
 import { Replier } from './core/replier.js';
+import { publicFailure, redactDiagnostic } from './core/public-error.js';
 import { WorldEngine } from './core/world.js';
 import { PushService } from './core/push.js';
 import { StorageService } from './core/storage.js';
@@ -206,7 +207,41 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
 
   const state = { startedAt: new Date().toISOString(), dbRecovered: opened.recovered, dbRecoveredFrom: opened.recoveredFrom, version: VERSION };
   const server: FastifyInstance = Fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, bodyLimit: env.MAX_BODY_BYTES, trustProxy: true });
-  await server.register(cors, { origin: true, credentials: true });
+  server.setErrorHandler((error, _request, reply) => {
+    const statusCode =
+      typeof error === 'object' && error !== null && 'statusCode' in error && typeof error.statusCode === 'number'
+        ? error.statusCode
+        : undefined;
+    if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+      const safeExpectedErrors: Record<number, { error: string; message: string }> = {
+        400: { error: 'bad_request', message: '请求格式不正确。' },
+        401: { error: 'unauthorized', message: '需要有效的访问凭据。' },
+        403: { error: 'forbidden', message: '无权执行此请求。' },
+        404: { error: 'not_found', message: '请求的资源不存在。' },
+        409: { error: 'conflict', message: '请求状态冲突。' },
+        413: { error: 'request_too_large', message: '请求内容过大。' },
+        429: { error: 'too_many_requests', message: '请求过于频繁，请稍后重试。' }
+      };
+      const safe = safeExpectedErrors[statusCode] ?? { error: 'request_rejected', message: '请求无法处理。' };
+      void reply.code(statusCode).send(safe);
+      return;
+    }
+    const failure = publicFailure('internal_error');
+    const diagnostic = redactDiagnostic(error);
+    repos.errors.add('http.unexpected', failure.code, { incidentId: failure.incidentId, diagnostic });
+    server.log.error({ incidentId: failure.incidentId, diagnostic }, 'unexpected request failure');
+    void reply.code(500).send({
+      error: failure.code,
+      message: failure.message,
+      incidentId: failure.incidentId
+    });
+  });
+  const allowedOrigins = new Set(env.CORS_ALLOWED_ORIGINS);
+  await server.register(cors, {
+    origin: (origin, callback) => callback(null, origin !== undefined && allowedOrigins.has(origin)),
+    credentials: false,
+    allowedHeaders: ['content-type', 'x-sooya-token', 'x-admin-token', 'authorization']
+  });
   await server.register(multipart, { limits: { fileSize: env.MAX_UPLOAD_BYTES, files: env.MAX_UPLOAD_FILES, fields: 20, fieldSize: 64 * 1024 } });
 
   const app: SooyaApp = {
