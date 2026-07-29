@@ -1,25 +1,46 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { mediaUrl } from '../lib/api.js';
+import { getToken } from '../lib/api.js';
+import { fetchAuthenticatedMedia, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
+import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 import type { ChatMessage, MessagePart } from '../lib/types.js';
 import { AudioBubble } from './AudioBubble.js';
+import { AuthenticatedImage } from './AuthenticatedMedia.js';
 
 function formatClock(iso: string): string { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; }
 function formatBytes(n: number): string { return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`; }
 function messageText(message: ChatMessage): string { return message.content.map((part) => part.type === 'text' ? part.text ?? '' : part.type === 'audio' ? part.transcript ?? '' : '').filter(Boolean).join('\n'); }
 async function copy(text: string): Promise<void> { if (navigator.clipboard) await navigator.clipboard.writeText(text); else { const area = document.createElement('textarea'); area.value = text; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); } }
-async function savePart(part: MessagePart): Promise<void> { if (!part.media) return; const src = mediaUrl(part.media.url); try { const response = await fetch(src); if (!response.ok) throw new Error(String(response.status)); const blob = await response.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = part.media.name ?? `sooya-${part.media.id}`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch { window.open(src, '_blank', 'noopener,noreferrer'); } }
+async function savePart(part: MessagePart): Promise<void> {
+  if (!part.media) return;
+  const result = await fetchAuthenticatedMedia(part.media.url, {
+    scope: 'user',
+    token: getToken(),
+    expected: part.type === 'image' ? 'image' : part.type === 'audio' ? 'audio' : 'file'
+  });
+  try {
+    const link = document.createElement('a');
+    link.href = result.url;
+    link.download = safeDownloadName(part.media.name, `sooya-${part.media.id}`);
+    link.click();
+  } finally {
+    window.setTimeout(() => releaseMediaUrl(result.url), 1000);
+  }
+}
 
 function ImagePart({ part, onOpen }: { part: MessagePart; onOpen?: (mediaId: string) => void }) {
   const [failed, setFailed] = useState(false);
+  const media = useAuthenticatedMedia(part.media?.url, 'user', 'image');
   if (part.status === 'failed') return <div className="bubble bubble-note">图片没有发出去{part.error ? `：${part.error}` : ''}</div>;
   if (part.status === 'pending' || !part.media) return <div className="bubble bubble-note pulsing">图片生成中…</div>;
   if (failed) return <div className="bubble bubble-note">图片加载失败</div>;
   const ratio = part.media.width && part.media.height ? part.media.width / part.media.height : undefined;
-  const src = mediaUrl(part.media.url); const alt = part.media.name ?? '图片';
-  return <button className="image-part" type="button" onClick={() => onOpen ? onOpen(part.media!.id) : window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id: part.media!.id } }))} aria-label="查看大图" data-media-id={part.media.id} data-src={src} data-alt={alt}><img src={src} alt={alt} loading="lazy" style={ratio ? { aspectRatio: String(ratio) } : undefined} onError={() => setFailed(true)} /></button>;
+  const { url, error } = media;
+  const alt = part.media.name ?? '图片';
+  if (error) return <div className="bubble bubble-note">{error}</div>;
+  return <button className="image-part" type="button" onClick={() => onOpen ? onOpen(part.media!.id) : window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id: part.media!.id } }))} aria-label="查看大图" data-media-id={part.media.id} data-src={url ?? ''} data-alt={alt}>{url && <img src={url} alt={alt} loading="lazy" style={ratio ? { aspectRatio: String(ratio) } : undefined} onError={() => setFailed(true)} />}</button>;
 }
-function StickerPart({ part }: { part: MessagePart }) { const [failed, setFailed] = useState(false); if (!part.media || failed) return null; return <img className="sticker-part" src={mediaUrl(part.media.url)} alt={String(part.meta?.stickerName ?? '表情')} loading="lazy" onError={() => setFailed(true)} />; }
-function FilePart({ part }: { part: MessagePart }) { if (!part.media) return <div className="bubble bubble-note">文件不可用</div>; return <a className="bubble bubble-file" href={mediaUrl(part.media.url)} target="_blank" rel="noreferrer" download><span className="file-icon">▣</span><span className="file-meta"><span className="file-name">{part.media.name ?? '文件'}</span><span className="file-size">{formatBytes(part.media.bytes)}</span></span></a>; }
+function StickerPart({ part }: { part: MessagePart }) { const [failed, setFailed] = useState(false); if (!part.media || failed) return null; return <AuthenticatedImage className="sticker-part" path={part.media.url} scope="user" alt={String(part.meta?.stickerName ?? '表情')} loading="lazy" onError={() => setFailed(true)} />; }
+function FilePart({ part }: { part: MessagePart }) { if (!part.media) return <div className="bubble bubble-note">文件不可用</div>; return <button className="bubble bubble-file" type="button" onClick={() => void savePart(part)}><span className="file-icon">▣</span><span className="file-meta"><span className="file-name">{part.media.name ?? '文件'}</span><span className="file-size">{formatBytes(part.media.bytes)}</span></span></button>; }
 
 interface Props {
   message: ChatMessage; personaName: string; avatar: string; userAvatar: string; showAvatar: boolean;
@@ -57,7 +78,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
       onPointerDown={(event) => { if (event.pointerType === 'mouse') return; press.current = { timer: window.setTimeout(() => openMenu(event.clientX, event.clientY), 520), x: event.clientX, y: event.clientY }; }}
       onPointerMove={(event) => { const current = press.current; if (current && Math.hypot(event.clientX - current.x, event.clientY - current.y) > 9) { clearTimeout(current.timer); press.current = null; } }}
       onPointerUp={() => { if (press.current) clearTimeout(press.current.timer); press.current = null; }} onPointerCancel={() => { if (press.current) clearTimeout(press.current.timer); press.current = null; }}>
-      <div className="avatar-slot">{showAvatar && <img className="avatar" src={mine ? userAvatar : avatar} alt={mine ? '我' : personaName} draggable={false} />}</div>
+      <div className="avatar-slot">{showAvatar && <AuthenticatedImage className="avatar" path={mine ? userAvatar : avatar} scope="user" alt={mine ? '我' : personaName} draggable={false} />}</div>
       <div className="msg-body">
         {message.replyTo && <div className="message-reply-preview">回复消息 · {message.replyTo.slice(-8)}</div>}
         <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': return part.text ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{part.text}</div> : null; case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} />; default: return null; } })}</div>

@@ -7,6 +7,18 @@ export interface StreamHandlers {
   onGap: (lastMessageSeq: number) => void;
 }
 
+export function buildStreamRequest(lastEventId: number, token: string | null): { url: string; init: RequestInit } {
+  const params = new URLSearchParams();
+  if (lastEventId > 0) params.set('lastEventId', String(lastEventId));
+  return {
+    url: `/api/stream${params.toString() ? `?${params.toString()}` : ''}`,
+    init: {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      cache: 'no-store'
+    }
+  };
+}
+
 /**
  * Durable SSE client.
  *
@@ -15,7 +27,7 @@ export interface StreamHandlers {
  * - asks the app to reconcile through REST when the server reports a gap
  */
 export class ChatStream {
-  private source: EventSource | null = null;
+  private controller: AbortController | null = null;
   private lastEventId = 0;
   private retry = 0;
   private timer: number | null = null;
@@ -46,7 +58,7 @@ export class ChatStream {
 
   start(): void {
     this.stopped = false;
-    this.connect();
+    void this.connect();
     window.addEventListener('online', this.handleOnline);
     document.addEventListener('visibilitychange', this.handleVisibility);
   }
@@ -56,71 +68,96 @@ export class ChatStream {
     window.removeEventListener('online', this.handleOnline);
     document.removeEventListener('visibilitychange', this.handleVisibility);
     if (this.timer) window.clearTimeout(this.timer);
-    this.source?.close();
-    this.source = null;
+    this.controller?.abort();
+    this.controller = null;
   }
 
   private handleOnline = () => {
-    if (!this.stopped && this.source === null) this.connect();
+    if (!this.stopped && this.controller === null) void this.connect();
   };
 
   private handleVisibility = () => {
     // Mobile browsers silently kill background EventSources.
-    if (document.visibilityState === 'visible' && !this.stopped && this.source === null) this.connect();
+    if (document.visibilityState === 'visible' && !this.stopped && this.controller === null) void this.connect();
   };
 
-  private connect(): void {
+  private async connect(): Promise<void> {
     if (this.stopped) return;
     this.handlers.onStateChange('connecting');
-    const params = new URLSearchParams();
-    if (this.lastEventId > 0) params.set('lastEventId', String(this.lastEventId));
     const token = getToken();
-    if (token) params.set('token', token);
-    const url = `/api/stream${params.toString() ? `?${params.toString()}` : ''}`;
-
-    let source: EventSource;
+    const request = buildStreamRequest(this.lastEventId, token);
+    const controller = new AbortController();
+    this.controller = controller;
     try {
-      source = new EventSource(url);
-    } catch {
-      this.scheduleReconnect();
-      return;
-    }
-    this.source = source;
-
-    source.onopen = () => {
+      const response = await fetch(request.url, { ...request.init, signal: controller.signal });
+      if (response.status === 401 || response.status === 403) {
+        this.handlers.onStateChange('unauthorized');
+        return;
+      }
+      if (!response.ok || !response.body) throw new Error(`stream failed (${response.status})`);
       this.retry = 0;
       this.handlers.onStateChange('online');
-    };
-
-    source.onerror = () => {
-      source.close();
-      if (this.source === source) this.source = null;
+      await this.readEvents(response.body, controller.signal);
+      if (!this.stopped && !controller.signal.aborted) throw new Error('stream ended');
+    } catch {
+      if (controller.signal.aborted || this.stopped) return;
       this.handlers.onStateChange('offline');
       this.scheduleReconnect();
-    };
+    } finally {
+      if (this.controller === controller) this.controller = null;
+    }
+  }
 
-    const handle = (type: string) => (evt: MessageEvent<string>) => {
-      if (evt.lastEventId) {
-        const seq = Number(evt.lastEventId);
-        if (Number.isFinite(seq)) this.setLastEventId(seq);
-      }
-      let data: Record<string, any> = {};
-      try {
-        data = JSON.parse(evt.data) as Record<string, any>;
-      } catch {
-        return;
-      }
-      if (typeof data.seq === 'number') this.setLastEventId(data.seq);
-      if (type === 'stream.ready') {
-        this.handlers.onStateChange('online');
-        if (data.gapPossible) this.handlers.onGap(Number(data.lastMessageSeq ?? 0));
-        if (typeof data.lastEventSeq === 'number') this.setLastEventId(data.lastEventSeq);
-        return;
-      }
-      this.handlers.onEvent(type, data);
-    };
+  private dispatch(type: string, rawData: string, eventId: string): void {
+    if (eventId) {
+      const seq = Number(eventId);
+      if (Number.isFinite(seq)) this.setLastEventId(seq);
+    }
+    let data: Record<string, any> = {};
+    try {
+      data = JSON.parse(rawData) as Record<string, any>;
+    } catch {
+      return;
+    }
+    if (typeof data.seq === 'number') this.setLastEventId(data.seq);
+    if (type === 'stream.ready') {
+      this.handlers.onStateChange('online');
+      if (data.gapPossible) this.handlers.onGap(Number(data.lastMessageSeq ?? 0));
+      if (typeof data.lastEventSeq === 'number') this.setLastEventId(data.lastEventSeq);
+      return;
+    }
+    this.handlers.onEvent(type, data);
+  }
 
-    for (const type of this.types) source.addEventListener(type, handle(type) as EventListener);
+  private async readEvents(body: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<void> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (!signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        buffer = buffer.replace(/\r\n/g, '\n');
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary >= 0) {
+          const block = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          let type = 'message';
+          let id = '';
+          const data: string[] = [];
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) type = line.slice(6).trimStart();
+            else if (line.startsWith('id:')) id = line.slice(3).trimStart();
+            else if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+          }
+          if (data.length > 0 && this.types.includes(type)) this.dispatch(type, data.join('\n'), id);
+          boundary = buffer.indexOf('\n\n');
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   private scheduleReconnect(): void {
@@ -128,6 +165,6 @@ export class ChatStream {
     if (this.timer) window.clearTimeout(this.timer);
     const delay = Math.min(1000 * 2 ** this.retry, 15_000) + Math.random() * 500;
     this.retry = Math.min(this.retry + 1, 5);
-    this.timer = window.setTimeout(() => this.connect(), delay);
+    this.timer = window.setTimeout(() => void this.connect(), delay);
   }
 }

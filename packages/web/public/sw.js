@@ -1,9 +1,7 @@
 /** SOOYA offline shell, media cache and Web Push service worker. */
-const VERSION = 'sooya-v5';
+const VERSION = 'sooya-v6';
 const SHELL_CACHE = `${VERSION}-shell`;
-const MEDIA_CACHE = `${VERSION}-media`;
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg'];
-const MEDIA_LIMIT = 120;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS).catch(() => undefined)).then(() => self.skipWaiting()));
@@ -46,13 +44,6 @@ self.addEventListener('notificationclick', (event) => {
   }));
 });
 
-async function trimCache(name, limit) {
-  const cache = await caches.open(name);
-  const keys = await cache.keys();
-  if (keys.length <= limit) return;
-  for (const key of keys.slice(0, keys.length - limit)) await cache.delete(key);
-}
-
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
@@ -61,20 +52,8 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/health') || url.pathname === '/api/stream' || url.pathname === '/api/events') return;
 
   if (url.pathname.startsWith('/api/media/') && !url.pathname.endsWith('/meta')) {
-    const cacheKey = new Request(url.origin + url.pathname, { method: 'GET' });
-    event.respondWith(caches.open(MEDIA_CACHE).then(async (cache) => {
-      const hit = await cache.match(cacheKey);
-      if (hit) return hit;
-      try {
-        const response = await fetch(request);
-        if (response.ok && response.status === 200) void cache.put(cacheKey, response.clone()).then(() => trimCache(MEDIA_CACHE, MEDIA_LIMIT));
-        return response;
-      } catch (error) {
-        const stale = await cache.match(cacheKey);
-        if (stale) return stale;
-        throw error;
-      }
-    }));
+    // Protected media is fetched with Authorization and is never persisted in Cache API.
+    event.respondWith(fetch(request));
     return;
   }
 

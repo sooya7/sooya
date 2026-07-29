@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { adminApi, getAdminToken, setAdminToken, type AdminPersona } from '../lib/admin.js';
 import { adminMediaUrl, featureApi, type WorldEntry } from '../lib/features.js';
+import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 
 const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'gentle'] as const;
 const EMOTION_LABELS: Record<string, string> = { neutral: '中性', happy: '开心', sad: '难过', angry: '生气', gentle: '温柔' };
@@ -27,6 +28,9 @@ function errorText(error: unknown): string {
 }
 
 function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona; onPersona: (p: AdminPersona) => void; onNotice: (s: string) => void }) {
+  const assistantMedia = useAuthenticatedMedia(persona.avatar, 'admin', 'image');
+  const userMedia = useAuthenticatedMedia(persona.userAvatar, 'admin', 'image');
+  persona = { ...persona, avatar: assistantMedia.url ?? '', userAvatar: userMedia.url ?? '' };
   const upload = async (slot: 'assistant' | 'user', file?: File) => {
     if (!file) return;
     try {
@@ -41,8 +45,8 @@ function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona;
     <section className="admin-form-card" data-testid="avatar-settings">
       <div className="admin-panel-heading"><div><h2>双方头像</h2><p>分别上传 SOOYA 与用户头像，保存后聊天页面会即时刷新。</p></div></div>
       <div className="admin-summary">
-        <label className="admin-card"><strong>SOOYA 头像</strong><img src={adminMediaUrl(persona.avatar)} alt="SOOYA 头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} /><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('assistant', event.target.files?.[0])} /></label>
-        <label className="admin-card"><strong>用户头像</strong><img src={adminMediaUrl(persona.userAvatar)} alt="用户头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} /><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('user', event.target.files?.[0])} /></label>
+        <label className="admin-card"><strong>SOOYA 头像</strong><img src={adminMediaUrl(persona.avatar)} alt="SOOYA 头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} />{assistantMedia.error && <small role="status">{assistantMedia.error}</small>}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('assistant', event.target.files?.[0])} /></label>
+        <label className="admin-card"><strong>用户头像</strong><img src={adminMediaUrl(persona.userAvatar)} alt="用户头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} />{userMedia.error && <small role="status">{userMedia.error}</small>}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('user', event.target.files?.[0])} /></label>
       </div>
     </section>
   );
@@ -53,8 +57,12 @@ function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [text, setText] = useState('你好呀，我是 SOOYA。');
   const [emotion, setEmotion] = useState('neutral');
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
   const load = () => featureApi.voice().then(setData).catch((error) => onNotice(errorText(error)));
   useEffect(() => { void load(); }, []);
+  useEffect(() => () => {
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+  }, []);
   const policy = data?.policy ?? {};
   const model = data?.model ?? {};
   const emotions = data?.emotions ?? {};
@@ -74,11 +82,12 @@ function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
     try {
       const blob = await featureApi.previewVoice(text, emotion);
       const url = URL.createObjectURL(blob);
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = url;
       if (audioRef.current) {
         audioRef.current.src = url;
         await audioRef.current.play();
       }
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (error) {
       onNotice(errorText(error));
     }

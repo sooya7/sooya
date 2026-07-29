@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getAdminToken, setAdminToken } from '../lib/admin.js';
 import { adminMediaUrl, featureApi, type FeatureMedia } from '../lib/features.js';
+import { fetchAuthenticatedMedia, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
 import { ImageViewer, type ViewerImage } from './ImageViewer.js';
 
 const PAGE_SIZE = 60;
@@ -17,24 +18,21 @@ function extension(media: FeatureMedia): string {
 
 async function downloadMedia(media: FeatureMedia): Promise<void> {
   const src = adminMediaUrl(media.url);
-  try {
-    const response = await fetch(src);
-    if (!response.ok) throw new Error(String(response.status));
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = `${media.name?.replace(/[^\w\u4e00-\u9fff.-]+/g, '_') || `sooya-${media.id}`}.${extension(media)}`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
-  } catch {
-    window.open(src, '_blank', 'noopener,noreferrer');
-  }
+  const response = await fetch(src);
+  if (!response.ok) throw new Error(`媒体下载失败（${response.status}）`);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = safeDownloadName(media.name, `sooya-${media.id}.${extension(media)}`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
 }
 
 export default function GalleryPage() {
+  const objectUrls = useRef(new Set<string>());
   const [token, setTokenState] = useState(() => getAdminToken() ?? '');
   const [media, setMedia] = useState<FeatureMedia[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -50,6 +48,10 @@ export default function GalleryPage() {
   const [stats, setStats] = useState({ count: 0, bytes: 0 });
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  useEffect(() => () => {
+    for (const url of objectUrls.current) releaseMediaUrl(url);
+    objectUrls.current.clear();
+  }, []);
 
   const images = useMemo(() => media.filter((item) => item.kind === 'image' && item.exists), [media]);
   const viewerImages = useMemo<ViewerImage[]>(() => images.map((item) => ({ id: item.id, src: adminMediaUrl(item.url), alt: item.name ?? `SOOYA 图片 ${item.id}` })), [images]);
@@ -63,11 +65,29 @@ export default function GalleryPage() {
     setError(null);
     try {
       const result = await featureApi.gallery(query(append ? media.length : 0));
-      const next = append ? [...media, ...result.media.filter((item) => !media.some((old) => old.id === item.id))] : result.media;
+      const resolved = await Promise.all(result.media.map(async (item) => {
+        if (!item.exists) return item;
+        const loaded = await fetchAuthenticatedMedia(item.url, {
+          scope: 'admin',
+          token: getAdminToken(),
+          expected: item.kind === 'image' ? 'image' : item.kind === 'audio' ? 'audio' : 'file'
+        });
+        objectUrls.current.add(loaded.url);
+        return { ...item, url: loaded.url };
+      }));
+      if (!append) {
+        for (const url of objectUrls.current) {
+          if (!resolved.some((item) => item.url === url)) {
+            releaseMediaUrl(url);
+            objectUrls.current.delete(url);
+          }
+        }
+      }
+      const next = append ? [...media, ...resolved.filter((item) => !media.some((old) => old.id === item.id))] : resolved;
       setMedia(next);
       setStats(result.stats ?? { count: next.length, bytes: next.reduce((sum, item) => sum + item.bytes, 0) });
       setTotal(result.total);
-      setHasMore(result.media.length === PAGE_SIZE);
+      setHasMore(resolved.length === PAGE_SIZE);
       setSelected((before) => new Set([...before].filter((id) => next.some((item) => item.id === id))));
     } catch (err) {
       setError(err instanceof Error ? err.message : '图库加载失败');
@@ -150,7 +170,7 @@ export default function GalleryPage() {
         {images.map((item) => {
           const src = adminMediaUrl(item.url);
           const checked = selected.has(item.id);
-          return <article className={`gallery-item ${checked ? 'selected' : ''}`} key={item.id}><button type="button" className="gallery-thumb" onClick={() => setViewerId(item.id)} aria-label="查看图片"><img src={src} alt={item.name ?? '图库图片'} loading="lazy" /></button><label className="gallery-select"><input type="checkbox" checked={checked} onChange={() => toggle(item.id)} />选择</label><div className="gallery-item-actions"><button type="button" aria-label={item.favorite ? '取消收藏' : '收藏'} onClick={() => void featureApi.patchMedia(item.id, { favorite: !item.favorite }).then(() => load(false)).catch((e) => setError(e.message))}>{item.favorite ? '★ 已收藏' : '☆ 收藏'}</button><button type="button" onClick={() => void downloadMedia(item)}>保存</button>{trash ? <><button type="button" onClick={() => void batch('restore', [item.id])}>恢复</button><button type="button" className="gallery-danger" onClick={() => void batch('permanent', [item.id])}>永久删除</button></> : <button type="button" className="gallery-danger" onClick={() => void batch('trash', [item.id])}>移入回收站</button>}</div><small>{new Date(item.createdAt).toLocaleString()} · {formatBytes(item.bytes)} · {item.origin}</small>{item.references && item.references.total > 0 && <small>被引用 {item.references.total} 次</small>}</article>;
+          return <article className={`gallery-item ${checked ? 'selected' : ''}`} data-media-id={item.id} key={item.id}><button type="button" className="gallery-thumb" onClick={() => setViewerId(item.id)} aria-label="查看图片"><img src={src} alt={item.name ?? '图库图片'} loading="lazy" /></button><label className="gallery-select"><input type="checkbox" checked={checked} onChange={() => toggle(item.id)} />选择</label><div className="gallery-item-actions"><button type="button" aria-label={item.favorite ? '取消收藏' : '收藏'} onClick={() => void featureApi.patchMedia(item.id, { favorite: !item.favorite }).then(() => load(false)).catch((e) => setError(e.message))}>{item.favorite ? '★ 已收藏' : '☆ 收藏'}</button><button type="button" onClick={() => void downloadMedia(item)}>保存</button>{trash ? <><button type="button" onClick={() => void batch('restore', [item.id])}>恢复</button><button type="button" className="gallery-danger" onClick={() => void batch('permanent', [item.id])}>永久删除</button></> : <button type="button" className="gallery-danger" onClick={() => void batch('trash', [item.id])}>移入回收站</button>}</div><small>{new Date(item.createdAt).toLocaleString()} · {formatBytes(item.bytes)} · {item.origin}</small>{item.references && item.references.total > 0 && <small>被引用 {item.references.total} 次</small>}</article>;
         })}
       </section>
 

@@ -218,6 +218,8 @@ describe('secret redaction', () => {
   it('masks keys inside strings', () => {
     expect(redactStringSecrets('using sk-abcdefghijklmnop now')).not.toContain('ghijklmnop');
     expect(redactStringSecrets('Authorization: Bearer supersecrettoken')).not.toContain('supersecrettoken');
+    expect(redactStringSecrets('/api/media/x?token=chat-secret-123')).not.toContain('chat-secret-123');
+    expect(redactStringSecrets('/api/media/x?admin_token=admin-secret-123')).not.toContain('admin-secret-123');
   });
 
   it('masks short and long secrets', () => {

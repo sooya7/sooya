@@ -53,7 +53,7 @@ export function registerMediaRoutes(app: SooyaApp): void {
     catch (err) { if (err instanceof PathTraversalError) { reply.code(400); return { error: 'bad_path' }; } throw err; }
     if (!located) { reply.code(404); return { error: 'not_found' }; }
     const row = located.row; const stat = fs.statSync(located.path); const range = req.headers.range;
-    void reply.header('content-type', row.mime).header('cache-control', 'private, max-age=31536000, immutable').header('accept-ranges', 'bytes').header('x-content-type-options', 'nosniff');
+    void reply.header('content-type', row.mime).header('cache-control', 'private, no-store').header('accept-ranges', 'bytes').header('x-content-type-options', 'nosniff');
     if (row.kind === 'file') void reply.header('content-disposition', `attachment; filename="${encodeURIComponent(row.rel_path)}"`);
     if (range) {
       const match = /bytes=(\d*)-(\d*)/.exec(range);

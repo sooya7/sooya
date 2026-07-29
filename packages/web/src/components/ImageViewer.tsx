@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { blobForMediaUrl } from '../lib/authenticatedMedia.js';
 
 export interface ViewerImage {
   id: string;
@@ -24,25 +25,23 @@ function extensionFromUrl(src: string): string {
 }
 
 async function imageBlob(image: ViewerImage): Promise<Blob> {
+  const loaded = blobForMediaUrl(image.src);
+  if (loaded) return loaded;
   const response = await fetch(image.src);
   if (!response.ok) throw new Error(`download failed (${response.status})`);
   return await response.blob();
 }
 
 async function saveImage(image: ViewerImage): Promise<void> {
-  try {
-    const blob = await imageBlob(image);
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = `${image.alt || 'sooya-image'}.${extensionFromUrl(image.src)}`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-  } catch {
-    window.open(image.src, '_blank', 'noopener,noreferrer');
-  }
+  const blob = await imageBlob(image);
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = `${image.alt || 'sooya-image'}.${extensionFromUrl(image.src)}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
 async function shareImage(image: ViewerImage): Promise<void> {
@@ -53,12 +52,7 @@ async function shareImage(image: ViewerImage): Promise<void> {
       await navigator.share({ title: image.alt || 'SOOYA 图片', files: [file] });
       return;
     }
-    if (navigator.share) {
-      await navigator.share({ title: image.alt || 'SOOYA 图片', url: image.src });
-      return;
-    }
-    await navigator.clipboard.writeText(image.src);
-    window.alert('浏览器不支持系统分享，图片地址已复制');
+    await saveImage(image);
   } catch (error) {
     if ((error as DOMException).name === 'AbortError') return;
     await saveImage(image);
@@ -146,6 +140,7 @@ export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
       onClick={(event) => { if (event.target === event.currentTarget && scale === 1) requestClose(); }}
       onWheel={(event) => { event.preventDefault(); setZoom(scale + (event.deltaY < 0 ? 0.25 : -0.25)); }}
       onPointerDown={(event) => {
+        if ((event.target as Element).closest('.image-viewer-actions, .image-viewer-nav')) return;
         pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
         event.currentTarget.setPointerCapture(event.pointerId);
         const points = [...pointers.current.values()];

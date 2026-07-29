@@ -71,6 +71,7 @@ export default async function globalSetup(): Promise<void> {
       CONFIG_DIR: configDir,
       WEB_DIR: path.join(ROOT, 'packages/web/dist'),
       ALLOW_PRIVATE_NETWORK_FETCH: 'true',
+      WEB_CHAT_TOKEN: 'e2e-chat-token',
       ADMIN_API_TOKEN: 'e2e-admin-token',
       ENABLE_BACKGROUND_JOBS: 'true',
       BACKUP_INTERVAL_MS: '0'

@@ -1,7 +1,8 @@
 import type { ChatMessage, MediaRef, PersonaInfo, StickerInfo } from './types.js';
+import { credentialFreeMediaPath } from './authenticatedMedia.js';
 
 const TOKEN_KEY = 'sooya.token';
-export function getToken(): string | null { try { const fromUrl = new URLSearchParams(window.location.search).get('token'); if (fromUrl) { localStorage.setItem(TOKEN_KEY, fromUrl); const url = new URL(window.location.href); url.searchParams.delete('token'); window.history.replaceState({}, '', url.toString()); return fromUrl; } return localStorage.getItem(TOKEN_KEY); } catch { return null; } }
+export function getToken(): string | null { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } }
 export function setToken(token: string): void { try { localStorage.setItem(TOKEN_KEY, token); } catch { /* private mode */ } }
 export class ApiError extends Error { constructor(message: string, readonly status: number, readonly body?: unknown) { super(message); this.name = 'ApiError'; } }
 
@@ -30,4 +31,5 @@ export const api = {
   capabilities: () => request<{ capabilities: Record<string, { configured: boolean; ok: boolean; detail?: string }>; stickers: { available: number; total: number } }>('/api/capabilities'),
   events: (since: number) => request<{ events: Array<Record<string, unknown>>; lastEventSeq: number }>(`/api/events?since=${since}`)
 };
-export function mediaUrl(url: string): string { const token = getToken(); if (!token) return url; return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`; }
+/** @deprecated Render protected media through useAuthenticatedMedia instead. */
+export function mediaUrl(url: string): string { return credentialFreeMediaPath(url); }

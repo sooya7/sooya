@@ -1,5 +1,6 @@
 import { ApiError } from './api.js';
 import { getAdminToken } from './admin.js';
+import { credentialFreeMediaPath } from './authenticatedMedia.js';
 
 export interface FeatureMedia {
   id: string;
@@ -106,7 +107,5 @@ export const featureApi = {
 };
 
 export function adminMediaUrl(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  return `${url}${url.includes('?') ? '&' : '?'}admin_token=${encodeURIComponent(token)}`;
+  return credentialFreeMediaPath(url);
 }
