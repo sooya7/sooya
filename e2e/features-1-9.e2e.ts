@@ -311,6 +311,55 @@ test.describe('SOOYA 1-9 user flows', () => {
     await expect(page.locator('.msg-row.mine').filter({ hasText: '[消息已撤回]' }).last()).toBeVisible();
   });
 
+  test('copy selected text never falls back to the full message', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: async (value: string) => {
+            (window as typeof window & { __copiedText?: string }).__copiedText = value;
+          }
+        }
+      });
+    });
+    const text = `E2E 只复制选中片段 ${Date.now()}`;
+    const selected = '只复制选中片段';
+    await page.goto('/');
+    await page.getByTestId('composer-input').fill(text);
+    const sendCompleted = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/messages' &&
+      response.request().method() === 'POST' &&
+      response.ok()
+    );
+    await page.getByTestId('btn-send').click();
+    await sendCompleted;
+
+    const message = page.locator('.msg-row.mine').filter({ hasText: text }).last();
+    await message.getByRole('button', { name: '消息操作' }).click();
+    await expect(page.getByRole('menuitem', { name: '复制选中文本' })).toBeDisabled();
+    expect(await page.evaluate(() => (window as typeof window & { __copiedText?: string }).__copiedText)).toBeUndefined();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu', { name: '消息操作' })).toBeHidden();
+
+    await message.getByTestId('text-bubble').evaluate((element, value) => {
+      const content = element.textContent ?? '';
+      const start = content.indexOf(value);
+      const node = element.firstChild;
+      if (!node || start < 0) throw new Error('selection fixture text not found');
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, start + value.length);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }, selected);
+    await message.getByRole('button', { name: '消息操作' }).click();
+    const copySelection = page.getByRole('menuitem', { name: '复制选中文本' });
+    await expect(copySelection).toBeEnabled();
+    await copySelection.click();
+    await expect.poll(() => page.evaluate(() => (window as typeof window & { __copiedText?: string }).__copiedText)).toBe(selected);
+  });
+
   test('scrolling cancels a touch long-press before the message menu opens', async ({ page }) => {
     const text = `E2E 滚动取消长按 ${Date.now()}`;
     await page.goto('/');

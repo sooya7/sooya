@@ -9,6 +9,13 @@ import { AuthenticatedImage } from './AuthenticatedMedia.js';
 function formatClock(iso: string): string { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; }
 function formatBytes(n: number): string { return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`; }
 function messageText(message: ChatMessage): string { return message.content.map((part) => part.type === 'text' ? part.text ?? '' : part.type === 'audio' ? part.transcript ?? '' : '').filter(Boolean).join('\n'); }
+function selectedTextWithin(container: HTMLElement | null): string {
+  const selection = window.getSelection();
+  if (!container || !selection || selection.isCollapsed || selection.rangeCount === 0) return '';
+  const range = selection.getRangeAt(0);
+  if (!container.contains(range.commonAncestorContainer)) return '';
+  return selection.toString().trim();
+}
 async function copy(text: string): Promise<void> { if (navigator.clipboard) await navigator.clipboard.writeText(text); else { const area = document.createElement('textarea'); area.value = text; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove(); } }
 async function savePart(part: MessagePart): Promise<void> {
   if (!part.media) return;
@@ -51,7 +58,8 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   const mine = message.role === 'user';
   const visible = message.content.filter((part) => part.type !== 'system');
   const failedMessage = message.status === 'failed';
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; selectedText: string } | null>(null);
+  const messageRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const press = useRef<{ timer: number; pointerId: number; x: number; y: number } | null>(null);
   const cancelPress = useCallback(() => {
@@ -84,7 +92,11 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   }, [menu]);
 
   if (message.role === 'system') return <div className="system-row"><span>{message.content.map((part) => part.text).filter(Boolean).join(' ')}</span></div>;
-  const openMenu = (x: number, y: number) => setMenu({ x: Math.max(8, Math.min(window.innerWidth - 220, x)), y: Math.max(8, Math.min(window.innerHeight - 360, y)) });
+  const openMenu = (x: number, y: number) => setMenu({
+    x: Math.max(8, Math.min(window.innerWidth - 220, x)),
+    y: Math.max(8, Math.min(window.innerHeight - 360, y)),
+    selectedText: selectedTextWithin(messageRef.current)
+  });
   const text = messageText(message);
   const image = visible.find((part) => part.type === 'image' && part.media);
   const audio = visible.find((part) => part.type === 'audio' && part.media);
@@ -92,7 +104,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   const act = async (work: () => void | Promise<void>, success?: string) => { setMenu(null); try { await work(); if (success) onNotice?.(success); } catch (error) { onNotice?.((error as Error).message); } };
 
   return (
-    <div className={`msg-row ${mine ? 'mine' : 'theirs'}`} data-role={message.role} data-status={message.status} data-testid="message"
+    <div ref={messageRef} className={`msg-row ${mine ? 'mine' : 'theirs'}`} data-role={message.role} data-status={message.status} data-testid="message"
       onContextMenu={(event) => { event.preventDefault(); openMenu(event.clientX, event.clientY); }}
       onPointerDown={(event) => {
         if (event.pointerType === 'mouse') return;
@@ -115,7 +127,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
       </div>
       {menu && <div ref={menuRef} className="message-action-menu" role="menu" aria-label="消息操作" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 10000 }}>
         {text && <button role="menuitem" type="button" onClick={() => void act(() => copy(text), '已复制全文')}>复制全文</button>}
-        {text && <button role="menuitem" type="button" onClick={() => void act(() => copy(window.getSelection()?.toString().trim() || text), '已复制文本')}>复制选中文本</button>}
+        {text && <button role="menuitem" type="button" disabled={!menu.selectedText} onClick={() => void act(() => copy(menu.selectedText), '已复制文本')}>复制选中文本</button>}
         {onQuote && <button role="menuitem" type="button" onClick={() => void act(() => onQuote(message))}>引用回复</button>}
         {mine && !message.pendingLocal && onResend && <button role="menuitem" type="button" onClick={() => void act(() => onResend(message))}>重新发送</button>}
         {failedMessage && onRetry && <button role="menuitem" type="button" onClick={() => void act(() => onRetry(message))}>重试</button>}
