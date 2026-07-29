@@ -130,7 +130,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const message = deps.messages.get(messageId);
     if (!message || message.role !== 'assistant' || message.status !== 'sent') return;
     const result = await deps.push.notifyReply(message);
-    if (result.delivered || result.removed || result.failed) deps.bus.publish('push.updated', result);
+    if (result.delivered || result.removed || result.failed) deps.bus.publish('push.updated', { ...result });
   });
 
   worker.register('memory.embed.backfill', async () => { await deps.memory.backfillEmbeddings(20); });
