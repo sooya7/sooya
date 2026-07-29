@@ -20,7 +20,7 @@
 | M-016 | 报告误判 | 当前实现并非报告假定的 touchmove passive 路径。 |
 | M-017 | 已被后续提交修复 | `b852e3b` 将世界管理搜索和 Context 相关性搜索统一改为 `LIKE ? ESCAPE '\'`，`\`、`%`、`_` 通过共享 helper 字面转义。 |
 | M-018 | 已被后续提交修复 | `b852e3b` 新增持久化 Unicode identity key、迁移回填/重复 winner 选择及活动 canonical 部分唯一索引。 |
-| M-019 | 无法确认 | 待比较 preview 与 apply 统计。 |
+| M-019 | 已被后续提交修复 | `006a0d6` 仅把本次可直接删除的媒体计入 reclaimableBytes；执行分别返回 deletedBytes 与 skippedBytes，预览/执行口径可核对。 |
 | M-020 | 测试不足 | 待核验保存后 capability 刷新。 |
 | M-021 | 测试不足 | 待大数据量 UI 验证。 |
 | M-022 | 测试不足 | 待 2000 条导入事务验证。 |
@@ -246,4 +246,24 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - RED：`world-search.test.ts` 中 `100%` 实际返回 2 条、预期 1；`world-normalization.test.ts` 中 Unicode 变体未合并且 key 为 undefined。
 - GREEN/回归：`npm --workspace packages/server test -- --run test/migration-rollback.test.ts test/world-normalization.test.ts test/world-search.test.ts test/features-1-9.test.ts --reporter=verbose`，4 files、12/12 通过，约 29.1 秒，正常退出。
 - 升级测试从 schema v4 构造既有 Unicode 活动重复项，v5 正确选择 user/高 confidence winner，并验证数据库唯一索引拒绝第二个活动 canonical。
+- Server typecheck/build 通过。
+
+## M-019 修复与验证
+
+提交：`006a0d6 fix(storage): align cleanup preview with deletable bytes`。
+
+失败证据：活动且未引用的正常图库媒体出现在 `unreferencedMedia`，并被计入 `reclaimableBytes`；但 apply 对同一项目要求 `deleted_at`，因此预览承诺的释放量无法兑现。
+
+修复后：
+
+- `unreferencedMedia` 清理候选只包含已进入回收站、当前无消息/贴纸/世界/头像引用的媒体；活动媒体不再被描述为本次可直接释放。
+- 回收站未引用媒体的预览 `reclaimableBytes` 与成功执行的 `releasedBytes/deletedBytes` 一致。
+- 预览后文件变化、引用变化等安全跳过累计到 `skippedBytes`，并保留逐项 category/target/reason；missing DB record 不虚构磁盘释放字节。
+- apply 审计同时记录 deletedBytes、skippedBytes、deleted 和 skipped，差异可解释。
+
+验证：
+
+- RED：活动未引用媒体实际出现在候选并计入字节，预期不应成为直接删除候选。
+- GREEN：`storage-cleanup-report.test.ts` 5/5 通过，新增活动媒体、回收站媒体和预览/执行字节一致性断言。
+- 回归：`npm --workspace packages/server test -- --run test/storage-cleanup-report.test.ts test/media-delete-consistency.test.ts test/features-1-9.test.ts --reporter=verbose`，3 files、14/14 通过，约 43.8 秒，正常退出。
 - Server typecheck/build 通过。
