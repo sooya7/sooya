@@ -3,7 +3,7 @@
 | 编号 | 当前核验状态 | 证据与处理决定 |
 |---|---|---|
 | M-001 | 已被后续提交修复 | 构建阻断已修复，完整测试仍受其他问题影响。原始 Head `bd2db8b` 缺失 `media/store.ts`、`media/stickers.ts`；`09ac980` 仅同步必要模块，`9456767` 修复测试夹具的跨平台 `file:` URL 转换。 |
-| M-002 | 已被后续提交修复 | Run 30435357087 的 E2E 连续超时并耗尽 35 分钟；`772c2a4` 修复测试直连 API 缺少 Bearer、静默忽略非 2xx、功能中心移动导航缺失、旧路由/图标定位契约及乐观消息竞态。本地根命令 62/62 通过，最新 Head 的 Linux Actions 仍待确认。 |
+| M-002 | 已被后续提交修复 | Run 30435357087 的 E2E 连续超时并耗尽 35 分钟；`772c2a4` 修复测试直连 API 缺少 Bearer、静默忽略非 2xx、功能中心移动导航缺失、旧路由/图标定位契约及乐观消息竞态。Run `30452925203` 的 Linux Browser E2E 已成功。 |
 | M-003 | 报告误判 | 模拟运行时超出唯一范围；事实库功能另按第 8 项核验。 |
 | M-004 | 已被后续提交修复 | `3cb4640` 抽取统一语音参数解析链路；试听与正式回复都读取已保存映射，自动情绪别名映射到 UI 预设，缺失预设安全回退中性。 |
 | M-005 | 已被后续提交修复 | `14eb215` 按模型 context window、输出上限和安全余量建立统一输入预算；摘要、记忆、世界事实和近期消息按预算纳入，高权威世界事实优先，预算与 dropped counts 持久化。 |
@@ -11,7 +11,7 @@
 | M-007 | 已被后续提交修复 | `898bb0a` 用同步 drag ref 消除快速 pointermove→pointerup 读取旧 React state 的竞态；真实 CDP touch 连续 3/3、双端功能 10/10、完整 E2E 66/66。物理设备惯性、系统返回与异常 capture 释放仍待真机。 |
 | M-008 | 已被后续提交修复 | `d044681` 为清理预览生成持久化 reportId、策略/候选 hash；管理端 apply 必须提交已确认报告，只处理快照候选并逐项二次校验。 |
 | M-009 | 已被后续提交修复 | `c03c6c2` 不再吞掉媒体文件删除错误；单删、批量删和孤立上传收集失败均保留 DB 记录并返回/记录明确失败。 |
-| M-010 | 已被后续提交修复 | `7afd647` 移除普通/管理媒体及 SSE 的长期 query token，改用分作用域 Bearer fetch + Blob URL；受保护媒体 network-only。相关自动化通过，完整 Server 聚合命令仍无汇总超时，原生移动端 Web Share 待真机验证。 |
+| M-010 | 已被后续提交修复 | `7afd647` 移除普通/管理媒体及 SSE 的长期 query token，改用分作用域 Bearer fetch + Blob URL；受保护媒体 network-only。相关自动化和 Linux Browser E2E 通过；原生移动端 Web Share 待真机验证。 |
 | M-011 | 已被后续提交修复 | `13286b1` 将世界数据媒体引用从模糊 `LIKE` 改为 `json_tree` 对 `mediaId/media_id` 文本值的精确匹配，并同步引用统计、未引用清理和孤立上传扫描。 |
 | M-012 | 报告误判 | 唯一清单要求“批量导出与选择一致”，未要求 ZIP 格式；当前逐项安全 Blob 下载已由 M-010 自动化覆盖，不新增 ZIP 范围。 |
 | M-013 | 已被后续提交修复 | `7afd647` 后受保护媒体全部 network-only，Service Worker 不再建立忽略 `?v=` 的媒体缓存键；激活时清理旧敏感缓存。 |
@@ -423,3 +423,20 @@ E2E 在 Desktop/Mobile 均记录 voice GET 次数，保存后要求至少两次�
 - 完整 E2E：`npm run test:e2e -- --reporter=list`，Desktop 35/35、Mobile 35/35，总计 70/70，约 2.3 分钟。
 - Web 单元：`npm test -w @sooya/web`，3 files、22/22 通过。
 - Web typecheck 与 production build：通过。
+
+## Head Linux 综合验证与孤立媒体夹具修复
+
+Run `30452925203`（Head `3555b83`）：
+
+- Browser end-to-end tests：成功，约 3 分 34 秒。
+- Release package and container validation：成功；发布包、校验、Docker build、容器 readiness 均成功。
+- Dependency vulnerability audit：成功。
+- Independent code validation：Server/Web typecheck 和 build 成功；Server 全量为 218/219，唯一失败为 `does not remove an orphan database row when its file cannot be deleted`。
+
+失败根因不是删除实现：测试刚创建媒体后调用 `collectOrphans(0)`，而查询使用严格的 `created_at < cutoff`。Linux Runner 上创建时间与 cutoff 落在同一毫秒，测试媒体没有进入候选，故障 mock 未执行，最终错误为 `promise resolved "[]" instead of rejecting`。
+
+`ada591d fix(test): make orphan age fixture deterministic` 将该测试记录的 `created_at` 显式设为稳定旧时间，不修改生产保留期、查询比较符或删除错误传播。验证：
+
+- `npm test -- --run test/media-delete-consistency.test.ts test/storage-cleanup-report.test.ts --reporter=verbose`：2 files、8/8 通过。
+- Server typecheck/build：通过。
+- 当前 Head 的最终 Linux 综合 Run 待重新触发；不得把 `30452925203` 整体记为 success。
