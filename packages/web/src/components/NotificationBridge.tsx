@@ -20,7 +20,6 @@ async function showReplyNotification(body: string) {
       icon: '/icons/icon.svg',
       badge: '/icons/icon.svg',
       tag: 'sooya-latest-reply',
-      renotify: true,
       data: { url: '/' }
     });
     return;
