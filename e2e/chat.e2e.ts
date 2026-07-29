@@ -19,7 +19,18 @@ async function calls(): Promise<Record<string, number>> {
 }
 
 async function clearChat(baseURL: string): Promise<void> {
-  await fetch(`${baseURL}/api/admin/chat/clear`, { method: 'POST', headers: { 'x-admin-token': ADMIN } });
+  const res = await fetch(`${baseURL}/api/admin/chat/clear`, { method: 'POST', headers: { 'x-admin-token': ADMIN } });
+  if (!res.ok) throw new Error(`clear chat failed: ${res.status}`);
+}
+
+async function chatApi(baseURL: string, path: string, init: RequestInit): Promise<void> {
+  const headers = new Headers(init.headers);
+  headers.set('authorization', `Bearer ${CHAT_TOKEN}`);
+  const res = await fetch(`${baseURL}${path}`, { ...init, headers });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`chat API ${init.method ?? 'GET'} ${path} failed: ${res.status} ${body}`);
+  }
 }
 
 async function send(page: Page, text: string): Promise<void> {
@@ -260,7 +271,7 @@ test('the user can upload and send an image', async ({ page }) => {
 test('history loads older messages when scrolling up, without jumping', async ({ page, baseURL }) => {
   // Seed enough history through the API so paging is required.
   for (let i = 0; i < 24; i++) {
-    await fetch(`${baseURL}/api/messages/sync`, {
+    await chatApi(baseURL!, '/api/messages/sync', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ clientMsgId: `hist-${i}-${Date.now()}`, content: [{ type: 'text', text: `历史消息 ${i}` }] })
@@ -284,7 +295,7 @@ test('history loads older messages when scrolling up, without jumping', async ({
 
 test('reading history is not interrupted by a new reply', async ({ page, baseURL }) => {
   for (let i = 0; i < 20; i++) {
-    await fetch(`${baseURL}/api/messages/sync`, {
+    await chatApi(baseURL!, '/api/messages/sync', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ clientMsgId: `keep-${i}-${Date.now()}`, content: [{ type: 'text', text: `旧消息 ${i}` }] })
@@ -303,7 +314,7 @@ test('reading history is not interrupted by a new reply', async ({ page, baseURL
   const before = await page.getByTestId('scroller').evaluate((el) => el.scrollTop);
 
   // A message arrives from another client while we are reading.
-  await fetch(`${baseURL}/api/messages`, {
+  await chatApi(baseURL!, '/api/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ clientMsgId: `intrusion-${Date.now()}`, content: [{ type: 'text', text: '打扰一下' }] })
@@ -335,7 +346,7 @@ test('a reply produced while the tab is disconnected still appears without a man
   await page.waitForTimeout(500);
 
   // Server-side activity happens while the page cannot see the stream.
-  await fetch(`${baseURL}/api/messages/sync`, {
+  await chatApi(baseURL!, '/api/messages/sync', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ clientMsgId: `offline-${Date.now()}`, content: [{ type: 'text', text: '断线时发送' }] })
@@ -468,7 +479,7 @@ test('opens the admin panel in the same tab', async ({ page }) => {
   await page.goto('/');
 
   await page.getByTestId('admin-entry').click();
-  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page).toHaveURL(/\/admin\/features$/);
   await expect(page.getByTestId('admin-lock')).toBeVisible();
 });
 

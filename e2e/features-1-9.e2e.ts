@@ -12,7 +12,8 @@ test.describe('SOOYA 1-9 user flows', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((token: string) => localStorage.setItem('sooya.token', token), CHAT_TOKEN);
   });
-  test('feature center exposes avatar, voice, world and storage controls', async ({ page }) => {
+  test('feature center exposes avatar, voice, world and storage controls', async ({ page }, testInfo) => {
+    const worldSubject = `E2E 城市 ${testInfo.project.name} ${Date.now()}`;
     await page.addInitScript(() => {
       const original = URL.revokeObjectURL.bind(URL);
       (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls = [];
@@ -58,16 +59,16 @@ test.describe('SOOYA 1-9 user flows', () => {
     await page.getByRole('button', { name: '世界引擎' }).click();
     const worldSettings = page.getByTestId('world-settings');
     await expect(worldSettings).toBeVisible();
-    await page.getByPlaceholder('主体').fill('E2E 城市');
+    await page.getByPlaceholder('主体').fill(worldSubject);
     await page.getByPlaceholder('关系/属性').fill('天气');
     await page.getByPlaceholder('内容').fill('晴朗');
     await page.getByRole('button', { name: '新增' }).click();
-    const worldRow = worldSettings.locator('.admin-list-row').filter({ hasText: 'E2E 城市' });
+    const worldRow = worldSettings.locator('.admin-list-row').filter({ hasText: worldSubject });
     await expect(worldRow).toContainText('晴朗');
     await worldRow.getByRole('button', { name: '编辑' }).click();
     await page.getByLabel('编辑内容').fill('多云');
     await page.getByRole('button', { name: '保存编辑' }).click();
-    await expect(worldSettings.locator('.admin-list-row').filter({ hasText: 'E2E 城市' })).toContainText('多云');
+    await expect(worldSettings.locator('.admin-list-row').filter({ hasText: worldSubject })).toContainText('多云');
 
     await page.getByRole('button', { name: '存储治理' }).click();
     await expect(page.getByTestId('storage-settings')).toBeVisible();
@@ -157,15 +158,30 @@ test.describe('SOOYA 1-9 user flows', () => {
     const replyText = `E2E 引用回复 ${Date.now()}`;
     await page.goto('/');
     await page.getByTestId('composer-input').fill(firstText);
+    const firstSendCompleted = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/messages' &&
+      response.request().method() === 'POST' &&
+      response.ok()
+    );
     await page.getByTestId('btn-send').click();
+    await firstSendCompleted;
     const first = page.locator('.msg-row.mine').filter({ hasText: firstText }).last();
     await expect(first).toBeVisible();
     await first.getByRole('button', { name: '消息操作' }).click();
     await page.getByRole('menuitem', { name: '引用回复' }).click();
     await expect(page.locator('.composer-quote')).toContainText(firstText.slice(0, 20));
 
-    await page.getByTestId('composer-input').fill(replyText);
+    const composerInput = page.getByTestId('composer-input');
+    await composerInput.fill(replyText);
+    await expect(composerInput).toHaveValue(replyText);
+    await expect(page.getByTestId('btn-send')).toBeEnabled();
+    const replySendCompleted = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/messages' &&
+      response.request().method() === 'POST' &&
+      response.ok()
+    );
     await page.getByTestId('btn-send').click();
+    await replySendCompleted;
     const reply = page.locator('.msg-row.mine').filter({ hasText: replyText }).last();
     await expect(reply).toBeVisible();
     await expect(reply.locator('.message-reply-preview')).toBeVisible();
