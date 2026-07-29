@@ -560,6 +560,7 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | Browser E2E 基线恢复 | `772c2a4` | 旧 Head Run `30445900732` 为 49/62；当前 Head 本地根命令 62/62，无 skip/fixme。Web unit 17/17、typecheck、production build 同步通过 | 本地自动化通过；Linux Actions 待确认 |
 | 2026-07-29 | M-015 滚动取消长按 | `5192ccb` | 统一 press session 在 scroll、位移、pointerup/cancel、lostpointercapture、隐藏、失焦、卸载时清理；RED 滚动后菜单误开，修复后定向 1/1、功能 8/8、完整 E2E 64/64 | 自动化验证通过；iOS/Android 真机手势待验收 |
 | 2026-07-29 | M-007/M-014 查看器手势与历史 | `898bb0a` | 快速 swipe 使用同步 drag ref 消除旧 state 竞态；已有 history state、单 viewer entry、切图不增条目、返回/关闭恢复均覆盖。真实 Mobile touch 连续 3/3、功能 10/10、完整 E2E 66/66 | M-007 自动化通过待真机；M-014 报告误判 |
+| 2026-07-29 | M-020 Voice capability 刷新 | `860449b` | PUT 保存成功后强制重新 GET 完整 voice 状态；Desktop/Mobile 断言初始与保存后至少两次 GET，capability 文案和试听状态保持正确，定向 2/2 | 报告误判；防回归测试通过 |
 | 2026-07-29 | M-012 / M-013 范围与缓存复核 | `7afd647` / 核验记录 | 清单未要求 ZIP，现有选择一致的安全 Blob 批量下载保留；受保护媒体已 network-only，旧媒体缓存由 `sooya-v6` 清理 | M-012 报告误判；M-013 已被后续提交修复 |
 | 2026-07-29 | M-017 / M-018 世界搜索与 identity | `b852e3b` | LIKE 通配符统一字面转义；NFKC Unicode identity key 持久化，v5 回填重复 winner 并用部分唯一索引保护。RED `100%` 误返 2 条且 Unicode 未合并；修复后相关 12/12、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-019 清理空间口径 | `006a0d6` | 活动未引用媒体不再计入本次可释放；回收站候选的 preview/released/deleted bytes 一致，安全跳过另计 skippedBytes。RED 活动媒体被错误计入；修复后相关 14/14、Server typecheck/build 通过 | 自动化验证通过 |

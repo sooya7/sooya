@@ -21,7 +21,7 @@
 | M-017 | 已被后续提交修复 | `b852e3b` 将世界管理搜索和 Context 相关性搜索统一改为 `LIKE ? ESCAPE '\'`，`\`、`%`、`_` 通过共享 helper 字面转义。 |
 | M-018 | 已被后续提交修复 | `b852e3b` 新增持久化 Unicode identity key、迁移回填/重复 winner 选择及活动 canonical 部分唯一索引。 |
 | M-019 | 已被后续提交修复 | `006a0d6` 仅把本次可直接删除的媒体计入 reclaimableBytes；执行分别返回 deletedBytes 与 skippedBytes，预览/执行口径可核对。 |
-| M-020 | 测试不足 | 待核验保存后 capability 刷新。 |
+| M-020 | 报告误判 | `featureApi.updateVoice()` 当前在 PUT 成功后立即重新 GET 完整 voice 状态，VoiceEditor 用新响应替换 state。`860449b` 补 Desktop/Mobile E2E，确认保存后 GET 至少执行第二次、capability 文案和试听状态继续由刷新结果渲染。 |
 | M-021 | 测试不足 | 待大数据量 UI 验证。 |
 | M-022 | 测试不足 | 待 2000 条导入事务验证。 |
 | M-023 | 无法确认 | 待核验可见性同步失败补偿。 |
@@ -95,6 +95,14 @@ M-014 复核覆盖页面预先存在自定义 history state、打开查看器、
 - Web unit 17/17、typecheck、production build 通过。
 
 限制：iOS Safari/Android Chrome 物理设备的系统返回键、惯性、双指和异常 pointer capture 释放仍按真机矩阵验收。
+
+## M-020 capability 刷新复核
+
+提交：`860449b test(voice): verify capability refresh after save`。
+
+`featureApi.updateVoice()` 不是直接采用 PUT 的部分响应：它先等待 PUT 成功，再调用 `GET /api/admin/voice`，该接口重新读取 `services.capabilities.statuses().tts`、policy、model、emotions 和 supported 参数；VoiceEditor 随后以完整响应替换本地 state。
+
+E2E 在 Desktop/Mobile 均记录 voice GET 次数，保存后要求至少两次（初始加载 + 保存后刷新），并断言 capability 文案和试听按钮仍按刷新结果可用。定向命令 `npx playwright test e2e/features-1-9.e2e.ts --grep "feature center exposes" --reporter=list` 为 2/2 通过。因此报告假定的 capability 过期路径不存在，M-020 记为报告误判。
 
 ## Windows 本地环境阻塞
 
