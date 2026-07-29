@@ -3,6 +3,7 @@ import type { SooyaApp } from '../app.js';
 import { requireAdminToken, requireChatToken } from './auth.js';
 import { mediaMeta, toMediaRef, type MediaRow } from '../db/repos/media.repo.js';
 import type { BrowserPushSubscription } from '../core/push.js';
+import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from '../core/voice.js';
 
 const IdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,80}$/);
 const WorldCandidateSchema = z.object({
@@ -14,14 +15,6 @@ const WorldCandidateSchema = z.object({
   confidence: z.number().min(0).max(1).optional(),
   authority: z.enum(['model', 'user', 'admin']).optional()
 });
-
-const DEFAULT_EMOTIONS = {
-  neutral: { label: '中性', instructions: '自然、清晰、平静地说。', speed: 1 },
-  happy: { label: '开心', instructions: '轻快、明亮、有笑意，但不要夸张。', speed: 1.06 },
-  sad: { label: '难过', instructions: '轻声、克制、略慢，带一点低落。', speed: 0.9 },
-  angry: { label: '生气', instructions: '语气坚定、略急，但不要吼叫。', speed: 1.04 },
-  gentle: { label: '温柔', instructions: '柔和、亲近、放慢一点。', speed: 0.94 }
-};
 
 export function registerFeatureRoutes(app: SooyaApp): void {
   const { server, repos, services, config } = app;
@@ -225,7 +218,7 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       capability: status,
       policy: config.getPersona().voicePolicy,
       model: config.safeModels().tts,
-      emotions: repos.settings.get('voice.emotions', DEFAULT_EMOTIONS),
+      emotions: repos.settings.get('voice.emotions', DEFAULT_VOICE_EMOTIONS),
       supported: { voice: true, speed: true, instructions: true, pitch: false, volume: false }
     };
   });
@@ -256,7 +249,7 @@ export function registerFeatureRoutes(app: SooyaApp): void {
     }
     if (parsed.data.emotions) repos.settings.set('voice.emotions', parsed.data.emotions);
     repos.audit.add('voice', 'settings.updated');
-    return { policy: config.getPersona().voicePolicy, model: config.safeModels().tts, emotions: repos.settings.get('voice.emotions', DEFAULT_EMOTIONS) };
+    return { policy: config.getPersona().voicePolicy, model: config.safeModels().tts, emotions: repos.settings.get('voice.emotions', DEFAULT_VOICE_EMOTIONS) };
   });
 
   server.post('/api/admin/voice/preview', adminGuard, async (req, reply) => {
@@ -270,10 +263,10 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       reply.code(503);
       return { error: 'tts_not_configured', message: '请先配置可用的语音合成模型' };
     }
-    const emotions = repos.settings.get<Record<string, { instructions: string; speed: number }>>('voice.emotions', DEFAULT_EMOTIONS);
-    const emotion = emotions[parsed.data.emotion] ?? emotions.neutral ?? DEFAULT_EMOTIONS.neutral;
+    const emotions = repos.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
+    const delivery = resolveVoiceDelivery(parsed.data.text, parsed.data.emotion, emotions);
     try {
-      const audio = await tts.synthesize(parsed.data.text, { emotion: parsed.data.emotion, instructions: emotion.instructions, speed: emotion.speed });
+      const audio = await tts.synthesize(parsed.data.text, delivery);
       void reply.header('content-type', audio.mime).header('cache-control', 'no-store').header('content-disposition', `inline; filename="preview.${audio.format}"`);
       return reply.send(audio.data);
     } catch (err) {

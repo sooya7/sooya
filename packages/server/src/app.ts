@@ -139,7 +139,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
     keepRecent: env.CONTEXT_RECENT_MESSAGES
   });
-  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors });
+  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings });
   const backups = new BackupService({
     db: () => dbHandle,
     dbFile,
