@@ -14,6 +14,7 @@ test.describe('SOOYA 1-9 user flows', () => {
   });
   test('feature center exposes avatar, voice, world and storage controls', async ({ page }, testInfo) => {
     const worldSubject = `E2E 城市 ${testInfo.project.name} ${Date.now()}`;
+    let voiceStatusReads = 0;
     await page.addInitScript(() => {
       const original = URL.revokeObjectURL.bind(URL);
       (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls = [];
@@ -27,6 +28,7 @@ test.describe('SOOYA 1-9 user flows', () => {
       if (new URL(request.url()).pathname.startsWith('/api/media/')) {
         mediaRequests.push({ url: request.url(), authorization: request.headers().authorization });
       }
+      if (new URL(request.url()).pathname === '/api/admin/voice' && request.method() === 'GET') voiceStatusReads++;
     });
     await installAdminToken(page);
     await page.goto('/admin/features');
@@ -54,6 +56,8 @@ test.describe('SOOYA 1-9 user flows', () => {
     await expect(page.getByLabel('音量')).toBeDisabled();
     await page.getByRole('button', { name: '保存语音配置' }).click();
     await expect(page.getByText('情绪语音配置已保存并立即生效')).toBeVisible();
+    await expect.poll(() => voiceStatusReads).toBeGreaterThanOrEqual(2);
+    await expect(page.getByText(/TTS 能力可用/)).toBeVisible();
     await expect(page.getByRole('button', { name: '试听' })).toBeEnabled();
 
     await page.getByRole('button', { name: '世界引擎' }).click();
