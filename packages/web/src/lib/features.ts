@@ -83,7 +83,10 @@ export const featureApi = {
     request<{ changed: number; blocked: Array<{ id: string; reason: string }>; missing: string[] }>('/api/admin/media/batch', { method: 'POST', body: { ids, action } }),
 
   voice: () => request<Record<string, any>>('/api/admin/voice'),
-  updateVoice: (body: Record<string, unknown>) => request<Record<string, any>>('/api/admin/voice', { method: 'PUT', body }),
+  updateVoice: async (body: Record<string, unknown>) => {
+    await request('/api/admin/voice', { method: 'PUT', body });
+    return request<Record<string, any>>('/api/admin/voice');
+  },
   previewVoice: (text: string, emotion: string) => request<Blob>('/api/admin/voice/preview', { method: 'POST', body: { text, emotion }, raw: true }),
 
   world: (query: { search?: string; kind?: string; active?: boolean; limit?: number; offset?: number } = {}) =>
