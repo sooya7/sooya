@@ -82,7 +82,7 @@ export class WorldEngine {
     let conflicts = 0;
     for (let i = 0; i < rows.length; i++) {
       const current = rows[i];
-      if (current.role !== 'user') continue;
+      if (!current || current.role !== 'user') continue;
       const next = rows[i + 1];
       const assistant = next?.role === 'assistant' ? next : undefined;
       const result = await this.extract(textOf(current), assistant ? textOf(assistant) : '', assistant?.id ?? current.id);
