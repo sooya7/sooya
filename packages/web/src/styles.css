@@ -8,14 +8,17 @@
   --ink-soft: #6b7280;
   --ink-faint: #9aa1ac;
   --line: #e6e8ec;
-  --accent: #3aa1ff;
-  --accent-deep: #1f8de6;
-  --mine: #d7ecff;
-  --mine-ink: #10334f;
+  /* Shared with the admin console so the two halves read as one product. */
+  --accent: #6d5efc;
+  --accent-deep: #4c5fd7;
+  --grad: linear-gradient(135deg, #6d5efc, #2f80ed);
+  --grad-soft: linear-gradient(135deg, #f0edff, #e8f2ff);
+  --mine: var(--grad);
+  --mine-ink: #ffffff;
   --danger: #e5484d;
   --radius-lg: 18px;
   --radius-sm: 10px;
-  --shadow-soft: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.05);
+  --shadow-soft: 0 2px 6px rgba(16, 26, 48, 0.06), 0 12px 28px -12px rgba(16, 26, 48, 0.18);
   --topbar-h: 56px;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
     'Helvetica Neue', Arial, sans-serif;
@@ -1494,4 +1497,43 @@ button {
 
 .audio-wave i.played {
   opacity: 0.85;
+}
+
+/* ---- Shared accent system: outgoing bubbles carry the gradient ---------- */
+
+.bubble-audio.mine,
+.bubble-audio.mine .audio-time,
+.bubble-audio.mine .audio-speed,
+.bubble-audio.mine .audio-transcript-toggle {
+  color: #fff;
+}
+
+.bubble-audio.mine .audio-play,
+.bubble-audio.mine .audio-speed {
+  color: #4c5fd7;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.bubble-audio.mine .audio-track {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* The reply row sits on the page, not on the bubble, so it keeps ink text. */
+.msg-row.mine .message-reply-preview {
+  justify-self: end;
+  background: rgba(109, 94, 252, 0.09);
+  border-left: 0;
+  border-right: 2px solid rgba(109, 94, 252, 0.5);
+  border-radius: 8px 0 0 8px;
+  text-align: right;
+}
+
+.topbar-status.connected .status-dot {
+  background: #0fae7e;
+}
+
+.unread-pill {
+  background: var(--grad);
+  border-color: transparent;
+  box-shadow: 0 10px 22px -10px rgba(109, 94, 252, 0.8);
 }
