@@ -33,7 +33,7 @@ export class WorldRepo {
     return this.db.prepare(`SELECT * FROM world_entries ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY active DESC,updated_at DESC LIMIT ? OFFSET ?`).all(...values) as WorldEntryRow[];
   }
   relevant(query: string, limit = 18): WorldEntryRow[] {
-    const terms = [...new Set(query.split(/[\s，。！？、；：,.!?;:]+/).map((value) => value.trim()).filter((value) => value.length >= 2))].slice(0,8);
+    const terms = worldSearchTerms(query).slice(0,16);
     const authorityOrder = `CASE authority WHEN 'admin' THEN 3 WHEN 'user' THEN 2 ELSE 1 END`;
     if (!terms.length) return this.db.prepare(`SELECT * FROM world_entries WHERE active=1 AND conflict_of IS NULL ORDER BY ${authorityOrder} DESC,confidence DESC,updated_at DESC LIMIT ?`).all(limit) as WorldEntryRow[];
     const clauses = terms.map(() => '(subject LIKE ? OR predicate LIKE ? OR object LIKE ?)').join(' OR ');
@@ -93,6 +93,18 @@ export class StorageSampleRepo {
   constructor(private readonly db: DbLike) {}
   add(mediaBytes: number,dataBytes: number,freeBytes: number|null): void { this.db.prepare('INSERT INTO storage_samples(created_at,media_bytes,data_bytes,free_bytes) VALUES(?,?,?,?)').run(nowIso(),mediaBytes,dataBytes,freeBytes); this.db.prepare('DELETE FROM storage_samples WHERE id NOT IN (SELECT id FROM storage_samples ORDER BY created_at DESC LIMIT 720)').run(); }
   list(limit=48): Array<{ createdAt:string;mediaBytes:number;dataBytes:number;freeBytes:number|null }> { const rows=this.db.prepare('SELECT * FROM storage_samples ORDER BY created_at DESC LIMIT ?').all(Math.min(720,Math.max(1,limit))) as Array<{ created_at:string;media_bytes:number;data_bytes:number;free_bytes:number|null }>; return rows.map((row)=>({ createdAt:row.created_at,mediaBytes:row.media_bytes,dataBytes:row.data_bytes,freeBytes:row.free_bytes })); }
+}
+function worldSearchTerms(query: string): string[] {
+  const terms = new Set<string>();
+  for (const token of query.split(/[\s，。！？、；：,.!?;:]+/).map((value) => value.trim()).filter(Boolean)) {
+    if (token.length >= 2) terms.add(token);
+    if (/^[\p{Script=Han}]+$/u.test(token) && token.length > 2) {
+      for (let size = 2; size <= Math.min(4, token.length); size++) {
+        for (let index = 0; index + size <= token.length; index++) terms.add(token.slice(index, index + size));
+      }
+    }
+  }
+  return [...terms];
 }
 function normalizeCandidate(input: WorldCandidate): WorldCandidate|null { if (!['entity','relation','fact','scene','timeline'].includes(input.kind)) return null; const subject=String(input.subject ?? '').trim().slice(0,200); const predicate=String(input.predicate ?? '').trim().slice(0,120); const object=String(input.object ?? '').trim().slice(0,500); if (!subject || !predicate || !object) return null; const confidence=Math.max(0,Math.min(1,Number(input.confidence ?? 0.6))); const authority=input.authority && ['model','user','admin'].includes(input.authority) ? input.authority : 'model'; return { kind:input.kind,subject,predicate,object,value:input.value ?? {},confidence,authority }; }
 function normalize(value:string):string { return value.trim().toLocaleLowerCase().replace(/[\s，。！？、；：,.!?;:]+/g,''); }
