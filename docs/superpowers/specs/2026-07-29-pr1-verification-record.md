@@ -24,7 +24,7 @@
 | M-020 | 报告误判 | `featureApi.updateVoice()` 当前在 PUT 成功后立即重新 GET 完整 voice 状态，VoiceEditor 用新响应替换 state。`860449b` 补 Desktop/Mobile E2E，确认保存后 GET 至少执行第二次、capability 文案和试听状态继续由刷新结果渲染。 |
 | M-021 | 已被后续提交修复 | `36a0543` 用分类摘要和每页 50 条明细替换完整 JSON `<pre>`；完整原始报告按需下载。2000 候选双端 E2E 证明 DOM 只渲染当前页、翻页正确、下载 Blob/文件名正确。 |
 | M-022 | 确定存在，已修复 | `WorldEngine.import()` 原先逐条调用 `WorldRepo.apply()`，后续失败会留下此前已提交条目；`8a733be` 改为单一批量事务，并覆盖 2000 条、回滚、合并、冲突和禁用计数。 |
-| M-023 | 无法确认 | 待核验可见性同步失败补偿。 |
+| M-023 | 确定存在，已修复 | `NotificationBridge` 原先永久吞掉 visibility 同步失败；`a4a9fdc` 增加有限重试、最新状态补偿、重新读取鉴权和卸载清理。系统级 Push 仍待真机。 |
 | M-024 | 测试不足 | 待 UI 选择态验证。 |
 
 ## M-001 取证
@@ -373,3 +373,29 @@ E2E 在 Desktop/Mobile 均记录 voice GET 次数，保存后要求至少两次�
 - GREEN：同一命令 3/3 通过，正常退出；2000 条用例约 3.56 秒。
 - 回归：`npm test -- --run test/world-import.test.ts test/world-normalization.test.ts test/world-search.test.ts test/features-1-9.test.ts --reporter=verbose`，4 files、12/12 通过，约 44.19 秒，正常退出。
 - `npm run typecheck`、`npm run build`（`packages/server`）：通过。
+
+## M-023 修复与验证
+
+提交：`a4a9fdc fix(push): retry visibility synchronization`。
+
+失败证据：
+
+- `NotificationBridge` 的首次同步、`visibilitychange`、focus 和 blur 请求均以 `.catch(() => undefined)` 结束。
+- RED 等价抽取保留旧行为后，临时失败测试预期 3 次、实际 1 次；耗尽后状态变化补偿测试预期累计 4 次、实际 2 次。
+
+修复后：
+
+- 每次状态变化立即同步当前前台状态；失败按 250ms、1000ms 有限重试，总尝试数最多 3 次，不无限重试、不显示骚扰性错误。
+- 新状态事件取消旧状态的待重试计时器并立即发送最新状态，避免旧状态覆盖新状态。
+- 三次失败耗尽后保持静默，但下一次 visibility/focus/blur 事件会重新开始同步。
+- 每次重试重新构造 Push API 请求头并读取当前会话 token；测试覆盖首次 401 后使用刷新 token 成功重试。
+- 组件卸载会取消待重试计时器，已卸载控制器不再发送。
+
+验证：
+
+- RED：`npm test -- --run src/lib/visibilitySync.test.ts --reporter=verbose`，2/4 失败，实际调用数分别为 1 和 2。
+- GREEN：同一文件扩展为 5 个用例后 5/5 通过。
+- Web 全量：`npm test`，3 files、22/22 通过。
+- `npm run typecheck`、`npm run build`（`packages/web`）：通过。
+
+限制：桌面自动化没有真实浏览器 PushManager 和系统通知通道；前台重复通知的最终系统级行为仍列入 iOS/Android PWA 真机验收。
