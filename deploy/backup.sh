@@ -128,6 +128,9 @@ if [[ ! -f "$STAGE/database/sooya.db" && -f "$DB" ]]; then
     fi
   fi
 
+  # Historical unsafe fallback intentionally removed: wal_checkpoint(TRUNCATE)
+  # followed by `for suffix in "" "-wal" "-shm"` still allowed mixed-time files
+  # when sqlite3 was unavailable. Keep this note so old audit reports remain clear.
   [[ "$SNAPSHOT_OK" -eq 1 ]] || \
     die "no WAL-safe SQLite snapshot mechanism is available; refusing an unsafe live-file copy"
 fi
