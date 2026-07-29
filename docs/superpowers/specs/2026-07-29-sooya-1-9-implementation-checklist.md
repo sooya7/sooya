@@ -530,7 +530,6 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 
 | 阻塞项 | 证据 | 影响 | 处理方式 |
 |---|---|---|---|
-| 最新 Head 尚无完整 Linux Run success | Run `30452925203` 的 Browser E2E、发布/容器、审计成功；Server 218/219，唯一失败是同毫秒孤立媒体夹具边界，`ada591d` 已修复 | 自动化功能已通过，但最终综合门槛仍需新 Head Run success | 推送 `ada591d` 与记录后重新触发完整 workflow |
 | iOS 真机验收缺失 | 尚无设备、系统、浏览器和录屏证据 | 头像、手势、Push、TTS 验收框不能勾选 | 使用真实 iPhone 完成矩阵并记录证据 |
 | Android 真机验收缺失 | 尚无设备、系统、浏览器和录屏证据 | 同上 | 使用真实 Android 完成矩阵并记录证据 |
 | PWA 完全关闭通知缺少实际证据 | 自动化不能完全代替系统级推送验证 | Web Push 不能完成 | 在已安装 PWA 的 iOS/Android 上测试 |
@@ -544,12 +543,12 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | 独立代码验证 | Comprehensive Test #108 | TypeScript、Build、Server Tests 均成功 | 完成 |
 | 2026-07-29 | 发布与容器验证 | Comprehensive Test #108 | ZIP/TAR、Docker build、readiness 成功 | 完成 |
 | 2026-07-29 | 依赖审计 | Comprehensive Test #108 | `npm audit --audit-level=high` 成功 | 完成 |
-| 2026-07-29 | Browser E2E | `772c2a4` | 修复测试 API 鉴权、非 2xx 静默失败、移动功能导航、稳定语义定位及消息最终状态竞态；`npm run test:e2e -- --reporter=list` Desktop 31/31、Mobile 31/31，共 62/62，2.0 分钟正常退出 | 本地自动化通过，待最新 Head Actions |
+| 2026-07-29 | Browser E2E | `772c2a4`、Run `30453599456` | 修复测试 API 鉴权、非 2xx 静默失败、移动功能导航、稳定语义定位及消息最终状态竞态；最终 Linux Browser Job 成功 | 自动化验证通过 |
 | 2026-07-29 | PWA 与真机验收 | 尚无完整实际设备证据 | 清单要求的头像、手势、通知和语音试听 | 未开始 |
-| 2026-07-29 | 最终完整验收 | 尚未取得可接受的最终 success Run | 需在所有问题修复与真机验证后执行 | 未开始 |
-| 2026-07-29 | PR #1 独立 Head 核验 | `09ac980`、`9456767` | 原始 Head 缺少 `media/store.ts` 和 `media/stickers.ts`；构建阻断已修复。`fileURLToPath()` 消除 Windows `C:\C:\...`，unit 35/35；regression 25/26，剩余 Bash 检查为 Windows/WSL 本地环境阻塞 | 构建阻断已修复，完整测试仍受其他问题影响 |
-| 2026-07-29 | Browser E2E 取消根因 | Actions Run `30435357087` | 多个用例先超时失败，随后耗尽 35 分钟 job timeout；并非成功或可接受的取消 | 阻塞待修复 |
-| 2026-07-29 | M-010 统一媒体鉴权 | `7afd647` | 普通/管理媒体及 SSE 改用 Bearer Header；DOM/下载/分享使用 Blob URL；Service Worker network-only 并清理旧缓存。Web 17/17、相关 Server 118/118、定向 E2E 5/5，双端 typecheck/build 通过 | 实现与相关自动化完成；完整 Server 聚合超时、真机 Web Share 待验证 |
+| 2026-07-29 | 最终完整自动化验收 | Run `30453599456` | 当前代码 Head `c0b3209`：Server 219/219、Browser E2E、发布包、Docker/readiness、依赖审计全部 success | 自动化完成，真机验收仍待执行 |
+| 2026-07-29 | PR #1 独立 Head 核验 | `09ac980`、`9456767`、Run `30453599456` | 原始 Head 缺少两个媒体模块；构建阻断与 Windows `file:` URL 已修复。Linux Server 21 files、219/219，包含 regression 26/26 和 Bash 语法检查 | 自动化验证通过；Windows/WSL 本地互操作仍为环境限制 |
+| 2026-07-29 | Browser E2E 取消根因 | Actions Run `30435357087` / `30453599456` | 旧 Run 多用例超时后耗尽 35 分钟；修复后最终 Linux Browser Job 成功 | 已被后续提交修复 |
+| 2026-07-29 | M-010 统一媒体鉴权 | `7afd647` / Run `30453599456` | 普通/管理媒体及 SSE 改用 Bearer Header；DOM/下载/分享使用 Blob URL；Service Worker network-only 并清理旧缓存。最终 Linux Server、Browser Job 成功 | 自动化完成；真机 Web Share 待验证 |
 | 2026-07-29 | M-011 精确媒体引用保护 | `13286b1` | 世界数据从 `%媒体ID%` 模糊 LIKE 改为 `json_tree` 精确结构字段；消息、贴纸、双方头像、世界数据、禁用/损坏 JSON、解除引用后删除均覆盖。RED 实际 2/预期 0；修复后相关 7/7、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-006 Push 订阅失效判定 | `4a65013` | 仅 404/410 自动删除；500/503/网络/DNS/TLS 连续失败保留订阅并累计计数，成功后归零。RED 第 6 次误删 5 个；修复后相关 7/7、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-004 正式语音情绪映射 | `3cb4640` | 试听与正式回复共用 `resolveVoiceDelivery()`，每次读取已保存映射；覆盖别名、缺失预设回退、正式音频持久化。RED 正式调用 options 为 `undefined`；修复后相关 13/13、聊天 37/37、Server typecheck/build 通过 | 相关自动化通过；移动端真实试听待真机验收 |
@@ -557,7 +556,7 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | Windows 数据库恢复基线 | `6632637` | 损坏库在 pragma 失败后关闭 SQLite 句柄，解除 Windows 文件锁；reliability 从 19/21 恢复为 21/21，Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-009 媒体永久删除一致性 | `c03c6c2` | 文件删除失败不再继续删 DB；单删明确 500 并审计，批量隔离失败项，孤立收集向维护 Job 抛错。RED 实际假成功 200；修复后相关 10/10、reliability 21/21、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-008 清理预览报告绑定 | `d044681` | 预览持久化 reportId、策略/候选 hash；apply 必须提交同一报告，仅处理快照并复核引用、路径、大小、mtime。RED 无 reportId 且 apply 可直接执行；修复后相关 13/13、Web 17/17、双端 typecheck/build 通过 | 自动化验证通过 |
-| 2026-07-29 | Browser E2E 基线恢复 | `772c2a4` | 旧 Head Run `30445900732` 为 49/62；当前 Head 本地根命令 62/62，无 skip/fixme。Web unit 17/17、typecheck、production build 同步通过 | 本地自动化通过；Linux Actions 待确认 |
+| 2026-07-29 | Browser E2E 基线恢复 | `772c2a4` / Run `30453599456` | 旧 Head Run `30445900732` 为 49/62；修复后本地扩展为 70/70，最终 Linux Browser Job 成功 | 自动化验证通过 |
 | 2026-07-29 | M-015 滚动取消长按 | `5192ccb` | 统一 press session 在 scroll、位移、pointerup/cancel、lostpointercapture、隐藏、失焦、卸载时清理；RED 滚动后菜单误开，修复后定向 1/1、功能 8/8、完整 E2E 64/64 | 自动化验证通过；iOS/Android 真机手势待验收 |
 | 2026-07-29 | M-007/M-014 查看器手势与历史 | `898bb0a` | 快速 swipe 使用同步 drag ref 消除旧 state 竞态；已有 history state、单 viewer entry、切图不增条目、返回/关闭恢复均覆盖。真实 Mobile touch 连续 3/3、功能 10/10、完整 E2E 66/66 | M-007 自动化通过待真机；M-014 报告误判 |
 | 2026-07-29 | M-020 Voice capability 刷新 | `860449b` | PUT 保存成功后强制重新 GET 完整 voice 状态；Desktop/Mobile 断言初始与保存后至少两次 GET，capability 文案和试听状态保持正确，定向 2/2 | 报告误判；防回归测试通过 |

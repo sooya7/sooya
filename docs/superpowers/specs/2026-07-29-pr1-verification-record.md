@@ -2,7 +2,7 @@
 
 | 编号 | 当前核验状态 | 证据与处理决定 |
 |---|---|---|
-| M-001 | 已被后续提交修复 | 构建阻断已修复，完整测试仍受其他问题影响。原始 Head `bd2db8b` 缺失 `media/store.ts`、`media/stickers.ts`；`09ac980` 仅同步必要模块，`9456767` 修复测试夹具的跨平台 `file:` URL 转换。 |
+| M-001 | 已被后续提交修复 | 原始 Head `bd2db8b` 缺失 `media/store.ts`、`media/stickers.ts`；`09ac980` 仅同步必要模块，`9456767` 修复测试夹具的跨平台 `file:` URL 转换。最终 Linux Run `30453599456` 的构建与 Server 219/219 均通过。 |
 | M-002 | 已被后续提交修复 | Run 30435357087 的 E2E 连续超时并耗尽 35 分钟；`772c2a4` 修复测试直连 API 缺少 Bearer、静默忽略非 2xx、功能中心移动导航缺失、旧路由/图标定位契约及乐观消息竞态。Run `30452925203` 的 Linux Browser E2E 已成功。 |
 | M-003 | 报告误判 | 模拟运行时超出唯一范围；事实库功能另按第 8 项核验。 |
 | M-004 | 已被后续提交修复 | `3cb4640` 抽取统一语音参数解析链路；试听与正式回复都读取已保存映射，自动情绪别名映射到 UI 预设，缺失预设安全回退中性。 |
@@ -54,7 +54,7 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - `npm run build -w @sooya/web`：production build 通过。
 - `npm run test:e2e -- --reporter=list`：62/62 通过，Desktop 31/31、Mobile 31/31，耗时 2.0 分钟，正常退出，无 skip/fixme。
 
-因此本地 Browser 自动化基线已恢复；只有最新 Head 的 Linux Actions 成功后，才可把 CI 门槛记为完成。
+因此本地 Browser 自动化基线已恢复；后续最终 Linux Run `30453599456` 已成功。
 
 ## M-015 修复与验证
 
@@ -149,7 +149,7 @@ E2E 在 Desktop/Mobile 均记录 voice GET 次数，保存后要求至少两次�
 - `npm run test -w @sooya/server -- --run test/stream.test.ts`：6/6 通过。
 - `npx playwright test --project=desktop --grep "generates and displays an image|playable voice message|feature center exposes|gallery supports|service worker keeps protected media" --reporter=list`：5/5 通过。断言普通/管理 Bearer Header、Blob DOM、无 token URL/DOM、Blob 生命周期、下载/分享安全降级和 Cache Storage 无受保护媒体。
 
-限制：`npm run test -w @sooya/server` 的完整聚合运行在外层 364 秒超时前未输出最终 Vitest 汇总，因此不能记为完整 Server 套件通过；上述 M-010 直接相关文件均已拆分通过。原生 iOS/Android Web Share、移动浏览器 Blob 生命周期仍标记为真机待验证。
+历史限制：本地 Windows 聚合运行曾在外层 364 秒超时前未输出最终 Vitest 汇总；最终 Linux Run `30453599456` 已取得 21 files、219/219。原生 iOS/Android Web Share、移动浏览器 Blob 生命周期仍标记为真机待验证。
 
 ## M-011 修复与验证
 
@@ -440,3 +440,12 @@ Run `30452925203`（Head `3555b83`）：
 - `npm test -- --run test/media-delete-consistency.test.ts test/storage-cleanup-report.test.ts --reporter=verbose`：2 files、8/8 通过。
 - Server typecheck/build：通过。
 - 当前 Head 的最终 Linux 综合 Run 待重新触发；不得把 `30452925203` 整体记为 success。
+
+最终综合结果：Run `30453599456`（Head `c0b3209`）整体 `success`。
+
+- Independent code validation：Server/Web typecheck、production build、Server 完整测试和汇总门禁全部成功；Server 为 21 files、219/219，约 313.13 秒。
+- Browser end-to-end tests：成功，约 3 分 16 秒。
+- Release package and container validation：发布包、校验、Docker build、容器 readiness 和汇总门禁全部成功，约 3 分 32 秒。
+- Dependency vulnerability audit：成功，约 14 秒。
+- 失败诊断 artifact 上传步骤按 `if: failure()` 正常 skipped，不属于关键验证跳过。
+- Actions 的 Node 20 runtime deprecation 为平台警告，不改变本 Run 的成功结论；后续维护应升级 action/runtime 版本。
