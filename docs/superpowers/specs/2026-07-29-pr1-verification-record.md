@@ -10,7 +10,7 @@
 | M-006 | 已被后续提交修复 | `4a65013` 限制自动删除为 404/410；500、503、网络、DNS、TLS 临时失败只累计诊断计数，不删除订阅，成功后计数归零。 |
 | M-007 | 已被后续提交修复 | 当前 ImageViewer 使用 Pointer Capture；仍需真机异常释放验证。 |
 | M-008 | 无法确认 | 待核验预览与 apply 的报告绑定路径。 |
-| M-009 | 无法确认 | 待核验文件与数据库删除补偿路径。 |
+| M-009 | 已被后续提交修复 | `c03c6c2` 不再吞掉媒体文件删除错误；单删、批量删和孤立上传收集失败均保留 DB 记录并返回/记录明确失败。 |
 | M-010 | 已被后续提交修复 | `7afd647` 移除普通/管理媒体及 SSE 的长期 query token，改用分作用域 Bearer fetch + Blob URL；受保护媒体 network-only。相关自动化通过，完整 Server 聚合命令仍无汇总超时，原生移动端 Web Share 待真机验证。 |
 | M-011 | 已被后续提交修复 | `13286b1` 将世界数据媒体引用从模糊 `LIKE` 改为 `json_tree` 对 `mediaId/media_id` 文本值的精确匹配，并同步引用统计、未引用清理和孤立上传扫描。 |
 | M-012 | 测试不足 | 待核验 ZIP 实际内容。 |
@@ -164,3 +164,32 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - `npm --workspace packages/server run typecheck`、`npm --workspace packages/server run build`：通过。
 
 限制：预算使用跨 provider 的保守估算而非绑定单一厂商 tokenizer；128-token 安全余量用于降低不同模型分词差异造成的溢出风险。模型服务仍应返回并监控实际 usage。
+
+## Windows 数据库恢复基线修复
+
+提交：`6632637 fix(db): close failed database handles on recovery`。
+
+组合回归暴露两个既有 Windows 失败：损坏数据库在 `applyPragmas()` 抛出 `SQLITE_NOTADB` 后，`tryOpen()` 未关闭刚创建的 SQLite 句柄；Windows 文件锁使 quarantine/删除原文件失败，fresh recovery 再次打开同一损坏库。修复在 pragma 失败路径关闭句柄并保留原始异常。
+
+验证：`npm --workspace packages/server test -- --run test/reliability.test.ts --reporter=verbose` 从 19/21（2 个 `SQLITE_NOTADB`）恢复为 21/21，约 52.5 秒，正常退出；Server typecheck/build 通过。
+
+## M-009 修复与验证
+
+提交：`c03c6c2 fix(storage): preserve media records on delete failures`。
+
+失败证据：模拟 `fs.rm` 拒绝删除正式媒体文件时，旧 API 仍返回 200，随后数据库记录消失而文件仍存在。
+
+修复后：
+
+- `MediaStore.delete()` 只有文件删除成功后才删除数据库记录；任一步失败都会抛出，不再空 catch 后继续。
+- 若数据库删除在文件删除后失败，操作同样返回失败且记录仍存在，可由 missing-record/reconcile 路径追踪处理。
+- 单文件永久删除返回 500 `media_delete_failed`，错误文本不暴露真实路径；写入 error log 与 `permanent.delete_failed` 审计。
+- 批量永久删除逐项隔离，失败项进入 `failed`，不计入 `changed`，其他独立媒体继续处理；最终批量审计包含失败结果。
+- `collectOrphans()` 文件删除失败时不删除数据库行并向维护 Job 抛错，避免后台任务静默制造孤立文件。
+
+验证：
+
+- 首次 RED：`npm --workspace packages/server test -- --run test/media-delete-consistency.test.ts --reporter=verbose`，预期 500、实际 200。
+- GREEN：同一命令 3/3 通过，覆盖单删、批量部分失败、孤立上传收集失败及最终 DB/文件状态。
+- 回归：`npm --workspace packages/server test -- --run test/media-delete-consistency.test.ts test/features-1-9.test.ts test/media-references.test.ts --reporter=verbose`，3 files、10/10 通过，约 32.5 秒，正常退出。
+- `test/reliability.test.ts` 21/21 通过；Server typecheck/build 通过。
