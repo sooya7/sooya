@@ -76,7 +76,7 @@ Only one resync loop runs at a time. A newer reload cancels an older loop. Pages
 
 ### Resend replacement
 
-Resend reuses the failed message content but creates a new `clientMsgId`. On success, the failed local message is removed and the accepted server message occupies its sorted sequence position. On failure, the original failed row remains visible and retryable. A resend never removes an already-persisted successful message.
+Resend reuses both the failed message content and its original `clientMsgId`. This lets the server's idempotency rule reconcile the case where the original request committed but its response was lost. On success, the failed local message is replaced by the accepted server message in sequence order. On failure, the original failed row remains visible and retryable. A resend never removes an already-persisted successful message.
 
 ## Slice C: PWA and Protected Media
 
