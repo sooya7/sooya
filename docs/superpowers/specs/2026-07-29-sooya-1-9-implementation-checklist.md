@@ -547,5 +547,6 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | Browser E2E | Comprehensive Test #108 / 重跑 Job | 原 Job 在 `npm run test:e2e` 被取消，重跑中 | 实现完成，待自动化验收 |
 | 2026-07-29 | PWA 与真机验收 | 尚无完整实际设备证据 | 清单要求的头像、手势、通知和语音试听 | 未开始 |
 | 2026-07-29 | 最终完整验收 | 尚未取得可接受的最终 success Run | 需在所有问题修复与真机验证后执行 | 未开始 |
-| 2026-07-29 | PR #1 独立 Head 核验 | `bd2db8b` 的干净安装、typecheck、build 与服务端测试 | 缺少 `media/store.ts` 和 `media/stickers.ts`；已同步必要模块。typecheck/build 通过，服务端测试仍有 Windows 路径与贴纸资产失败待分离处理 | 进行中 |
+| 2026-07-29 | PR #1 独立 Head 核验 | `09ac980`、`9456767` | 原始 Head 缺少 `media/store.ts` 和 `media/stickers.ts`；构建阻断已修复。`fileURLToPath()` 消除 Windows `C:\C:\...`，unit 35/35；regression 25/26，剩余 Bash 检查为 Windows/WSL 本地环境阻塞 | 构建阻断已修复，完整测试仍受其他问题影响 |
 | 2026-07-29 | Browser E2E 取消根因 | Actions Run `30435357087` | 多个用例先超时失败，随后耗尽 35 分钟 job timeout；并非成功或可接受的取消 | 阻塞待修复 |
+| 2026-07-29 | M-010 统一媒体鉴权 | `7afd647` | 普通/管理媒体及 SSE 改用 Bearer Header；DOM/下载/分享使用 Blob URL；Service Worker network-only 并清理旧缓存。Web 17/17、相关 Server 118/118、定向 E2E 5/5，双端 typecheck/build 通过 | 实现与相关自动化完成；完整 Server 聚合超时、真机 Web Share 待验证 |
