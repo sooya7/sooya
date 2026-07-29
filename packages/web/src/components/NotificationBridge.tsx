@@ -17,10 +17,11 @@ async function pushRequest<T>(path: string, init: RequestInit = {}): Promise<T> 
   return body as T;
 }
 
-function fromBase64Url(value: string): Uint8Array {
+function fromBase64Url(value: string): ArrayBuffer {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(normalized + '='.repeat((4 - normalized.length % 4) % 4));
-  return Uint8Array.from(raw, (ch) => ch.charCodeAt(0));
+  const bytes = Uint8Array.from(raw, (ch) => ch.charCodeAt(0));
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 async function currentSubscription(): Promise<PushSubscription | null> {
