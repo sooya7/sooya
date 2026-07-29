@@ -160,7 +160,6 @@ export const MIGRATIONS: Migration[] = [
         INSERT INTO counters(name, value) VALUES ('message_seq', 0), ('event_seq', 0);
       `);
 
-      // Keep FTS in sync with memories.
       db.exec(`
         CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
           INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
@@ -195,9 +194,6 @@ export const MIGRATIONS: Migration[] = [
     version: 3,
     name: 'fts_trigram_tokenizer',
     up: (db) => {
-      // unicode61 treats a whole Chinese sentence as a single token, which made
-      // FTS recall useless for CJK. The trigram tokenizer indexes overlapping
-      // 3-character sequences and works for both Latin and CJK text.
       db.exec(`
         DROP TRIGGER IF EXISTS memories_ai;
         DROP TRIGGER IF EXISTS memories_ad;
@@ -220,6 +216,77 @@ export const MIGRATIONS: Migration[] = [
           INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
           INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
         END;
+      `);
+    }
+  },
+  {
+    version: 4,
+    name: 'features_1_9_foundations',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE media ADD COLUMN deleted_at TEXT;
+        ALTER TABLE media ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE media ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
+        CREATE INDEX idx_media_deleted ON media(deleted_at, created_at DESC);
+        CREATE INDEX idx_media_favorite ON media(favorite, deleted_at, created_at DESC);
+
+        CREATE TABLE push_subscriptions (
+          endpoint        TEXT PRIMARY KEY,
+          p256dh          TEXT NOT NULL,
+          auth            TEXT NOT NULL,
+          expiration_time INTEGER,
+          visible         INTEGER NOT NULL DEFAULT 0,
+          last_seen_at    TEXT,
+          fail_count      INTEGER NOT NULL DEFAULT 0,
+          created_at      TEXT NOT NULL,
+          updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX idx_push_updated ON push_subscriptions(updated_at DESC);
+
+        CREATE TABLE world_entries (
+          id                TEXT PRIMARY KEY,
+          kind              TEXT NOT NULL CHECK (kind IN ('entity','relation','fact','scene','timeline')),
+          subject           TEXT NOT NULL,
+          predicate         TEXT NOT NULL,
+          object            TEXT NOT NULL,
+          value_json        TEXT NOT NULL DEFAULT '{}',
+          confidence        REAL NOT NULL DEFAULT 0.6,
+          authority         TEXT NOT NULL DEFAULT 'model' CHECK (authority IN ('model','user','admin')),
+          source_message_id TEXT,
+          active            INTEGER NOT NULL DEFAULT 1,
+          conflict_of       TEXT REFERENCES world_entries(id) ON DELETE SET NULL,
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL
+        );
+        CREATE INDEX idx_world_active ON world_entries(active, kind, updated_at DESC);
+        CREATE INDEX idx_world_identity ON world_entries(subject, predicate, active);
+        CREATE INDEX idx_world_source ON world_entries(source_message_id);
+
+        CREATE TABLE world_sources (
+          entry_id   TEXT NOT NULL REFERENCES world_entries(id) ON DELETE CASCADE,
+          message_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (entry_id, message_id)
+        );
+
+        CREATE TABLE audit_log (
+          id          TEXT PRIMARY KEY,
+          category    TEXT NOT NULL,
+          action      TEXT NOT NULL,
+          target      TEXT,
+          detail_json TEXT NOT NULL DEFAULT '{}',
+          created_at  TEXT NOT NULL
+        );
+        CREATE INDEX idx_audit_created ON audit_log(created_at DESC);
+
+        CREATE TABLE storage_samples (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          created_at  TEXT NOT NULL,
+          media_bytes INTEGER NOT NULL,
+          data_bytes  INTEGER NOT NULL,
+          free_bytes  INTEGER
+        );
+        CREATE INDEX idx_storage_samples_created ON storage_samples(created_at DESC);
       `);
     }
   }
