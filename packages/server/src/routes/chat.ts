@@ -5,7 +5,6 @@ import { requireChatToken } from './auth.js';
 import { SendMessageSchema, type ChatMessage } from '../core/types.js';
 import { parseUserDirectives } from '../core/directives.js';
 import { maintenanceCoordinator } from '../core/maintenance.js';
-import { nowIso } from '../util/ids.js';
 
 const HistoryQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30), before: z.coerce.number().int().min(0).optional(), since: z.coerce.number().int().min(0).optional() });
 
@@ -107,21 +106,28 @@ export function registerChatRoutes(app: SooyaApp): void {
     const blocked = rejectBlockedWrite(reply);
     if (blocked) return blocked;
     const id = (req.params as { id: string }).id;
-    const message = repos.messages.get(id);
-    if (!message) { reply.code(404); return { error: 'not_found' }; }
-    if (message.role !== 'user' || message.meta?.withdrawnAt) { reply.code(409); return { error: 'not_withdrawable' }; }
-    if (Date.now() - Date.parse(message.createdAt) > 5 * 60_000) { reply.code(409); return { error: 'withdraw_window_expired', message: '只能撤回五分钟内发送的消息' }; }
-    const meta = { ...(message.meta ?? {}), withdrawnAt: nowIso(), originalPartTypes: message.content.map((part) => part.type) };
+    const now = Date.now();
+    const windowMs = 5 * 60_000;
+    // Coordinate eligibility, conditional state transition, parts replacement,
+    // audit and the durable message.updated event in one SQLite transaction.
+    // Only the winning caller (kind === 'withdrawn') persists an event; the
+    // live fanout happens strictly after the transaction commits.
     const tx = app.db.transaction(() => {
-      app.db.prepare('DELETE FROM message_parts WHERE message_id = ?').run(id);
-      app.db.prepare(`INSERT INTO message_parts(id, message_id, idx, type, text, media_id, status, error, duration, transcript, meta_json) VALUES (?, ?, 0, 'text', ?, NULL, 'sent', NULL, NULL, NULL, '{}')`).run(`withdrawn_${id}`, id, '[消息已撤回]');
-      app.db.prepare('UPDATE messages SET meta_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(meta), nowIso(), id);
+      const result = repos.messages.withdraw(id, now, windowMs);
+      if (result.kind === 'withdrawn') {
+        repos.audit.add('message', 'withdrawn', id, { preservedPlaceholder: true });
+        const event = services.bus.persist('message.updated', { message: result.message });
+        return { result, event };
+      }
+      return { result, event: null };
     });
-    tx();
-    const updated = repos.messages.get(id)!;
-    repos.audit.add('message', 'withdrawn', id, { preservedPlaceholder: true });
-    services.bus.publish('message.updated', { message: updated });
-    return { message: updated };
+    const { result, event } = tx();
+    if (result.kind === 'not_found') { reply.code(404); return { error: 'not_found' }; }
+    if (result.kind === 'not_withdrawable') { reply.code(409); return { error: 'not_withdrawable' }; }
+    if (result.kind === 'expired') { reply.code(409); return { error: 'withdraw_window_expired', message: '只能撤回五分钟内发送的消息' }; }
+    if (result.kind === 'already_withdrawn') { return { duplicate: true, message: result.message }; }
+    services.bus.fanout(event!);
+    return { message: result.message };
   });
 
   server.get('/api/stickers', { preHandler: auth }, async () => ({ stickers: services.stickerLibrary.available().map((sticker) => ({ id: sticker.id, name: sticker.name, emotion: sticker.emotion, tags: sticker.tags, url: sticker.url, mediaId: sticker.mediaId })) }));
