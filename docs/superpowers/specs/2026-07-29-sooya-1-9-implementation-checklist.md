@@ -565,3 +565,4 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | M-012 / M-013 范围与缓存复核 | `7afd647` / 核验记录 | 清单未要求 ZIP，现有选择一致的安全 Blob 批量下载保留；受保护媒体已 network-only，旧媒体缓存由 `sooya-v6` 清理 | M-012 报告误判；M-013 已被后续提交修复 |
 | 2026-07-29 | M-017 / M-018 世界搜索与 identity | `b852e3b` | LIKE 通配符统一字面转义；NFKC Unicode identity key 持久化，v5 回填重复 winner 并用部分唯一索引保护。RED `100%` 误返 2 条且 Unicode 未合并；修复后相关 12/12、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-019 清理空间口径 | `006a0d6` | 活动未引用媒体不再计入本次可释放；回收站候选的 preview/released/deleted bytes 一致，安全跳过另计 skippedBytes。RED 活动媒体被错误计入；修复后相关 14/14、Server typecheck/build 通过 | 自动化验证通过 |
+| 2026-07-29 | M-022 世界数据批量导入事务 | `8a733be` | 旧实现逐条提交，故障注入后残留 1 条；现由单一 SQLite 事务覆盖整批写入、冲突和禁用，失败全量回滚。2000 条、冲突/合并/禁用及回滚 3/3，世界相关回归 12/12，Server typecheck/build 通过 | 自动化验证通过 |

@@ -23,7 +23,7 @@
 | M-019 | 已被后续提交修复 | `006a0d6` 仅把本次可直接删除的媒体计入 reclaimableBytes；执行分别返回 deletedBytes 与 skippedBytes，预览/执行口径可核对。 |
 | M-020 | 报告误判 | `featureApi.updateVoice()` 当前在 PUT 成功后立即重新 GET 完整 voice 状态，VoiceEditor 用新响应替换 state。`860449b` 补 Desktop/Mobile E2E，确认保存后 GET 至少执行第二次、capability 文案和试听状态继续由刷新结果渲染。 |
 | M-021 | 已被后续提交修复 | `36a0543` 用分类摘要和每页 50 条明细替换完整 JSON `<pre>`；完整原始报告按需下载。2000 候选双端 E2E 证明 DOM 只渲染当前页、翻页正确、下载 Blob/文件名正确。 |
-| M-022 | 测试不足 | 待 2000 条导入事务验证。 |
+| M-022 | 确定存在，已修复 | `WorldEngine.import()` 原先逐条调用 `WorldRepo.apply()`，后续失败会留下此前已提交条目；`8a733be` 改为单一批量事务，并覆盖 2000 条、回滚、合并、冲突和禁用计数。 |
 | M-023 | 无法确认 | 待核验可见性同步失败补偿。 |
 | M-024 | 测试不足 | 待 UI 选择态验证。 |
 
@@ -350,3 +350,26 @@ E2E 在 Desktop/Mobile 均记录 voice GET 次数，保存后要求至少两次�
 - GREEN：`storage-cleanup-report.test.ts` 5/5 通过，新增活动媒体、回收站媒体和预览/执行字节一致性断言。
 - 回归：`npm --workspace packages/server test -- --run test/storage-cleanup-report.test.ts test/media-delete-consistency.test.ts test/features-1-9.test.ts --reporter=verbose`，3 files、14/14 通过，约 43.8 秒，正常退出。
 - Server typecheck/build 通过。
+
+## M-022 修复与验证
+
+提交：`8a733be fix(world): make imports atomic`。
+
+失败证据：
+
+- `WorldEngine.import()` 对每个条目分别调用一次带事务的 `WorldRepo.apply()`，因此事务边界仍然是单条而不是整批。
+- 故障注入测试在第二条 `INSERT` 执行 `RAISE(ABORT)`；旧实现抛错后数据库实际仍有 1 条，预期为 0。
+
+修复后：
+
+- `WorldRepo.importEntries()` 在一个 SQLite 事务内完成整批写入、去重合并、冲突 winner 选择和 `active:false` 禁用。
+- 任一条写入失败会回滚本批此前所有写入和状态变更。
+- 2000 条导入返回 `{ stored: 2000, merged: 0, conflicts: 0, disabled: 0 }`，最终数据库为 2000 条。
+- 混合导入返回确定的 stored/merged/conflicts/disabled 计数，并断言最终 active/inactive 状态。
+
+验证：
+
+- RED：`npm test -- --run test/world-import.test.ts --reporter=verbose`，1/3 失败；回滚用例期望 0、实际 1，2000 条用例约 4.23 秒。
+- GREEN：同一命令 3/3 通过，正常退出；2000 条用例约 3.56 秒。
+- 回归：`npm test -- --run test/world-import.test.ts test/world-normalization.test.ts test/world-search.test.ts test/features-1-9.test.ts --reporter=verbose`，4 files、12/12 通过，约 44.19 秒，正常退出。
+- `npm run typecheck`、`npm run build`（`packages/server`）：通过。
