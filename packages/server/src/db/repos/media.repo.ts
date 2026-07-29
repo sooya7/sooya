@@ -136,7 +136,18 @@ export class MediaRepo {
   references(id: string): MediaReferences {
     const messageParts = (this.db.prepare('SELECT COUNT(*) c FROM message_parts WHERE media_id = ?').get(id) as { c: number }).c;
     const stickers = (this.db.prepare('SELECT COUNT(*) c FROM stickers WHERE media_id = ?').get(id) as { c: number }).c;
-    const worldEntries = (this.db.prepare('SELECT COUNT(*) c FROM world_entries WHERE active = 1 AND value_json LIKE ?').get(`%${id}%`) as { c: number }).c;
+    const worldEntries = (this.db.prepare(`
+      SELECT COUNT(*) c
+      FROM world_entries w
+      WHERE w.active = 1
+        AND EXISTS (
+          SELECT 1
+          FROM json_tree(CASE WHEN json_valid(w.value_json) THEN w.value_json ELSE '{}' END) ref
+          WHERE ref.key IN ('mediaId', 'media_id')
+            AND ref.type = 'text'
+            AND ref.value = ?
+        )
+    `).get(id) as { c: number }).c;
     return { messageParts, stickers, worldEntries, total: messageParts + stickers + worldEntries };
   }
 
@@ -149,7 +160,17 @@ export class MediaRepo {
       WHERE m.kind != 'sticker'
         AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM world_entries w WHERE w.active = 1 AND w.value_json LIKE '%' || m.id || '%')
+        AND NOT EXISTS (
+          SELECT 1 FROM world_entries w
+          WHERE w.active = 1
+            AND EXISTS (
+              SELECT 1
+              FROM json_tree(CASE WHEN json_valid(w.value_json) THEN w.value_json ELSE '{}' END) ref
+              WHERE ref.key IN ('mediaId', 'media_id')
+                AND ref.type = 'text'
+                AND ref.value = m.id
+            )
+        )
       ORDER BY m.created_at LIMIT ?
     `).all(limit) as MediaRow[];
   }
@@ -163,7 +184,17 @@ export class MediaRepo {
         AND m.deleted_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
-        AND NOT EXISTS (SELECT 1 FROM world_entries w WHERE w.active = 1 AND w.value_json LIKE '%' || m.id || '%')
+        AND NOT EXISTS (
+          SELECT 1 FROM world_entries w
+          WHERE w.active = 1
+            AND EXISTS (
+              SELECT 1
+              FROM json_tree(CASE WHEN json_valid(w.value_json) THEN w.value_json ELSE '{}' END) ref
+              WHERE ref.key IN ('mediaId', 'media_id')
+                AND ref.type = 'text'
+                AND ref.value = m.id
+            )
+        )
       ORDER BY m.created_at LIMIT ?
     `).all(cutoff, limit) as MediaRow[];
   }
