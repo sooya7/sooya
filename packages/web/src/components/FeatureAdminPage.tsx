@@ -190,7 +190,7 @@ function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const setPolicy = (key: string, value: number) => setData((previous) => previous ? { ...previous, policy: { ...previous.policy, [key]: value } } : previous);
   const preview = async (apply: boolean) => {
     try {
-      const result = await featureApi.cleanupStorage(apply);
+      const result = await featureApi.cleanupStorage(apply, undefined, apply ? report?.report?.reportId : undefined);
       setReport(result);
       await load();
       onNotice(apply ? `清理完成，释放 ${bytes(result.releasedBytes)}` : '清理预览已生成，尚未删除任何内容');

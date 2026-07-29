@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type { AppEnv } from '../config/env.js';
 import type { ConfigStore } from '../config/store.js';
 import type { MediaRepo } from '../db/repos/media.repo.js';
@@ -9,6 +10,7 @@ import type { AuditRepo, StorageSampleRepo } from '../db/repos/feature.repo.js';
 import type { MediaStore } from '../media/store.js';
 import type { MaintenanceCoordinator } from './maintenance.js';
 import { dirSize } from '../util/fsx.js';
+import { randomId } from '../util/ids.js';
 
 export interface StoragePolicy {
   softLimitBytes: number;
@@ -19,17 +21,25 @@ export interface StoragePolicy {
 }
 
 export interface CleanupReport {
+  reportId: string;
   generatedAt: string;
+  policyHash: string;
+  candidateHash: string;
   candidates: {
     expiredTrash: Array<{ id: string; bytes: number; references: number }>;
     missingRecords: Array<{ id: string; relPath: string; bytes: number }>;
-    orphanFiles: Array<{ path: string; bytes: number }>;
+    orphanFiles: Array<{ path: string; bytes: number; mtimeMs: number }>;
     unreferencedMedia: Array<{ id: string; bytes: number }>;
-    tempFiles: Array<{ path: string; bytes: number }>;
-    oldBackups: Array<{ path: string; bytes: number }>;
+    tempFiles: Array<{ path: string; bytes: number; mtimeMs: number }>;
+    oldBackups: Array<{ path: string; bytes: number; mtimeMs: number }>;
   };
   reclaimableBytes: number;
 }
+
+type CleanupCategory = keyof CleanupReport['candidates'];
+type CleanupSnapshotStore = Record<string, CleanupReport>;
+const CLEANUP_REPORTS_KEY = 'storage.cleanup.reports';
+const CLEANUP_REPORT_TTL_MS = 60 * 60_000;
 
 const DEFAULT_POLICY: StoragePolicy = {
   softLimitBytes: 700 * 1024 * 1024,
@@ -173,7 +183,7 @@ export class StorageService {
       .map(([key, files]) => ({ key, files, mtime: Math.max(...files.map((file) => file.mtimeMs)) }))
       .sort((a, b) => b.mtime - a.mtime)
       .slice(policy.backupKeep)
-      .flatMap((group) => group.files.map((file) => ({ path: file.path, bytes: file.bytes })));
+      .flatMap((group) => group.files.map((file) => ({ path: file.path, bytes: file.bytes, mtimeMs: file.mtimeMs })));
     const reclaimableBytes = [
       ...expiredTrash.filter((item) => item.references === 0),
       ...orphanFiles,
@@ -181,27 +191,68 @@ export class StorageService {
       ...tempFiles,
       ...oldBackups
     ].reduce((sum, item) => sum + item.bytes, 0);
+    const candidates = { expiredTrash, missingRecords, orphanFiles, unreferencedMedia, tempFiles, oldBackups };
     return {
+      reportId: `cleanup_${randomId(18)}`,
       generatedAt: new Date().toISOString(),
-      candidates: { expiredTrash, missingRecords, orphanFiles, unreferencedMedia, tempFiles, oldBackups },
+      policyHash: digest(policy),
+      candidateHash: digest(candidates),
+      candidates,
       reclaimableBytes
     };
   }
 
-  async cleanup(input: { apply?: boolean; categories?: string[] } = {}): Promise<{ applied: boolean; report: CleanupReport; deleted: Record<string, number>; releasedBytes: number }> {
+  async cleanup(input: { apply?: boolean; categories?: string[]; reportId?: string; internal?: boolean } = {}): Promise<{
+    applied: boolean;
+    report: CleanupReport;
+    deleted: Record<string, number>;
+    skipped: Array<{ category: CleanupCategory; target: string; reason: string }>;
+    releasedBytes: number;
+  }> {
     if (this.activeWrites > 0) throw new Error('media write is in progress; retry cleanup shortly');
     const release = this.maintenance.begin('storage.cleanup', { blocksWrites: true });
     this.maintenanceRunning = true;
     try {
-      const report = await this.report();
-      const categories = new Set(input.categories ?? ['expiredTrash', 'orphanFiles', 'unreferencedMedia', 'tempFiles', 'oldBackups', 'missingRecords']);
+      let report: CleanupReport;
+      if (input.apply && !input.internal) {
+        if (!input.reportId) throw cleanupReportError('CLEANUP_REPORT_REQUIRED', 'a confirmed cleanup report is required');
+        const stored = this.loadCleanupReports()[input.reportId];
+        if (!stored || Date.now() - Date.parse(stored.generatedAt) > CLEANUP_REPORT_TTL_MS) {
+          throw cleanupReportError('CLEANUP_REPORT_INVALID', 'cleanup report is missing or expired');
+        }
+        if (stored.policyHash !== digest(this.policy())) {
+          throw cleanupReportError('CLEANUP_REPORT_INVALID', 'storage policy changed after preview');
+        }
+        if (stored.candidateHash !== digest(stored.candidates)) {
+          throw cleanupReportError('CLEANUP_REPORT_INVALID', 'cleanup report candidate snapshot is invalid');
+        }
+        report = stored;
+      } else {
+        report = await this.report();
+      }
+      const categories = new Set<CleanupCategory>(
+        (input.categories ?? ['expiredTrash', 'orphanFiles', 'unreferencedMedia', 'tempFiles', 'oldBackups', 'missingRecords']) as CleanupCategory[]
+      );
       const deleted: Record<string, number> = {};
+      const skipped: Array<{ category: CleanupCategory; target: string; reason: string }> = [];
       let releasedBytes = 0;
-      if (!input.apply) return { applied: false, report, deleted, releasedBytes };
+      if (!input.apply) {
+        this.saveCleanupReport(report);
+        this.audit.add('storage', 'cleanup.previewed', report.reportId, {
+          reportId: report.reportId,
+          candidateHash: report.candidateHash,
+          policyHash: report.policyHash
+        });
+        return { applied: false, report, deleted, skipped, releasedBytes };
+      }
 
       if (categories.has('expiredTrash')) {
         for (const item of report.candidates.expiredTrash) {
-          if (item.references > 0) continue;
+          const row = this.media.get(item.id);
+          if (!row || !row.deleted_at || row.bytes !== item.bytes || this.media.references(item.id).total > 0 || this.avatarMediaIds().has(item.id)) {
+            skipped.push({ category: 'expiredTrash', target: item.id, reason: 'no_longer_safe' });
+            continue;
+          }
           if (await this.mediaStore.delete(item.id)) {
             deleted.expiredTrash = (deleted.expiredTrash ?? 0) + 1;
             releasedBytes += item.bytes;
@@ -211,7 +262,10 @@ export class StorageService {
       if (categories.has('unreferencedMedia')) {
         for (const item of report.candidates.unreferencedMedia) {
           const row = this.media.get(item.id);
-          if (!row || !row.deleted_at || this.media.references(item.id).total > 0) continue;
+          if (!row || !row.deleted_at || row.bytes !== item.bytes || this.media.references(item.id).total > 0 || this.avatarMediaIds().has(item.id)) {
+            skipped.push({ category: 'unreferencedMedia', target: item.id, reason: 'no_longer_safe' });
+            continue;
+          }
           if (await this.mediaStore.delete(item.id)) {
             deleted.unreferencedMedia = (deleted.unreferencedMedia ?? 0) + 1;
             releasedBytes += item.bytes;
@@ -221,6 +275,14 @@ export class StorageService {
       for (const category of ['orphanFiles', 'tempFiles', 'oldBackups'] as const) {
         if (!categories.has(category)) continue;
         for (const item of report.candidates[category]) {
+          if (!this.isSafeCleanupPath(category, item.path)) {
+            skipped.push({ category, target: item.path, reason: 'unsafe_path' });
+            continue;
+          }
+          if (!await matchesFileSnapshot(item)) {
+            skipped.push({ category, target: item.path, reason: 'file_changed_or_missing' });
+            continue;
+          }
           await fsp.rm(item.path, { force: true });
           deleted[category] = (deleted[category] ?? 0) + 1;
           releasedBytes += item.bytes;
@@ -228,12 +290,24 @@ export class StorageService {
       }
       if (categories.has('missingRecords')) {
         for (const item of report.candidates.missingRecords) {
-          if (this.media.references(item.id).total > 0 || this.avatarMediaIds().has(item.id)) continue;
+          const row = this.media.get(item.id);
+          if (!row || row.rel_path !== item.relPath || row.bytes !== item.bytes || this.mediaStore.exists(row) || this.media.references(item.id).total > 0 || this.avatarMediaIds().has(item.id)) {
+            skipped.push({ category: 'missingRecords', target: item.id, reason: 'no_longer_safe' });
+            continue;
+          }
           if (this.media.delete(item.id)) deleted.missingRecords = (deleted.missingRecords ?? 0) + 1;
         }
       }
-      this.audit.add('storage', 'cleanup.applied', null, { deleted, releasedBytes, generatedAt: report.generatedAt });
-      return { applied: true, report, deleted, releasedBytes };
+      this.audit.add('storage', 'cleanup.applied', report.reportId, {
+        reportId: report.reportId,
+        candidateHash: report.candidateHash,
+        policyHash: report.policyHash,
+        deleted,
+        skipped,
+        releasedBytes,
+        generatedAt: report.generatedAt
+      });
+      return { applied: true, report, deleted, skipped, releasedBytes };
     } catch (error) {
       this.errors.add('storage.cleanup', (error as Error).message);
       throw error;
@@ -250,6 +324,32 @@ export class StorageService {
   private avatarMediaIds(): Set<string> {
     const persona = this.config.getPersona();
     return new Set([mediaIdFromUrl(persona.avatar), mediaIdFromUrl(persona.userAvatar)].filter(Boolean) as string[]);
+  }
+
+  private loadCleanupReports(): CleanupSnapshotStore {
+    return this.settings.get<CleanupSnapshotStore>(CLEANUP_REPORTS_KEY, {});
+  }
+
+  private saveCleanupReport(report: CleanupReport): void {
+    const now = Date.now();
+    const entries = Object.values(this.loadCleanupReports())
+      .filter((item) => now - Date.parse(item.generatedAt) <= CLEANUP_REPORT_TTL_MS)
+      .sort((a, b) => Date.parse(b.generatedAt) - Date.parse(a.generatedAt))
+      .slice(0, 9);
+    this.settings.set(CLEANUP_REPORTS_KEY, Object.fromEntries(
+      [report, ...entries].map((item) => [item.reportId, item])
+    ));
+  }
+
+  private isSafeCleanupPath(category: 'orphanFiles' | 'tempFiles' | 'oldBackups', target: string): boolean {
+    const root = category === 'oldBackups'
+      ? this.env.backupDir
+      : category === 'tempFiles'
+        ? this.env.mediaDirs.tmp
+        : this.env.mediaDir;
+    const resolvedRoot = path.resolve(root);
+    const resolvedTarget = path.resolve(target);
+    return resolvedTarget.startsWith(`${resolvedRoot}${path.sep}`);
   }
 }
 
@@ -302,4 +402,21 @@ async function walkFiles(root: string): Promise<Array<{ path: string; bytes: num
     }
   }
   return out;
+}
+
+async function matchesFileSnapshot(item: { path: string; bytes: number; mtimeMs: number }): Promise<boolean> {
+  try {
+    const stat = await fsp.stat(item.path);
+    return stat.isFile() && stat.size === item.bytes && Math.abs(stat.mtimeMs - item.mtimeMs) < 1;
+  } catch {
+    return false;
+  }
+}
+
+function digest(value: unknown): string {
+  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function cleanupReportError(code: string, message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
 }

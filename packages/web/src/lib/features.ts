@@ -102,7 +102,8 @@ export const featureApi = {
 
   storage: () => request<Record<string, any>>('/api/admin/storage'),
   updateStorage: (body: Record<string, number>) => request<Record<string, any>>('/api/admin/storage/policy', { method: 'PUT', body }),
-  cleanupStorage: (apply: boolean, categories?: string[]) => request<Record<string, any>>('/api/admin/storage/cleanup', { method: 'POST', body: { apply, categories } }),
+  cleanupStorage: (apply: boolean, categories?: string[], reportId?: string) =>
+    request<Record<string, any>>('/api/admin/storage/cleanup', { method: 'POST', body: { apply, categories, reportId } }),
   audit: () => request<{ audit: Array<Record<string, unknown>> }>('/api/admin/audit')
 };
 

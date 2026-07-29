@@ -142,7 +142,11 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const orphans = await deps.media.collectOrphans();
     if (orphans.length > 0) deps.bus.publish('system.notice', { notice: 'cleaned orphan media', count: orphans.length });
     deps.memory.purgeExpired?.();
-    const cleanup = await deps.storage.cleanup({ apply: true, categories: ['expiredTrash', 'tempFiles', 'orphanFiles', 'oldBackups', 'missingRecords'] });
+    const cleanup = await deps.storage.cleanup({
+      apply: true,
+      internal: true,
+      categories: ['expiredTrash', 'tempFiles', 'orphanFiles', 'oldBackups', 'missingRecords']
+    });
     if (cleanup.releasedBytes > 0) deps.bus.publish('storage.updated', { releasedBytes: cleanup.releasedBytes, deleted: cleanup.deleted });
   });
 
