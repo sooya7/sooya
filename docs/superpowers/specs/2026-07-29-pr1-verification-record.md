@@ -7,7 +7,7 @@
 | M-003 | 报告误判 | 模拟运行时超出唯一范围；事实库功能另按第 8 项核验。 |
 | M-004 | 确定存在 | 正式回复直接 `synthesize(clipped)`，未读取保存的情绪映射。 |
 | M-005 | 测试不足 | 待按 ContextBuilder 实际预算路径补充核验。 |
-| M-006 | 确定存在 | 临时 HTTP/网络错误达到六次即删除订阅。 |
+| M-006 | 已被后续提交修复 | `4a65013` 限制自动删除为 404/410；500、503、网络、DNS、TLS 临时失败只累计诊断计数，不删除订阅，成功后计数归零。 |
 | M-007 | 已被后续提交修复 | 当前 ImageViewer 使用 Pointer Capture；仍需真机异常释放验证。 |
 | M-008 | 无法确认 | 待核验预览与 apply 的报告绑定路径。 |
 | M-009 | 无法确认 | 待核验文件与数据库删除补偿路径。 |
@@ -88,4 +88,26 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - 首次 RED：`npm run test -w @sooya/server -- --run test/media-references.test.ts`，1 failed，实际 worldEntries=2、预期 0。
 - GREEN：同一命令 1/1 通过，正常退出。
 - 回归：`npm run test -w @sooya/server -- --run test/media-references.test.ts test/features-1-9.test.ts`，2 files、7/7 通过。
+- `npm run typecheck -w @sooya/server`、`npm run build -w @sooya/server`：通过。
+
+## M-006 修复与验证
+
+提交：`4a65013 fix(push): preserve subscriptions on temporary failures`。
+
+失败证据：新增测试首次运行到第 6 次临时失败时，旧实现一次删除 5 个仍有效的订阅，`summary.removed` 实际为 5、预期为 0。
+
+覆盖：
+
+- 404、410 首次响应即删除；
+- 500、503 连续 7 次仍保留；
+- 普通网络异常、`EAI_AGAIN` DNS 临时失败、`ECONNRESET` TLS/连接临时失败连续 7 次仍保留；
+- 每次临时失败增加 `fail_count` 并计入 `failed`，不计入 `removed`；
+- 临时失败后成功投递返回 delivered，并将该订阅 `fail_count` 重置为 0；
+- 最终状态断言确认 404/410 记录不存在，其他订阅仍存在。
+
+验证：
+
+- 首次 RED：`npm run test -w @sooya/server -- --run test/push-retry.test.ts`，1 failed，第 6 次实际 removed=5。
+- GREEN：同一命令 1/1 通过。
+- 回归：`npm run test -w @sooya/server -- --run test/push-retry.test.ts test/features-1-9.test.ts`，2 files、7/7 通过。
 - `npm run typecheck -w @sooya/server`、`npm run build -w @sooya/server`：通过。
