@@ -81,7 +81,7 @@ export class StorageService {
     const categories: Record<string, number> = { image: 0, audio: 0, sticker: 0, file: 0, trash: 0, backup: backupBytes };
     for (const row of this.media.allRows()) {
       categories[row.kind] = (categories[row.kind] ?? 0) + row.bytes;
-      if (row.deleted_at) categories.trash += row.bytes;
+      if (row.deleted_at) categories.trash = (categories.trash ?? 0) + row.bytes;
     }
     this.samples.add(mediaBytes, dataBytes, freeBytes);
     const policy = this.policy();
