@@ -128,7 +128,7 @@ export class WorldRepo {
       return this.db.prepare('SELECT * FROM world_entries WHERE active = 1 AND conflict_of IS NULL ORDER BY authority DESC, confidence DESC, updated_at DESC LIMIT ?').all(limit) as WorldEntryRow[];
     }
     const clauses = terms.map(() => '(subject LIKE ? OR predicate LIKE ? OR object LIKE ?)').join(' OR ');
-    const values = terms.flatMap((term) => [`%${term}%`, `%${term}%`, `%${term}%`]);
+    const values: unknown[] = terms.flatMap((term) => [`%${term}%`, `%${term}%`, `%${term}%`]);
     values.push(limit);
     return this.db.prepare(`SELECT * FROM world_entries WHERE active = 1 AND conflict_of IS NULL AND (${clauses}) ORDER BY authority DESC, confidence DESC, updated_at DESC LIMIT ?`).all(...values) as WorldEntryRow[];
   }
