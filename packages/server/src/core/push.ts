@@ -107,22 +107,12 @@ export class PushService {
           summary.removed++;
           continue;
         }
-        const failures = this.subscriptions.markFailure(subscription.endpoint);
-        if (failures >= 6) {
-          this.subscriptions.remove(subscription.endpoint);
-          summary.removed++;
-        } else {
-          summary.failed++;
-        }
+        this.subscriptions.markFailure(subscription.endpoint);
+        summary.failed++;
         this.errors.add('push.deliver', `push endpoint returned ${response.status}`, { endpoint: originOnly(subscription.endpoint) });
       } catch (err) {
-        const failures = this.subscriptions.markFailure(subscription.endpoint);
-        if (failures >= 6) {
-          this.subscriptions.remove(subscription.endpoint);
-          summary.removed++;
-        } else {
-          summary.failed++;
-        }
+        this.subscriptions.markFailure(subscription.endpoint);
+        summary.failed++;
         this.errors.add('push.deliver', (err as Error).message, { endpoint: originOnly(subscription.endpoint) });
       }
     }
