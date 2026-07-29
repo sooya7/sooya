@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { blobForMediaUrl, fetchAuthenticatedMedia, releaseMediaUrl } from './authenticatedMedia.js';
+import {
+  AuthenticatedMediaError,
+  blobForMediaUrl,
+  fetchAuthenticatedMedia,
+  fetchAuthenticatedMediaWithRetry,
+  isRetriableMediaError,
+  releaseMediaUrl,
+  MEDIA_RETRY_DELAYS_MS
+} from './authenticatedMedia.js';
 import { mediaUrl } from './api.js';
 import { adminMediaUrl } from './features.js';
 import { buildStreamRequest } from './stream.js';
@@ -166,5 +174,78 @@ describe('authenticated media', () => {
     }).catch((error: unknown) => error);
     expect(failure).toMatchObject({ code: 'blob_url' });
     expect((failure as Error).message).not.toContain('never-log-this');
+  });
+});
+
+describe('media retry', () => {
+  const options = { scope: 'user', token: 'chat-secret', expected: 'image' } as const;
+  const png = () => new Response(new Blob(['image'], { type: 'image/png' }), {
+    status: 200,
+    headers: { 'content-type': 'image/png' }
+  });
+  const slept: number[] = [];
+  const sleep = async (ms: number) => { slept.push(ms); };
+
+  afterEach(() => { slept.length = 0; });
+
+  it('classifies which failures deserve another attempt', () => {
+    expect(isRetriableMediaError(new AuthenticatedMediaError('missing', 404, ''))).toBe(true);
+    expect(isRetriableMediaError(new AuthenticatedMediaError('network', null, ''))).toBe(true);
+    expect(isRetriableMediaError(new AuthenticatedMediaError('server', 503, ''))).toBe(true);
+    expect(isRetriableMediaError(new AuthenticatedMediaError('auth', 401, ''))).toBe(false);
+    expect(isRetriableMediaError(new AuthenticatedMediaError('gone', 410, ''))).toBe(false);
+    expect(isRetriableMediaError(new DOMException('aborted', 'AbortError'))).toBe(false);
+  });
+
+  it('recovers a 404 that becomes readable on a later attempt', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:retry-1');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('missing', { status: 404 }))
+      .mockResolvedValueOnce(png());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchAuthenticatedMediaWithRetry('/api/media/late', options, sleep);
+
+    expect(result.url).toBe('blob:retry-1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(slept).toEqual([MEDIA_RETRY_DELAYS_MS[0]]);
+    releaseMediaUrl(result.url);
+  });
+
+  it('gives up after the configured attempts and reports the last failure', async () => {
+    const fetchMock = vi.fn(async () => new Response('missing', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAuthenticatedMediaWithRetry('/api/media/gone', options, sleep))
+      .rejects.toMatchObject({ code: 'missing' });
+    expect(fetchMock).toHaveBeenCalledTimes(MEDIA_RETRY_DELAYS_MS.length + 1);
+    expect(slept).toEqual([...MEDIA_RETRY_DELAYS_MS]);
+  });
+
+  it('does not retry a permanent failure', async () => {
+    const fetchMock = vi.fn(async () => new Response('denied', { status: 403 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAuthenticatedMediaWithRetry('/api/media/private', options, sleep))
+      .rejects.toMatchObject({ code: 'auth' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(slept).toEqual([]);
+  });
+
+  it('stops retrying once the caller aborts', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async () => {
+      controller.abort();
+      return new Response('missing', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAuthenticatedMediaWithRetry(
+      '/api/media/late',
+      { ...options, signal: controller.signal },
+      sleep
+    )).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

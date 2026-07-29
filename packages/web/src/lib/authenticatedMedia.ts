@@ -76,6 +76,39 @@ export async function fetchAuthenticatedMedia(
   return { url, blob, contentType };
 }
 
+/**
+ * Failures worth another attempt. `missing` is included on purpose: a freshly
+ * generated image can be announced over the stream a beat before its bytes are
+ * readable, and a permanent 404 costs only two extra requests.
+ */
+const RETRIABLE_CODES = new Set(['network', 'server', 'rate_limit', 'missing']);
+
+export function isRetriableMediaError(error: unknown): boolean {
+  return error instanceof AuthenticatedMediaError && RETRIABLE_CODES.has(error.code);
+}
+
+/** Backoff before each retry. Kept short — a chat bubble is waiting on this. */
+export const MEDIA_RETRY_DELAYS_MS: readonly number[] = [400, 1200];
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+export async function fetchAuthenticatedMediaWithRetry(
+  path: string,
+  options: AuthenticatedMediaOptions,
+  sleep: (ms: number) => Promise<void> = wait
+): Promise<AuthenticatedMediaResult> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetchAuthenticatedMedia(path, options);
+    } catch (error) {
+      const delay = MEDIA_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !isRetriableMediaError(error)) throw error;
+      await sleep(delay);
+      if (options.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    }
+  }
+}
+
 export function releaseMediaUrl(url: string | null | undefined): void {
   if (url?.startsWith('blob:')) {
     blobByObjectUrl.delete(url);
