@@ -5,7 +5,7 @@
 # Guarantees:
 #   * .env, config/, data/, media, database, persona and model configuration
 #     live in $BASE_DIR/shared and are NEVER touched by an upgrade;
-#   * a verified database backup is taken before switching;
+#   * a verified, WAL-consistent backup is taken before switching;
 #   * the previous release stays on disk so rollback.sh is instant;
 #   * if the new release fails its health check, the old one is restored
 #     automatically.
@@ -47,25 +47,17 @@ PORT="$(grep -E '^PORT=' "$SHARED_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2 
 PORT="${PORT:-8788}"
 
 # ------------------------- 1. back up before touching anything ---------------
-log "creating a pre-upgrade backup"
-ADMIN_TOKEN="$(grep -E '^ADMIN_API_TOKEN=' "$SHARED_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
-if [[ -n "$ADMIN_TOKEN" ]] && curl -fsS -X POST \
-      -H "x-admin-token: $ADMIN_TOKEN" \
-      "http://127.0.0.1:${PORT}/api/admin/backups" >/dev/null 2>&1; then
-  log "online backup created through the admin API"
+DB="$SHARED_DIR/data/database/sooya.db"
+if [[ -f "$DB" ]]; then
+  BACKUP_HELPER="$SOURCE_DIR/deploy/backup.sh"
+  [[ -f "$BACKUP_HELPER" ]] || die "backup helper missing: $BACKUP_HELPER"
+  log "creating a verified pre-upgrade backup"
+  # backup.sh first tries the live admin API, then SQLite's own backup APIs. It
+  # deliberately fails closed rather than copying a live WAL database by hand.
+  bash "$BACKUP_HELPER" --dir "$BASE_DIR" --out "$SHARED_DIR/data/backups" --keep 14 || \
+    die "pre-upgrade backup failed; upgrade was not started"
 else
-  # Offline copy: safe because we also copy the WAL sidecars.
-  DB="$SHARED_DIR/data/database/sooya.db"
-  if [[ -f "$DB" ]]; then
-    STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-    mkdir -p "$SHARED_DIR/data/backups"
-    for suffix in "" "-wal" "-shm"; do
-      [[ -f "${DB}${suffix}" ]] && cp -p "${DB}${suffix}" "$SHARED_DIR/data/backups/pre-upgrade-${STAMP}.db${suffix}"
-    done
-    log "offline database copy stored in $SHARED_DIR/data/backups"
-  else
-    warn "no database found yet; skipping backup"
-  fi
+  warn "no database found yet; skipping backup"
 fi
 
 # ------------------------------ 2. build the new release ---------------------
@@ -85,14 +77,20 @@ tar -C "$SOURCE_DIR" \
     -cf - . | tar -C "$RELEASE_DIR" -xf -
 
 cd "$RELEASE_DIR"
-log "installing dependencies"
+log "installing build dependencies"
 npm ci --build-from-source=better-sqlite3
 log "building"
 npm run build -w @sooya/server
 npm run build -w @sooya/web
 rm -rf "$RELEASE_DIR/public"
 cp -r "$RELEASE_DIR/packages/web/dist" "$RELEASE_DIR/public"
-npm prune --omit=dev
+
+# Reinstall from the lockfile instead of pruning a workspace tree. npm prune can
+# remove a dependency that was placed in a workspace-local node_modules directory.
+log "installing production dependencies"
+rm -rf "$RELEASE_DIR/node_modules" "$RELEASE_DIR/packages/server/node_modules" "$RELEASE_DIR/packages/web/node_modules"
+npm ci --omit=dev --build-from-source=better-sqlite3
+node -e "require(require.resolve('better-sqlite3', { paths: [process.cwd() + '/packages/server'] })); console.log('better-sqlite3 runtime dependency verified')"
 
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$RELEASE_DIR"
 

@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 
 const MOCK = `http://127.0.0.1:${process.env.MOCK_PORT ?? 9912}/__control`;
 const ADMIN = 'e2e-admin-token';
+const CHAT_TOKEN = 'e2e-chat-token';
 
 async function control(patch: Record<string, unknown>): Promise<void> {
   const res = await fetch(MOCK, {
@@ -18,7 +19,18 @@ async function calls(): Promise<Record<string, number>> {
 }
 
 async function clearChat(baseURL: string): Promise<void> {
-  await fetch(`${baseURL}/api/admin/chat/clear`, { method: 'POST', headers: { 'x-admin-token': ADMIN } });
+  const res = await fetch(`${baseURL}/api/admin/chat/clear`, { method: 'POST', headers: { 'x-admin-token': ADMIN } });
+  if (!res.ok) throw new Error(`clear chat failed: ${res.status}`);
+}
+
+async function chatApi(baseURL: string, path: string, init: RequestInit): Promise<void> {
+  const headers = new Headers(init.headers);
+  headers.set('authorization', `Bearer ${CHAT_TOKEN}`);
+  const res = await fetch(`${baseURL}${path}`, { ...init, headers });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`chat API ${init.method ?? 'GET'} ${path} failed: ${res.status} ${body}`);
+  }
 }
 
 async function send(page: Page, text: string): Promise<void> {
@@ -44,7 +56,8 @@ async function waitForReply(page: Page, index = -1): Promise<void> {
     .toBe('sent');
 }
 
-test.beforeEach(async ({ baseURL }) => {
+test.beforeEach(async ({ baseURL, page }) => {
+  await page.addInitScript((token: string) => localStorage.setItem('sooya.token', token), CHAT_TOKEN);
   await clearChat(baseURL!);
   await control({ queue: [], fallback: '好的。', failChat: false, failImage: false, failTts: false, delayMs: 0, resetCalls: true });
 });
@@ -113,6 +126,12 @@ test('SOOYA sends a sticker', async ({ page }) => {
 });
 
 test('SOOYA generates and displays an image', async ({ page }) => {
+  const mediaRequests: Array<{ url: string; authorization: string | undefined }> = [];
+  page.context().on('request', (request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/media/')) {
+      mediaRequests.push({ url: request.url(), authorization: request.headers().authorization });
+    }
+  });
   await control({ queue: ['给你画好啦[[image:a quiet lake at dawn]]'] });
   await page.goto('/');
   await send(page, '画一张图');
@@ -120,7 +139,14 @@ test('SOOYA generates and displays an image', async ({ page }) => {
 
   const img = page.locator('[data-testid="message"][data-role="assistant"]').last().locator('.image-part img');
   await expect(img).toBeVisible();
+  await expect(img).toHaveAttribute('src', /^blob:/);
   await expect.poll(async () => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(10);
+  await expect.poll(() => mediaRequests.length).toBeGreaterThan(0);
+  for (const request of mediaRequests) {
+    expect(request.url).not.toContain(CHAT_TOKEN);
+    expect(request.authorization).toBe(`Bearer ${CHAT_TOKEN}`);
+  }
+  expect(await page.locator('body').evaluate((body, token) => body.innerHTML.includes(token), CHAT_TOKEN)).toBe(false);
   expect((await calls()).image).toBe(1);
 });
 
@@ -136,6 +162,12 @@ test('image generation failure degrades without losing the text', async ({ page 
 });
 
 test('SOOYA sends a playable voice message with a real duration', async ({ page }) => {
+  const mediaRequests: Array<{ url: string; authorization: string | undefined }> = [];
+  page.context().on('request', (request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/media/')) {
+      mediaRequests.push({ url: request.url(), authorization: request.headers().authorization });
+    }
+  });
   await control({ queue: ['晚安，好好睡一觉[[voice]]'] });
   await page.goto('/');
   await send(page, '用语音说晚安');
@@ -145,6 +177,7 @@ test('SOOYA sends a playable voice message with a real duration', async ({ page 
   const duration = last.getByTestId('audio-duration');
   await expect(duration).toBeVisible();
   await expect(duration).not.toHaveText('0:00');
+  await expect(last.locator('audio')).toHaveAttribute('src', /^blob:/);
 
   // The audio element must have loadable metadata from the stored file.
   const readyState = await last.locator('audio').evaluate(
@@ -157,6 +190,11 @@ test('SOOYA sends a playable voice message with a real duration', async ({ page 
       })
   );
   expect(readyState).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => mediaRequests.length).toBeGreaterThan(0);
+  for (const request of mediaRequests) {
+    expect(request.url).not.toContain(CHAT_TOKEN);
+    expect(request.authorization).toBe(`Bearer ${CHAT_TOKEN}`);
+  }
 
   // The transcript is reachable.
   await last.getByText('查看文字').click();
@@ -233,7 +271,7 @@ test('the user can upload and send an image', async ({ page }) => {
 test('history loads older messages when scrolling up, without jumping', async ({ page, baseURL }) => {
   // Seed enough history through the API so paging is required.
   for (let i = 0; i < 24; i++) {
-    await fetch(`${baseURL}/api/messages/sync`, {
+    await chatApi(baseURL!, '/api/messages/sync', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ clientMsgId: `hist-${i}-${Date.now()}`, content: [{ type: 'text', text: `历史消息 ${i}` }] })
@@ -257,7 +295,7 @@ test('history loads older messages when scrolling up, without jumping', async ({
 
 test('reading history is not interrupted by a new reply', async ({ page, baseURL }) => {
   for (let i = 0; i < 20; i++) {
-    await fetch(`${baseURL}/api/messages/sync`, {
+    await chatApi(baseURL!, '/api/messages/sync', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ clientMsgId: `keep-${i}-${Date.now()}`, content: [{ type: 'text', text: `旧消息 ${i}` }] })
@@ -276,7 +314,7 @@ test('reading history is not interrupted by a new reply', async ({ page, baseURL
   const before = await page.getByTestId('scroller').evaluate((el) => el.scrollTop);
 
   // A message arrives from another client while we are reading.
-  await fetch(`${baseURL}/api/messages`, {
+  await chatApi(baseURL!, '/api/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ clientMsgId: `intrusion-${Date.now()}`, content: [{ type: 'text', text: '打扰一下' }] })
@@ -308,7 +346,7 @@ test('a reply produced while the tab is disconnected still appears without a man
   await page.waitForTimeout(500);
 
   // Server-side activity happens while the page cannot see the stream.
-  await fetch(`${baseURL}/api/messages/sync`, {
+  await chatApi(baseURL!, '/api/messages/sync', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ clientMsgId: `offline-${Date.now()}`, content: [{ type: 'text', text: '断线时发送' }] })
@@ -372,7 +410,7 @@ test('PWA: manifest, icons and service worker are served correctly', async ({ pa
   expect(['registered', 'unsupported', 'none']).toContain(registered);
 });
 
-test('the service worker caches media without leaking the token into cache keys', async ({ page, baseURL }) => {
+test('the service worker keeps protected media out of Cache Storage', async ({ page, baseURL }) => {
   await control({ queue: ['给你一张图[[image:a blue sky]]'] });
   await page.goto('/');
   // Give the worker a chance to take control.
@@ -404,6 +442,7 @@ test('the service worker caches media without leaking the token into cache keys'
   }
   for (const url of keys) {
     expect(url, 'no cache key may embed an auth token').not.toContain('token=');
+    expect(new URL(url).pathname, 'protected media must stay network-only').not.toMatch(/^\/api\/media\//);
   }
   void baseURL;
 });
@@ -440,7 +479,7 @@ test('opens the admin panel in the same tab', async ({ page }) => {
   await page.goto('/');
 
   await page.getByTestId('admin-entry').click();
-  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page).toHaveURL(/\/admin\/features$/);
   await expect(page.getByTestId('admin-lock')).toBeVisible();
 });
 

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, mediaUrl } from '../lib/api.js';
+import { api } from '../lib/api.js';
 import type { MediaRef, StickerInfo } from '../lib/types.js';
 import { VoiceRecorder } from './VoiceRecorder.js';
+import { AuthenticatedImage } from './AuthenticatedMedia.js';
 
 export interface PendingAttachment {
   key: string;
@@ -63,7 +64,7 @@ export function Composer({ disabled, onSend, onNotice }: Props) {
           ...res.media.map((m) => ({
             key: m.id,
             media: m,
-            previewUrl: mediaUrl(m.url),
+            previewUrl: '',
             kind: m.kind === 'sticker' ? ('image' as const) : (m.kind as 'image' | 'audio' | 'file'),
             name: m.name ?? '文件'
           }))
@@ -162,7 +163,7 @@ export function Composer({ disabled, onSend, onNotice }: Props) {
           {stickers.length === 0 && <div className="sticker-empty">还没有可用的表情包</div>}
           {stickers.map((s) => (
             <button key={s.id} type="button" className="sticker-choice" onClick={() => void sendSticker(s)} title={s.emotion}>
-              <img src={mediaUrl(s.url)} alt={s.name} loading="lazy" />
+              <AuthenticatedImage path={s.url} scope="user" alt={s.name} loading="lazy" />
             </button>
           ))}
         </div>
@@ -173,7 +174,7 @@ export function Composer({ disabled, onSend, onNotice }: Props) {
           {attachments.map((a) => (
             <div key={a.key} className="attachment">
               {a.kind === 'image' ? (
-                <img src={a.previewUrl} alt={a.name} />
+                <AuthenticatedImage path={a.media.url} scope="user" alt={a.name} />
               ) : a.kind === 'audio' ? (
                 <span className="attachment-generic">🎤 {Math.round(a.media.duration ?? 0)}s</span>
               ) : (
@@ -199,7 +200,7 @@ export function Composer({ disabled, onSend, onNotice }: Props) {
           onReady={(media) => {
             setAttachments((prev) => [
               ...prev,
-              { key: media.id, media, previewUrl: mediaUrl(media.url), kind: 'audio', name: '语音' }
+              { key: media.id, media, previewUrl: '', kind: 'audio', name: '语音' }
             ]);
             setRecording(false);
           }}

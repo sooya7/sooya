@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { mediaUrl } from '../lib/api.js';
+import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 import type { MessagePart } from '../lib/types.js';
 
 const SPEEDS = [1, 1.5, 2];
@@ -23,6 +23,7 @@ export function AudioBubble({ part, mine }: Props) {
   const [speedIdx, setSpeedIdx] = useState(0);
   const [showTranscript, setShowTranscript] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const media = useAuthenticatedMedia(part.media?.url, 'user', 'audio');
 
   // Prefer the server-measured duration; fall back to the element's own value.
   const [elementDuration, setElementDuration] = useState<number | null>(null);
@@ -51,7 +52,7 @@ export function AudioBubble({ part, mine }: Props) {
     );
   }
 
-  const src = mediaUrl(part.media.url);
+  const src = media.url ?? '';
   const progress = duration > 0 ? Math.min(current / duration, 1) : 0;
   // Width scales with length, like a familiar messenger voice bubble.
   const width = Math.min(70 + Math.min(duration, 60) * 3.2, 260);
@@ -155,7 +156,7 @@ export function AudioBubble({ part, mine }: Props) {
         </button>
       )}
       {showTranscript && transcript && <div className="audio-transcript">{transcript}</div>}
-      {loadError && <div className="audio-transcript error">音频加载失败</div>}
+      {(media.error || loadError) && <div className="audio-transcript error">{media.error ?? '音频加载失败'}</div>}
     </div>
   );
 }

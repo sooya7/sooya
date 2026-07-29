@@ -90,10 +90,21 @@ export interface SynthesizedAudio {
   durationSec?: number;
 }
 
+export interface TTSOptions {
+  voice?: string;
+  signal?: AbortSignal;
+  /** Natural-language delivery direction for instruction-capable speech models. */
+  instructions?: string;
+  /** Per-utterance speed multiplier. */
+  speed?: number;
+  /** Optional diagnostic label saved by callers, not required by providers. */
+  emotion?: string;
+}
+
 export interface TTSProvider {
   readonly name: string;
   readonly configured: boolean;
-  synthesize(text: string, opts?: { voice?: string; signal?: AbortSignal }): Promise<SynthesizedAudio>;
+  synthesize(text: string, opts?: TTSOptions): Promise<SynthesizedAudio>;
   inspectHealth(): Promise<HealthStatus>;
 }
 

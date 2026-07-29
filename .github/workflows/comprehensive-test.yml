@@ -1,0 +1,167 @@
+name: Comprehensive Test
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: comprehensive-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code-validation:
+    name: Independent code validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.10.0'
+          cache: npm
+      - run: npm ci
+
+      - id: server_typecheck
+        name: Server typecheck
+        continue-on-error: true
+        run: npm run typecheck -w @sooya/server
+      - id: web_typecheck
+        name: Web typecheck
+        continue-on-error: true
+        run: npm run typecheck -w @sooya/web
+      - id: server_build
+        name: Server production build
+        continue-on-error: true
+        run: npm run build -w @sooya/server
+      - id: web_build
+        name: Web production build
+        continue-on-error: true
+        run: npm run build -w @sooya/web
+      - id: server_tests
+        name: Server unit, integration and API tests
+        continue-on-error: true
+        run: npm test
+
+      - name: Fail when any code validation failed
+        if: always()
+        env:
+          SERVER_TYPECHECK: ${{ steps.server_typecheck.outcome }}
+          WEB_TYPECHECK: ${{ steps.web_typecheck.outcome }}
+          SERVER_BUILD: ${{ steps.server_build.outcome }}
+          WEB_BUILD: ${{ steps.web_build.outcome }}
+          SERVER_TESTS: ${{ steps.server_tests.outcome }}
+        shell: bash
+        run: |
+          printf 'server typecheck: %s\n' "$SERVER_TYPECHECK"
+          printf 'web typecheck:    %s\n' "$WEB_TYPECHECK"
+          printf 'server build:    %s\n' "$SERVER_BUILD"
+          printf 'web build:       %s\n' "$WEB_BUILD"
+          printf 'server tests:    %s\n' "$SERVER_TESTS"
+          test "$SERVER_TYPECHECK" = success \
+            -a "$WEB_TYPECHECK" = success \
+            -a "$SERVER_BUILD" = success \
+            -a "$WEB_BUILD" = success \
+            -a "$SERVER_TESTS" = success
+
+  e2e:
+    name: Browser end-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.10.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-diagnostics
+          path: |
+            test-results
+            playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release-and-container:
+    name: Release package and container validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.10.0'
+          cache: npm
+      - run: npm ci
+      - id: package
+        name: Generate release packages
+        continue-on-error: true
+        run: npm run package
+      - id: verify_release
+        name: Verify release packages
+        continue-on-error: true
+        run: npm run verify:release
+      - id: docker_build
+        name: Build Docker image
+        continue-on-error: true
+        run: docker build -t sooya:ci .
+      - id: container_smoke
+        name: Start container and verify readiness
+        if: steps.docker_build.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name sooya-ci -p 8788:8788 sooya:ci
+          cleanup() {
+            docker logs sooya-ci || true
+            docker rm -f sooya-ci >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8788/health/ready; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'SOOYA container did not become ready' >&2
+          exit 1
+      - name: Fail when release or container validation failed
+        if: always()
+        env:
+          PACKAGE: ${{ steps.package.outcome }}
+          VERIFY_RELEASE: ${{ steps.verify_release.outcome }}
+          DOCKER_BUILD: ${{ steps.docker_build.outcome }}
+          CONTAINER_SMOKE: ${{ steps.container_smoke.outcome }}
+        shell: bash
+        run: |
+          printf 'package:         %s\n' "$PACKAGE"
+          printf 'verify release:  %s\n' "$VERIFY_RELEASE"
+          printf 'docker build:    %s\n' "$DOCKER_BUILD"
+          printf 'container smoke: %s\n' "$CONTAINER_SMOKE"
+          test "$PACKAGE" = success \
+            -a "$VERIFY_RELEASE" = success \
+            -a "$DOCKER_BUILD" = success \
+            -a "$CONTAINER_SMOKE" = success
+
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.10.0'
+          cache: npm
+      - run: npm audit --audit-level=high

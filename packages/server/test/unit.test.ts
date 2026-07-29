@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { parseUserDirectives, stripModelDirectives, StreamingDirectiveFilter } from '../src/core/directives.js';
 import { safeJoin, PathTraversalError, atomicWriteFileSync, cleanupTempFiles } from '../src/util/fsx.js';
 import { isPrivateIp, assertSafeUrl, SsrfError, withRetry, defaultRetryable, HttpTimeoutError } from '../src/util/http.js';
@@ -217,6 +218,8 @@ describe('secret redaction', () => {
   it('masks keys inside strings', () => {
     expect(redactStringSecrets('using sk-abcdefghijklmnop now')).not.toContain('ghijklmnop');
     expect(redactStringSecrets('Authorization: Bearer supersecrettoken')).not.toContain('supersecrettoken');
+    expect(redactStringSecrets('/api/media/x?token=chat-secret-123')).not.toContain('chat-secret-123');
+    expect(redactStringSecrets('/api/media/x?admin_token=admin-secret-123')).not.toContain('admin-secret-123');
   });
 
   it('masks short and long secrets', () => {
@@ -255,7 +258,7 @@ describe('image probing', () => {
   });
 
   it('reads generated sticker sizes', () => {
-    const p = path.resolve(new URL('../../../assets/stickers/happy.png', import.meta.url).pathname);
+    const p = fileURLToPath(new URL('../../../assets/stickers/happy.png', import.meta.url));
     const size = probeImageSize(fs.readFileSync(p));
     expect(size).toEqual({ width: 128, height: 128 });
   });

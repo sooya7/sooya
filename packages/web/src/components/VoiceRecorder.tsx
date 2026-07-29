@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, mediaUrl } from '../lib/api.js';
+import { api } from '../lib/api.js';
 import type { MediaRef } from '../lib/types.js';
 
 interface Props {
@@ -169,5 +169,3 @@ export function VoiceRecorder({ onReady, onCancel, onNotice }: Props) {
     </div>
   );
 }
-
-export { mediaUrl };

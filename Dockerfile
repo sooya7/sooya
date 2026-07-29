@@ -4,10 +4,32 @@
 # Target: a 2 vCPU / 2 GB Linux box. No orchestrator, no external services.
 # ============================================================================
 
+# ------------------------------------------------------ production deps only --
+# Install the production dependency graph for the workspaces from the lockfile.
+# npm only installs workspace dependencies reliably here when `--workspaces` is
+# explicit. Preserve both the hoisted root tree and the server-local tree so
+# Node resolves packages exactly as it did during installation.
+FROM node:20-bookworm-slim AS prod-deps
+WORKDIR /prod
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+COPY packages/server/package.json packages/server/
+COPY packages/web/package.json packages/web/
+RUN npm ci --omit=dev --workspaces --include-workspace-root --build-from-source=better-sqlite3 \
+  && mkdir -p packages/server/node_modules \
+  && node -e "const p=require.resolve('better-sqlite3',{paths:['/prod/packages/server']}); require(p); console.log('better-sqlite3 production dependency verified:',p)" \
+  && npm cache clean --force
+
+# ----------------------------------------------------------------- builder --
 FROM node:20-bookworm-slim AS builder
 WORKDIR /build
 
-# better-sqlite3 is compiled from source so the binary matches the runtime.
+# better-sqlite3 is compiled from source so tests/builds use the same ABI as the
+# final Node 20 runtime image.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
   && rm -rf /var/lib/apt/lists/*
@@ -24,9 +46,6 @@ COPY scripts ./scripts
 
 RUN npm run build -w @sooya/server \
   && npm run build -w @sooya/web
-
-# Prune to production dependencies only.
-RUN npm prune --omit=dev
 
 # ----------------------------------------------------------------- runtime --
 FROM node:20-bookworm-slim AS runtime
@@ -46,14 +65,16 @@ ENV NODE_ENV=production \
     WEB_DIR=/app/public \
     SOOYA_ASSETS_DIR=/app/assets/stickers
 
-COPY --from=builder /build/node_modules ./node_modules
-COPY --from=builder /build/package.json ./package.json
+COPY --from=prod-deps /prod/node_modules ./node_modules
+COPY --from=prod-deps /prod/packages/server/node_modules ./packages/server/node_modules
+COPY --from=prod-deps /prod/package.json ./package.json
 COPY --from=builder /build/packages/server/dist ./packages/server/dist
 COPY --from=builder /build/packages/server/package.json ./packages/server/package.json
 COPY --from=builder /build/packages/web/dist ./public
 COPY --from=builder /build/assets ./assets
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+  && node -e "const p=require.resolve('better-sqlite3',{paths:['/app/packages/server']}); require(p); console.log('better-sqlite3 available in final image:',p)"
 
 # Data and config are mounted volumes; create them so a bare `docker run` works.
 RUN mkdir -p /app/data /app/config \

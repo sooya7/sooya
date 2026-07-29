@@ -26,17 +26,46 @@ describe('WEB_CHAT_TOKEN', () => {
     expect(post.statusCode).toBe(401);
   });
 
-  it('accepts the token via header, bearer and query', async () => {
+  it('accepts the token via headers but rejects query credentials', async () => {
     h = await createHarness({ env: { WEB_CHAT_TOKEN: CHAT_TOKEN } });
     const variants = [
       { headers: { 'x-sooya-token': CHAT_TOKEN } },
-      { headers: { authorization: `Bearer ${CHAT_TOKEN}` } },
-      { url: `/api/conversation?token=${CHAT_TOKEN}` }
+      { headers: { authorization: `Bearer ${CHAT_TOKEN}` } }
     ];
     for (const v of variants) {
-      const res = await h.app.server.inject({ method: 'GET', url: v.url ?? '/api/conversation', headers: v.headers });
+      const res = await h.app.server.inject({ method: 'GET', url: '/api/conversation', headers: v.headers });
       expect(res.statusCode).toBe(200);
     }
+    const query = await h.app.server.inject({ method: 'GET', url: `/api/conversation?token=${CHAT_TOKEN}` });
+    expect(query.statusCode).toBe(401);
+  });
+
+  it('protects media with header credentials and never accepts query credentials', async () => {
+    h = await createHarness({ env: { WEB_CHAT_TOKEN: CHAT_TOKEN, ADMIN_API_TOKEN: ADMIN_TOKEN } });
+    const stored = await h.app.services.mediaStore.save({
+      kind: 'image',
+      origin: 'upload',
+      data: TEST_PNG,
+      declaredMime: 'image/png',
+      filename: 'protected.png'
+    });
+    const path = `/api/media/${stored.id}`;
+    expect((await h.app.server.inject({ method: 'GET', url: path })).statusCode).toBe(401);
+    expect((await h.app.server.inject({ method: 'GET', url: `${path}?token=${CHAT_TOKEN}` })).statusCode).toBe(401);
+    expect((await h.app.server.inject({ method: 'GET', url: `${path}?admin_token=${ADMIN_TOKEN}` })).statusCode).toBe(401);
+    const chatResponse = await h.app.server.inject({
+      method: 'GET',
+      url: path,
+      headers: { authorization: `Bearer ${CHAT_TOKEN}` }
+    });
+    expect(chatResponse.statusCode).toBe(200);
+    expect(chatResponse.headers['cache-control']).toBe('private, no-store');
+    expect(chatResponse.headers['content-type']).toBe('image/png');
+    expect((await h.app.server.inject({
+      method: 'GET',
+      url: path,
+      headers: { authorization: `Bearer ${ADMIN_TOKEN}` }
+    })).statusCode).toBe(200);
   });
 
   it('rejects a wrong token of the same length', async () => {
@@ -81,12 +110,23 @@ describe('ADMIN_API_TOKEN', () => {
       headers: { 'x-sooya-token': CHAT_TOKEN }
     });
     expect(withChatToken.statusCode).toBe(401);
+    const withChatBearer = await h.app.server.inject({
+      method: 'GET',
+      url: '/api/admin/persona',
+      headers: { authorization: `Bearer ${CHAT_TOKEN}` }
+    });
+    expect(withChatBearer.statusCode).toBe(401);
     const ok = await h.app.server.inject({
       method: 'GET',
       url: '/api/admin/persona',
       headers: { 'x-admin-token': ADMIN_TOKEN }
     });
     expect(ok.statusCode).toBe(200);
+    const query = await h.app.server.inject({
+      method: 'GET',
+      url: `/api/admin/persona?admin_token=${ADMIN_TOKEN}`
+    });
+    expect(query.statusCode).toBe(401);
   });
 
   it('protects every admin write route', async () => {

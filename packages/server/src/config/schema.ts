@@ -45,7 +45,18 @@ export const ProviderKindSchema = z.enum([
 ]);
 export type ProviderKind = z.infer<typeof ProviderKindSchema>;
 
+/**
+ * `environment` preserves the original deployment behaviour: environment
+ * variables may override the JSON file. Once a section is saved through the
+ * admin panel it becomes `panel` managed, so the values the user just saved
+ * are the values used at runtime and after a restart. Secrets may still be
+ * supplied through environment variables in either mode.
+ */
+export const ModelConfigSourceSchema = z.enum(['environment', 'panel']).default('environment');
+export type ModelConfigSource = z.infer<typeof ModelConfigSourceSchema>;
+
 export const ChatModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: ProviderKindSchema.default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
@@ -64,12 +75,12 @@ export const ChatModelSchema = z.object({
 export type ChatModelConfig = z.infer<typeof ChatModelSchema>;
 
 export const EmbeddingModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-embeddings', 'openai-compatible', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
   apiKeyEnv: z.string().optional(),
   model: z.string().default(''),
-  /** Dimension is read from the actual model config / first response, never hardcoded globally. */
   dimensions: z.number().int().min(8).max(8192).optional(),
   timeoutMs: z.number().int().min(1000).max(120_000).default(30_000),
   maxRetries: z.number().int().min(0).max(5).default(2)
@@ -77,6 +88,7 @@ export const EmbeddingModelSchema = z.object({
 export type EmbeddingModelConfig = z.infer<typeof EmbeddingModelSchema>;
 
 export const ImageModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-images', 'openai-compatible', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
@@ -89,6 +101,7 @@ export const ImageModelSchema = z.object({
 export type ImageModelConfig = z.infer<typeof ImageModelSchema>;
 
 export const TtsModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-tts', 'openai-compatible', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
@@ -97,12 +110,19 @@ export const TtsModelSchema = z.object({
   voice: z.string().default('alloy'),
   format: z.enum(['mp3', 'wav', 'opus', 'aac', 'flac']).default('mp3'),
   speed: z.number().min(0.25).max(4).default(1),
+  /** Enable automatic emotion detection, pacing and delivery instructions. */
+  expressive: z.boolean().default(true),
+  /** Some compatible gateways reject unknown fields; `off` omits instructions. */
+  instructionMode: z.enum(['on', 'auto', 'off']).default('on'),
+  /** Scales emotion-specific speed changes and instruction strength. */
+  emotionIntensity: z.number().min(0).max(1).default(0.75),
   timeoutMs: z.number().int().min(1000).max(300_000).default(90_000),
   maxRetries: z.number().int().min(0).max(5).default(1)
 });
 export type TtsModelConfig = z.infer<typeof TtsModelSchema>;
 
 export const SttModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-transcriptions', 'openai-compatible', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
@@ -116,7 +136,6 @@ export type SttModelConfig = z.infer<typeof SttModelSchema>;
 
 export const ModelsConfigSchema = z.object({
   chat: ChatModelSchema.default({}),
-  /** Optional dedicated models; when omitted they fall back to `chat`. */
   vision: ChatModelSchema.optional(),
   summary: ChatModelSchema.optional(),
   embedding: EmbeddingModelSchema.default({}),

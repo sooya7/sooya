@@ -2,10 +2,11 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pino from 'pino';
 import { buildApp, type SooyaApp } from '../../src/app.js';
 
-export const ASSETS_DIR = path.resolve(new URL('../../../../assets/stickers', import.meta.url).pathname);
+export const ASSETS_DIR = fileURLToPath(new URL('../../../../assets/stickers/', import.meta.url));
 
 export interface FakeChatOptions {
   /** Text chunks streamed back for each successive chat call. */

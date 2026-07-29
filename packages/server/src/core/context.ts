@@ -1,12 +1,12 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
-import type { SummaryRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
+import type { SummaryRepo } from '../db/repos/misc.repo.js';
 import type { MemoryService } from './memory.js';
-import type { CapabilityRegistry } from './capabilities.js';
 import type { Persona } from '../config/schema.js';
 import type { ChatMessage } from './types.js';
 import type { ChatTurn, ChatContentPart } from '../providers/types.js';
 import type { MediaStore } from '../media/store.js';
 import type { MediaRepo } from '../db/repos/media.repo.js';
+import type { WorldEngine } from './world.js';
 
 export interface BuiltContext {
   system: string;
@@ -17,6 +17,13 @@ export interface BuiltContext {
   summaryCount: number;
   recentCount: number;
   visionUsed: boolean;
+  worldEntries: number;
+  inputBudget: number;
+  estimatedInputTokens: number;
+  droppedSummaries: number;
+  droppedMemories: number;
+  droppedWorldEntries: number;
+  droppedRecentMessages: number;
 }
 
 export interface ContextOptions {
@@ -26,6 +33,8 @@ export interface ContextOptions {
   allowVision: boolean;
   stickerCatalogue: string;
   capabilityNotes: string[];
+  contextWindow: number;
+  maxOutputTokens: number;
 }
 
 export class ContextBuilder {
@@ -34,60 +43,80 @@ export class ContextBuilder {
     private readonly summaries: SummaryRepo,
     private readonly memory: MemoryService,
     private readonly mediaRepo: MediaRepo,
-    private readonly mediaStore: MediaStore
+    private readonly mediaStore: MediaStore,
+    private readonly world?: WorldEngine
   ) {}
 
   async build(persona: Persona, latestUserText: string, opts: ContextOptions): Promise<BuiltContext> {
     const recent = this.messages.recent(opts.recentMessages);
-    // `active()` already filters on active = 1, which is exactly what
-    // coveredUpTo() is derived from, so every returned row is in range.
     const activeSummaries = this.summaries.active(4);
 
-    const recall = await this.memory.recall(latestUserText || recent.map(plainText).join('\n').slice(-500), opts.memoryLimit);
+    const recallQuery = latestUserText || recent.map(plainText).join('\n').slice(-500);
+    const recall = await this.memory.recall(recallQuery, opts.memoryLimit);
+    const worldContext = this.world?.contextFor(recallQuery, 18) ?? '';
+    const worldLines = worldContext.split('\n').filter((line) => line.startsWith('· '));
+    const inputBudget = Math.max(256, opts.contextWindow - opts.maxOutputTokens - 128);
 
     const systemParts: string[] = [];
-    systemParts.push(persona.systemPrompt.trim());
-    if (persona.speakingStyle) systemParts.push(`说话风格：${persona.speakingStyle}`);
-    if (persona.relationshipContext) systemParts.push(`你们的关系：${persona.relationshipContext}`);
+    systemParts.push(trimToTokenEstimate(persona.systemPrompt.trim(), Math.max(96, Math.floor(inputBudget * 0.4))));
+    tryAddSystemPart(systemParts, [], `说话风格：${persona.speakingStyle}`, inputBudget);
+    tryAddSystemPart(systemParts, [], `你们的关系：${persona.relationshipContext}`, inputBudget);
 
-    systemParts.push(buildMultimediaInstructions(persona, opts));
-
-    if (activeSummaries.length > 0) {
-      const text = activeSummaries
-        .slice()
-        .sort((a, b) => a.from_seq - b.from_seq)
-        .map((s) => `· ${s.content}`)
-        .join('\n');
-      systemParts.push(`以前聊过的重点（阶段摘要）：\n${text}`);
-    }
-    if (recall.memories.length > 0) {
-      const text = recall.memories.map((m) => `· [${m.kind}] ${m.content}`).join('\n');
-      systemParts.push(`关于用户你已经知道的事：\n${text}`);
-    }
-    if (opts.capabilityNotes.length > 0) {
-      systemParts.push(`当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`);
-    }
-    systemParts.push(`现在的时间是 ${new Date().toISOString()}。`);
-
-    const turns: ChatTurn[] = [];
-    let visionUsed = false;
+    const convertedTurns: ChatTurn[] = [];
     for (const msg of recent) {
       if (msg.role === 'system') continue;
       const content = await this.messageToParts(msg, opts.allowVision);
       if (content.length === 0) continue;
-      if (content.some((c) => c.type === 'image')) visionUsed = true;
-      turns.push({ role: msg.role === 'assistant' ? 'assistant' : 'user', content });
+      convertedTurns.push({ role: msg.role === 'assistant' ? 'assistant' : 'user', content });
     }
 
+    const turns: ChatTurn[] = [];
+    for (let index = convertedTurns.length - 1; index >= 0; index--) {
+      const candidate = convertedTurns[index]!;
+      const next = [candidate, ...turns];
+      if (estimateContextTokens(systemParts, next) <= inputBudget) turns.unshift(candidate);
+      else if (index === convertedTurns.length - 1) turns.unshift(fitLatestTurn(systemParts, candidate, inputBudget));
+    }
+    const visionUsed = turns.some((turn) => turn.content.some((part) => part.type === 'image'));
+
+    const summaryLines = activeSummaries
+      .slice()
+      .sort((a, b) => a.from_seq - b.from_seq)
+      .map((summary) => `· ${summary.content}`);
+    const usedSummaries = addBudgetedLines(systemParts, turns, '以前聊过的重点（阶段摘要）：', summaryLines, inputBudget);
+    const memoryLines = recall.memories.map((memory) => `· [${memory.kind}] ${memory.content}`);
+    const usedMemories = addBudgetedLines(systemParts, turns, '关于用户你已经知道的事：', memoryLines, inputBudget);
+    const usedWorldEntries = addBudgetedLines(
+      systemParts,
+      turns,
+      '当前世界状态（只使用仍启用且未冲突的条目；用户或管理员设定优先）：',
+      worldLines,
+      inputBudget
+    );
+
+    tryAddSystemPart(systemParts, turns, buildMultimediaInstructions(persona, opts), inputBudget);
+    if (opts.capabilityNotes.length > 0) {
+      tryAddSystemPart(systemParts, turns, `当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`, inputBudget);
+    }
+    tryAddSystemPart(systemParts, turns, `现在的时间是 ${new Date().toISOString()}。`, inputBudget);
+
+    const estimatedInputTokens = estimateContextTokens(systemParts, turns);
     return {
       system: systemParts.filter(Boolean).join('\n\n'),
       turns,
-      usedMemories: recall.memories.length,
+      usedMemories,
       memoryStrategy: recall.strategy,
       memoryFallbackReason: recall.fallbackReason,
-      summaryCount: activeSummaries.length,
-      recentCount: recent.length,
-      visionUsed
+      summaryCount: usedSummaries,
+      recentCount: turns.length,
+      visionUsed,
+      worldEntries: usedWorldEntries,
+      inputBudget,
+      estimatedInputTokens,
+      droppedSummaries: activeSummaries.length - usedSummaries,
+      droppedMemories: recall.memories.length - usedMemories,
+      droppedWorldEntries: worldLines.length - usedWorldEntries,
+      droppedRecentMessages: convertedTurns.length - turns.length
     };
   }
 
@@ -132,6 +161,71 @@ export class ContextBuilder {
   }
 }
 
+export function estimateTextTokens(text: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const char of text) {
+    if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(char)) cjk++;
+    else if (!/\s/u.test(char)) other++;
+  }
+  return cjk + Math.ceil(other / 4);
+}
+
+function estimateContextTokens(systemParts: string[], turns: ChatTurn[]): number {
+  let total = estimateTextTokens(systemParts.filter(Boolean).join('\n\n')) + 4;
+  for (const turn of turns) {
+    total += 4;
+    for (const part of turn.content) {
+      total += part.type === 'text' ? estimateTextTokens(part.text) : 1024;
+    }
+  }
+  return total;
+}
+
+function tryAddSystemPart(systemParts: string[], turns: ChatTurn[], part: string, budget: number): boolean {
+  if (!part.trim()) return false;
+  if (estimateContextTokens([...systemParts, part], turns) > budget) return false;
+  systemParts.push(part);
+  return true;
+}
+
+function addBudgetedLines(systemParts: string[], turns: ChatTurn[], heading: string, lines: string[], budget: number): number {
+  const accepted: string[] = [];
+  for (const line of lines) {
+    const block = `${heading}\n${[...accepted, line].join('\n')}`;
+    if (estimateContextTokens([...systemParts, block], turns) > budget) continue;
+    accepted.push(line);
+  }
+  if (accepted.length > 0) systemParts.push(`${heading}\n${accepted.join('\n')}`);
+  return accepted.length;
+}
+
+function trimToTokenEstimate(text: string, maxTokens: number): string {
+  if (estimateTextTokens(text) <= maxTokens) return text;
+  const chars = [...text];
+  let low = 0;
+  let high = chars.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (estimateTextTokens(chars.slice(0, mid).join('')) <= maxTokens) low = mid;
+    else high = mid - 1;
+  }
+  return chars.slice(0, low).join('');
+}
+
+function fitLatestTurn(systemParts: string[], turn: ChatTurn, budget: number): ChatTurn {
+  const flattened = turn.content
+    .map((part) => part.type === 'text' ? part.text : '[图片]')
+    .filter(Boolean)
+    .join('\n');
+  const shell: ChatTurn = { role: turn.role, content: [{ type: 'text', text: '' }] };
+  const available = Math.max(16, budget - estimateContextTokens(systemParts, [shell]));
+  return {
+    role: turn.role,
+    content: [{ type: 'text', text: trimToTokenEstimate(flattened, available) }]
+  };
+}
+
 function plainText(msg: ChatMessage): string {
   return msg.content
     .map((p) => (p.type === 'text' ? p.text ?? '' : p.type === 'audio' ? p.transcript ?? '' : ''))
@@ -141,7 +235,7 @@ function plainText(msg: ChatMessage): string {
 
 function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): string {
   const lines: string[] = [];
-  lines.push('你可以在回复里混合使用文字、表情包、图片和语音。使用下面的标记来触发非文字内容，标记本身不会显示给用户：');
+  lines.push('你可以在回复里混合使用文字、表情包、图片和语音。非文字内容由你根据气氛主动决定，不要一直等用户明确要求。使用下面的标记触发，标记本身不会显示给用户：');
   if (persona.stickerPolicy.enabled) {
     lines.push(`· [[sticker:情绪]] 发一个表情包。可用表情：${opts.stickerCatalogue}`);
     lines.push('· [[sticker-only:情绪]] 这一条只发表情包，不发文字。');
@@ -151,9 +245,11 @@ function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): st
     lines.push('· [[voice]] 把这条文字同时用语音发出来。');
     lines.push('· [[voice-only]] 这一条只发语音，不显示文字（文字会作为语音文稿保留）。');
   }
+  lines.push('主动选择建议：情绪回应、调侃、晚安、安慰和短互动适合表情包；需要温度、亲密感或语气表达时适合语音；用户在描述、想象、设计或需要直观看效果时适合图片。');
+  lines.push('不要机械等待关键词，也不要为了展示能力强行添加媒体。通常一条回复主动选择一种最合适的媒体即可，除非同时使用确实更自然。');
   lines.push(
-    `使用频率：表情包=${persona.stickerPolicy.frequency}，图片=${persona.imagePolicy.frequency}，语音=${persona.voicePolicy.frequency}。` +
-      '不要每条都加，只在真的合适时使用；用户明确要求时必须照做。标记要写在回复的最后。'
+    `当前主动频率：表情包=${persona.stickerPolicy.frequency}，图片=${persona.imagePolicy.frequency}，语音=${persona.voicePolicy.frequency}。` +
+      '频率含义：high=经常在合适时主动使用；medium=每隔几轮遇到自然机会就主动使用；low=只在明显合适时偶尔主动使用；never=不要主动使用。用户明确要求时仍必须照做。标记写在回复最后。'
   );
   return lines.join('\n');
 }
