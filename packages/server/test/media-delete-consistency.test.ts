@@ -81,6 +81,8 @@ describe('permanent media deletion consistency', () => {
     const media = await harness.app.services.mediaStore.save({
       kind: 'image', origin: 'upload', data: PNG, declaredMime: 'image/png', filename: 'orphan.png'
     });
+    harness.app.db.prepare('UPDATE media SET created_at = ? WHERE id = ?')
+      .run('2000-01-01T00:00:00.000Z', media.id);
     const target = harness.app.services.mediaStore.absolutePath(media);
     vi.spyOn(fsp, 'rm').mockImplementation(async (path) => {
       if (path === target) throw new Error('simulated orphan refusal');
