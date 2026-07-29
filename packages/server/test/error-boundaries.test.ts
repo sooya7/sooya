@@ -59,6 +59,14 @@ describe('public error helpers', () => {
     expect(diagnostic).toContain('EACCES');
     expect(diagnostic).toContain('database locked');
   });
+
+  it('preserves a trailing failure clause after Windows and Linux paths', () => {
+    for (const path of ['/opt/app/file.ts', 'C:\\app\\file.ts']) {
+      const diagnostic = redactDiagnostic(new Error(`read ${path} failed: EACCES`));
+      expect(diagnostic, path).not.toContain(path);
+      expect(diagnostic, path).toContain('failed: EACCES');
+    }
+  });
 });
 
 describe('Fastify error boundary', () => {
