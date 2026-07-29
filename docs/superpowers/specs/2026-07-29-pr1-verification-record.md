@@ -53,6 +53,7 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - SSE 从带 query token 的 `EventSource` 改为带 Bearer Header 的 fetch 流；`lastEventId` 仍为非秘密查询参数。
 - Service Worker 升级为 `sooya-v6`，清理旧版本缓存，`/api/media/*` 采用 network-only；Server 媒体响应为 `Cache-Control: private, no-store`。
 - 图片查看器操作区不再被根节点 Pointer Capture 截获，真实指针保存/分享路径已由 Playwright 覆盖。
+- `docs/API.md` 已删除 `?token=` 作为正式鉴权方式的示例，明确普通 API、媒体与 SSE 均使用 Header，避免文档继续引导不安全客户端。
 
 自动化证据：
 

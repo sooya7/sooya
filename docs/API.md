@@ -23,16 +23,20 @@
 `/health/*` **永远不需要令牌**，这样部署脚本和容器探针在本机探测时不会因为
 `WEB_CHAT_TOKEN` 被误判为失败。健康响应不包含任何聊天内容或密钥。
 
-三种传递方式（择一）：
+令牌只通过请求 Header 传递（择一）：
 
 ```http
 X-Sooya-Token: <WEB_CHAT_TOKEN>
 Authorization: Bearer <WEB_CHAT_TOKEN>
-GET /api/messages?token=<WEB_CHAT_TOKEN>
 ```
 
 管理接口用 `X-Admin-Token: <ADMIN_API_TOKEN>`。管理令牌同时也能通过聊天接口的鉴权，
 这样运维工具只需要一个密钥。令牌比较使用常数时间算法。
+
+长期令牌不能放入 URL query 或 fragment；`?token=` 与 `?admin_token=` 不属于受支持的
+鉴权方式。媒体和 SSE 客户端同样必须使用 Header 鉴权：媒体由前端鉴权请求后转为
+临时 Blob URL，SSE 使用带 `Authorization` Header 的 fetch 流。这样可避免令牌进入
+浏览器历史、Referer、缓存键以及服务器、代理或监控的 URL 日志。
 
 > **API Key 永不返回前端。** `GET /api/admin/models` 会把每个 `apiKey` 替换成
 > `apiKeyConfigured: true|false`。日志与 `error_log` 表在写入前做密钥脱敏。
