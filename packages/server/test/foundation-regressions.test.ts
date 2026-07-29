@@ -152,9 +152,11 @@ describe('deployment safety regressions', () => {
   const restore = fs.readFileSync(path.join(REPO_ROOT, 'deploy/restore-backup.sh'), 'utf8');
 
   it('normalizes workspace production dependencies and verifies better-sqlite3 in the image', () => {
-    expect(dockerfile).toMatch(/runtime-node_modules/);
+    expect(dockerfile).toMatch(/AS prod-deps/);
+    expect(dockerfile).toMatch(/--workspaces --include-workspace-root/);
+    expect(dockerfile).toMatch(/COPY --from=prod-deps \/prod\/node_modules/);
     expect(dockerfile).toMatch(/packages\/server\/node_modules/);
-    expect(dockerfile).toMatch(/better-sqlite3 runtime dependency verified/);
+    expect(dockerfile).toMatch(/better-sqlite3 production dependency verified/);
     expect(dockerfile).toMatch(/better-sqlite3 available in final image/);
   });
 
