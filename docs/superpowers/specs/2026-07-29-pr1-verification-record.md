@@ -22,7 +22,7 @@
 | M-018 | 已被后续提交修复 | `b852e3b` 新增持久化 Unicode identity key、迁移回填/重复 winner 选择及活动 canonical 部分唯一索引。 |
 | M-019 | 已被后续提交修复 | `006a0d6` 仅把本次可直接删除的媒体计入 reclaimableBytes；执行分别返回 deletedBytes 与 skippedBytes，预览/执行口径可核对。 |
 | M-020 | 报告误判 | `featureApi.updateVoice()` 当前在 PUT 成功后立即重新 GET 完整 voice 状态，VoiceEditor 用新响应替换 state。`860449b` 补 Desktop/Mobile E2E，确认保存后 GET 至少执行第二次、capability 文案和试听状态继续由刷新结果渲染。 |
-| M-021 | 测试不足 | 待大数据量 UI 验证。 |
+| M-021 | 已被后续提交修复 | `36a0543` 用分类摘要和每页 50 条明细替换完整 JSON `<pre>`；完整原始报告按需下载。2000 候选双端 E2E 证明 DOM 只渲染当前页、翻页正确、下载 Blob/文件名正确。 |
 | M-022 | 测试不足 | 待 2000 条导入事务验证。 |
 | M-023 | 无法确认 | 待核验可见性同步失败补偿。 |
 | M-024 | 测试不足 | 待 UI 选择态验证。 |
@@ -103,6 +103,22 @@ M-014 复核覆盖页面预先存在自定义 history state、打开查看器、
 `featureApi.updateVoice()` 不是直接采用 PUT 的部分响应：它先等待 PUT 成功，再调用 `GET /api/admin/voice`，该接口重新读取 `services.capabilities.statuses().tts`、policy、model、emotions 和 supported 参数；VoiceEditor 随后以完整响应替换本地 state。
 
 E2E 在 Desktop/Mobile 均记录 voice GET 次数，保存后要求至少两次（初始加载 + 保存后刷新），并断言 capability 文案和试听按钮仍按刷新结果可用。定向命令 `npx playwright test e2e/features-1-9.e2e.ts --grep "feature center exposes" --reporter=list` 为 2/2 通过。因此报告假定的 capability 过期路径不存在，M-020 记为报告误判。
+
+## M-021 大清理报告渲染
+
+提交：`36a0543 fix(storage): paginate large cleanup reports`。
+
+失败证据：返回包含 2000 个 orphanFiles 的合法 cleanup report 后，旧 StorageEditor 不存在摘要/分页节点，而是同步 `JSON.stringify` 整份报告并渲染到单个 `<pre>`；新增测试在 `cleanup-report-summary` 不存在处失败。
+
+修复后：
+
+- 按六类候选显示数量和字节摘要，同时显示总项数、可释放空间与 reportId。
+- 明细扁平化后每页最多 50 行；DOM 不包含未进入当前页的第 2000 条记录。
+- 上一页/下一页有边界禁用和明确页码；报告替换时回到第一页。
+- 完整原始 JSON 只在用户点击下载时序列化，使用临时 Blob URL 和受控 `${reportId}.json` 文件名。
+- 执行安全清理仍引用原始 result state 中的 reportId，不改变 M-008 的确认报告绑定。
+
+验证：RED 为摘要节点不存在；GREEN 双端大报告 2/2、功能中心 12/12、完整 E2E 68/68（2.3 分钟）。Web unit 17/17、typecheck、production build 通过。
 
 ## Windows 本地环境阻塞
 
