@@ -167,7 +167,7 @@ export class StorageService {
       return !knownPaths.has(resolved) && !resolved.startsWith(`${tempRoot}${path.sep}`);
     });
     const unreferencedMedia = this.media.listUnreferenced(1000)
-      .filter((row) => !avatarIds.has(row.id))
+      .filter((row) => Boolean(row.deleted_at) && !avatarIds.has(row.id))
       .map((row) => ({ id: row.id, bytes: row.bytes }));
     const tempCutoff = Date.now() - policy.tempRetentionHours * 3600_000;
     const tempFiles = (await walkFiles(this.env.mediaDirs.tmp)).filter((file) => file.mtimeMs < tempCutoff);
@@ -208,6 +208,8 @@ export class StorageService {
     deleted: Record<string, number>;
     skipped: Array<{ category: CleanupCategory; target: string; reason: string }>;
     releasedBytes: number;
+    deletedBytes: number;
+    skippedBytes: number;
   }> {
     if (this.activeWrites > 0) throw new Error('media write is in progress; retry cleanup shortly');
     const release = this.maintenance.begin('storage.cleanup', { blocksWrites: true });
@@ -236,6 +238,7 @@ export class StorageService {
       const deleted: Record<string, number> = {};
       const skipped: Array<{ category: CleanupCategory; target: string; reason: string }> = [];
       let releasedBytes = 0;
+      let skippedBytes = 0;
       if (!input.apply) {
         this.saveCleanupReport(report);
         this.audit.add('storage', 'cleanup.previewed', report.reportId, {
@@ -243,7 +246,7 @@ export class StorageService {
           candidateHash: report.candidateHash,
           policyHash: report.policyHash
         });
-        return { applied: false, report, deleted, skipped, releasedBytes };
+        return { applied: false, report, deleted, skipped, releasedBytes, deletedBytes: 0, skippedBytes: 0 };
       }
 
       if (categories.has('expiredTrash')) {
@@ -251,6 +254,7 @@ export class StorageService {
           const row = this.media.get(item.id);
           if (!row || !row.deleted_at || row.bytes !== item.bytes || this.media.references(item.id).total > 0 || this.avatarMediaIds().has(item.id)) {
             skipped.push({ category: 'expiredTrash', target: item.id, reason: 'no_longer_safe' });
+            skippedBytes += item.bytes;
             continue;
           }
           if (await this.mediaStore.delete(item.id)) {
@@ -264,6 +268,7 @@ export class StorageService {
           const row = this.media.get(item.id);
           if (!row || !row.deleted_at || row.bytes !== item.bytes || this.media.references(item.id).total > 0 || this.avatarMediaIds().has(item.id)) {
             skipped.push({ category: 'unreferencedMedia', target: item.id, reason: 'no_longer_safe' });
+            skippedBytes += item.bytes;
             continue;
           }
           if (await this.mediaStore.delete(item.id)) {
@@ -277,10 +282,12 @@ export class StorageService {
         for (const item of report.candidates[category]) {
           if (!this.isSafeCleanupPath(category, item.path)) {
             skipped.push({ category, target: item.path, reason: 'unsafe_path' });
+            skippedBytes += item.bytes;
             continue;
           }
           if (!await matchesFileSnapshot(item)) {
             skipped.push({ category, target: item.path, reason: 'file_changed_or_missing' });
+            skippedBytes += item.bytes;
             continue;
           }
           await fsp.rm(item.path, { force: true });
@@ -305,9 +312,11 @@ export class StorageService {
         deleted,
         skipped,
         releasedBytes,
+        deletedBytes: releasedBytes,
+        skippedBytes,
         generatedAt: report.generatedAt
       });
-      return { applied: true, report, deleted, skipped, releasedBytes };
+      return { applied: true, report, deleted, skipped, releasedBytes, deletedBytes: releasedBytes, skippedBytes };
     } catch (error) {
       this.errors.add('storage.cleanup', (error as Error).message);
       throw error;

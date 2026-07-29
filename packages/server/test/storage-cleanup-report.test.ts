@@ -136,4 +136,52 @@ describe('bound storage cleanup reports', () => {
       reason: 'no_longer_safe'
     });
   });
+
+  it('counts only immediately deletable bytes and reconciles preview with apply', async () => {
+    harness = await createHarness({ env: { ADMIN_API_TOKEN: 'admin-test-token' } });
+    const media = await harness.app.services.mediaStore.save({
+      kind: 'image',
+      origin: 'upload',
+      data: PNG,
+      declaredMime: 'image/png',
+      filename: 'reclaimable.png'
+    });
+
+    const activePreview = await preview();
+    expect(activePreview.report.candidates.unreferencedMedia).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: media.id })])
+    );
+    expect(activePreview.report.reclaimableBytes).toBe(0);
+
+    harness.app.repos.media.trash(media.id);
+    const trashPreviewResponse = await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/admin/storage/cleanup',
+      headers: ADMIN,
+      payload: { apply: false, categories: ['unreferencedMedia'] }
+    });
+    const trashPreview = trashPreviewResponse.json();
+    expect(trashPreview.report.candidates.unreferencedMedia).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: media.id, bytes: media.bytes })])
+    );
+    expect(trashPreview.report.reclaimableBytes).toBe(media.bytes);
+
+    const applied = await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/admin/storage/cleanup',
+      headers: ADMIN,
+      payload: {
+        apply: true,
+        reportId: trashPreview.report.reportId,
+        categories: ['unreferencedMedia']
+      }
+    });
+    expect(applied.json()).toMatchObject({
+      releasedBytes: media.bytes,
+      deletedBytes: media.bytes,
+      skippedBytes: 0,
+      deleted: { unreferencedMedia: 1 }
+    });
+    expect(harness.app.repos.media.get(media.id)).toBeUndefined();
+  });
 });
