@@ -6,9 +6,10 @@
  *  - never caches /api or /health (chat data must always come from the server)
  *  - serves the shell for navigation requests (SPA offline support)
  *  - caches media files opportunistically so replaying an old voice clip works
+ *  - focuses the existing chat window when a reply notification is tapped
  */
 
-const VERSION = 'sooya-v3';
+const VERSION = 'sooya-v4';
 const SHELL_CACHE = `${VERSION}-shell`;
 const MEDIA_CACHE = `${VERSION}-media`;
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg'];
@@ -27,10 +28,24 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) =>
-        Promise.all(keys.filter((k) => !k.startsWith(VERSION)).map((k) => caches.delete(k)))
-      )
+      .then((keys) => Promise.all(keys.filter((key) => !key.startsWith(VERSION)).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
+      const existing = clients.find((client) => new URL(client.url).origin === self.location.origin);
+      if (existing) {
+        await existing.focus();
+        if ('navigate' in existing && existing.url !== target) await existing.navigate(target);
+        return;
+      }
+      await self.clients.openWindow(target);
+    })
   );
 });
 
@@ -48,47 +63,39 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Never intercept live data or the event stream.
   if (url.pathname.startsWith('/health') || url.pathname === '/api/stream' || url.pathname === '/api/events') return;
 
-  // Media: cache-first, since media ids are immutable.
   if (url.pathname.startsWith('/api/media/') && !url.pathname.endsWith('/meta')) {
-    // The auth token travels in the query string. Cache under the bare path so
-    // the secret is never written into Cache Storage keys, and so rotating the
-    // token does not orphan every previously cached file.
     const cacheKey = new Request(url.origin + url.pathname, { method: 'GET' });
     event.respondWith(
       caches.open(MEDIA_CACHE).then(async (cache) => {
         const hit = await cache.match(cacheKey);
         if (hit) return hit;
         try {
-          const res = await fetch(request);
-          // Range responses (206) must not be cached as if they were complete.
-          if (res.ok && res.status === 200) {
-            void cache.put(cacheKey, res.clone()).then(() => trimCache(MEDIA_CACHE, MEDIA_LIMIT));
+          const response = await fetch(request);
+          if (response.ok && response.status === 200) {
+            void cache.put(cacheKey, response.clone()).then(() => trimCache(MEDIA_CACHE, MEDIA_LIMIT));
           }
-          return res;
-        } catch (err) {
+          return response;
+        } catch (error) {
           const stale = await cache.match(cacheKey);
           if (stale) return stale;
-          throw err;
+          throw error;
         }
       })
     );
     return;
   }
 
-  // All other API calls: network only.
   if (url.pathname.startsWith('/api/')) return;
 
-  // Navigation: network-first with the cached shell as the offline fallback.
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
-        .then((res) => {
-          const copy = res.clone();
-          void caches.open(SHELL_CACHE).then((c) => c.put('/index.html', copy));
-          return res;
+        .then((response) => {
+          const copy = response.clone();
+          void caches.open(SHELL_CACHE).then((cache) => cache.put('/index.html', copy));
+          return response;
         })
         .catch(async () => {
           const cache = await caches.open(SHELL_CACHE);
@@ -98,14 +105,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets: stale-while-revalidate.
   event.respondWith(
     caches.open(SHELL_CACHE).then(async (cache) => {
       const hit = await cache.match(request);
       const network = fetch(request)
-        .then((res) => {
-          if (res.ok) void cache.put(request, res.clone());
-          return res;
+        .then((response) => {
+          if (response.ok) void cache.put(request, response.clone());
+          return response;
         })
         .catch(() => hit ?? Response.error());
       return hit ?? network;
