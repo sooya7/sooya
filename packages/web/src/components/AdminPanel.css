@@ -15,6 +15,13 @@
   --admin-success: #28a269;
   --admin-danger: #d7474d;
   --admin-danger-soft: #fff1f2;
+  --admin-ink: #0d1220;
+  --admin-ink-2: #18213a;
+  --admin-grad: linear-gradient(135deg, #6d5efc, #2f80ed);
+  --admin-grad-soft: linear-gradient(135deg, #f0edff, #e8f2ff);
+  --admin-radius: 16px;
+  --admin-sh-1: 0 1px 2px rgba(16, 26, 48, 0.05);
+  --admin-sh-2: 0 2px 6px rgba(16, 26, 48, 0.06), 0 12px 28px -12px rgba(16, 26, 48, 0.18);
   width: 100%;
   max-width: none;
   min-height: 100dvh;
@@ -44,9 +51,8 @@
   flex-direction: column;
   height: 100dvh;
   padding: 18px 12px 14px;
-  background: rgba(255, 255, 255, 0.96);
-  border-right: 1px solid var(--admin-line);
-  backdrop-filter: blur(18px);
+  background: linear-gradient(180deg, var(--admin-ink), var(--admin-ink-2));
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   z-index: 10;
 }
 
@@ -66,8 +72,8 @@
   flex: 0 0 34px;
   border-radius: 11px;
   color: #fff;
-  background: linear-gradient(145deg, #58aaf4, #2d83d5);
-  box-shadow: 0 6px 16px rgba(45, 131, 213, 0.2);
+  background: var(--admin-grad);
+  box-shadow: 0 6px 18px rgba(109, 94, 252, 0.34);
   font-size: 15px;
   font-weight: 800;
 }
@@ -107,22 +113,19 @@
   border-radius: 11px;
   text-align: left;
   transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
-}
-
-.admin-side-nav-plain button {
-  /* No icon is rendered in this nav, so the label must not sit in the icon column. */
-  grid-template-columns: minmax(0, 1fr);
+  color: rgba(226, 232, 245, 0.62);
 }
 
 .admin-side-nav button:hover {
-  color: var(--admin-text);
-  background: var(--admin-surface-soft);
+  color: #f4f7fd;
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .admin-side-nav button.active {
-  color: var(--admin-primary-deep);
-  background: var(--admin-primary-soft);
-  border-color: #d6eaff;
+  color: #fff;
+  background: var(--admin-grad);
+  border-color: transparent;
+  box-shadow: 0 8px 20px -8px rgba(109, 94, 252, 0.7);
 }
 
 .admin-nav-icon {
@@ -1117,4 +1120,93 @@
   grid-column: 1 / -1;
   display: flex;
   gap: 8px;
+}
+
+/* ---- Visual pass: ink sidebar, grouped nav, layered surfaces ----------- */
+
+.admin-sidebar .admin-brand-copy strong {
+  color: #f5f7fc;
+}
+
+.admin-sidebar .admin-brand-copy small,
+.admin-sidebar .admin-side-action {
+  color: rgba(214, 222, 238, 0.55);
+}
+
+.admin-sidebar .admin-side-action:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.admin-sidebar-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Nine sections need signposting; without groups the list reads as a wall. */
+.admin-nav-group {
+  margin: 14px 10px 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: rgba(232, 236, 246, 0.32);
+  text-transform: uppercase;
+}
+
+.admin-nav-group:first-child {
+  margin-top: 2px;
+}
+
+.admin-side-nav button .admin-nav-copy small {
+  color: rgba(214, 222, 238, 0.42);
+}
+
+.admin-side-nav button.active .admin-nav-copy small {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.admin-side-nav button .admin-nav-icon {
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.admin-side-nav button.active .admin-nav-icon {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.admin-card,
+.admin-summary-tile,
+.admin-status-card,
+.admin-form-card {
+  border-radius: var(--admin-radius);
+  box-shadow: var(--admin-sh-2);
+}
+
+.admin-summary-tile {
+  position: relative;
+  overflow: hidden;
+}
+
+.admin-summary-tile .admin-summary-icon {
+  color: #4c5fd7;
+  background: var(--admin-grad-soft);
+  border-radius: 10px;
+}
+
+.admin-topbar .admin-eyebrow {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: var(--admin-grad-soft);
+  color: #4a49b8;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.admin-primary {
+  background: var(--admin-grad);
+  border-color: transparent;
+  box-shadow: 0 8px 18px -8px rgba(109, 94, 252, 0.66);
 }

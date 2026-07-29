@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../lib/api.js';
 import { AvatarEditor, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js';
 import {
@@ -54,16 +54,20 @@ const CAPABILITIES = [
   ['stt', '语音识别模型']
 ] as const;
 
-const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: IconName }> = [
-  { id: 'overview', label: '概览', description: '运行状态与资源', icon: 'overview' },
-  { id: 'persona', label: '助手配置', description: '人设与表达方式', icon: 'persona' },
-  { id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
-  { id: 'avatar', label: '双方头像', description: '助手与用户头像', icon: 'persona' },
-  { id: 'voice', label: '情绪语音', description: '语气与语音合成', icon: 'message' },
-  { id: 'world', label: '世界引擎', description: '世界设定与检索', icon: 'cpu' },
-  { id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
-  { id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
-  { id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' }
+/** Nav groups, so nine sections read as a structure instead of a list. */
+const NAV_GROUPS = ['运行状态', '助手与表达', '内容与系统'] as const;
+type NavGroup = (typeof NAV_GROUPS)[number];
+
+const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: IconName; group: NavGroup }> = [
+  { group: '运行状态', id: 'overview', label: '概览', description: '运行状态与资源', icon: 'overview' },
+  { group: '助手与表达', id: 'persona', label: '助手配置', description: '人设与表达方式', icon: 'persona' },
+  { group: '内容与系统', id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
+  { group: '助手与表达', id: 'avatar', label: '双方头像', description: '助手与用户头像', icon: 'persona' },
+  { group: '助手与表达', id: 'voice', label: '情绪语音', description: '语气与语音合成', icon: 'message' },
+  { group: '助手与表达', id: 'world', label: '世界引擎', description: '世界设定与检索', icon: 'cpu' },
+  { group: '内容与系统', id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
+  { group: '内容与系统', id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
+  { group: '内容与系统', id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' }
 ];
 
 const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
@@ -517,11 +521,23 @@ function AvatarPanel({ onNotice }: { onNotice: (v: string) => void }) {
 function TabButtons({ tab, setTab, mobile }: { tab: Tab; setTab: (tab: Tab) => void; mobile: boolean }) {
   return (
     <nav className={mobile ? 'admin-mobile-tabs' : 'admin-side-nav'} aria-label="管理面板导航">
-      {TABS.map((item) => (
-        <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
-          {mobile ? item.label : <><span className="admin-nav-icon"><Icon name={item.icon} /></span><span className="admin-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span></>}
-        </button>
-      ))}
+      {mobile
+        ? TABS.map((item) => (
+          <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+            {item.label}
+          </button>
+        ))
+        : NAV_GROUPS.map((group) => (
+          <Fragment key={group}>
+            <p className="admin-nav-group">{group}</p>
+            {TABS.filter((item) => item.group === group).map((item) => (
+              <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+                <span className="admin-nav-icon"><Icon name={item.icon} /></span>
+                <span className="admin-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
+              </button>
+            ))}
+          </Fragment>
+        ))}
     </nav>
   );
 }
