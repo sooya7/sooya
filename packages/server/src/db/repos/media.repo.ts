@@ -97,7 +97,7 @@ export class MediaRepo {
     if (ids.length === 0) return out;
     const placeholders = ids.map(() => '?').join(',');
     const rows = this.db.prepare(`SELECT * FROM media WHERE id IN (${placeholders})`).all(...ids) as MediaRow[];
-    for (const r of rows) out.set(r.id, r);
+    for (const row of rows) out.set(row.id, row);
     return out;
   }
 
@@ -106,60 +106,19 @@ export class MediaRepo {
   }
 
   listGallery(input: GalleryQuery = {}): MediaRow[] {
-    const where: string[] = [];
-    const values: unknown[] = [];
-    if (input.kind) {
-      where.push('m.kind = ?');
-      values.push(input.kind);
-    }
-    if (input.origin) {
-      where.push('m.origin = ?');
-      values.push(input.origin);
-    }
-    if (input.deleted === true) where.push('m.deleted_at IS NOT NULL');
-    else if (input.deleted === false || input.deleted === undefined) where.push('m.deleted_at IS NULL');
-    if (input.favorite) where.push('m.favorite = 1');
-    if (input.from) {
-      where.push('m.created_at >= ?');
-      values.push(input.from);
-    }
-    if (input.to) {
-      where.push('m.created_at <= ?');
-      values.push(input.to);
-    }
-    const search = input.search?.trim();
-    if (search) {
-      where.push(`(
-        m.id LIKE ? OR m.rel_path LIKE ? OR m.meta_json LIKE ? OR m.tags_json LIKE ? OR
-        EXISTS (
-          SELECT 1 FROM message_parts p
-          LEFT JOIN messages msg ON msg.id = p.message_id
-          WHERE p.media_id = m.id AND (p.text LIKE ? OR p.transcript LIKE ? OR msg.meta_json LIKE ?)
-        )
-      )`);
-      const q = `%${search.replace(/[%_]/g, '\\$&')}%`;
-      values.push(q, q, q, q, q, q, q);
-    }
+    const { where, values } = galleryWhere(input);
     const limit = Math.max(1, Math.min(200, input.limit ?? 50));
     const offset = Math.max(0, input.offset ?? 0);
-    values.push(limit, offset);
     return this.db
       .prepare(`SELECT m.* FROM media m ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY m.created_at DESC LIMIT ? OFFSET ?`)
-      .all(...values) as MediaRow[];
+      .all(...values, limit, offset) as MediaRow[];
   }
 
   galleryStats(input: Omit<GalleryQuery, 'limit' | 'offset'> = {}): { count: number; bytes: number } {
-    const rows = this.listGallery({ ...input, limit: 200, offset: 0 });
-    if (rows.length < 200) return { count: rows.length, bytes: rows.reduce((n, row) => n + row.bytes, 0) };
-    const where: string[] = [];
-    const values: unknown[] = [];
-    if (input.kind) { where.push('kind = ?'); values.push(input.kind); }
-    if (input.origin) { where.push('origin = ?'); values.push(input.origin); }
-    if (input.deleted === true) where.push('deleted_at IS NOT NULL');
-    else where.push('deleted_at IS NULL');
-    if (input.favorite) where.push('favorite = 1');
-    const row = this.db.prepare(`SELECT COUNT(*) count, COALESCE(SUM(bytes), 0) bytes FROM media ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).get(...values) as { count: number; bytes: number };
-    return row;
+    const { where, values } = galleryWhere(input);
+    return this.db
+      .prepare(`SELECT COUNT(*) count, COALESCE(SUM(m.bytes), 0) bytes FROM media m ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`)
+      .get(...values) as { count: number; bytes: number };
   }
 
   count(includeDeleted = true): number {
@@ -184,7 +143,7 @@ export class MediaRepo {
   }
 
   setTags(id: string, tags: string[]): boolean {
-    const normalized = [...new Set(tags.map((v) => v.trim()).filter(Boolean))].slice(0, 30);
+    const normalized = [...new Set(tags.map((value) => value.trim()).filter(Boolean))].slice(0, 30);
     return this.db.prepare('UPDATE media SET tags_json = ? WHERE id = ?').run(JSON.stringify(normalized), id).changes > 0;
   }
 
@@ -214,7 +173,6 @@ export class MediaRepo {
     `).all(limit) as MediaRow[];
   }
 
-  /** Uploaded media older than `cutoff` that no message part references. */
   listOrphanUploads(cutoff: string, limit = 500): MediaRow[] {
     return this.db
       .prepare(
@@ -238,6 +196,32 @@ export class MediaRepo {
   setTranscript(id: string, transcript: string): void {
     this.db.prepare('UPDATE media SET transcript = ? WHERE id = ?').run(transcript, id);
   }
+}
+
+function galleryWhere(input: GalleryQuery): { where: string[]; values: unknown[] } {
+  const where: string[] = [];
+  const values: unknown[] = [];
+  if (input.kind) { where.push('m.kind = ?'); values.push(input.kind); }
+  if (input.origin) { where.push('m.origin = ?'); values.push(input.origin); }
+  if (input.deleted === true) where.push('m.deleted_at IS NOT NULL');
+  else if (input.deleted === false || input.deleted === undefined) where.push('m.deleted_at IS NULL');
+  if (input.favorite) where.push('m.favorite = 1');
+  if (input.from) { where.push('m.created_at >= ?'); values.push(input.from); }
+  if (input.to) { where.push('m.created_at <= ?'); values.push(input.to); }
+  const search = input.search?.trim();
+  if (search) {
+    where.push(`(
+      m.id LIKE ? ESCAPE '\\' OR m.rel_path LIKE ? ESCAPE '\\' OR m.meta_json LIKE ? ESCAPE '\\' OR m.tags_json LIKE ? ESCAPE '\\' OR
+      EXISTS (
+        SELECT 1 FROM message_parts p
+        LEFT JOIN messages msg ON msg.id = p.message_id
+        WHERE p.media_id = m.id AND (p.text LIKE ? ESCAPE '\\' OR p.transcript LIKE ? ESCAPE '\\' OR msg.meta_json LIKE ? ESCAPE '\\')
+      )
+    )`);
+    const q = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
+    values.push(q, q, q, q, q, q, q);
+  }
+  return { where, values };
 }
 
 export function toMediaRef(row: MediaRow): MediaRef {
