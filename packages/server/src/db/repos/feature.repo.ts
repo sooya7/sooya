@@ -21,6 +21,7 @@ export type WorldAuthority = 'model' | 'user' | 'admin';
 export interface WorldEntryRow { id: string; kind: WorldKind; subject: string; subject_key: string; predicate: string; predicate_key: string; object: string; value_json: string; confidence: number; authority: WorldAuthority; source_message_id: string | null; active: number; conflict_of: string | null; created_at: string; updated_at: string; }
 export interface WorldCandidate { kind: WorldKind; subject: string; predicate: string; object: string; value?: Record<string, unknown>; confidence?: number; authority?: WorldAuthority; }
 export interface WorldApplyResult { stored: number; merged: number; conflicts: number; entries: WorldEntryRow[]; }
+export interface WorldImportResult { stored: number; merged: number; conflicts: number; disabled: number; }
 const authorityRank: Record<WorldAuthority, number> = { model: 1, user: 2, admin: 3 };
 
 export class WorldRepo {
@@ -54,34 +55,52 @@ export class WorldRepo {
     return this.db.prepare(`SELECT * FROM world_entries WHERE active=1 AND conflict_of IS NULL AND (${clauses}) ORDER BY ${authorityOrder} DESC,confidence DESC,updated_at DESC LIMIT ?`).all(...values) as WorldEntryRow[];
   }
   apply(candidates: WorldCandidate[], sourceMessageId: string | null): WorldApplyResult {
-    const result: WorldApplyResult = { stored: 0,merged: 0,conflicts: 0,entries: [] };
-    this.db.transaction(() => {
-      for (const raw of candidates) {
-        const candidate = normalizeCandidate(raw); if (!candidate) continue;
-        const subjectKey = worldIdentityKey(candidate.subject);
-        const predicateKey = worldIdentityKey(candidate.predicate);
-        const existing = this.db.prepare(`SELECT * FROM world_entries WHERE active=1 AND conflict_of IS NULL AND subject_key=? AND predicate_key=? ORDER BY CASE authority WHEN 'admin' THEN 3 WHEN 'user' THEN 2 ELSE 1 END DESC,confidence DESC,updated_at DESC LIMIT 1`).get(subjectKey,predicateKey) as WorldEntryRow | undefined;
-        if (existing && normalize(existing.object) === normalize(candidate.object)) {
-          const confidence = Math.max(existing.confidence,candidate.confidence ?? 0.6);
-          const authority = authorityRank[candidate.authority ?? 'model'] > authorityRank[existing.authority] ? candidate.authority ?? 'model' : existing.authority;
-          this.db.prepare('UPDATE world_entries SET confidence=?,authority=?,value_json=?,updated_at=? WHERE id=?').run(confidence,authority,JSON.stringify(candidate.value ?? safeJson(existing.value_json)),nowIso(),existing.id);
-          if (sourceMessageId) this.addSource(existing.id,sourceMessageId);
-          result.merged++; result.entries.push(this.get(existing.id)!); continue;
+    return this.db.transaction(() => this.applyCandidates(candidates, sourceMessageId))();
+  }
+  importEntries(entries: Array<WorldCandidate & { active?: boolean }>): WorldImportResult {
+    return this.db.transaction(() => {
+      const result: WorldImportResult = { stored: 0, merged: 0, conflicts: 0, disabled: 0 };
+      for (const entry of entries) {
+        const applied = this.applyCandidates([entry], null);
+        result.stored += applied.stored;
+        result.merged += applied.merged;
+        result.conflicts += applied.conflicts;
+        if (entry.active === false) {
+          for (const row of applied.entries) {
+            if (row.active === 1 && this.update(row.id, { active: false })) result.disabled++;
+          }
         }
-        if (existing) {
-          const incomingAuthority = candidate.authority ?? 'model';
-          const canReplace = authorityRank[incomingAuthority] > authorityRank[existing.authority] || (authorityRank[incomingAuthority] === authorityRank[existing.authority] && (candidate.confidence ?? 0.6) > existing.confidence);
-          if (canReplace) {
-            this.db.prepare('UPDATE world_entries SET active=0,conflict_of=NULL,updated_at=? WHERE id=?').run(nowIso(),existing.id);
-            const winner = this.insert(candidate,sourceMessageId,true,null);
-            this.db.prepare('UPDATE world_entries SET conflict_of=?,updated_at=? WHERE id=?').run(winner.id,nowIso(),existing.id);
-            result.entries.push(winner);
-          } else result.entries.push(this.insert(candidate,sourceMessageId,false,existing.id));
-          result.conflicts++; continue;
-        }
-        const created = this.insert(candidate,sourceMessageId,true,null); result.stored++; result.entries.push(created);
       }
+      return result;
     })();
+  }
+  private applyCandidates(candidates: WorldCandidate[], sourceMessageId: string | null): WorldApplyResult {
+    const result: WorldApplyResult = { stored: 0,merged: 0,conflicts: 0,entries: [] };
+    for (const raw of candidates) {
+      const candidate = normalizeCandidate(raw); if (!candidate) continue;
+      const subjectKey = worldIdentityKey(candidate.subject);
+      const predicateKey = worldIdentityKey(candidate.predicate);
+      const existing = this.db.prepare(`SELECT * FROM world_entries WHERE active=1 AND conflict_of IS NULL AND subject_key=? AND predicate_key=? ORDER BY CASE authority WHEN 'admin' THEN 3 WHEN 'user' THEN 2 ELSE 1 END DESC,confidence DESC,updated_at DESC LIMIT 1`).get(subjectKey,predicateKey) as WorldEntryRow | undefined;
+      if (existing && normalize(existing.object) === normalize(candidate.object)) {
+        const confidence = Math.max(existing.confidence,candidate.confidence ?? 0.6);
+        const authority = authorityRank[candidate.authority ?? 'model'] > authorityRank[existing.authority] ? candidate.authority ?? 'model' : existing.authority;
+        this.db.prepare('UPDATE world_entries SET confidence=?,authority=?,value_json=?,updated_at=? WHERE id=?').run(confidence,authority,JSON.stringify(candidate.value ?? safeJson(existing.value_json)),nowIso(),existing.id);
+        if (sourceMessageId) this.addSource(existing.id,sourceMessageId);
+        result.merged++; result.entries.push(this.get(existing.id)!); continue;
+      }
+      if (existing) {
+        const incomingAuthority = candidate.authority ?? 'model';
+        const canReplace = authorityRank[incomingAuthority] > authorityRank[existing.authority] || (authorityRank[incomingAuthority] === authorityRank[existing.authority] && (candidate.confidence ?? 0.6) > existing.confidence);
+        if (canReplace) {
+          this.db.prepare('UPDATE world_entries SET active=0,conflict_of=NULL,updated_at=? WHERE id=?').run(nowIso(),existing.id);
+          const winner = this.insert(candidate,sourceMessageId,true,null);
+          this.db.prepare('UPDATE world_entries SET conflict_of=?,updated_at=? WHERE id=?').run(winner.id,nowIso(),existing.id);
+          result.entries.push(winner);
+        } else result.entries.push(this.insert(candidate,sourceMessageId,false,existing.id));
+        result.conflicts++; continue;
+      }
+      const created = this.insert(candidate,sourceMessageId,true,null); result.stored++; result.entries.push(created);
+    }
     return result;
   }
   create(candidate: WorldCandidate, sourceMessageId: string | null = null): WorldEntryRow { const normalized = normalizeCandidate(candidate); if (!normalized) throw new Error('invalid world entry'); return this.insert(normalized,sourceMessageId,true,null); }

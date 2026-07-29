@@ -101,22 +101,10 @@ export class WorldEngine {
     const schema = z.object({ version: z.literal(1).optional(), entries: z.array(CandidateSchema.extend({ active: z.boolean().optional() })).max(2000) });
     const parsed = schema.safeParse(data);
     if (!parsed.success) throw new Error(`invalid world import: ${parsed.error.message}`);
-    let stored = 0;
-    let merged = 0;
-    let conflicts = 0;
-    let disabled = 0;
-    for (const entry of parsed.data.entries) {
-      const result = this.repo.apply([{ ...entry, authority: entry.authority ?? 'admin' }], null);
-      stored += result.stored;
-      merged += result.merged;
-      conflicts += result.conflicts;
-      if (entry.active === false) {
-        for (const row of result.entries) {
-          if (row.active === 1 && this.repo.update(row.id, { active: false })) disabled++;
-        }
-      }
-    }
-    return { stored, merged, conflicts, disabled };
+    return this.repo.importEntries(parsed.data.entries.map((entry) => ({
+      ...entry,
+      authority: entry.authority ?? 'admin'
+    })));
   }
 }
 
