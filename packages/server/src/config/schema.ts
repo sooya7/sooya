@@ -81,7 +81,6 @@ export const EmbeddingModelSchema = z.object({
   apiKey: z.string().default(''),
   apiKeyEnv: z.string().optional(),
   model: z.string().default(''),
-  /** Dimension is read from the actual model config / first response, never hardcoded globally. */
   dimensions: z.number().int().min(8).max(8192).optional(),
   timeoutMs: z.number().int().min(1000).max(120_000).default(30_000),
   maxRetries: z.number().int().min(0).max(5).default(2)
@@ -111,6 +110,12 @@ export const TtsModelSchema = z.object({
   voice: z.string().default('alloy'),
   format: z.enum(['mp3', 'wav', 'opus', 'aac', 'flac']).default('mp3'),
   speed: z.number().min(0.25).max(4).default(1),
+  /** Enable automatic emotion detection, pacing and delivery instructions. */
+  expressive: z.boolean().default(true),
+  /** Some compatible gateways reject unknown fields; `off` omits instructions. */
+  instructionMode: z.enum(['on', 'auto', 'off']).default('on'),
+  /** Scales emotion-specific speed changes and instruction strength. */
+  emotionIntensity: z.number().min(0).max(1).default(0.75),
   timeoutMs: z.number().int().min(1000).max(300_000).default(90_000),
   maxRetries: z.number().int().min(0).max(5).default(1)
 });
@@ -131,7 +136,6 @@ export type SttModelConfig = z.infer<typeof SttModelSchema>;
 
 export const ModelsConfigSchema = z.object({
   chat: ChatModelSchema.default({}),
-  /** Optional dedicated models; when omitted they fall back to `chat`. */
   vision: ChatModelSchema.optional(),
   summary: ChatModelSchema.optional(),
   embedding: EmbeddingModelSchema.default({}),
