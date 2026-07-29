@@ -79,12 +79,10 @@ export class MediaRepo {
       favorite: 0,
       tags_json: JSON.stringify(input.tags ?? [])
     };
-    this.db
-      .prepare(
-        `INSERT INTO media (id, kind, rel_path, mime, bytes, sha256, width, height, duration, origin, created_at, transcript, meta_json, deleted_at, favorite, tags_json)
-         VALUES (@id, @kind, @rel_path, @mime, @bytes, @sha256, @width, @height, @duration, @origin, @created_at, @transcript, @meta_json, @deleted_at, @favorite, @tags_json)`
-      )
-      .run(row);
+    this.db.prepare(`
+      INSERT INTO media (id, kind, rel_path, mime, bytes, sha256, width, height, duration, origin, created_at, transcript, meta_json, deleted_at, favorite, tags_json)
+      VALUES (@id, @kind, @rel_path, @mime, @bytes, @sha256, @width, @height, @duration, @origin, @created_at, @transcript, @meta_json, @deleted_at, @favorite, @tags_json)
+    `).run(row);
     return row;
   }
 
@@ -102,23 +100,22 @@ export class MediaRepo {
   }
 
   list(limit = 50, offset = 0, kind?: MediaRow['kind']): MediaRow[] {
-    return this.listGallery({ limit, offset, kind, deleted: false });
+    const safeLimit = Math.max(1, Math.min(10_000, limit));
+    const safeOffset = Math.max(0, offset);
+    if (kind) return this.db.prepare('SELECT * FROM media WHERE kind = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?').all(kind, safeLimit, safeOffset) as MediaRow[];
+    return this.db.prepare('SELECT * FROM media WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?').all(safeLimit, safeOffset) as MediaRow[];
   }
 
   listGallery(input: GalleryQuery = {}): MediaRow[] {
     const { where, values } = galleryWhere(input);
     const limit = Math.max(1, Math.min(200, input.limit ?? 50));
     const offset = Math.max(0, input.offset ?? 0);
-    return this.db
-      .prepare(`SELECT m.* FROM media m ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY m.created_at DESC LIMIT ? OFFSET ?`)
-      .all(...values, limit, offset) as MediaRow[];
+    return this.db.prepare(`SELECT m.* FROM media m ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY m.created_at DESC LIMIT ? OFFSET ?`).all(...values, limit, offset) as MediaRow[];
   }
 
   galleryStats(input: Omit<GalleryQuery, 'limit' | 'offset'> = {}): { count: number; bytes: number } {
     const { where, values } = galleryWhere(input);
-    return this.db
-      .prepare(`SELECT COUNT(*) count, COALESCE(SUM(m.bytes), 0) bytes FROM media m ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`)
-      .get(...values) as { count: number; bytes: number };
+    return this.db.prepare(`SELECT COUNT(*) count, COALESCE(SUM(m.bytes), 0) bytes FROM media m ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`).get(...values) as { count: number; bytes: number };
   }
 
   count(includeDeleted = true): number {
@@ -126,21 +123,10 @@ export class MediaRepo {
     return (this.db.prepare(sql).get() as { c: number }).c;
   }
 
-  delete(id: string): boolean {
-    return this.db.prepare('DELETE FROM media WHERE id = ?').run(id).changes > 0;
-  }
-
-  trash(id: string): boolean {
-    return this.db.prepare('UPDATE media SET deleted_at = COALESCE(deleted_at, ?) WHERE id = ?').run(nowIso(), id).changes > 0;
-  }
-
-  restore(id: string): boolean {
-    return this.db.prepare('UPDATE media SET deleted_at = NULL WHERE id = ?').run(id).changes > 0;
-  }
-
-  setFavorite(id: string, favorite: boolean): boolean {
-    return this.db.prepare('UPDATE media SET favorite = ? WHERE id = ?').run(favorite ? 1 : 0, id).changes > 0;
-  }
+  delete(id: string): boolean { return this.db.prepare('DELETE FROM media WHERE id = ?').run(id).changes > 0; }
+  trash(id: string): boolean { return this.db.prepare('UPDATE media SET deleted_at = COALESCE(deleted_at, ?) WHERE id = ?').run(nowIso(), id).changes > 0; }
+  restore(id: string): boolean { return this.db.prepare('UPDATE media SET deleted_at = NULL WHERE id = ?').run(id).changes > 0; }
+  setFavorite(id: string, favorite: boolean): boolean { return this.db.prepare('UPDATE media SET favorite = ? WHERE id = ?').run(favorite ? 1 : 0, id).changes > 0; }
 
   setTags(id: string, tags: string[]): boolean {
     const normalized = [...new Set(tags.map((value) => value.trim()).filter(Boolean))].slice(0, 30);
@@ -154,13 +140,8 @@ export class MediaRepo {
     return { messageParts, stickers, worldEntries, total: messageParts + stickers + worldEntries };
   }
 
-  allRows(): MediaRow[] {
-    return this.db.prepare('SELECT * FROM media ORDER BY created_at DESC').all() as MediaRow[];
-  }
-
-  listExpiredTrash(cutoff: string, limit = 500): MediaRow[] {
-    return this.db.prepare('SELECT * FROM media WHERE deleted_at IS NOT NULL AND deleted_at < ? ORDER BY deleted_at LIMIT ?').all(cutoff, limit) as MediaRow[];
-  }
+  allRows(): MediaRow[] { return this.db.prepare('SELECT * FROM media ORDER BY created_at DESC').all() as MediaRow[]; }
+  listExpiredTrash(cutoff: string, limit = 500): MediaRow[] { return this.db.prepare('SELECT * FROM media WHERE deleted_at IS NOT NULL AND deleted_at < ? ORDER BY deleted_at LIMIT ?').all(cutoff, limit) as MediaRow[]; }
 
   listUnreferenced(limit = 500): MediaRow[] {
     return this.db.prepare(`
@@ -174,28 +155,21 @@ export class MediaRepo {
   }
 
   listOrphanUploads(cutoff: string, limit = 500): MediaRow[] {
-    return this.db
-      .prepare(
-        `SELECT m.* FROM media m
-          WHERE m.origin = 'upload'
-            AND m.kind != 'sticker'
-            AND m.created_at < ?
-            AND m.deleted_at IS NULL
-            AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
-            AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
-            AND NOT EXISTS (SELECT 1 FROM world_entries w WHERE w.active = 1 AND w.value_json LIKE '%' || m.id || '%')
-          ORDER BY m.created_at LIMIT ?`
-      )
-      .all(cutoff, limit) as MediaRow[];
+    return this.db.prepare(`
+      SELECT m.* FROM media m
+      WHERE m.origin = 'upload'
+        AND m.kind != 'sticker'
+        AND m.created_at < ?
+        AND m.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM world_entries w WHERE w.active = 1 AND w.value_json LIKE '%' || m.id || '%')
+      ORDER BY m.created_at LIMIT ?
+    `).all(cutoff, limit) as MediaRow[];
   }
 
-  findBySha(sha: string, kind: MediaRow['kind']): MediaRow | undefined {
-    return this.db.prepare('SELECT * FROM media WHERE sha256 = ? AND kind = ? AND deleted_at IS NULL LIMIT 1').get(sha, kind) as MediaRow | undefined;
-  }
-
-  setTranscript(id: string, transcript: string): void {
-    this.db.prepare('UPDATE media SET transcript = ? WHERE id = ?').run(transcript, id);
-  }
+  findBySha(sha: string, kind: MediaRow['kind']): MediaRow | undefined { return this.db.prepare('SELECT * FROM media WHERE sha256 = ? AND kind = ? AND deleted_at IS NULL LIMIT 1').get(sha, kind) as MediaRow | undefined; }
+  setTranscript(id: string, transcript: string): void { this.db.prepare('UPDATE media SET transcript = ? WHERE id = ?').run(transcript, id); }
 }
 
 function galleryWhere(input: GalleryQuery): { where: string[]; values: unknown[] } {
@@ -226,24 +200,8 @@ function galleryWhere(input: GalleryQuery): { where: string[]; values: unknown[]
 
 export function toMediaRef(row: MediaRow): MediaRef {
   let name: string | null = null;
-  try {
-    const meta = JSON.parse(row.meta_json) as { name?: string };
-    name = meta.name ?? null;
-  } catch {
-    /* ignore */
-  }
-  return {
-    id: row.id,
-    kind: row.kind,
-    mime: row.mime,
-    bytes: row.bytes,
-    width: row.width,
-    height: row.height,
-    duration: row.duration,
-    url: `/api/media/${row.id}`,
-    name,
-    transcript: row.transcript
-  };
+  try { const meta = JSON.parse(row.meta_json) as { name?: string }; name = meta.name ?? null; } catch { /* ignore */ }
+  return { id: row.id, kind: row.kind, mime: row.mime, bytes: row.bytes, width: row.width, height: row.height, duration: row.duration, url: `/api/media/${row.id}`, name, transcript: row.transcript };
 }
 
 export function mediaMeta(row: MediaRow): { tags: string[]; meta: Record<string, unknown> } {
