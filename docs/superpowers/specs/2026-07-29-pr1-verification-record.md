@@ -13,13 +13,13 @@
 | M-009 | 已被后续提交修复 | `c03c6c2` 不再吞掉媒体文件删除错误；单删、批量删和孤立上传收集失败均保留 DB 记录并返回/记录明确失败。 |
 | M-010 | 已被后续提交修复 | `7afd647` 移除普通/管理媒体及 SSE 的长期 query token，改用分作用域 Bearer fetch + Blob URL；受保护媒体 network-only。相关自动化通过，完整 Server 聚合命令仍无汇总超时，原生移动端 Web Share 待真机验证。 |
 | M-011 | 已被后续提交修复 | `13286b1` 将世界数据媒体引用从模糊 `LIKE` 改为 `json_tree` 对 `mediaId/media_id` 文本值的精确匹配，并同步引用统计、未引用清理和孤立上传扫描。 |
-| M-012 | 测试不足 | 待核验 ZIP 实际内容。 |
-| M-013 | 无法确认 | 待核验 SW 缓存键版本行为。 |
+| M-012 | 报告误判 | 唯一清单要求“批量导出与选择一致”，未要求 ZIP 格式；当前逐项安全 Blob 下载已由 M-010 自动化覆盖，不新增 ZIP 范围。 |
+| M-013 | 已被后续提交修复 | `7afd647` 后受保护媒体全部 network-only，Service Worker 不再建立忽略 `?v=` 的媒体缓存键；激活时清理旧敏感缓存。 |
 | M-014 | 真机待验证 | 历史状态需 E2E 复现。 |
 | M-015 | 真机待验证 | 移动端滚动长按需复现。 |
 | M-016 | 报告误判 | 当前实现并非报告假定的 touchmove passive 路径。 |
-| M-017 | 无法确认 | 待核验 LIKE 转义实现与测试。 |
-| M-018 | 无法确认 | 待核验归一化与数据库唯一约束。 |
+| M-017 | 已被后续提交修复 | `b852e3b` 将世界管理搜索和 Context 相关性搜索统一改为 `LIKE ? ESCAPE '\'`，`\`、`%`、`_` 通过共享 helper 字面转义。 |
+| M-018 | 已被后续提交修复 | `b852e3b` 新增持久化 Unicode identity key、迁移回填/重复 winner 选择及活动 canonical 部分唯一索引。 |
 | M-019 | 无法确认 | 待比较 preview 与 apply 统计。 |
 | M-020 | 测试不足 | 待核验保存后 capability 刷新。 |
 | M-021 | 测试不足 | 待大数据量 UI 验证。 |
@@ -219,3 +219,31 @@ GitHub Actions Run `30435357087` 的 E2E 自 08:26:27 运行，多个用例每�
 - GREEN：同一文件 4/4 通过，覆盖旧快照不删除新增 orphan、无 reportId 拒绝、文件变化跳过、媒体新增引用后跳过及审计 reportId。
 - 回归：`npm --workspace packages/server test -- --run test/storage-cleanup-report.test.ts test/media-delete-consistency.test.ts test/features-1-9.test.ts --reporter=verbose`，3 files、13/13 通过，约 40.2 秒，正常退出。
 - Web 测试 17/17；Server/Web typecheck 与 production build 均通过。
+
+## M-012 / M-013 范围裁定
+
+- M-012：严格按《SOOYA 1–9 功能实施清单与验收标准》，批量导出必须与选择集合一致、排除不应导出的回收站内容，但清单未指定 ZIP。当前逐项鉴权 Blob 下载属于满足该功能语义的浏览器兼容实现，并已在 M-010 覆盖下载地址无 token、受控文件名和清理；“必须生成 ZIP”记录为报告误判/扩范围，不引入新依赖。
+- M-013：旧实现将媒体 query 归一化为 pathname 缓存，确有版本污染风险；`7afd647` 已把 `/api/media/*` 改为 network-only、Blob URL 不经过 Service Worker、`sooya-v6` 激活删除旧缓存。因此该问题属于已被后续提交修复，不再为 `?v=` 建媒体 Cache API key。
+
+## M-017 / M-018 修复与验证
+
+提交：`b852e3b fix(world): stabilize identities and literal search`。
+
+失败证据：
+
+- M-017：搜索 `100%` 时旧查询同时返回字面 `100%` 与 `1000` 记录；`_` 同样匹配任意单字符。
+- M-018：先写入 `Straße角色 / IST伙伴`，再写入 `STRAẞE角色 / ist伙伴` 时，第二次 `merged` 实际为 0，并产生两个活动事实；表中不存在持久化 identity key。
+
+修复后：
+
+- 新增共享 `literalContainsPattern()`，媒体与世界搜索统一转义 `\`、`%`、`_`；世界 list/relevant SQL 明确使用 `ESCAPE '\'`。
+- 新增 locale-independent `worldIdentityKey()`：NFKC、trim、Unicode lowercase、空白归一化；对话提取、导入、管理创建和更新共用同一键。
+- schema v5 新增 `subject_key` / `predicate_key`；升级时回填既有记录，并按 authority、confidence、updatedAt、id 选择活动 winner，其他重复项转为冲突历史。
+- 部分唯一索引保证同一 identity 最多一个 `active=1 AND conflict_of IS NULL` canonical；冲突替换顺序调整为事务内先停用旧 winner，再插入新 winner。
+
+验证：
+
+- RED：`world-search.test.ts` 中 `100%` 实际返回 2 条、预期 1；`world-normalization.test.ts` 中 Unicode 变体未合并且 key 为 undefined。
+- GREEN/回归：`npm --workspace packages/server test -- --run test/migration-rollback.test.ts test/world-normalization.test.ts test/world-search.test.ts test/features-1-9.test.ts --reporter=verbose`，4 files、12/12 通过，约 29.1 秒，正常退出。
+- 升级测试从 schema v4 构造既有 Unicode 活动重复项，v5 正确选择 user/高 confidence winner，并验证数据库唯一索引拒绝第二个活动 canonical。
+- Server typecheck/build 通过。

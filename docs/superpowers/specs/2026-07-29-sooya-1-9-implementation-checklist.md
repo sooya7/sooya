@@ -557,3 +557,5 @@ PWA 在后台或关闭后，也能在机器人回复完成时收到系统通知�
 | 2026-07-29 | Windows 数据库恢复基线 | `6632637` | 损坏库在 pragma 失败后关闭 SQLite 句柄，解除 Windows 文件锁；reliability 从 19/21 恢复为 21/21，Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-009 媒体永久删除一致性 | `c03c6c2` | 文件删除失败不再继续删 DB；单删明确 500 并审计，批量隔离失败项，孤立收集向维护 Job 抛错。RED 实际假成功 200；修复后相关 10/10、reliability 21/21、Server typecheck/build 通过 | 自动化验证通过 |
 | 2026-07-29 | M-008 清理预览报告绑定 | `d044681` | 预览持久化 reportId、策略/候选 hash；apply 必须提交同一报告，仅处理快照并复核引用、路径、大小、mtime。RED 无 reportId 且 apply 可直接执行；修复后相关 13/13、Web 17/17、双端 typecheck/build 通过 | 自动化验证通过 |
+| 2026-07-29 | M-012 / M-013 范围与缓存复核 | `7afd647` / 核验记录 | 清单未要求 ZIP，现有选择一致的安全 Blob 批量下载保留；受保护媒体已 network-only，旧媒体缓存由 `sooya-v6` 清理 | M-012 报告误判；M-013 已被后续提交修复 |
+| 2026-07-29 | M-017 / M-018 世界搜索与 identity | `b852e3b` | LIKE 通配符统一字面转义；NFKC Unicode identity key 持久化，v5 回填重复 winner 并用部分唯一索引保护。RED `100%` 误返 2 条且 Unicode 未合并；修复后相关 12/12、Server typecheck/build 通过 | 自动化验证通过 |
