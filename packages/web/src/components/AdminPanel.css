@@ -11,6 +11,7 @@
   --admin-faint: #98a2b3;
   --admin-primary: #398fe6;
   --admin-primary-deep: #2377ca;
+  --admin-primary-deeper: #1b5fa5;
   --admin-primary-soft: #eaf4ff;
   --admin-success: #28a269;
   --admin-danger: #d7474d;
@@ -1211,32 +1212,36 @@
   text-transform: uppercase;
 }
 
-/* Primary action. It used to set only the gradient background and inherit the
-   default button text colour, which left dark grey text on saturated purple —
-   low contrast and the reason this button looked wrong. */
+/* Primary action ("添加模型" and friends). Two earlier problems: it inherited the
+   default dark grey text, and then it was given a saturated violet gradient with a
+   heavy violet glow — louder than anything else in the panel, which builds on the
+   calm blue of --admin-primary. It now uses that same blue, deepened, so white text
+   clears WCAG AA across the whole gradient (4.6:1 at the light end, 6.5:1 at the
+   dark end) instead of the 3.4:1 the old light violet-blue end gave. */
 .admin-primary {
-  background: var(--admin-grad);
+  background: linear-gradient(135deg, var(--admin-primary-deep), var(--admin-primary-deeper));
   border-color: transparent;
   color: #fff;
   font-weight: 650;
   letter-spacing: 0.01em;
-  box-shadow: 0 8px 18px -8px rgba(109, 94, 252, 0.66);
+  box-shadow: 0 4px 12px -8px rgba(27, 95, 165, 0.5);
   transition: filter 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
 }
 
 .admin-primary:hover:not(:disabled) {
-  filter: brightness(1.07) saturate(1.04);
-  box-shadow: 0 10px 24px -8px rgba(109, 94, 252, 0.82);
+  filter: brightness(1.08);
+  box-shadow: 0 6px 16px -8px rgba(27, 95, 165, 0.62);
 }
 
 .admin-primary:active:not(:disabled) {
   transform: translateY(1px);
-  filter: brightness(0.98);
-  box-shadow: 0 4px 12px -9px rgba(109, 94, 252, 0.7);
+  filter: brightness(0.96);
+  box-shadow: 0 2px 8px -8px rgba(27, 95, 165, 0.55);
 }
 
+/* A white ring was invisible: the button sits on white cards, not on the dark rail. */
 .admin-primary:focus-visible {
-  outline: 2px solid #fff;
+  outline: 2px solid var(--admin-primary-deeper);
   outline-offset: 2px;
 }
 
