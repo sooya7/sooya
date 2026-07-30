@@ -192,6 +192,9 @@
 .gallery-item small { display: block; margin-top: 8px; color: var(--ink-faint); font-size: 11px; }
 .gallery-empty,
 .gallery-error { max-width: 1120px; margin: 30px auto; text-align: center; color: var(--ink-soft); }
+/* Progress line shown while the remaining thumbnails stream in. Compact and above the
+   grid, so it never pushes the images that already arrived out of view. */
+.gallery-loading-more { max-width: 1120px; margin: 10px auto 0; text-align: center; color: var(--ink-faint); font-size: 12px; }
 .gallery-error { color: var(--danger); }
 .gallery-gate { display: grid; place-items: center; }
 .gallery-login {
