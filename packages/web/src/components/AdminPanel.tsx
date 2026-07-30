@@ -2,7 +2,6 @@ import { FormEvent, Fragment, useCallback, useEffect, useMemo, useState } from '
 import { ApiError } from '../lib/api.js';
 import { AvatarEditor, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js';
 import {
-  emptyPreset,
   interfaceOptions,
   MODEL_SLOTS,
   presetsBySlot,
@@ -10,6 +9,7 @@ import {
   SLOT_LABELS,
   SLOT_PROVIDERS,
   suggestId,
+  presetFromConfig,
   upsertPreset,
   validatePreset,
   type ModelPreset,
@@ -202,15 +202,17 @@ function PersonaPanel({ onNotice }: { onNotice: (v: string) => void }) {
  * only place an operator can add a model rather than overwrite one; applying a
  * preset is what actually assigns it to its slot on the server.
  */
-function ModelLibrary({ onNotice, onApplied }: { onNotice: (v: string) => void; onApplied: (models: AdminModels) => void }) {
+function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: string) => void; onApplied: (models: AdminModels) => void; reloadKey?: number }) {
   const [presets, setPresets] = useState<ModelPreset[] | null>(null);
   const [draft, setDraft] = useState<ModelPreset | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // reloadKey changes when the config form adds an entry, so this list never
+  // keeps a stale copy it would later write back over the new one.
   useEffect(() => {
     void adminApi.modelPresets().then((r) => setPresets(r.presets)).catch((e) => onNotice(errorText(e)));
-  }, [onNotice]);
+  }, [onNotice, reloadKey]);
 
   const commit = async (next: ModelPreset[], message: string) => {
     setBusy(true);
@@ -309,11 +311,7 @@ function ModelLibrary({ onNotice, onApplied }: { onNotice: (v: string) => void; 
             <button type="button" disabled={busy} onClick={() => { setDraft(null); setEditingId(null); }}>取消</button>
           </div>
         </div>
-      ) : (
-        <div className="admin-preset-form-actions">
-          <button type="button" className="admin-primary" data-testid="admin-preset-add" onClick={() => { setDraft(emptyPreset()); setEditingId(null); }}>添加模型</button>
-        </div>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -321,6 +319,9 @@ function ModelLibrary({ onNotice, onApplied }: { onNotice: (v: string) => void; 
 function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [models, setModels] = useState<AdminModels | null>(null);
   const [selected, setSelected] = useState<ModelSlot>('chat');
+  const [available, setAvailable] = useState<string[] | null>(null);
+  const [pulling, setPulling] = useState(false);
+  const [libraryKey, setLibraryKey] = useState(0);
 
   useEffect(() => {
     void adminApi.models().then((r) => setModels(r.models)).catch((e) => onNotice(errorText(e)));
@@ -343,6 +344,38 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
     }
   };
 
+  /** Asks the endpoint what it serves. The key stays server-side. */
+  const pull = async () => {
+    setPulling(true);
+    try {
+      const r = await adminApi.discoverModels(selected, String(config.baseUrl ?? '').trim() || undefined);
+      setAvailable(r.models);
+      onNotice(`拉取到 ${r.models.length} 个模型`);
+    } catch (e) {
+      setAvailable(null);
+      onNotice(errorText(e));
+    } finally {
+      setPulling(false);
+    }
+  };
+
+  /** Saves what is on screen into the library as a new entry. */
+  const addToLibrary = async () => {
+    try {
+      const current = await adminApi.modelPresets();
+      const draft = presetFromConfig(selected, config, current.presets);
+      if (typeof draft === 'string') {
+        onNotice(draft);
+        return;
+      }
+      await adminApi.saveModelPresets([...current.presets, draft]);
+      setLibraryKey((k) => k + 1);
+      onNotice(`已添加到模型库：${draft.name}`);
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+
   if (!models) return <p className="admin-muted">正在读取模型配置…</p>;
 
   return (
@@ -350,7 +383,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
       <aside>
         <h2>模型能力</h2>
         {CAPABILITIES.map(([key, label]) => (
-          <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => setSelected(key)}>
+          <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); }}>
             <span>{label}</span>
             <small>{String((models[key] as Record<string, unknown> | undefined)?.model ?? '未独立配置')}</small>
           </button>
@@ -358,13 +391,27 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
       </aside>
       <div className="admin-form-card">
         <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description="编辑当前能力使用的真实服务端配置。" />
-        <ModelLibrary onNotice={onNotice} onApplied={setModels} />
+        <ModelLibrary onNotice={onNotice} onApplied={setModels} reloadKey={libraryKey} />
         <label>接口协议<select value={String(config.provider ?? 'none')} onChange={(e) => update('provider', e.target.value)}>
           {interfaceOptions(selected, config.provider == null ? null : String(config.provider)).map((option) => (
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}
         </select></label>
-        <label>模型名<input value={String(config.model ?? '')} onChange={(e) => update('model', e.target.value)} /></label>
+        <label className="admin-form-wide">
+          模型名
+          <span className="admin-inline-field">
+            <input list="admin-model-options" value={String(config.model ?? '')} onChange={(e) => update('model', e.target.value)} />
+            <button type="button" data-testid="admin-model-pull" disabled={pulling} onClick={() => void pull()}>{pulling ? '拉取中…' : '拉取模型'}</button>
+          </span>
+          <datalist id="admin-model-options">
+            {(available ?? []).map((name) => <option key={name} value={name} />)}
+          </datalist>
+          <small>
+            {available
+              ? `拉取到 ${available.length} 个模型，点输入框可选；列表可能不全，仍可手填。`
+              : '从接口地址拉取该服务提供的模型名。密钥不会离开服务器。'}
+          </small>
+        </label>
         <label className="admin-form-wide">接口地址<input value={String(config.baseUrl ?? '')} onChange={(e) => update('baseUrl', e.target.value)} /></label>
         <label>密钥环境变量<input value={String(config.apiKeyEnv ?? '')} placeholder="留空则保持当前密钥" onChange={(e) => update('apiKeyEnv', e.target.value || undefined)} /></label>
         <label>请求超时（毫秒）<input type="number" value={String(config.timeoutMs ?? '')} onChange={(e) => update('timeoutMs', Number(e.target.value))} /></label>
@@ -407,7 +454,10 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         </>}
         {selected === 'stt' && <label>识别语言<input value={String(config.language ?? '')} onChange={(e) => update('language', e.target.value)} /></label>}
         {selected === 'embedding' && <label>向量维度<input type="number" value={String(config.dimensions ?? '')} onChange={(e) => update('dimensions', Number(e.target.value))} /></label>}
-        <div className="admin-actions"><button type="button" onClick={() => void save()}>保存模型配置</button></div>
+        <div className="admin-actions">
+          <button type="button" onClick={() => void save()}>保存模型配置</button>
+          <button type="button" data-testid="admin-model-add-preset" onClick={() => void addToLibrary()}>添加配置</button>
+        </div>
       </div>
     </section>
   );

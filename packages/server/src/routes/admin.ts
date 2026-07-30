@@ -3,7 +3,8 @@ import os from 'node:os';
 import { z } from 'zod';
 import type { SooyaApp } from '../app.js';
 import { requireAdminToken } from './auth.js';
-import { MODEL_SLOTS, ModelPresetsSchema, PersonaSchema, type ModelPreset } from '../config/schema.js';
+import { MODEL_SLOTS, ModelPresetsSchema, PersonaSchema, type ModelPreset, type ModelSlot } from '../config/schema.js';
+import { assertSafeUrl } from '../util/http.js';
 import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
 
 /** Admin API used by the built-in management panel. */
@@ -94,6 +95,93 @@ export function registerAdminRoutes(app: SooyaApp): void {
     } catch (err) {
       reply.code(400);
       return { error: 'invalid_models', message: (err as Error).message.slice(0, 500) };
+    }
+  });
+
+  /**
+   * Ask the configured endpoint which models it serves, so the model name can be
+   * picked instead of typed from memory.
+   *
+   * The key never leaves the server: the panel sends at most a base URL, and the
+   * credential is taken from the saved config (or its env var). `baseUrl` is
+   * accepted so the list can be pulled for an address that is still unsaved in
+   * the form, which is exactly when you need it.
+   */
+  const DISCOVERABLE = new Set([
+    'openai-chat',
+    'openai-responses',
+    'openai-compatible',
+    'openai-embeddings',
+    'openai-images',
+    'openai-tts',
+    'openai-transcriptions',
+    'anthropic-messages'
+  ]);
+  server.post('/api/admin/models/:slot/discover', guard, async (req, reply) => {
+    const slot = (req.params as { slot?: string }).slot as ModelSlot | undefined;
+    if (!slot || !MODEL_SLOTS.includes(slot)) {
+      reply.code(400);
+      return { error: 'bad_request', message: '未知的能力槽位' };
+    }
+    const parsed = z.object({ baseUrl: z.string().max(300).optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'bad_request', issues: parsed.error.issues };
+    }
+    const saved = (config.getModels() as Record<string, { provider?: string; baseUrl?: string; apiKey?: string } | undefined>)[slot];
+    const provider = saved?.provider ?? 'none';
+    if (!DISCOVERABLE.has(provider)) {
+      // A vendor-specific protocol has no /models route. Saying so beats a
+      // network error the reader has to reverse-engineer.
+      reply.code(400);
+      return { error: 'discovery_unsupported', message: `「${provider}」这种接口不提供模型列表，模型名需要手填` };
+    }
+    const base = (parsed.data.baseUrl ?? saved?.baseUrl ?? '').trim().replace(/\/+$/, '');
+    if (!base) {
+      reply.code(400);
+      return { error: 'missing_base_url', message: '先填接口地址再拉取' };
+    }
+    const url = base.endsWith('/models') ? base : `${base}/models`;
+    try {
+      await assertSafeUrl(url, app.env.ALLOW_PRIVATE_NETWORK_FETCH);
+    } catch (err) {
+      reply.code(400);
+      return { error: 'unsafe_url', message: (err as Error).message.slice(0, 200) };
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
+    try {
+      // Anthropic lists models on the same path but authenticates differently;
+      // sending it a bearer token would just come back 401.
+      const headers: Record<string, string> = saved?.apiKey
+        ? provider === 'anthropic-messages'
+          ? { 'x-api-key': saved.apiKey, 'anthropic-version': '2023-06-01' }
+          : { authorization: `Bearer ${saved.apiKey}` }
+        : {};
+      const res = await (app.fetchImpl ?? fetch)(url, { headers, signal: controller.signal });
+      if (!res.ok) {
+        reply.code(502);
+        return { error: 'discovery_failed', message: `拉取失败：HTTP ${res.status}` };
+      }
+      const payload = (await res.json()) as { data?: unknown; models?: unknown };
+      const rows = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : [];
+      const ids = [...new Set(
+        rows
+          .map((row) => (typeof row === 'string' ? row : (row as { id?: unknown; name?: unknown })?.id ?? (row as { name?: unknown })?.name))
+          .filter((id): id is string => typeof id === 'string' && !!id.trim())
+          .map((id) => id.trim())
+      )].sort((a, b) => a.localeCompare(b)).slice(0, 300);
+      if (!ids.length) {
+        reply.code(502);
+        return { error: 'discovery_empty', message: '接口返回了列表，但里面没有可用的模型名' };
+      }
+      return { models: ids, source: url };
+    } catch (err) {
+      repos.errors.add('admin.discover', (err as Error).message);
+      reply.code(502);
+      return { error: 'discovery_failed', message: (err as Error).message.slice(0, 200) };
+    } finally {
+      clearTimeout(timer);
     }
   });
 

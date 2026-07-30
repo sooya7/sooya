@@ -125,6 +125,46 @@ export function validatePreset(
   return null;
 }
 
+/**
+ * Turns the config currently being edited into a library entry, so "添加配置"
+ * needs no second form.
+ *
+ * The id is derived from slot and model name and de-duplicated with a numeric
+ * suffix: reusing an existing id would silently overwrite that entry, and the
+ * operator asked to *add* one. Non-ASCII model names reduce to nothing under
+ * `suggestId`, hence the slot-only fallback.
+ *
+ * Returns a string when the config cannot become a preset yet — the caller shows
+ * it as-is. Never guesses a model name; a preset without one cannot be applied.
+ */
+export function presetFromConfig(
+  slot: ModelSlot,
+  config: Record<string, unknown>,
+  existing: ModelPreset[]
+): ModelPreset | string {
+  const model = String(config.model ?? '').trim();
+  if (!model) return '先填模型名再添加到模型库';
+  const provider = String(config.provider ?? '').trim();
+  if (!provider || provider === 'none') return '先选择接口协议再添加到模型库';
+  if (!SLOT_PROVIDERS[slot].includes(provider)) return `${SLOT_LABELS[slot]}不支持该接口协议`;
+  if (existing.length >= MAX_PRESETS) return `最多保存 ${MAX_PRESETS} 个预设`;
+  const stem = (suggestId(`${slot}-${model}`) || slot).slice(0, 60);
+  const taken = new Set(existing.map((item) => item.id));
+  let id = stem;
+  for (let n = 2; taken.has(id); n += 1) id = `${stem}-${n}`;
+  return {
+    id,
+    name: `${SLOT_LABELS[slot]} · ${model}`.slice(0, 80),
+    slot,
+    provider,
+    model: model.slice(0, 200),
+    baseUrl: String(config.baseUrl ?? '').trim().slice(0, 300),
+    // Only the variable name travels — the key itself stays on the server.
+    apiKeyEnv: String(config.apiKeyEnv ?? '').trim().slice(0, 120),
+    notes: ''
+  };
+}
+
 /** Trimmed copy safe to send to the server. */
 export function normalizePreset(draft: ModelPreset): ModelPreset {
   return {
