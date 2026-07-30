@@ -39,8 +39,11 @@ describe('authenticated media', () => {
     expect(mediaBranch).toContain('fetch(request)');
     expect(mediaBranch).not.toContain('cache.put');
     expect(mediaBranch).not.toContain('cache.match');
-    expect(source).toContain("const VERSION = 'sooya-v6'");
-    expect(source).toContain("keys.filter((key) => !key.startsWith(VERSION))");
+    // The shell list is injected at build time; the source must keep the placeholder
+    // and derive the cache name from it, so a new build cannot reuse a stale cache.
+    expect(source).toContain('const BUILD_MANIFEST = /*__SOOYA_BUILD_MANIFEST__*/');
+    expect(source).toContain('const SHELL_CACHE = `sooya-shell-${BUILD_MANIFEST.version}`');
+    expect(source).toContain("keys.filter((key) => key !== SHELL_CACHE && key.startsWith('sooya'))");
   });
   it('uses scoped headers without putting credentials in the URL', async () => {
     const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:media-1');

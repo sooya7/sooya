@@ -1,14 +1,19 @@
 /** SOOYA offline shell, media cache and Web Push service worker. */
-const VERSION = 'sooya-v6';
-const SHELL_CACHE = `${VERSION}-shell`;
-const SHELL_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg'];
+// Replaced at build time by scripts/inject-sw-assets.mjs with the real Vite
+// output. The values below are only what `vite dev` needs to stay valid.
+const BUILD_MANIFEST = /*__SOOYA_BUILD_MANIFEST__*/ {
+  "version": "development",
+  "assets": ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg']
+};
+const SHELL_CACHE = `sooya-shell-${BUILD_MANIFEST.version}`;
+const SHELL_ASSETS = BUILD_MANIFEST.assets;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS).catch(() => undefined)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => !key.startsWith(VERSION)).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== SHELL_CACHE && key.startsWith('sooya')).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
 });
 
 self.addEventListener('push', (event) => {
