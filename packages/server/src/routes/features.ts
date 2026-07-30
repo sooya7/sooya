@@ -72,6 +72,17 @@ export function registerFeatureRoutes(app: SooyaApp): void {
   });
 
   /* -------------------------------- push ----------------------------------- */
+  /*
+   * What she is doing, for the header in the client. Behind the chat guard
+   * rather than the admin guard: this is hers to show the user, not a setting.
+   */
+  server.get('/api/life', chatGuard, async () => services.life.snapshot());
+
+  server.post('/api/admin/life/tick', adminGuard, async () => {
+    const result = services.life.tick();
+    return { ...result, snapshot: services.life.snapshot() };
+  });
+
   server.get('/api/push/public-key', chatGuard, async () => ({ publicKey: services.push.publicKey(), status: services.push.status() }));
   server.get('/api/push/status', chatGuard, async () => services.push.status());
   server.post('/api/push/subscribe', chatGuard, async (req, reply) => {

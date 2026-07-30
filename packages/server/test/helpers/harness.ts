@@ -37,6 +37,8 @@ export interface HarnessOptions {
   embeddingDim?: number;
   skipStickerImport?: boolean;
   startWorkers?: boolean;
+  /** Pins the life engine's clock; see BuildAppOptions.clock. */
+  clock?: () => Date;
 }
 
 export interface Harness {
@@ -247,6 +249,7 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       ...(opts.env ?? {})
     },
     logger: pino({ level: 'silent' }),
+    clock: opts.clock,
     fetchImpl,
     assetsDir: ASSETS_DIR,
     skipStickerImport: opts.skipStickerImport,

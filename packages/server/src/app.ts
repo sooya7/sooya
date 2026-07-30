@@ -44,6 +44,13 @@ import { ensureDirSync, cleanupTempFiles } from './util/fsx.js';
 
 export interface BuildAppOptions {
   env?: Partial<NodeJS.ProcessEnv>;
+  /**
+   * Injectable clock. The life engine derives everything from wall-clock time,
+   * so a test that cannot move the clock can only assert whatever she happens
+   * to be doing when it runs -- which at 01:00 is "asleep", making the
+   * behaviour that matters untestable.
+   */
+  clock?: () => Date;
   logger?: Logger;
   skipStickerImport?: boolean;
   assetsDir?: string;
@@ -139,7 +146,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const world = new WorldEngine(repos.world, capabilities, repos.errors, repos.messages);
   const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, opts.fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
-  const life = new LifeEngine(repos.life, { ...DEFAULT_LIFE_CONFIG, tzOffsetMinutes: env.LIFE_TZ_OFFSET_MINUTES, quietGapMinutes: env.LIFE_QUIET_GAP_MINUTES, maxReachOutsPerDay: env.LIFE_MAX_REACH_OUTS_PER_DAY });
+  const life = new LifeEngine(repos.life, { ...DEFAULT_LIFE_CONFIG, tzOffsetMinutes: env.LIFE_TZ_OFFSET_MINUTES, quietGapMinutes: env.LIFE_QUIET_GAP_MINUTES, maxReachOutsPerDay: env.LIFE_MAX_REACH_OUTS_PER_DAY }, opts.clock);
   const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, world, env.ENABLE_LIFE_ENGINE ? life : undefined);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
