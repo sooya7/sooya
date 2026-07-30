@@ -43,7 +43,8 @@ export function requireChatToken(app: SooyaApp) {
 
 /**
  * Admin API guard. Unlike the chat token this one is fail-closed: if
- * ADMIN_API_TOKEN is not configured, every write endpoint is disabled.
+ * ADMIN_API_TOKEN is not configured, every admin endpoint is disabled —
+ * reads included, not just writes.
  */
 export function requireAdminToken(app: SooyaApp) {
   return async (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void> => {

@@ -54,8 +54,13 @@ curl -s http://127.0.0.1:8788/api/capabilities | jq .capabilities
 - **不实现 Agent。** `packages/server/src/agent/` 只有 `CapabilityRegistry`、
   `ToolRegistry`、`AgentWorker` 接口，没有任何实现，聊天模块不 import 它。
   `/api/admin/system` 会如实返回 `agent.active: false`、`tools: []`。
-- **不做管理面板网页。** 只有后端 API（`/api/admin/*`），未配置
-  `ADMIN_API_TOKEN` 时全部返回 503。
+- **管理控制台已有网页。**（本条原文为「不做管理面板网页」，已过期。）
+  `packages/web/src/components/AdminPanel.tsx` 是一个九标签页控制台：概览、
+  助手配置、模型配置、双方头像、情绪语音、世界引擎、内容管理、存储治理、
+  运维与备份。它调用的仍然只是 `/api/admin/*`——那 29 个路由**读写都挂了
+  同一个守卫**，未配置 `ADMIN_API_TOKEN` 时一律 503，token 不对则 401
+  （请求头是 `x-admin-token`，不接受 `Bearer`）。所以页面本身
+  **不构成一层新的权限**，没有 token 时它连数据都读不到。
 - **单人格，无切换。** 人格在 `config/persona.json`，UI 与数据库都不提供切换。
 - **单会话，硬编码 `conversation_id = "main"`。** 无新建/删除/切换聊天。
 - **无用户系统。** 没有注册、多账号、工作区。
