@@ -12,7 +12,6 @@ import { NotificationBridge } from './NotificationBridge.js';
  * browser push stack and assert what the user actually sees.
  */
 
-const HIDDEN_KEY = 'sooya.push.optin.hidden';
 
 interface FakeSub {
   endpoint: string;
@@ -85,10 +84,13 @@ async function click(element: Element | null): Promise<void> {
 }
 
 const bar = () => container.querySelector('[data-testid="push-controls"]');
-const bell = () => container.querySelector('[data-testid="push-reopen"]');
+const bell = () => container.querySelector<HTMLButtonElement>('[data-testid="push-bell"]');
 const toggle = () => container.querySelector<HTMLButtonElement>('[data-testid="push-controls"] button:not(.notification-dismiss)');
 const dismiss = () => container.querySelector('[data-testid="push-controls"] .notification-dismiss');
 const note = () => container.querySelector('[data-testid="push-controls"] small')?.textContent ?? '';
+
+/** Open the popover the way a user does; every control lives behind the bell now. */
+const open = async () => { await click(bell()); };
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -104,9 +106,22 @@ afterEach(async () => {
 });
 
 describe('NotificationBridge', () => {
-  it('开启后按钮改成「关闭通知」，并把订阅登记到服务端', async () => {
+  it('默认只有一个铃铛，聊天区没有任何浮层', async () => {
     setup();
     await mount();
+
+    // The whole point of moving this into the top bar: it asks nothing until asked.
+    expect(bar()).toBeNull();
+    expect(bell()).not.toBeNull();
+    expect(bell()?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('点铃铛才展开，开启后按钮改成「关闭通知」并把订阅登记到服务端', async () => {
+    setup();
+    await mount();
+    await open();
+
+    expect(bell()?.getAttribute('aria-expanded')).toBe('true');
     expect(toggle()?.textContent).toBe('开启通知');
 
     await click(toggle());
@@ -119,6 +134,7 @@ describe('NotificationBridge', () => {
   it('关闭后按钮回到「开启通知」——这是修了三次的那个 bug', async () => {
     setup({ subscribed: true, permission: 'granted' });
     await mount();
+    await open();
     expect(toggle()?.textContent).toBe('关闭通知');
 
     await click(toggle());
@@ -131,6 +147,7 @@ describe('NotificationBridge', () => {
   it('浏览器没真的取消时不许谎报已关闭', async () => {
     setup({ subscribed: true, permission: 'granted', keepSubscription: true });
     await mount();
+    await open();
 
     await click(toggle());
 
@@ -139,54 +156,55 @@ describe('NotificationBridge', () => {
     expect(note()).toBe('订阅仍然存在，请再试一次');
   });
 
-  it('收起后留下铃铛，点铃铛能把开关拿回来', async () => {
-    setup();
-    await mount();
-
-    await click(dismiss());
-
-    expect(bar()).toBeNull();
-    expect(window.localStorage.getItem(HIDDEN_KEY)).toBe('1');
-    const reopen = bell();
-    expect(reopen).not.toBeNull();
-    expect(reopen?.getAttribute('aria-label')).toContain('已关闭');
-
-    await click(reopen);
-
-    // Hiding used to be a one-way door: the flag persisted and no UI path came back.
-    expect(bar()).not.toBeNull();
-    expect(window.localStorage.getItem(HIDDEN_KEY)).toBeNull();
-  });
-
   it('铃铛反映当前是开着的', async () => {
     setup({ subscribed: true, permission: 'granted' });
     await mount();
 
+    expect(bell()?.className).toContain('is-on');
+    expect(bell()?.getAttribute('aria-label')).toContain('已开启');
+    expect(bell()?.querySelector('.notification-bell-slash')).toBeNull();
+  });
+
+  it('关掉浮层不写任何持久化状态，重新进来也不会自动弹出', async () => {
+    setup();
+    await mount();
+    await open();
+    expect(bar()).not.toBeNull();
+
     await click(dismiss());
 
-    const reopen = bell();
-    expect(reopen?.className).toContain('is-on');
-    expect(reopen?.getAttribute('aria-label')).toContain('已开启');
-    expect(reopen?.querySelector('.notification-reopen-slash')).toBeNull();
+    expect(bar()).toBeNull();
+    // The old bar persisted a "hidden" flag, which is what made dismissing it a
+    // one-way door. Nothing to persist now: closed is simply the default.
+    expect(window.localStorage.length).toBe(0);
+
+    await act(async () => { root?.unmount(); root = null; });
+    await mount();
+    expect(bar()).toBeNull();
   });
 
-  it('已收起时仍然会因为待处理状态重新出现', async () => {
-    setup({ subscribed: true, permission: 'granted' });
-    window.localStorage.setItem(HIDDEN_KEY, '1');
+  it('Escape 和点击外部都能关掉浮层', async () => {
+    setup();
     await mount();
 
-    // Hidden, so only the bell is on screen …
+    await open();
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); });
     expect(bar()).toBeNull();
-    await click(bell());
-    // … and reopening keeps the real state instead of resetting to "off".
-    expect(toggle()?.textContent).toBe('关闭通知');
+
+    await open();
+    await act(async () => { document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); });
+    expect(bar()).toBeNull();
   });
 
-  it('权限被浏览器拒绝时改成提示去站点设置', async () => {
+  it('权限被浏览器拒绝时展开后是去站点设置的提示，而不是一个按不动的开关', async () => {
     setup({ permission: 'denied' });
     await mount();
 
-    expect(container.textContent).toContain('通知权限已被浏览器禁用');
-    expect(bar()).toBeNull();
+    expect(container.textContent).not.toContain('通知权限已被浏览器禁用');
+
+    await open();
+
+    expect(bar()?.textContent).toContain('通知权限已被浏览器禁用');
+    expect(toggle()).toBeNull();
   });
 });

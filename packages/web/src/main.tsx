@@ -4,7 +4,6 @@ import App from './App.js';
 import GalleryPage from './components/GalleryPage.js';
 import AdminPanel from './components/AdminPanel.js';
 import { ImageViewerHost } from './components/ImageViewerHost.js';
-import { NotificationBridge } from './components/NotificationBridge.js';
 import './styles.css';
 import './components/AdminPanel.css';
 import './components/overlays.css';
@@ -19,7 +18,6 @@ createRoot(container).render(
   <StrictMode>
     {galleryRoute ? <GalleryPage /> : featureAdminRoute ? <AdminPanel initialTab="avatar" /> : <App />}
     {!galleryRoute && !featureAdminRoute && <ImageViewerHost />}
-    {!galleryRoute && !featureAdminRoute && <NotificationBridge />}
   </StrictMode>
 );
 

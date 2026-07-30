@@ -208,18 +208,21 @@
 .gallery-login input { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; }
 .gallery-login a { text-align: center; color: var(--ink-soft); text-decoration: none; }
 
+/* Anchored under the bell in the top bar, opened on demand. It used to be a fixed
+   bar centred just above the composer and shown by default, which covered the
+   conversation and sat on top of the service-worker update prompt. Absolute
+   positioning inside .notification-menu is what keeps it out of the chat area. */
 .notification-optin {
-  position: fixed;
+  position: absolute;
   z-index: 80;
-  left: 50%;
-  bottom: calc(82px + env(safe-area-inset-bottom));
-  transform: translateX(-50%);
-  width: min(92vw, 520px);
+  top: calc(100% + 8px);
+  right: 0;
+  width: max(220px, min(76vw, 300px));
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 30px 14px 14px;
   border: 1px solid var(--accent-line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.96);
@@ -249,9 +252,11 @@
   .gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 }
 
-/* The opt-in bar is fixed above the composer, so it must be dismissible: it used to
-   float there permanently no matter what the user chose. */
+/* Corner close button of the popover. */
 .notification-optin .notification-dismiss {
+  position: absolute;
+  top: 4px;
+  right: 6px;
   flex: 0 0 auto;
   width: 26px;
   min-width: 26px;

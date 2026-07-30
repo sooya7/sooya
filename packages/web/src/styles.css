@@ -1566,15 +1566,6 @@ button {
 .sw-update-accept:hover { filter: brightness(1.1); }
 .sw-update-later { background: transparent; color: var(--ink-soft); border-color: var(--line); }
 .sw-update-later:hover { color: var(--ink); border-color: var(--accent-line); }
-/* Both bottom bars are fixed and centred a dozen pixels apart, so when the push
-   opt-in bar is up it used to sit on top of this prompt (z-index 80 vs 40) and
-   swallow the clicks meant for "立即更新" — the update was unreachable, not just
-   unseen. Stack them instead: the opt-in keeps its slot, the prompt moves above
-   it. The z-index above is the fallback for engines without `:has()`, where an
-   overlap would leave the more urgent prompt clickable. */
-body:has(.notification-optin) .sw-update {
-  bottom: calc(var(--composer-h, 76px) + 18px + 68px);
-}
 /* Voice note still fetching its bytes — distinct from a real failure, which used to
    be shown for both because an empty <audio src=""> fires `error` immediately. */
 .audio-transcript.loading {
@@ -1594,21 +1585,33 @@ body:has(.notification-optin) .sw-update {
 }
 .audio-play:disabled { opacity: 0.5; cursor: default; }
 
-/* Bell left behind when the opt-in bar is dismissed. Without it, hiding the bar
-   was a one-way door: the toggle became unreachable from the UI entirely. */
-.notification-reopen {
-  position: fixed; right: 14px; bottom: calc(var(--composer-h, 76px) + 18px);
-  z-index: 35; display: grid; place-items: center;
-  width: 34px; height: 34px; padding: 0; cursor: pointer;
-  border-radius: 999px; border: 1px solid var(--line);
-  background: var(--surface-raised); color: var(--ink-soft);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
-  transition: color .16s ease, border-color .16s ease, transform .12s ease;
+/* Notification setting, in the top bar beside the control-panel entry. It was a bar
+   floating over the conversation before, shown by default; it covered the chat and
+   swallowed the clicks meant for the update prompt. Sized to match
+   .topbar-admin-entry so the two read as one pair of controls. */
+.notification-menu {
+  position: relative;
+  margin-left: auto;   /* claims the free space so the pair sits at the right edge */
+  flex: 0 0 auto;
+  display: inline-flex;
 }
-.notification-reopen:hover { color: var(--ink); border-color: var(--accent-line); }
-.notification-reopen:active { transform: translateY(1px); }
-.notification-reopen.is-on { color: var(--accent); border-color: var(--accent-line); }
-.notification-reopen svg { width: 18px; height: 18px; fill: currentColor; }
-.notification-reopen .notification-reopen-slash {
+/* Without the bell (unsupported browser) the gear keeps its own auto margin. */
+.notification-menu + .topbar-admin-entry { margin-left: 8px; }
+
+.notification-bell {
+  width: 30px; height: 30px; padding: 0; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid #d5e0eb; border-radius: 50%;
+  background: #fff; color: #4c6f91;
+  transition: transform .16s ease, background .16s ease, border-color .16s ease;
+}
+.notification-bell:hover,
+.notification-bell:focus-visible {
+  border-color: #b7cce0; background: #f1f6fb; transform: translateY(-1px); outline: none;
+}
+.notification-bell:active { transform: scale(0.94); }
+.notification-bell.is-on { color: var(--accent); border-color: var(--accent-line); }
+.notification-bell svg { width: 16px; height: 16px; display: block; fill: currentColor; }
+.notification-bell .notification-bell-slash {
   fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round;
 }
