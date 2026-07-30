@@ -87,12 +87,26 @@ describe('MessageItem 引用块', () => {
     expect(preview()).not.toBeNull();
   });
 
-  it('引用的消息已经不在记录里时给出说明', async () => {
+  it('用户主动引用的消息已不在记录里时给出说明', async () => {
+    // A quote the user chose deliberately: dropping it silently would lose the fact
+    // that this message was a reply at all.
+    const mine = message({ id: 'm2', role: 'user', replyTo: 'gone' });
+
+    await render(<MessageItem {...common} message={mine} quoted={null} quotedLabel="" previousId="m1" />);
+
+    expect(preview()?.textContent).toContain('原消息已不在当前记录中');
+  });
+
+  it('bot 回复指向的消息已滚出窗口时什么都不显示', async () => {
+    // Every assistant turn carries replyTo for stream recovery, so this placeholder
+    // was appearing on the first bubble of the loaded window on every single load —
+    // information the user cannot act on, attached to a reply nobody made.
     const reply = message({ id: 'm2', replyTo: 'gone' });
 
     await render(<MessageItem {...common} message={reply} quoted={null} quotedLabel="" previousId="m1" />);
 
-    expect(preview()?.textContent).toContain('原消息已不在当前记录中');
+    expect(preview()).toBeNull();
+    expect(container.textContent).not.toContain('原消息已不在当前记录中');
   });
 
   it('用户自己引用上一条 bot 消息时同样不重复显示', async () => {
