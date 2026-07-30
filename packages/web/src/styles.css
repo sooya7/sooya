@@ -653,8 +653,9 @@ button {
   height: 38px;
   border-radius: 50%;
   background: var(--line);
-  /* Inactive is a light chip, so the glyph has to be dark to be seen at all. */
-  color: var(--ink-faint);
+  /* Inactive is a light chip. --ink-faint on --line is about 1.7:1, which the
+     static preview showed is not legible; --ink-soft clears 4:1. */
+  color: var(--ink-soft);
   display: flex;
   align-items: center;
   justify-content: center;

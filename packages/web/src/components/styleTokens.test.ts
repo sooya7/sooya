@@ -42,6 +42,8 @@ describe('shared colour tokens', () => {
 
   it('gives the send button the shared gradient and a readable idle glyph', () => {
     expect(CHAT).toMatch(/\.send-btn\.active \{\s*background: var\(--grad\);/);
-    expect(CHAT).toMatch(/\.send-btn \{[^}]*color: var\(--ink-faint\);/);
+    // --ink-faint on --line measured about 1.7:1 in the static preview and the
+    // glyph simply was not there; --ink-soft is the floor for this chip.
+    expect(CHAT).toMatch(/\.send-btn \{[^}]*color: var\(--ink-soft\);/);
   });
 });
