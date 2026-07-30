@@ -116,6 +116,20 @@ export const TtsModelSchema = z.object({
   instructionMode: z.enum(['on', 'auto', 'off']).default('on'),
   /** Scales emotion-specific speed changes and instruction strength. */
   emotionIntensity: z.number().min(0).max(1).default(0.75),
+  /**
+   * How emotion reaches the model, because the two voice families accept it
+   * differently and no single request shape works for both:
+   * - `instruction`: a natural-language delivery instruction (豆包 2.0 音色，
+   *   标签「指令遵循」). Free-form, so it is not limited to a fixed word list.
+   * - `enum`: the `emotion` + `emotion_scale` fields (only the 15 「多情感」
+   *   音色, all `*_emo_*` in the 1.0 family, accept these).
+   * - `auto`: read it off the voice id — `_emo_` means the enum, anything else
+   *   gets the instruction. Derived from ground truth rather than a hand-set
+   *   flag, which is how the `supportsVision` lie broke image replies.
+   */
+  emotionMode: z.enum(['auto', 'instruction', 'enum', 'off']).default('auto'),
+  /** 情绪值 for the enum transport: 1~5, non-linear, official default is 4. */
+  emotionScale: z.number().min(1).max(5).default(4),
   timeoutMs: z.number().int().min(1000).max(300_000).default(90_000),
   maxRetries: z.number().int().min(0).max(5).default(1)
 });
