@@ -40,6 +40,12 @@ describe('shared colour tokens', () => {
     expect(literals).toEqual([]);
   });
 
+  it('leaves the remove badge somewhere to sit on a text attachment chip', () => {
+    // A voice attachment is a chip as narrow as '🎤 8s', and the badge is pinned
+    // to the top-right corner, so without reserved padding it covers the label.
+    expect(CHAT).toMatch(/\.attachment-generic \{[^}]*padding: 10px 28px 10px 12px;/);
+  });
+
   it('gives the send button the shared gradient and a readable idle glyph', () => {
     expect(CHAT).toMatch(/\.send-btn\.active \{\s*background: var\(--grad\);/);
     // --ink-faint on --line measured about 1.7:1 in the static preview and the
