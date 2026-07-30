@@ -26,10 +26,10 @@ export async function disablePushSubscription(
   subscription: RemovablePushSubscription,
   request: typeof requestPushApi = requestPushApi
 ): Promise<DisablePushResult> {
-  let browserRemoved = false;
   let browserError: Error | null = null;
   try {
-    browserRemoved = await subscription.unsubscribe();
+    // 返回 false 只表示本来就没有订阅，对「已关闭」这个结果没有影响。
+    await subscription.unsubscribe();
   } catch (error) {
     browserError = error as Error;
   }
