@@ -65,10 +65,17 @@ interface Props {
   message: ChatMessage; personaName: string; avatar: string; userAvatar: string; showAvatar: boolean;
   /** The message being replied to, when it is still loaded. */
   quoted?: ChatMessage | null; quotedLabel?: string;
+  /**
+   * Id of the message directly above this one. Every assistant reply carries
+   * `replyTo` pointing at the message that triggered it, which in a 1v1 chat is
+   * almost always the line right above — rendering a quote of it just repeats what
+   * the user can already see. Quoting anything further back is still shown.
+   */
+  previousId?: string | null;
   onRetry?: (message: ChatMessage) => void; onResend?: (message: ChatMessage) => void; onQuote?: (message: ChatMessage) => void; onWithdraw?: (message: ChatMessage) => void; onOpenImage?: (mediaId: string) => void; onNotice?: (text: string) => void;
 }
 
-export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, quoted, quotedLabel, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
+export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, quoted, quotedLabel, previousId, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
   const mine = message.role === 'user';
   const visible = message.content.filter((part) => part.type !== 'system');
   const failedMessage = message.status === 'failed';
@@ -135,7 +142,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
       onPointerUp={cancelPress} onPointerCancel={cancelPress} onLostPointerCapture={cancelPress}>
       <div className="avatar-slot">{showAvatar && <AuthenticatedImage className="avatar" path={mine ? userAvatar : avatar} scope="user" alt={mine ? '我' : personaName} draggable={false} />}</div>
       <div className="msg-body">
-        {message.replyTo && (
+        {message.replyTo && message.replyTo !== previousId && (
           <div className="message-reply-preview" data-testid="reply-preview">
             <span className="reply-author">{quotedLabel || '原消息'}</span>
             <span className="reply-text">{quoted ? quotedPreview(quoted) : '原消息已不在当前记录中'}</span>
