@@ -169,8 +169,12 @@ export class OpenAIChatProvider implements ChatProvider {
   }
 
   async stream(req: ChatRequest, onChunk: (c: ChatChunk) => void): Promise<ChatResult> {
-    // Retries are applied here so `maxRetries` also governs streamed requests.
-    return streamWithRetry(this.cfg.maxRetries, (emit) => this.streamOnce(req, emit), onChunk);
+    // Retries are applied here so `maxRetries` also governs streamed requests -- but
+    // only for requests that actually stream. When the model cannot stream, `streamOnce`
+    // delegates to `complete()`, which runs a retry ladder of its own; applying this one
+    // as well multiplied them into (maxRetries + 1)^2 requests.
+    const retries = this.cfg.supportsStreaming ? this.cfg.maxRetries : 0;
+    return streamWithRetry(retries, (emit) => this.streamOnce(req, emit), onChunk);
   }
 
   private async streamOnce(req: ChatRequest, emit: (c: ChatChunk) => void): Promise<ChatResult> {
@@ -307,8 +311,12 @@ export class OpenAIResponsesProvider implements ChatProvider {
   }
 
   async stream(req: ChatRequest, onChunk: (c: ChatChunk) => void): Promise<ChatResult> {
-    // Retries are applied here so `maxRetries` also governs streamed requests.
-    return streamWithRetry(this.cfg.maxRetries, (emit) => this.streamOnce(req, emit), onChunk);
+    // Retries are applied here so `maxRetries` also governs streamed requests -- but
+    // only for requests that actually stream. When the model cannot stream, `streamOnce`
+    // delegates to `complete()`, which runs a retry ladder of its own; applying this one
+    // as well multiplied them into (maxRetries + 1)^2 requests.
+    const retries = this.cfg.supportsStreaming ? this.cfg.maxRetries : 0;
+    return streamWithRetry(retries, (emit) => this.streamOnce(req, emit), onChunk);
   }
 
   private async streamOnce(req: ChatRequest, emit: (c: ChatChunk) => void): Promise<ChatResult> {
@@ -479,8 +487,12 @@ export class AnthropicChatProvider implements ChatProvider {
   }
 
   async stream(req: ChatRequest, onChunk: (c: ChatChunk) => void): Promise<ChatResult> {
-    // Retries are applied here so `maxRetries` also governs streamed requests.
-    return streamWithRetry(this.cfg.maxRetries, (emit) => this.streamOnce(req, emit), onChunk);
+    // Retries are applied here so `maxRetries` also governs streamed requests -- but
+    // only for requests that actually stream. When the model cannot stream, `streamOnce`
+    // delegates to `complete()`, which runs a retry ladder of its own; applying this one
+    // as well multiplied them into (maxRetries + 1)^2 requests.
+    const retries = this.cfg.supportsStreaming ? this.cfg.maxRetries : 0;
+    return streamWithRetry(retries, (emit) => this.streamOnce(req, emit), onChunk);
   }
 
   private async streamOnce(req: ChatRequest, emit: (c: ChatChunk) => void): Promise<ChatResult> {
