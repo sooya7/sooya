@@ -1584,3 +1584,22 @@ button {
   cursor: pointer;
 }
 .audio-play:disabled { opacity: 0.5; cursor: default; }
+
+/* Bell left behind when the opt-in bar is dismissed. Without it, hiding the bar
+   was a one-way door: the toggle became unreachable from the UI entirely. */
+.notification-reopen {
+  position: fixed; right: 14px; bottom: calc(var(--composer-h, 76px) + 18px);
+  z-index: 35; display: grid; place-items: center;
+  width: 34px; height: 34px; padding: 0; cursor: pointer;
+  border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface-raised); color: var(--ink-soft);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+  transition: color .16s ease, border-color .16s ease, transform .12s ease;
+}
+.notification-reopen:hover { color: var(--ink); border-color: var(--accent-line); }
+.notification-reopen:active { transform: translateY(1px); }
+.notification-reopen.is-on { color: var(--accent); border-color: var(--accent-line); }
+.notification-reopen svg { width: 18px; height: 18px; fill: currentColor; }
+.notification-reopen .notification-reopen-slash {
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round;
+}
