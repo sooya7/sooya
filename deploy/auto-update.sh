@@ -46,6 +46,11 @@ LOCK_FILE="/run/sooya-auto-update.lock"
 
 log()  { printf '[auto-update] %s\n' "$*"; }
 die()  { printf '[auto-update] %s\n' "$*" >&2; exit 1; }
+# Declining to deploy is this unit doing its job, not failing at it. Every squash merge
+# creates a commit whose checks start from zero, so treating "not green yet" as a
+# failure left a failed systemd unit behind after every single merge — which is exactly
+# the state a real failure needs to stand out from.
+skip() { log "$*"; exit 0; }
 
 [[ $EUID -eq 0 ]] || die "please run as root (sudo)"
 [[ -d "$BASE_DIR/shared" ]] || die "$BASE_DIR/shared not found — run install.sh first"
@@ -84,10 +89,16 @@ if (( REQUIRE_GREEN )); then
   RUNS="$(curl -fsS "${AUTH[@]}" \
     "https://api.github.com/repos/$SLUG/commits/$REMOTE_SHA/check-runs" 2>/dev/null)" ||
     die "cannot read checks for ${REMOTE_SHA:0:8} (private repo needs GITHUB_TOKEN); not deploying"
-  # No jq dependency on a small box: count conclusions with grep.
-  TOTAL="$(printf '%s' "$RUNS" | grep -o '"conclusion":' | wc -l)"
-  GOOD="$(printf '%s' "$RUNS" | grep -o '"conclusion": *"\(success\|skipped\|neutral\)"' | wc -l)"
-  (( TOTAL > 0 )) || die "no checks reported for ${REMOTE_SHA:0:8}; not deploying"
+  # No jq dependency on a small box: count with grep. `grep` exits 1 when it matches
+  # nothing, and under `set -Eeuo pipefail` that killed the script right here, before
+  # any of the messages below could be printed — a merge whose checks had not been
+  # created yet produced a failed unit with an empty journal. Hence `|| true`.
+  count() { printf '%s' "$RUNS" | { grep -oE "$1" || true; } | wc -l | tr -d ' '; }
+  TOTAL="$(count '"conclusion":')"
+  GOOD="$(count '"conclusion": *"(success|skipped|neutral)"')"
+  PENDING="$(count '"status": *"(queued|in_progress|waiting|pending|requested)"')"
+  (( TOTAL > 0 )) || skip "checks for ${REMOTE_SHA:0:8} have not been reported yet; waiting for the next run"
+  (( PENDING == 0 )) || skip "checks for ${REMOTE_SHA:0:8} are still running ($GOOD/$TOTAL green, $PENDING pending); waiting for the next run"
   (( TOTAL == GOOD )) || die "checks are not green for ${REMOTE_SHA:0:8} ($GOOD/$TOTAL); not deploying"
   log "checks are green ($GOOD/$TOTAL)"
 fi
