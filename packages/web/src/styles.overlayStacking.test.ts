@@ -1,14 +1,13 @@
 /**
- * The two bottom-centred fixed overlays — the push opt-in bar and the
- * service-worker update prompt — are authored in different stylesheets, so
- * nothing stops one from being moved on top of the other. That already happened
- * once in production: the opt-in bar (z-index 80) covered the update prompt
- * (z-index 40) and hit-testing at the centre of "立即更新" returned the opt-in
- * bar, so the update could not be accepted at all.
+ * The push opt-in UI and the service-worker update prompt are authored in different
+ * stylesheets, and they collided in production: the opt-in bar was a fixed, bottom
+ * centred bar shown by default (z-index 80) and it covered the update prompt
+ * (z-index 40) so completely that hit-testing the centre of "立即更新" returned the
+ * bar. The update could not be accepted at all.
  *
- * These assertions read the real declarations and compare numbers, so a future
- * z-index bump or offset change on either side fails here instead of silently
- * burying a prompt again.
+ * The fix was to stop floating the opt-in over the conversation: it is now a popover
+ * anchored under the bell in the top bar. These assertions read the real declarations
+ * so that neither half of that can quietly come back.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -55,25 +54,24 @@ describe('bottom overlay stacking', () => {
   const updatePrompt = ruleBody(appCss, '.sw-update');
   const optin = ruleBody(overlayCss, '.notification-optin');
 
-  it('keeps both overlays pinned to the bottom centre', () => {
-    for (const body of [updatePrompt, optin]) {
-      expect(declaration(body, 'position')).toBe('fixed');
-      expect(declaration(body, 'bottom')).toBeTruthy();
-    }
+  it('keeps the update prompt pinned above the composer', () => {
+    expect(declaration(updatePrompt, 'position')).toBe('fixed');
+    expect(literalPxOffset(declaration(updatePrompt, 'bottom'))).toBeGreaterThan(0);
   });
 
-  it('puts the update prompt above the opt-in bar when they overlap', () => {
-    // Whoever wins a collision must be the prompt: dismissing the opt-in bar is
-    // optional, accepting an update is not.
+  it('puts the update prompt above the notification popover if they ever overlap', () => {
+    // Whoever wins a collision must be the prompt: opening the notification setting
+    // is optional, accepting an update is not.
     expect(zIndex(updatePrompt)).toBeGreaterThan(zIndex(optin));
   });
 
-  it('moves the update prompt clear of the opt-in bar while it is shown', () => {
-    const raised = ruleBody(appCss, 'body:has(.notification-optin) .sw-update');
-    const base = literalPxOffset(declaration(updatePrompt, 'bottom'));
-    const lifted = literalPxOffset(declaration(raised, 'bottom'));
-    // The opt-in bar measures ~57px tall in production; anything less than its
-    // height still leaves the prompt partly underneath it.
-    expect(lifted - base).toBeGreaterThanOrEqual(57);
+  it('keeps the notification popover out of the conversation entirely', () => {
+    // Anchored to the top bar, not fixed over the chat. `position: fixed` here is
+    // exactly what produced the bug, so it is the thing worth forbidding.
+    const position = declaration(optin, 'position');
+    expect(position).not.toBe('fixed');
+    expect(position).toBe('absolute');
+    // A bottom offset would put it back over the composer and the prompt.
+    expect(() => declaration(optin, 'bottom')).toThrow();
   });
 });

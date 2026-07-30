@@ -5,26 +5,6 @@ import { createVisibilitySynchronizer } from '../lib/visibilitySync.js';
 
 type PushState = 'unsupported' | 'prompt' | 'subscribed' | 'denied' | 'working' | 'error';
 
-/** Remembers that the user already dealt with this bar, so it stops occupying the chat. */
-const HIDDEN_KEY = 'sooya.push.optin.hidden';
-
-function readHidden(): boolean {
-  try {
-    return window.localStorage.getItem(HIDDEN_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeHidden(hidden: boolean): void {
-  try {
-    if (hidden) window.localStorage.setItem(HIDDEN_KEY, '1');
-    else window.localStorage.removeItem(HIDDEN_KEY);
-  } catch {
-    // Storage denied: the bar simply comes back next load.
-  }
-}
-
 function fromBase64Url(value: string): ArrayBuffer {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(normalized + '='.repeat((4 - normalized.length % 4) % 4));
@@ -49,12 +29,23 @@ async function subscribe(): Promise<PushSubscription> {
   return subscription;
 }
 
+/**
+ * Lives in the top bar next to the control-panel entry: a bell that opens the push
+ * toggle on demand.
+ *
+ * It used to be a bar floating over the conversation, shown by default until
+ * dismissed. Two things were wrong with that. It covered the chat — and the service
+ * worker update prompt, whose clicks it swallowed outright — and it asked a question
+ * nobody had asked it to ask, on every fresh device. Notifications are a setting, so
+ * they belong with the settings: nothing appears until the bell is clicked.
+ */
 export function NotificationBridge() {
   const supported = typeof window !== 'undefined' && 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
   const [state, setState] = useState<PushState>(() => !supported ? 'unsupported' : Notification.permission === 'denied' ? 'denied' : 'prompt');
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [hidden, setHidden] = useState(() => supported && readHidden());
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const mounted = useRef(true);
 
   useEffect(() => () => { mounted.current = false; }, []);
@@ -100,6 +91,25 @@ export function NotificationBridge() {
     };
   }, [subscription]);
 
+  // A popover with no way out is its own annoyance, so honour the two gestures every
+  // user already expects. An action in flight keeps it open: closing mid-subscribe
+  // would hide the outcome the user is waiting for.
+  useEffect(() => {
+    if (!open) return;
+    const closeUnlessBusy = () => { if (state !== 'working') setOpen(false); };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') closeUnlessBusy(); };
+    const onPointerDown = (event: PointerEvent) => {
+      const root = rootRef.current;
+      if (root && event.target instanceof Node && !root.contains(event.target)) closeUnlessBusy();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [open, state]);
+
   if (!supported) return null;
 
   const enable = async () => {
@@ -134,56 +144,43 @@ export function NotificationBridge() {
     }
   };
 
-  const on0 = Boolean(subscription);
+  const on = Boolean(subscription);
+  const statusText =
+    state === 'denied'
+      ? '通知权限已被浏览器禁用，请在站点设置中重新允许。'
+      : on
+        ? 'SOOYA 后台通知已开启'
+        : '开启通知，PWA 关闭后也能收到回复';
 
-  const dismiss = () => {
-    writeHidden(true);
-    setMessage(null);   // otherwise the "keep showing while there is a message" rule wins
-    setHidden(true);
-  };
-
-  if (state === 'denied') {
-    if (hidden) return null;
-    return (
-      <div className="notification-optin" role="status">
-        <span>通知权限已被浏览器禁用，请在站点设置中重新允许。</span>
-        <button type="button" className="notification-dismiss" aria-label="不再提示" onClick={dismiss}>×</button>
-      </div>
-    );
-  }
-
-  // Once the user has answered, the bar has nothing left to ask; keeping it on screen
-  // forever was the \"stuck\" part of this bug. It never hides a pending action or an
-  // error, and it always leaves the small bell behind — hiding the bar used to be a
-  // one-way door, with no way back to the toggle short of clearing site data.
-  if (hidden && state !== 'working' && !message) {
-    return (
+  return (
+    <div className={`notification-menu${open ? ' is-open' : ''}`} ref={rootRef}>
       <button
         type="button"
-        className={`notification-reopen${on0 ? ' is-on' : ''}`}
-        data-testid="push-reopen"
-        aria-label={on0 ? '通知设置：后台通知已开启' : '通知设置：后台通知已关闭'}
+        className={`notification-bell${on ? ' is-on' : ''}`}
+        data-testid="push-bell"
+        aria-label={`通知设置：后台通知${on ? '已开启' : '已关闭'}`}
+        aria-expanded={open}
         title="通知设置"
-        onClick={() => { writeHidden(false); setHidden(false); }}
+        onClick={() => setOpen((value) => !value)}
       >
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M12 3a5 5 0 0 0-5 5v3.6L5.4 14a1 1 0 0 0 .8 1.6h11.6a1 1 0 0 0 .8-1.6L17 11.6V8a5 5 0 0 0-5-5Z" />
           <path d="M10 18.2a2 2 0 0 0 4 0Z" />
-          {!on0 && <path className="notification-reopen-slash" d="M4 4l16 16" />}
+          {!on && <path className="notification-bell-slash" d="M4 4l16 16" />}
         </svg>
       </button>
-    );
-  }
-
-  const on = Boolean(subscription);
-  return (
-    <div className="notification-optin" role="status" data-testid="push-controls" data-push-state={state}>
-      <span>{on ? 'SOOYA 后台通知已开启' : '开启通知，PWA 关闭后也能收到回复'}</span>
-      {message && <small>{message}</small>}
-      <button type="button" disabled={state === 'working'} onClick={() => void (on ? disable() : enable())}>
-        {state === 'working' ? '处理中…' : on ? '关闭通知' : '开启通知'}
-      </button>
-      <button type="button" className="notification-dismiss" aria-label="收起通知提示" onClick={dismiss}>×</button>
+      {open && (
+        <div className="notification-optin" role="dialog" aria-label="通知设置" data-testid="push-controls" data-push-state={state}>
+          <span>{statusText}</span>
+          {message && <small>{message}</small>}
+          {state !== 'denied' && (
+            <button type="button" disabled={state === 'working'} onClick={() => void (on ? disable() : enable())}>
+              {state === 'working' ? '处理中…' : on ? '关闭通知' : '开启通知'}
+            </button>
+          )}
+          <button type="button" className="notification-dismiss" aria-label="关闭通知设置" onClick={() => setOpen(false)}>×</button>
+        </div>
+      )}
     </div>
   );
 }

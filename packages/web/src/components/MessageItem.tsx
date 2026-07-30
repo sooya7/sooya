@@ -77,6 +77,12 @@ interface Props {
 
 export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, quoted, quotedLabel, previousId, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
   const mine = message.role === 'user';
+  // Every assistant turn carries `replyTo` for stream recovery, so a preview is only
+  // worth showing when it says something the bubble order does not: not the message
+  // right above, and not a target that scrolled out of the loaded window — for those
+  // the placeholder is pure noise. A user message is different: the quote was chosen
+  // deliberately, so say the original is gone rather than dropping it silently.
+  const showReplyPreview = Boolean(message.replyTo) && message.replyTo !== previousId && (Boolean(quoted) || mine);
   const visible = message.content.filter((part) => part.type !== 'system');
   const failedMessage = message.status === 'failed';
   const [menu, setMenu] = useState<{ x: number; y: number; selectedText: string } | null>(null);
@@ -142,7 +148,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
       onPointerUp={cancelPress} onPointerCancel={cancelPress} onLostPointerCapture={cancelPress}>
       <div className="avatar-slot">{showAvatar && <AuthenticatedImage className="avatar" path={mine ? userAvatar : avatar} scope="user" alt={mine ? '我' : personaName} draggable={false} />}</div>
       <div className="msg-body">
-        {message.replyTo && message.replyTo !== previousId && (
+        {showReplyPreview && (
           <div className="message-reply-preview" data-testid="reply-preview">
             <span className="reply-author">{quotedLabel || '原消息'}</span>
             <span className="reply-text">{quoted ? quotedPreview(quoted) : '原消息已不在当前记录中'}</span>
