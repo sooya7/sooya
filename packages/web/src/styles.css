@@ -1553,7 +1553,7 @@ button {
 /* Service-worker update prompt: only appears when a new build is parked and waiting. */
 .sw-update {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--composer-h, 76px) + 18px);
-  z-index: 40; display: flex; align-items: center; gap: 10px;
+  z-index: 90; display: flex; align-items: center; gap: 10px;
   padding: 10px 12px 10px 16px; border-radius: 999px;
   background: var(--surface-raised); border: 1px solid var(--accent-line);
   box-shadow: 0 10px 30px rgba(0, 0, 0, .45); color: var(--ink); font-size: 14px;
@@ -1566,6 +1566,15 @@ button {
 .sw-update-accept:hover { filter: brightness(1.1); }
 .sw-update-later { background: transparent; color: var(--ink-soft); border-color: var(--line); }
 .sw-update-later:hover { color: var(--ink); border-color: var(--accent-line); }
+/* Both bottom bars are fixed and centred a dozen pixels apart, so when the push
+   opt-in bar is up it used to sit on top of this prompt (z-index 80 vs 40) and
+   swallow the clicks meant for "立即更新" — the update was unreachable, not just
+   unseen. Stack them instead: the opt-in keeps its slot, the prompt moves above
+   it. The z-index above is the fallback for engines without `:has()`, where an
+   overlap would leave the more urgent prompt clickable. */
+body:has(.notification-optin) .sw-update {
+  bottom: calc(var(--composer-h, 76px) + 18px + 68px);
+}
 /* Voice note still fetching its bytes — distinct from a real failure, which used to
    be shown for both because an empty <audio src=""> fires `error` immediately. */
 .audio-transcript.loading {
