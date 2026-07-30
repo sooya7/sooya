@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 // @ts-expect-error -- plain .mjs build script, no types needed
-import { buildManifest, injectSwManifest, isShellAsset } from './inject-sw-assets.mjs';
+import { buildManifest, iconAllowList, injectSwManifest, isShellAsset } from './inject-sw-assets.mjs';
 
 const WORKER_SOURCE = path.resolve(__dirname, '..', 'public', 'sw.js');
 const created: string[] = [];
@@ -83,6 +83,39 @@ describe('inject-sw-assets', () => {
     // marker survives so a second run is idempotent, not a hard failure
     expect(worker).toContain('__SOOYA_BUILD_MANIFEST__');
     expect(() => injectSwManifest({ dist })).not.toThrow();
+  });
+
+  it('precaches only the icons the manifest declares', () => {
+    const dist = makeDist({
+      'manifest.webmanifest': JSON.stringify({
+        name: 'SOOYA',
+        icons: [{ src: '/icons/small-192.png', sizes: '192x192', type: 'image/png' }]
+      }),
+      'icons/small-192.png': 'declared',
+      // unreferenced source artwork: exactly what must stay out of the install
+      'icons/photo-1024.png': 'x'.repeat(2_500_000)
+    });
+    expect([...iconAllowList(dist)].sort()).toEqual(['/icons/icon.svg', '/icons/small-192.png']);
+
+    const manifest = buildManifest(dist);
+    expect(manifest.assets).toContain('/icons/small-192.png');
+    expect(manifest.assets).toContain('/icons/icon.svg');
+    expect(manifest.assets).not.toContain('/icons/photo-1024.png');
+    expect(manifest.bytes).toBeLessThan(3_000_000);
+  });
+
+  it('refuses to precache a shell that is too heavy to install', () => {
+    const heavy = makeDist({
+      'manifest.webmanifest': JSON.stringify({ icons: [{ src: '/icons/huge.png', sizes: '512x512' }] }),
+      'icons/huge.png': 'x'.repeat(3_100_000)
+    });
+    expect(() => buildManifest(heavy)).toThrow(/too much to fetch on install/);
+  });
+
+  it('keeps build-time reporting out of the worker', () => {
+    const dist = makeDist();
+    injectSwManifest({ dist });
+    expect(fs.readFileSync(path.join(dist, 'sw.js'), 'utf8')).not.toContain('"bytes"');
   });
 
   it('fails loudly instead of shipping an un-injected worker', () => {
