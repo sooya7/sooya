@@ -1,0 +1,13 @@
+# Checks every 5 minutes, plus once shortly after boot.
+[Unit]
+Description=Check origin/main for SOOYA updates
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+# Spread the load so every SOOYA box does not hit GitHub on the same second.
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target
