@@ -45,4 +45,19 @@ describe('merged admin console', () => {
     expect(EDITORS).not.toContain('export default function');
     expect(EDITORS).not.toContain('admin-lock');
   });
+
+  /**
+   * ci run 117 caught what the contracts above could not: the console header
+   * renders the active tab title as an `h1`, and every embedded editor repeated
+   * that exact title as its own `h2`. Two headings with one accessible name is a
+   * strict-mode violation for `getByRole('heading', { name })`, which is how
+   * `features-1-9.e2e.ts` finds the avatar section, and it read as a flake
+   * because whichever heading mounted second decided the outcome.
+   */
+  it('never repeats a tab title as a heading inside an editor', () => {
+    const titles = [...PANEL.matchAll(/title: '([^']+)'/g)].map((m) => m[1]);
+    expect(titles.length).toBeGreaterThanOrEqual(9);
+    const headings = [...EDITORS.matchAll(/<h[12]>([^<{]+)<\/h[12]>/g)].map((m) => m[1]);
+    expect(headings.filter((h) => titles.includes(h))).toEqual([]);
+  });
 });
