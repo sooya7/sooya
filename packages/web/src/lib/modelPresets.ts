@@ -28,6 +28,44 @@ export const SLOT_PROVIDERS: Record<ModelSlot, string[]> = {
   stt: ['openai-transcriptions', 'openai-compatible']
 };
 
+/** Human labels for the wire protocols, so a form can name what it offers. */
+export const PROVIDER_LABELS: Record<string, string> = {
+  'openai-chat': 'OpenAI Chat Completions',
+  'openai-responses': 'OpenAI Responses',
+  'anthropic-messages': 'Anthropic Messages',
+  'openai-compatible': 'OpenAI Compatible',
+  'openai-embeddings': 'OpenAI Embeddings',
+  'openai-images': 'OpenAI Images',
+  'openai-tts': 'OpenAI TTS',
+  'openai-transcriptions': 'OpenAI Transcriptions'
+};
+
+export interface InterfaceOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * The interfaces one capability may actually speak, for a `<select>`.
+ *
+ * Offering all nine protocols under every capability invites a config that only
+ * fails at request time — a 语音合成 slot set to Anthropic Messages looks saved
+ * and then throws on the first reply. `current` is kept even when it is not a
+ * legal choice: a value missing from the options renders the select blank, and
+ * the next save would silently rewrite whatever the server actually had.
+ */
+export function interfaceOptions(slot: ModelSlot, current?: string | null): InterfaceOption[] {
+  const options: InterfaceOption[] = [
+    { value: 'none', label: '未配置' },
+    ...SLOT_PROVIDERS[slot].map((value) => ({ value, label: PROVIDER_LABELS[value] ?? value }))
+  ];
+  const now = (current ?? '').trim();
+  if (now && !options.some((o) => o.value === now)) {
+    options.push({ value: now, label: `${PROVIDER_LABELS[now] ?? now}（当前值，此能力不适用）` });
+  }
+  return options;
+}
+
 export interface ModelPreset {
   id: string;
   name: string;
