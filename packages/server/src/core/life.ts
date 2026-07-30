@@ -49,6 +49,8 @@ export interface LifeConfig {
   maxReachOutsPerDay: number;
   /** Local hours she will not message during, because she is asleep. */
   silentHours: { from: number; to: number };
+  /** Panel switch. The env kill-switch still wins over this. */
+  reachOut: boolean;
 }
 
 export const DEFAULT_LIFE_CONFIG: LifeConfig = {
@@ -56,7 +58,8 @@ export const DEFAULT_LIFE_CONFIG: LifeConfig = {
   routine: DEFAULT_ROUTINE,
   quietGapMinutes: 180,
   maxReachOutsPerDay: 3,
-  silentHours: { from: 0, to: 9 }
+  silentHours: { from: 0, to: 9 },
+  reachOut: true
 };
 
 export interface ResolvedActivity {
@@ -140,14 +143,23 @@ export interface LifeTickResult {
 }
 
 export class LifeEngine {
+  /*
+   * The config is resolved on every read rather than captured once, so a change
+   * made in the admin panel takes effect on the next tick instead of at the next
+   * deploy. Callers may still pass a plain object; tests rely on that.
+   */
+  private readonly resolve: () => LifeConfig;
+
   constructor(
     private readonly repo: LifeRepo,
-    private readonly config: LifeConfig = DEFAULT_LIFE_CONFIG,
+    config: LifeConfig | (() => LifeConfig) = DEFAULT_LIFE_CONFIG,
     private readonly clock: () => Date = () => new Date()
-  ) {}
+  ) {
+    this.resolve = typeof config === 'function' ? config : () => config;
+  }
 
   get settings(): LifeConfig {
-    return this.config;
+    return this.resolve();
   }
 
   now(): Date {
@@ -161,7 +173,7 @@ export class LifeEngine {
    */
   tick(): LifeTickResult {
     const at = this.clock();
-    const resolved = resolveActivity(at, this.config);
+    const resolved = resolveActivity(at, this.settings);
     const current = this.repo.current();
     if (current && current.activity === resolved.activity && current.started_at === resolved.startedAt.toISOString()) {
       return { changed: false, activity: current.activity, kind: current.kind as LifeKind, mood: current.mood, endedPrevious: null };
@@ -178,7 +190,7 @@ export class LifeEngine {
 
   /** What she is doing right now, computed even if no tick has ever run. */
   currentActivity(): ResolvedActivity {
-    return resolveActivity(this.clock(), this.config);
+    return resolveActivity(this.clock(), this.settings);
   }
 
   /**
@@ -188,8 +200,8 @@ export class LifeEngine {
    */
   contextLines(lastUserMessageAt?: Date | null): string[] {
     const at = this.clock();
-    const resolved = resolveActivity(at, this.config);
-    const local = new Date(at.getTime() + this.config.tzOffsetMinutes * 60_000);
+    const resolved = resolveActivity(at, this.settings);
+    const local = new Date(at.getTime() + this.settings.tzOffsetMinutes * 60_000);
     const clock = `${local.getUTCMonth() + 1}月${local.getUTCDate()}日 ${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')}`;
     const intoIt = humanGap(at.getTime() - resolved.startedAt.getTime());
 
@@ -212,12 +224,14 @@ export class LifeEngine {
    */
   shouldReachOut(lastUserMessageAt: Date | null, lastAssistantMessageAt: Date | null): { reach: boolean; reason: string; candidate: LifeLogRow | null } {
     const at = this.clock();
-    if (isSilentHour(at, this.config)) return { reach: false, reason: 'silent_hours', candidate: null };
+    if (!this.settings.reachOut) return { reach: false, reason: 'disabled', candidate: null };
+    if (this.settings.maxReachOutsPerDay <= 0) return { reach: false, reason: 'daily_cap', candidate: null };
+    if (isSilentHour(at, this.settings)) return { reach: false, reason: 'silent_hours', candidate: null };
 
-    const resolved = resolveActivity(at, this.config);
+    const resolved = resolveActivity(at, this.settings);
     if (resolved.kind === 'sleep') return { reach: false, reason: 'asleep', candidate: null };
 
-    const gapMs = this.config.quietGapMinutes * 60_000;
+    const gapMs = this.settings.quietGapMinutes * 60_000;
     if (lastUserMessageAt && at.getTime() - lastUserMessageAt.getTime() < gapMs) {
       return { reach: false, reason: 'user_was_recently_here', candidate: null };
     }
@@ -227,7 +241,7 @@ export class LifeEngine {
       return { reach: false, reason: 'already_spoke', candidate: null };
     }
     const dayAgo = new Date(at.getTime() - 86_400_000).toISOString();
-    if (this.repo.countSharedSince(dayAgo) >= this.config.maxReachOutsPerDay) {
+    if (this.repo.countSharedSince(dayAgo) >= this.settings.maxReachOutsPerDay) {
       return { reach: false, reason: 'daily_cap', candidate: null };
     }
     const candidate = this.repo.unshared(['out', 'play', 'meal', 'chore'], 1)[0] ?? null;
@@ -241,7 +255,7 @@ export class LifeEngine {
 
   /** Current state for the UI, so the user can see what she is up to. */
   snapshot(): { activity: string; kind: LifeKind; mood: string; startedAt: string; endsAt: string; recent: Array<{ activity: string; startedAt: string; endedAt: string }> } {
-    const resolved = resolveActivity(this.clock(), this.config);
+    const resolved = resolveActivity(this.clock(), this.settings);
     return {
       activity: resolved.activity,
       kind: resolved.kind,

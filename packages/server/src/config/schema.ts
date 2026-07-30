@@ -20,6 +20,23 @@ export const ImagePolicySchema = z.object({
   maxPerReply: z.number().int().min(0).max(4).default(1)
 });
 
+/*
+ * How much of a life she leads, and how freely she may interrupt. Every field is
+ * optional on purpose: an absent field means "keep using the deployment default"
+ * (the LIFE_* env vars), so writing one value in the panel does not silently
+ * freeze copies of the others into persona.json.
+ */
+export const LifePolicySchema = z.object({
+  reachOut: z.boolean().optional(),
+  /** She stays quiet at least this long after the user's last message. */
+  quietGapMinutes: z.number().int().min(5).max(1440).optional(),
+  maxReachOutsPerDay: z.number().int().min(0).max(20).optional(),
+  /** Local hours she will not message during. from===to means never silent. */
+  silentFrom: z.number().int().min(0).max(23).optional(),
+  silentTo: z.number().int().min(0).max(23).optional()
+});
+export type LifePolicy = z.infer<typeof LifePolicySchema>;
+
 export const PersonaSchema = z.object({
   id: z.string().default('sooya'),
   name: z.string().min(1).default('SOOYA'),
@@ -32,7 +49,8 @@ export const PersonaSchema = z.object({
   language: z.string().default('zh-CN'),
   stickerPolicy: StickerPolicySchema.default({}),
   voicePolicy: VoicePolicySchema.default({}),
-  imagePolicy: ImagePolicySchema.default({})
+  imagePolicy: ImagePolicySchema.default({}),
+  lifePolicy: LifePolicySchema.default({})
 });
 export type Persona = z.infer<typeof PersonaSchema>;
 
