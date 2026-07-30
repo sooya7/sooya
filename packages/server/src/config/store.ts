@@ -108,11 +108,16 @@ export class ConfigStore {
       return undefined;
     };
     const panelManaged = (section: ModelSection): boolean => next[section]?.configSource === 'panel';
+    /** True when this section carries a key the operator saved deliberately. */
+    const ownKey = (section: ModelSection): boolean => panelManaged(section) && !!next[section]?.apiKey;
 
-    // Secrets may still come from the environment even when the visible model
-    // settings are panel-managed. This keeps API keys out of models.json.
+    // A key saved through the panel wins over the environment: otherwise typing
+    // one in appears to work and changes nothing whenever a generic variable
+    // like OPENAI_API_KEY happens to exist, which is how image generation sat
+    // on a 401. For sections the panel never touched the environment stays
+    // authoritative, so a deployment can still rotate a stale file key.
     const chatKey = pick(next.chat.apiKeyEnv ?? '', 'SOOYA_CHAT_API_KEY', 'OPENAI_API_KEY');
-    if (chatKey) next.chat.apiKey = chatKey;
+    if (chatKey && !ownKey('chat')) next.chat.apiKey = chatKey;
     if (!panelManaged('chat')) {
       const chatBase = pick('SOOYA_CHAT_BASE_URL', 'OPENAI_BASE_URL');
       if (chatBase) next.chat.baseUrl = chatBase;
@@ -123,7 +128,7 @@ export class ConfigStore {
     }
 
     const embKey = pick(next.embedding.apiKeyEnv ?? '', 'SOOYA_EMBEDDING_API_KEY', 'OPENAI_API_KEY');
-    if (embKey) next.embedding.apiKey = embKey;
+    if (embKey && !ownKey('embedding')) next.embedding.apiKey = embKey;
     if (!panelManaged('embedding')) {
       const embBase = pick('SOOYA_EMBEDDING_BASE_URL');
       if (embBase) next.embedding.baseUrl = embBase;
@@ -135,7 +140,7 @@ export class ConfigStore {
     }
 
     const imgKey = pick(next.image.apiKeyEnv ?? '', 'SOOYA_IMAGE_API_KEY', 'OPENAI_API_KEY');
-    if (imgKey) next.image.apiKey = imgKey;
+    if (imgKey && !ownKey('image')) next.image.apiKey = imgKey;
     if (!panelManaged('image')) {
       const imgBase = pick('SOOYA_IMAGE_BASE_URL');
       if (imgBase) next.image.baseUrl = imgBase;
@@ -147,7 +152,7 @@ export class ConfigStore {
     }
 
     const ttsKey = pick(next.tts.apiKeyEnv ?? '', 'SOOYA_TTS_API_KEY', 'OPENAI_API_KEY');
-    if (ttsKey) next.tts.apiKey = ttsKey;
+    if (ttsKey && !ownKey('tts')) next.tts.apiKey = ttsKey;
     if (!panelManaged('tts')) {
       const ttsBase = pick('SOOYA_TTS_BASE_URL');
       if (ttsBase) next.tts.baseUrl = ttsBase;
@@ -161,7 +166,7 @@ export class ConfigStore {
     }
 
     const sttKey = pick(next.stt.apiKeyEnv ?? '', 'SOOYA_STT_API_KEY', 'OPENAI_API_KEY');
-    if (sttKey) next.stt.apiKey = sttKey;
+    if (sttKey && !ownKey('stt')) next.stt.apiKey = sttKey;
     if (!panelManaged('stt')) {
       const sttBase = pick('SOOYA_STT_BASE_URL');
       if (sttBase) next.stt.baseUrl = sttBase;

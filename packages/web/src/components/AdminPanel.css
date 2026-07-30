@@ -450,8 +450,17 @@
 .admin-v2 .admin-form-card > p,
 .admin-v2 .admin-form-wide,
 .admin-v2 .admin-actions,
-.admin-v2 .admin-panel-heading {
+.admin-v2 .admin-panel-heading,
+/* The library is a block, not a field: left in a grid cell it took half the row
+   and pushed 接口协议 into the opposite column with a gap between them. */
+.admin-v2 .admin-model-library {
   grid-column: 1 / -1;
+}
+
+/* Inline warning under a field the operator is about to get wrong. */
+.admin-v2 .admin-field-warning {
+  color: #b42318;
+  font-weight: 600;
 }
 
 .admin-v2 .admin-form-card label {

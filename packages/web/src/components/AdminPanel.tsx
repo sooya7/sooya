@@ -268,7 +268,7 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
   return (
     <section className="admin-model-library" data-testid="admin-model-library">
       <PanelHeading title="模型库" description="保存任意多个模型预设，随时指派给某项能力。预设只记录密钥的环境变量名，不保存密钥本身。" />
-      {groups.length === 0 && <p className="admin-muted">还没有预设。添加一个，就能在不同模型之间随时切换。</p>}
+      {groups.length === 0 && <p className="admin-muted">还没有预设。把下面的配置填好后点「添加配置」，就能在不同模型之间随时切换。</p>}
       {groups.map(([slot, items]) => (
         <div className="admin-preset-group" key={slot}>
           <h3>{SLOT_LABELS[slot]}</h3>
@@ -320,6 +320,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [models, setModels] = useState<AdminModels | null>(null);
   const [selected, setSelected] = useState<ModelSlot>('chat');
   const [available, setAvailable] = useState<string[] | null>(null);
+  const [keyDraft, setKeyDraft] = useState('');
   const [pulling, setPulling] = useState(false);
   const [libraryKey, setLibraryKey] = useState(0);
 
@@ -336,9 +337,11 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const save = async () => {
     if (!models) return;
     try {
-      const r = await adminApi.updateModels({ [selected]: config });
+      const typed = keyDraft.trim();
+      const r = await adminApi.updateModels({ [selected]: { ...config, ...(typed ? { apiKey: typed } : {}) } });
       setModels(r.models);
-      onNotice('模型配置已保存');
+      setKeyDraft('');
+      onNotice(typed ? '模型配置与密钥已保存' : '模型配置已保存');
     } catch (e) {
       onNotice(errorText(e));
     }
@@ -383,7 +386,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
       <aside>
         <h2>模型能力</h2>
         {CAPABILITIES.map(([key, label]) => (
-          <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); }}>
+          <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); setKeyDraft(''); }}>
             <span>{label}</span>
             <small>{String((models[key] as Record<string, unknown> | undefined)?.model ?? '未独立配置')}</small>
           </button>
@@ -413,7 +416,18 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           </small>
         </label>
         <label className="admin-form-wide">接口地址<input value={String(config.baseUrl ?? '')} onChange={(e) => update('baseUrl', e.target.value)} /></label>
-        <label>密钥环境变量<input value={String(config.apiKeyEnv ?? '')} placeholder="留空则保持当前密钥" onChange={(e) => update('apiKeyEnv', e.target.value || undefined)} /></label>
+        <label>
+          API Key
+          <input
+            type="password"
+            autoComplete="off"
+            data-testid="admin-model-apikey"
+            value={keyDraft}
+            placeholder={config.apiKeyConfigured ? '已配置，留空则不改' : '粘贴密钥'}
+            onChange={(e) => setKeyDraft(e.target.value)}
+          />
+          <small>{config.apiKeyConfigured ? '已保存一把密钥。要换就粘新的，留空则保持不变。' : '还没有密钥，粘贴后点保存。'}</small>
+        </label>
         <label>请求超时（毫秒）<input type="number" value={String(config.timeoutMs ?? '')} onChange={(e) => update('timeoutMs', Number(e.target.value))} /></label>
         {['chat', 'vision', 'summary'].includes(selected) && <>
           <label>最大输出 Token<input type="number" value={String(config.maxTokens ?? '')} onChange={(e) => update('maxTokens', Number(e.target.value))} /></label>
