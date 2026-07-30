@@ -53,10 +53,36 @@ export function isShellAsset(relative) {
   return false;
 }
 
+/**
+ * Which icons deserve a place in the install-time precache: the ones the web app
+ * manifest actually declares, plus `icon.svg` because the push handler names it.
+ * `dist/icons/` also carries big unreferenced source images — 7.3 MB of them at the
+ * time of writing, including two 2.6 MB 1024px photos — and precaching those would
+ * make every install pay for artwork nothing renders.
+ */
+export function iconAllowList(distDir) {
+  const allowed = new Set(['/icons/icon.svg']);
+  const manifestPath = path.join(distDir, 'manifest.webmanifest');
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      for (const icon of Array.isArray(parsed.icons) ? parsed.icons : []) {
+        if (typeof icon?.src === 'string' && icon.src.startsWith('/')) allowed.add(icon.src);
+      }
+    } catch {
+      // A malformed manifest is the build's problem, not a reason to precache 7 MB.
+    }
+  }
+  return allowed;
+}
+
 /** Build the sorted asset url list plus a version derived from it. */
 export function buildManifest(distDir) {
   if (!fs.existsSync(distDir)) throw new Error(`dist directory not found: ${distDir}`);
-  const files = walk(distDir).filter(isShellAsset);
+  const allowedIcons = iconAllowList(distDir);
+  const files = walk(distDir)
+    .filter(isShellAsset)
+    .filter((file) => !file.startsWith('icons/') || allowedIcons.has(`/${file}`));
   if (!files.some((file) => file === 'index.html')) {
     throw new Error(`no index.html in ${distDir}; did vite build run?`);
   }
@@ -64,8 +90,12 @@ export function buildManifest(distDir) {
     throw new Error(`no hashed js bundle in ${distDir}/assets; refusing to ship an empty shell`);
   }
   const assets = ['/', ...files.map((file) => `/${file}`)].sort();
+  const bytes = files.reduce((total, file) => total + fs.statSync(path.join(distDir, file)).size, 0);
+  if (bytes > 3_000_000) {
+    throw new Error(`shell precache is ${(bytes / 1e6).toFixed(1)} MB; that is too much to fetch on install`);
+  }
   const version = createHash('sha256').update(JSON.stringify(assets)).digest('hex').slice(0, 12);
-  return { version, assets };
+  return { version, assets, bytes };
 }
 
 /** Rewrite the worker in place. Returns the manifest that was injected. */
@@ -90,8 +120,15 @@ export function injectSwManifest({ dist, worker } = {}) {
     if (!fs.existsSync(onDisk)) throw new Error(`manifest lists a file that does not exist: ${url}`);
   }
 
-  const next = source.replace(PATTERN, `$1${JSON.stringify(manifest, null, 2)};`);
-  if (next === source) throw new Error('manifest substitution produced no change');
+  // Only version + assets belong in the worker; `bytes` is build-time reporting.
+  const injected = { version: manifest.version, assets: manifest.assets };
+  const next = source.replace(PATTERN, `$1${JSON.stringify(injected, null, 2)};`);
+  // Re-running on an already-injected worker must be a no-op, not a failure: a build
+  // can legitimately run twice. What must never pass silently is a substitution that
+  // failed to take effect.
+  if (!next.includes(`"version": "${manifest.version}"`)) {
+    throw new Error('manifest substitution did not take effect');
+  }
   fs.writeFileSync(workerPath, next);
   return manifest;
 }
@@ -105,7 +142,7 @@ if (invokedDirectly) {
       return at === -1 ? undefined : args[at + 1];
     };
     const manifest = injectSwManifest({ dist: readFlag('--dist'), worker: readFlag('--worker') });
-    console.log(`sw manifest ${manifest.version}: ${manifest.assets.length} shell assets precached`);
+    console.log(`sw manifest ${manifest.version}: ${manifest.assets.length} shell assets, ${(manifest.bytes / 1e6).toFixed(2)} MB precached`);
   } catch (err) {
     console.error(`inject-sw-assets failed: ${err instanceof Error ? err.message : err}`);
     process.exit(1);
