@@ -1,0 +1,17 @@
+# Deploys origin/main when it moves. Paired with sooya-auto-update.timer.
+#
+# oneshot, not a daemon: the timer decides when it runs, and the script exits
+# immediately when there is nothing to deploy. It is intentionally NOT sandboxed
+# the way sooya.service is — it has to write /opt/sooya and restart a unit.
+[Unit]
+Description=SOOYA auto update from origin/main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/sooya/src/deploy/auto-update.sh --dir /opt/sooya --branch main --require-green
+# A build plus health check is slow on a small box; do not kill it half way.
+TimeoutStartSec=1800
+# Set this when the repository is private, so --require-green can read checks:
+# Environment=GITHUB_TOKEN=ghp_...

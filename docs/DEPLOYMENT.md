@@ -188,6 +188,46 @@ sudo ./deploy/upgrade.sh --source .
 
 ---
 
+## 自动更新（跟随 `main`）
+
+`upgrade.sh` 已经承担了所有危险动作，所以自动更新只是一层判断"要不要升级"的外壳：
+比对 `origin/main` 与已部署的 commit，不同才动手。
+
+```bash
+# 一次性：把本机变成跟随 main 的部署机
+sudo git clone https://github.com/<你>/sooya.git /opt/sooya/src
+sudo cp /opt/sooya/src/deploy/sooya-auto-update.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now sooya-auto-update.timer
+```
+
+```bash
+sudo systemctl list-timers sooya-auto-update      # 下次何时检查
+sudo journalctl -u sooya-auto-update -f           # 看它做了什么
+sudo /opt/sooya/src/deploy/auto-update.sh --dir /opt/sooya --branch main   # 立刻手动跑一次
+```
+
+默认每 5 分钟检查一次（开机 3 分钟后先跑一次），并带 ±60 秒随机抖动。
+
+**它的行为边界：**
+
+- `main` 没动 → 直接退出，**不重启服务**，所以定时器跑得再频繁也不影响运行中的实例；
+- `flock` 保证不会有两次升级重叠 —— 定时器在上一次还没升完时触发会安静退出；
+- `git fetch` 失败 → 退出，运行中的版本不受影响；
+- `--require-green`（service 单元里默认开启）会先查这个 commit 在 GitHub 上的
+  检查结果，**不绿不部署**，读不到状态也不部署（fail closed）。私有仓库需要在
+  service 单元里设 `Environment=GITHUB_TOKEN=...`，否则查不到就永远不部署；
+- 已部署的 commit 记录在 `shared/.deployed-commit`，且**只在 `upgrade.sh` 成功返回后
+  才写入**。升级失败时 `upgrade.sh` 已经把旧版本恢复回去了，而记录没变，所以下次会
+  重试同一个 commit，而不是把失败当成已上线。
+
+**要不要用它，取决于你怎么看待"自动"：** 好处是推到 `main` 五分钟内自动上线；
+代价是一次坏合并也会在五分钟内自动上线（虽然健康检查失败会自动回滚）。
+想更保守就把定时器停掉，只在需要时手动跑那条 `auto-update.sh` 命令 —— 脚本本身
+是幂等的，手动跑和定时跑没有区别。
+
+---
+
 ## 回滚
 
 ```bash
