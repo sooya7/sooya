@@ -1,0 +1,75 @@
+# 用 GitHub 的定时器从外部激活 Browser Use 会话。
+#
+# 为什么需要它：Browser Use 的 scheduled jobs 在 Free 计划上不投递——定时记录能建，
+# 但会话空闲时那一轮不会自己跑起来。而公开 API 的 session queue 接口可以从外部往
+# 会话里塞一条消息，等于替人“发了一句话”，会话因此被激活并开始干活。
+#
+# 需要配置两样东西（只需一次）：
+#   1. secret  BROWSER_USE_API_KEY  —— cloud.browser-use.com/settings?tab=api-keys 创建，bu_ 开头
+#   2. variable BU_SESSION_ID       —— 要被唤醒的会话 id
+# 都在 Settings → Secrets and variables → Actions。
+#
+# 关掉它：Actions 页面停用这个 workflow，或删掉本文件。
+
+name: agent shift
+
+on:
+  schedule:
+    # 每小时 :07（UTC）。GitHub 的定时是 best-effort，高峰时可能晚十几分钟。
+    - cron: '7 * * * *'
+  workflow_dispatch:
+    inputs:
+      text:
+        description: 本次发给 agent 的指令（留空则用 .github/agent-shift.md）
+        required: false
+
+concurrency:
+  group: agent-shift
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  poke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Queue a shift into the agent session
+        env:
+          KEY: ${{ secrets.BROWSER_USE_API_KEY }}
+          SESSION: ${{ vars.BU_SESSION_ID }}
+          OVERRIDE: ${{ inputs.text }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEY:-}" ]; then
+            echo "::error::secret BROWSER_USE_API_KEY is not set"; exit 1
+          fi
+          if [ -z "${SESSION:-}" ]; then
+            echo "::error::repository variable BU_SESSION_ID is not set"; exit 1
+          fi
+
+          if [ -n "${OVERRIDE:-}" ]; then
+            TEXT="$OVERRIDE"
+          else
+            TEXT="$(cat .github/agent-shift.md)"
+          fi
+          BODY="$(jq -nc --arg t "$TEXT" '{text: $t, interrupt: false}')"
+
+          CODE="$(curl -sS -o /tmp/queue-response.json -w '%{http_code}' -X POST \
+            -H "X-Browser-Use-API-Key: ${KEY}" \
+            -H 'Content-Type: application/json' \
+            "https://api.browser-use.com/api/v4/sessions/${SESSION}/queue" \
+            -d "${BODY}")"
+
+          echo "http ${CODE}"
+          cat /tmp/queue-response.json || true
+          echo
+          case "${CODE}" in
+            2*) echo "shift queued into session ${SESSION}" ;;
+            401|403) echo "::error::BROWSER_USE_API_KEY was rejected — rotate it and update the secret"; exit 1 ;;
+            404) echo "::error::session ${SESSION} not found — update the BU_SESSION_ID variable"; exit 1 ;;
+            *) echo "::error::queue rejected the shift (http ${CODE})"; exit 1 ;;
+          esac
