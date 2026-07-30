@@ -497,6 +497,25 @@
   font-size: 12px;
 }
 
+/* Input plus its own action button on one row (model name + 拉取模型). */
+.admin-v2 .admin-inline-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.admin-v2 .admin-inline-field input {
+  flex: 1 1 auto;
+  /* Without this a flex input refuses to shrink below its content width and
+     pushes the button out of the card. */
+  min-width: 0;
+}
+
+.admin-v2 .admin-inline-field button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .admin-v2 .admin-actions {
   display: flex;
   align-items: center;

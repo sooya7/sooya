@@ -37,6 +37,8 @@ export interface HarnessOptions {
   embeddingDim?: number;
   skipStickerImport?: boolean;
   startWorkers?: boolean;
+  /** Reply for GET <baseUrl>/models, used by the model-discovery route. */
+  discover?: { status?: number; payload?: unknown } | 'network-error';
   /** Pins the life engine's clock; see BuildAppOptions.clock. */
   clock?: () => Date;
 }
@@ -127,6 +129,15 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const body = init?.body && typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : null;
+
+    if (url.endsWith('/models')) {
+      if (opts.discover === 'network-error') throw new Error('socket hang up');
+      const spec = opts.discover === undefined || opts.discover === 'network-error' ? {} : opts.discover;
+      return new Response(JSON.stringify(spec.payload ?? { data: [{ id: 'zeta-2' }, { id: 'alpha-1' }] }), {
+        status: spec.status ?? 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
 
     if (url.includes('/chat/completions')) {
       state.chatCalls.push({ body, url });

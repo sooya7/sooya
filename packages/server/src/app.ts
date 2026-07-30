@@ -104,6 +104,8 @@ export interface SooyaApp {
     dbRecoveredFrom?: string;
     version: string;
   };
+  /** Injected in tests so routes can reach the network through a stub. */
+  fetchImpl?: typeof fetch;
   reopenDatabase: () => void;
   close: () => Promise<void>;
 }
@@ -288,6 +290,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     repos,
     services: { mediaStore, stickerLibrary, capabilities, memory, world, life, push, storage, context, summarizer, replier, bus, worker, backups, agents, tools, agentCapabilities },
     state,
+    fetchImpl: opts.fetchImpl,
     reopenDatabase: () => {
       const previous = dbHandle.raw;
       closeDatabase(previous);

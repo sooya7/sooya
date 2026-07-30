@@ -5,6 +5,7 @@ import {
   MAX_PRESETS,
   MODEL_SLOTS,
   normalizePreset,
+  presetFromConfig,
   presetsBySlot,
   PROVIDER_LABELS,
   removePreset,
@@ -140,5 +141,56 @@ describe('interface options per capability', () => {
   it('does not duplicate a saved value that is already legal', () => {
     const values = interfaceOptions('tts', 'openai-tts').map((o) => o.value);
     expect(values.filter((v) => v === 'openai-tts')).toHaveLength(1);
+  });
+});
+
+describe('presetFromConfig（把当前配置存进模型库）', () => {
+  const cfg = { provider: 'openai-compatible', model: 'deepseek-v4-flash', baseUrl: 'https://api.sooya.icu/v1', apiKeyEnv: 'SOOYA_CHAT_API_KEY' };
+
+  it('carries the config over and derives an id and a readable name', () => {
+    const preset = presetFromConfig('chat', cfg, []);
+    expect(typeof preset).not.toBe('string');
+    expect(preset).toMatchObject({
+      id: 'chat-deepseek-v4-flash',
+      slot: 'chat',
+      provider: 'openai-compatible',
+      model: 'deepseek-v4-flash',
+      baseUrl: 'https://api.sooya.icu/v1',
+      apiKeyEnv: 'SOOYA_CHAT_API_KEY'
+    });
+    expect((preset as ModelPreset).name).toContain('deepseek-v4-flash');
+  });
+
+  it('suffixes a colliding id instead of overwriting the existing entry', () => {
+    const first = presetFromConfig('chat', cfg, []) as ModelPreset;
+    const second = presetFromConfig('chat', cfg, [first]) as ModelPreset;
+    const third = presetFromConfig('chat', cfg, [first, second]) as ModelPreset;
+    expect(second.id).toBe('chat-deepseek-v4-flash-2');
+    expect(third.id).toBe('chat-deepseek-v4-flash-3');
+  });
+
+  it('produces a preset the server-side validator accepts', () => {
+    const preset = presetFromConfig('tts', { provider: 'volc-tts', model: 'seed-tts-2.0' }, []) as ModelPreset;
+    expect(validatePreset(preset, [])).toBeNull();
+  });
+
+  it('refuses rather than inventing a model name', () => {
+    expect(presetFromConfig('chat', { ...cfg, model: '   ' }, [])).toMatch(/模型名/);
+  });
+
+  it('refuses a slot that is switched off or mismatched, which could never be applied', () => {
+    expect(presetFromConfig('chat', { ...cfg, provider: 'none' }, [])).toMatch(/接口协议/);
+    expect(presetFromConfig('tts', { provider: 'openai-embeddings', model: 'x' }, [])).toMatch(/不支持/);
+  });
+
+  it('falls back to a slot-only id when the model name is entirely non-ascii', () => {
+    const preset = presetFromConfig('image', { provider: 'openai-images', model: '豆包画图' }, []) as ModelPreset;
+    expect(preset.id).toBe('image');
+    expect(validatePreset(preset, [])).toBeNull();
+  });
+
+  it('stops at the library cap', () => {
+    const full = Array.from({ length: MAX_PRESETS }, (_, i) => ({ ...(presetFromConfig('chat', cfg, []) as ModelPreset), id: `p${i}` }));
+    expect(presetFromConfig('chat', cfg, full)).toMatch(/最多/);
   });
 });
