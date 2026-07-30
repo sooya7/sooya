@@ -343,6 +343,46 @@ export const MIGRATIONS: Migration[] = [
           WHERE active = 1 AND conflict_of IS NULL;
       `);
     }
+  },
+  {
+    version: 6,
+    name: 'life_engine',
+    up: (db) => {
+      /*
+       * The assistant had no existence between messages. Nothing advanced, so
+       * "什么都没发生" was the only honest answer to 你在干嘛 -- and the model,
+       * having no state to read, invented a different answer every time.
+       *
+       * life_state holds the single current activity; life_log is the history
+       * she recounts from. `shared` marks a log row she has already brought up
+       * unprompted, so she does not open with the same thing twice.
+       */
+      db.exec(`
+        CREATE TABLE life_state (
+          id          INTEGER PRIMARY KEY CHECK (id = 1),
+          activity    TEXT NOT NULL,
+          kind        TEXT NOT NULL,
+          mood        TEXT NOT NULL,
+          started_at  TEXT NOT NULL,
+          ends_at     TEXT NOT NULL,
+          updated_at  TEXT NOT NULL,
+          meta_json   TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE TABLE life_log (
+          id          TEXT PRIMARY KEY,
+          activity    TEXT NOT NULL,
+          kind        TEXT NOT NULL,
+          mood        TEXT NOT NULL,
+          started_at  TEXT NOT NULL,
+          ended_at    TEXT NOT NULL,
+          shared      INTEGER NOT NULL DEFAULT 0,
+          created_at  TEXT NOT NULL
+        );
+        CREATE INDEX idx_life_log_started ON life_log(started_at DESC);
+        CREATE INDEX idx_life_log_shared ON life_log(shared, started_at DESC);
+      `);
+    }
   }
 ];
 

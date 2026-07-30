@@ -25,6 +25,8 @@ import { Summarizer } from './core/summarizer.js';
 import { Replier } from './core/replier.js';
 import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
 import { WorldEngine } from './core/world.js';
+import { LifeEngine, DEFAULT_LIFE_CONFIG } from './core/life.js';
+import { LifeRepo } from './db/repos/life.repo.js';
 import { PushService } from './core/push.js';
 import { StorageService } from './core/storage.js';
 import { maintenanceCoordinator } from './core/maintenance.js';
@@ -66,6 +68,7 @@ export interface SooyaApp {
     errors: ErrorLogRepo;
     pushSubscriptions: PushSubscriptionRepo;
     world: WorldRepo;
+    life: LifeRepo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
   };
@@ -75,6 +78,7 @@ export interface SooyaApp {
     capabilities: CapabilityRegistry;
     memory: MemoryService;
     world: WorldEngine;
+    life: LifeEngine;
     push: PushService;
     storage: StorageService;
     context: ContextBuilder;
@@ -122,6 +126,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     errors: new ErrorLogRepo(dbHandle),
     pushSubscriptions: new PushSubscriptionRepo(dbHandle),
     world: new WorldRepo(dbHandle),
+    life: new LifeRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle)
   };
@@ -134,7 +139,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const world = new WorldEngine(repos.world, capabilities, repos.errors, repos.messages);
   const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, opts.fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
-  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, world);
+  const life = new LifeEngine(repos.life, { ...DEFAULT_LIFE_CONFIG, tzOffsetMinutes: env.LIFE_TZ_OFFSET_MINUTES, quietGapMinutes: env.LIFE_QUIET_GAP_MINUTES, maxReachOutsPerDay: env.LIFE_MAX_REACH_OUTS_PER_DAY });
+  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, world, env.ENABLE_LIFE_ENGINE ? life : undefined);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
@@ -170,6 +176,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     bus,
     backups,
     world,
+    life,
+    capabilities,
+    config,
+    reachOutEnabled: env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT,
     push,
     storage,
     tmpDirs: [env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files, env.dbDir]
@@ -269,7 +279,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, stickerLibrary, capabilities, memory, world, push, storage, context, summarizer, replier, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, stickerLibrary, capabilities, memory, world, life, push, storage, context, summarizer, replier, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     reopenDatabase: () => {
       const previous = dbHandle.raw;
@@ -332,6 +342,16 @@ function scheduleRecurring(app: SooyaApp): void {
     } catch { /* ignore */ }
   }, 30 * 60 * 1000);
   maintenance.unref?.();
+
+  if (env.ENABLE_LIFE_ENGINE && env.LIFE_TICK_INTERVAL_MS > 0) {
+    // Enqueued immediately as well: a restart should not leave her state
+    // frozen at whatever she was doing when the process died.
+    try { repos.jobs.enqueue('life.tick', {}); } catch { /* ignore */ }
+    const life = setInterval(() => {
+      try { repos.jobs.enqueue('life.tick', {}); } catch { /* ignore */ }
+    }, env.LIFE_TICK_INTERVAL_MS);
+    life.unref?.();
+  }
 
   if (env.BACKUP_INTERVAL_MS > 0) {
     const backup = setInterval(() => {

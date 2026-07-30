@@ -6,6 +6,10 @@ import type { EventBus } from '../events/bus.js';
 import type { BackupService } from '../backup/service.js';
 import type { MediaStore } from '../media/store.js';
 import type { WorldEngine } from './world.js';
+import type { LifeEngine } from './life.js';
+import type { CapabilityRegistry } from './capabilities.js';
+import type { ChatProvider } from '../providers/types.js';
+import type { ConfigStore } from '../config/store.js';
 import type { PushService } from './push.js';
 import type { StorageService } from './storage.js';
 import { cleanupTempFiles } from '../util/fsx.js';
@@ -92,6 +96,10 @@ export interface JobDeps {
   bus: EventBus;
   backups: BackupService;
   world: WorldEngine;
+  life: LifeEngine;
+  capabilities: CapabilityRegistry;
+  config: ConfigStore;
+  reachOutEnabled: boolean;
   push: PushService;
   storage: StorageService;
   tmpDirs: string[];
@@ -133,6 +141,46 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     if (result.delivered || result.removed || result.failed) deps.bus.publish('push.updated', { ...result });
   });
 
+  /*
+   * Advances her day. Runs on a timer, not off a user message, because the
+   * whole point is that she exists while nobody is looking. The engine
+   * resolves the activity from the clock, so a tick that was missed while the
+   * process was down does not leave her stuck in yesterday's afternoon.
+   */
+  worker.register('life.tick', async () => {
+    const result = deps.life.tick();
+    if (result.changed) deps.bus.publish('life.updated', { activity: result.activity, kind: result.kind, mood: result.mood });
+    if (!deps.reachOutEnabled) return;
+
+    const recent = deps.messages.recent(40);
+    const lastUser = [...recent].reverse().find((msg) => msg.role === 'user');
+    const lastAssistant = [...recent].reverse().find((msg) => msg.role === 'assistant');
+    const decision = deps.life.shouldReachOut(
+      lastUser ? new Date(lastUser.createdAt) : null,
+      lastAssistant ? new Date(lastAssistant.createdAt) : null
+    );
+    if (!decision.reach || !decision.candidate) return;
+
+    const provider = deps.capabilities.chatProvider();
+    if (!provider.configured) return;
+    const persona = deps.config.getPersona();
+    const text = await composeReachOut(provider, persona.systemPrompt, deps.life.contextLines(lastUser ? new Date(lastUser.createdAt) : null), decision.candidate.activity);
+    if (!text) return;
+
+    const created = deps.messages.create({
+      role: 'assistant',
+      status: 'sent',
+      parts: [{ type: 'text', text }],
+      // Marked so the client can tell it apart, and so a later audit can
+      // measure how often she spoke first.
+      meta: { proactive: true, lifeLogId: decision.candidate.id, activity: decision.candidate.activity }
+    });
+    if (!created.created) return;
+    deps.life.markShared(decision.candidate.id);
+    deps.bus.persist('message.received', { message: created.message });
+    deps.jobs.enqueue('push.reply', { messageId: created.message.id }, { maxAttempts: 3 });
+  });
+
   worker.register('memory.embed.backfill', async () => { await deps.memory.backfillEmbeddings(20); });
   worker.register('summary.build', async () => { await deps.summarizer.runOnce(); });
 
@@ -151,6 +199,33 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   });
 
   worker.register('backup.create', async (payload) => { await deps.backups.create(String(payload.reason ?? 'scheduled')); });
+}
+
+/**
+ * One short unprompted line, grounded in what she actually just did. The
+ * activity is passed in rather than left to the model so the message cannot
+ * contradict the state the user can see in the UI.
+ */
+async function composeReachOut(
+  provider: ChatProvider,
+  personaPrompt: string,
+  lifeLines: string[],
+  activity: string
+): Promise<string> {
+  const result = await provider.complete({
+    system: [
+      personaPrompt.trim(),
+      lifeLines.join('\n'),
+      `你想主动跟用户说说刚才${activity}的事。`,
+      '写一条 40 字以内的消息，像随手发的碎碎念，只说这一件事。',
+      '不要打招呼式的开场，不要问“你在吗”，不要提到任何系统、功能或设置。',
+      '直接输出这句话本身，不要引号。'
+    ].join('\n'),
+    messages: [{ role: 'user', content: [{ type: 'text', text: '（无人说话，你主动开口）' }] }],
+    temperature: 0.9,
+    maxTokens: 120
+  });
+  return result.text.trim().replace(/^["“']|["”']$/g, '').slice(0, 120);
 }
 
 function textOf(msg: { content: Array<{ type: string; text?: string | null; transcript?: string | null }> } | undefined): string {
