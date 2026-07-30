@@ -68,3 +68,13 @@ export interface ActivityState {
   thinking: boolean;
   label: string | null;
 }
+
+/** What she is doing right now, shown in the header. */
+export interface LifeState {
+  activity: string;
+  kind: string;
+  mood: string;
+  startedAt: string;
+  endsAt: string;
+  recent: Array<{ activity: string; startedAt: string; endedAt: string }>;
+}

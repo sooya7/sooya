@@ -29,6 +29,7 @@ export const api = {
   transcribe: (mediaId: string) => request<{ transcript: string; duration: number | null }>(`/api/media/${mediaId}/transcribe`, { method: 'POST' }),
   stickers: () => request<{ stickers: StickerInfo[] }>('/api/stickers'),
   capabilities: () => request<{ capabilities: Record<string, { configured: boolean; ok: boolean; detail?: string }>; stickers: { available: number; total: number } }>('/api/capabilities'),
+  life: () => request<{ activity: string; kind: string; mood: string; startedAt: string; endsAt: string; recent: Array<{ activity: string; startedAt: string; endedAt: string }> }>('/api/life'),
   events: (since: number) => request<{ events: Array<Record<string, unknown>>; lastEventSeq: number }>(`/api/events?since=${since}`)
 };
 /** @deprecated Render protected media through useAuthenticatedMedia instead. */

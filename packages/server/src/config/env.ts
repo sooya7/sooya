@@ -72,7 +72,18 @@ const EnvSchema = z.object({
   SUMMARY_CHUNK_MESSAGES: intish(30),
 
   ENABLE_BACKGROUND_JOBS: boolish(true),
-  DISABLE_MEMORY_PIPELINE: boolish(false)
+  DISABLE_MEMORY_PIPELINE: boolish(false),
+
+  /* She keeps her own hours whether or not anyone is talking to her. */
+  ENABLE_LIFE_ENGINE: boolish(true),
+  /* Her local timezone; the user is UTC+8, and the server may not be. */
+  LIFE_TZ_OFFSET_MINUTES: intish(8 * 60),
+  LIFE_TICK_INTERVAL_MS: intish(5 * 60 * 1000),
+  /* Silence required before she will speak first. */
+  LIFE_QUIET_GAP_MINUTES: intish(180),
+  LIFE_MAX_REACH_OUTS_PER_DAY: intish(3),
+  /* Unprompted messages are off until the user turns them on. */
+  ENABLE_LIFE_REACH_OUT: boolish(false)
 });
 
 export type RawEnv = z.infer<typeof EnvSchema>;

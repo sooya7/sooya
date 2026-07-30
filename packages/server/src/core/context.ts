@@ -7,6 +7,7 @@ import type { ChatTurn, ChatContentPart } from '../providers/types.js';
 import type { MediaStore } from '../media/store.js';
 import type { MediaRepo } from '../db/repos/media.repo.js';
 import type { WorldEngine } from './world.js';
+import type { LifeEngine } from './life.js';
 
 export interface BuiltContext {
   system: string;
@@ -18,6 +19,7 @@ export interface BuiltContext {
   recentCount: number;
   visionUsed: boolean;
   worldEntries: number;
+  lifeLines: number;
   inputBudget: number;
   estimatedInputTokens: number;
   droppedSummaries: number;
@@ -44,7 +46,8 @@ export class ContextBuilder {
     private readonly memory: MemoryService,
     private readonly mediaRepo: MediaRepo,
     private readonly mediaStore: MediaStore,
-    private readonly world?: WorldEngine
+    private readonly world?: WorldEngine,
+    private readonly life?: LifeEngine
   ) {}
 
   async build(persona: Persona, latestUserText: string, opts: ContextOptions): Promise<BuiltContext> {
@@ -97,6 +100,20 @@ export class ContextBuilder {
       inputBudget
     );
 
+    /*
+     * Her own state goes in before the capability notes: what she is doing is
+     * part of who she is right now, while the capability notes are about what
+     * the software can do. Keeping them separate is what stopped the world
+     * engine's frozen "语音不可用" rows from being treated as personality.
+     */
+    const lifeLinesList = this.life?.contextLines(lastUserMessageAt(recent)) ?? [];
+    let lifeLines = 0;
+    if (lifeLinesList.length > 0) {
+      const before = systemParts.length;
+      tryAddSystemPart(systemParts, turns, `你此刻的真实状态：\n${lifeLinesList.join('\n')}`, inputBudget);
+      lifeLines = systemParts.length > before ? lifeLinesList.length : 0;
+    }
+
     tryAddSystemPart(systemParts, turns, buildMultimediaInstructions(persona, opts), inputBudget);
     if (opts.capabilityNotes.length > 0) {
       tryAddSystemPart(systemParts, turns, `当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`, inputBudget);
@@ -114,6 +131,7 @@ export class ContextBuilder {
       recentCount: turns.length,
       visionUsed,
       worldEntries: usedWorldEntries,
+      lifeLines,
       inputBudget,
       estimatedInputTokens,
       droppedSummaries: activeSummaries.length - usedSummaries,
@@ -227,6 +245,19 @@ function fitLatestTurn(systemParts: string[], turn: ChatTurn, budget: number): C
     role: turn.role,
     content: [{ type: 'text', text: trimToTokenEstimate(flattened, available) }]
   };
+}
+
+/**
+ * When the user last spoke *before now*. If the newest message is theirs -- the
+ * one being replied to -- it is skipped, so the gap describes how long they had
+ * been away before writing rather than always reading as "刚刚".
+ */
+function lastUserMessageAt(recent: ChatMessage[]): Date | null {
+  const users = recent.filter((msg) => msg.role === 'user');
+  const newest = recent[recent.length - 1];
+  const pool = newest?.role === 'user' ? users.slice(0, -1) : users;
+  const last = pool[pool.length - 1];
+  return last ? new Date(last.createdAt) : null;
 }
 
 function plainText(msg: ChatMessage): string {

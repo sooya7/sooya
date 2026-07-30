@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api.js';
 import { ChatStream } from './stream.js';
 import { fetchAllMessagePages, replaceFailedMessage } from './messageSync.js';
-import type { ActivityState, ChatMessage, ConnectionState, PersonaInfo } from './types.js';
+import type { ActivityState, ChatMessage, ConnectionState, LifeState, PersonaInfo } from './types.js';
 
 const PAGE_SIZE = 30;
 /** Matches the server's `?since=` cap; catch-up walks pages of this size. */
@@ -26,6 +26,7 @@ export function useChat() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [life, setLife] = useState<LifeState | null>(null);
   const streamRef = useRef<ChatStream | null>(null);
   const maxSeqRef = useRef(0);
   const draftRef = useRef(new Map<string, string>());
@@ -58,6 +59,12 @@ export function useChat() {
     catch (err) { if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else setError((err as Error).message); }
   }, [applyMessages]);
 
+  const refreshLife = useCallback(async () => {
+    // Never surfaces an error: what she is doing is decoration next to the
+    // conversation, and must not be able to break the chat.
+    try { setLife(await api.life()); } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -65,6 +72,7 @@ export function useChat() {
         const [conv, page] = await Promise.all([api.conversation(), api.messages({ limit: PAGE_SIZE })]);
         if (cancelled) return;
         setPersona(conv.persona); applyMessages(page.messages); setHasMore(page.hasMore); setReady(true);
+        void refreshLife();
         const stream = new ChatStream({
           onStateChange: setConnection,
           onGap: () => void resync(),
@@ -82,6 +90,9 @@ export function useChat() {
               case 'reply.content.done': setActivity({ thinking: true, label: '正在整理' }); break;
               case 'reply.completed': { setActivity({ thinking: false, label: null }); const msg = data.message as ChatMessage | undefined; if (msg) { draftRef.current.delete(msg.id); applyMessages([msg]); } else void resync(); break; }
               case 'reply.failed': { setActivity({ thinking: false, label: null }); const msg = data.message as ChatMessage | undefined; if (msg) applyMessages([msg]); setError(typeof data.error === 'string' ? data.error : '回复失败'); break; }
+              // She moved on to something else; re-read rather than trust the
+              // event payload, which carries no timings.
+              case 'life.updated': void refreshLife(); break;
               case 'system.notice': if (data.action === 'reload') void reload(); else void resync(); break;
               default: break;
             }
@@ -95,7 +106,7 @@ export function useChat() {
       }
     })();
     return () => { cancelled = true; streamRef.current?.stop(); streamRef.current = null; };
-  }, [applyMessages, reload, resync]);
+  }, [applyMessages, refreshLife, reload, resync]);
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMore) return;
@@ -139,7 +150,7 @@ export function useChat() {
 
   useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') void resync(); }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [resync]);
 
-  return { messages, persona, connection, activity, hasMore, loadingOlder, error, ready, send, resend, withdraw, loadOlder, resync, reload, clearError: () => setError(null) };
+  return { messages, persona, connection, activity, life, hasMore, loadingOlder, error, ready, send, resend, withdraw, loadOlder, resync, reload, clearError: () => setError(null) };
 }
 
 function applyDraft(messages: ChatMessage[], messageId: string, text: string): ChatMessage[] {

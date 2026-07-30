@@ -1636,6 +1636,25 @@ button {
   fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round;
 }
 
+/*
+ * What she is doing, next to the connection status. Muted and truncating: it
+ * is context, not a control, and must never push the admin entry off a 390px
+ * screen.
+ */
+.topbar-life {
+  font-size: 12px;
+  color: var(--ink-meta);
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-life::before {
+  content: '· ';
+  color: var(--ink-faint);
+}
+
 /* ---- Touch targets ------------------------------------------------------ */
 
 /*

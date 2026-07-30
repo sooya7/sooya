@@ -32,6 +32,6 @@ export const SendMessageSchema = z.object({
 });
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
-export type StreamEventType = 'message.received' | 'reply.thinking' | 'reply.text.delta' | 'reply.text.done' | 'reply.sticker.selecting' | 'reply.image.generating' | 'reply.audio.generating' | 'reply.content.done' | 'reply.media.saved' | 'reply.completed' | 'reply.failed' | 'message.updated' | 'memory.updated' | 'persona.updated' | 'world.updated' | 'push.updated' | 'storage.updated' | 'system.notice' | 'ping';
+export type StreamEventType = 'message.received' | 'reply.thinking' | 'reply.text.delta' | 'reply.text.done' | 'reply.sticker.selecting' | 'reply.image.generating' | 'reply.audio.generating' | 'reply.content.done' | 'reply.media.saved' | 'reply.completed' | 'reply.failed' | 'message.updated' | 'memory.updated' | 'persona.updated' | 'world.updated' | 'life.updated' | 'push.updated' | 'storage.updated' | 'system.notice' | 'ping';
 export interface StreamEvent { id: string; seq: number; type: StreamEventType; createdAt: string; payload: Record<string, unknown>; }
 export interface MemoryRecord { id: string; kind: 'profile' | 'preference' | 'relationship' | 'project' | 'event' | 'summary'; content: string; importance: number; confidence: number; createdAt: string; updatedAt: string; expiresAt?: string | null; hits: number; sources: string[]; hasEmbedding: boolean; }
