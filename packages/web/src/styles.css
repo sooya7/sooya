@@ -13,6 +13,10 @@
   --accent-deep: #4c5fd7;
   --grad: linear-gradient(135deg, #6d5efc, #2f80ed);
   --grad-soft: linear-gradient(135deg, #f0edff, #e8f2ff);
+  /* Accent at low alpha, for tints and focus rings. A token because a literal
+     rgba() of the old blue accent had been left behind in two places. */
+  --accent-tint: rgba(109, 94, 252, 0.12);
+  --accent-line: rgba(109, 94, 252, 0.28);
   --mine: var(--grad);
   --mine-ink: #ffffff;
   --danger: #e5484d;
@@ -590,7 +594,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(58, 161, 255, 0.12);
+  background: var(--accent-tint);
   border: 2px dashed var(--accent);
   border-radius: 12px;
   color: var(--accent-deep);
@@ -640,6 +644,7 @@ button {
 }
 .composer-input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
 .send-btn {
@@ -648,7 +653,8 @@ button {
   height: 38px;
   border-radius: 50%;
   background: var(--line);
-  color: #fff;
+  /* Inactive is a light chip, so the glyph has to be dark to be seen at all. */
+  color: var(--ink-faint);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -656,7 +662,8 @@ button {
   transition: background 0.15s, transform 0.1s;
 }
 .send-btn.active {
-  background: var(--accent);
+  background: var(--grad);
+  color: #fff;
 }
 .send-btn.active:active {
   transform: scale(0.94);
