@@ -134,6 +134,8 @@ export function NotificationBridge() {
     }
   };
 
+  const on0 = Boolean(subscription);
+
   const dismiss = () => {
     writeHidden(true);
     setMessage(null);   // otherwise the "keep showing while there is a message" rule wins
@@ -151,9 +153,27 @@ export function NotificationBridge() {
   }
 
   // Once the user has answered, the bar has nothing left to ask; keeping it on screen
-  // forever was the \"stuck\" part of this bug. It comes back from browser settings or
-  // by clearing the flag, and never hides a pending action or an error.
-  if (hidden && state !== 'working' && !message) return null;
+  // forever was the \"stuck\" part of this bug. It never hides a pending action or an
+  // error, and it always leaves the small bell behind — hiding the bar used to be a
+  // one-way door, with no way back to the toggle short of clearing site data.
+  if (hidden && state !== 'working' && !message) {
+    return (
+      <button
+        type="button"
+        className={`notification-reopen${on0 ? ' is-on' : ''}`}
+        data-testid="push-reopen"
+        aria-label={on0 ? '通知设置：后台通知已开启' : '通知设置：后台通知已关闭'}
+        title="通知设置"
+        onClick={() => { writeHidden(false); setHidden(false); }}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M12 3a5 5 0 0 0-5 5v3.6L5.4 14a1 1 0 0 0 .8 1.6h11.6a1 1 0 0 0 .8-1.6L17 11.6V8a5 5 0 0 0-5-5Z" />
+          <path d="M10 18.2a2 2 0 0 0 4 0Z" />
+          {!on0 && <path className="notification-reopen-slash" d="M4 4l16 16" />}
+        </svg>
+      </button>
+    );
+  }
 
   const on = Boolean(subscription);
   return (
