@@ -18,6 +18,15 @@ function waveform(seed: string, count: number): number[] {
 
 const SPEEDS = [1, 1.5, 2];
 
+/** Bar geometry, mirrored from `.audio-wave i` / `.audio-wave` gap in styles.css. */
+export const BAR_W = 2;
+export const BAR_GAP = 2;
+/**
+ * Everything in the bubble that is not the waveform: 12px padding twice, the 30px play
+ * button, three 8px flex gaps, `.audio-time` (32px) and `.audio-speed` (30px).
+ */
+export const BUBBLE_CHROME_W = 24 + 30 + 24 + 32 + 30;
+
 function formatTime(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '0:00';
   const m = Math.floor(sec / 60);
@@ -78,8 +87,13 @@ export function AudioBubble({ part, mine }: Props) {
   // always looks the same, without decoding audio just to draw 24 bars.
   const bars = waveform(part.media.id, Math.max(14, Math.min(28, Math.round(duration * 1.6) || 18)));
   const progress = duration > 0 ? Math.min(current / duration, 1) : 0;
-  // Width scales with length, like a familiar messenger voice bubble.
-  const width = Math.min(70 + Math.min(duration, 60) * 3.2, 260);
+  // Width scales with length, like a familiar messenger voice bubble -- but it is the
+  // width of the whole bubble, so the fixed furniture has to be paid for first. The old
+  // formula (70 + duration * 3.2) ignored it and returned 110px for a 12s clip, which is
+  // less than the furniture alone: the waveform was left negative space, overflowed its
+  // track and rendered on top of the duration. Keep BUBBLE_CHROME_W in step with the
+  // padding, play button, gaps, `.audio-time` and `.audio-speed` in styles.css.
+  const width = Math.min(BUBBLE_CHROME_W + bars.length * (BAR_W + BAR_GAP) - BAR_GAP, 300);
 
   const toggle = () => {
     const audio = audioRef.current;

@@ -522,27 +522,30 @@ button {
   flex: 0 0 auto;
 }
 
+/* Holds the waveform, so it needs the waveform's height. It used to be a 5px
+   progress bar with an absolutely positioned `.audio-track-fill` inside; the
+   waveform replaced that fill but the 5px box stayed, so `.audio-wave` (20px
+   tall, and wider than the box) spilled out and painted over the duration and
+   the speed button. `overflow: hidden` keeps that structurally impossible. */
 .audio-track {
   flex: 1 1 auto;
-  height: 5px;
-  border-radius: 3px;
-  background: rgba(0, 0, 0, 0.12);
+  height: 20px;
+  background: transparent;
   position: relative;
   cursor: pointer;
   min-width: 40px;
-}
-.audio-track-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: 3px;
-  background: var(--accent);
+  overflow: hidden;
 }
 
+/* Fixed widths so neither a longer timestamp (`10:05`) nor toggling the speed
+   to `1.5×` reflows the row and re-squeezes the waveform. */
 .audio-time {
   font-size: 12px;
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
+  min-width: 32px;
+  text-align: right;
 }
 
 .audio-speed {
@@ -553,6 +556,8 @@ button {
   border-radius: 8px;
   padding: 2px 6px;
   flex: 0 0 auto;
+  min-width: 30px;
+  text-align: center;
 }
 
 .audio-transcript-toggle {
@@ -1494,13 +1499,14 @@ button {
   align-items: center;
   width: 100%;
   height: 100%;
-  min-height: 20px;
   pointer-events: none;
 }
 
+/* `min-width: 2px` on every bar made the row unshrinkable, which is how it
+   overflowed a narrower track. Bars may now compress instead. */
 .audio-wave i {
-  flex: 1 1 auto;
-  min-width: 2px;
+  flex: 1 1 2px;
+  min-width: 1px;
   border-radius: 2px;
   background: currentColor;
   opacity: 0.28;
@@ -1526,8 +1532,9 @@ button {
   background: rgba(255, 255, 255, 0.92);
 }
 
+/* The waveform is the track now; a filled slab behind it just muddied the bars. */
 .bubble-audio.mine .audio-track {
-  background: rgba(255, 255, 255, 0.22);
+  background: transparent;
 }
 
 /* The reply row sits on the page, not on the bubble, so it keeps ink text. */
