@@ -214,10 +214,18 @@ export class VolcTTSProvider implements TTSProvider {
           }
           const reqParams: Record<string, unknown> = { text: spokenText, speaker: voice, audio_params: audioParams };
           if (this.cfg.model) reqParams.model = this.cfg.model;
+          const additions: Record<string, unknown> = {};
           if (transport === 'instruction' && opts.instructions && shouldSendInstructions(this.cfg)) {
-            // 2.0 音色 follow a spoken direction; the vendor reads it off the text
-            // stream, so it is prefixed rather than sent as a separate field.
-            reqParams.text = `（${opts.instructions}）${spokenText}`;
+            // The official instruction channel for 2.0 voices. Only the first entry
+            // is honoured, and this text is not billed and never spoken aloud —
+            // unlike folding the direction into `text`, which either gets read out
+            // or silently dropped by the parenthesis filter.
+            additions.context_texts = [opts.instructions];
+          }
+          if (Object.keys(additions).length) {
+            // Must be a JSON *string*: anything else makes the vendor's handler
+            // panic with a nil-map assignment behind an HTTP 200.
+            reqParams.additions = JSON.stringify(additions);
           }
 
           const res = await this.fetchImpl(this.cfg.baseUrl, {

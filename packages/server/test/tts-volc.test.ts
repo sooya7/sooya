@@ -33,7 +33,7 @@ function stream(chunks: Buffer[], tail: Record<string, unknown> | null = null): 
 }
 
 function capture(cfg: ReturnType<typeof config>, body: string) {
-  let sent: { headers: Record<string, string>; json: Record<string, unknown> } | null = null;
+  let sent: { headers: Record<string, string>; json: Record<string, any> } | null = null;
   const provider = new VolcTTSProvider(cfg, {
     allowPrivateNetwork: true,
     fetchImpl: async (_input, init) => {
@@ -83,13 +83,27 @@ describe('native 火山 TTS provider', () => {
     expect(read()!.json).not.toHaveProperty('emotion');
   });
 
-  it('speaks the delivery direction into the text for an instruction-following voice', async () => {
+  it('sends the delivery direction through additions.context_texts, never inside the spoken text', async () => {
     const { provider, read } = capture(config(), stream([mp3Chunk()]));
     await provider.synthesize('好耶', { emotion: 'happy', instructions: '轻快、明亮、有笑意。' });
     const req = read()!.json.req_params as Record<string, unknown>;
-    expect(String(req.text)).toContain('轻快');
-    expect(String(req.text)).toContain('好耶');
+    // Folding it into text gets it read aloud, or dropped by the parenthesis
+    // filter that is on by default. Either way the direction is not delivered.
+    expect(req.text).toBe('好耶');
+    expect(JSON.parse(String(req.additions))).toEqual({ context_texts: ['轻快、明亮、有笑意。'] });
     expect(req.audio_params).not.toHaveProperty('emotion');
+  });
+
+  it('serialises additions as a JSON string, because a raw object panics the vendor behind a 200', async () => {
+    const { provider, read } = capture(config(), stream([mp3Chunk()]));
+    await provider.synthesize('好耶', { instructions: '慢一点。' });
+    expect(typeof read()!.json.req_params.additions).toBe('string');
+  });
+
+  it('omits additions entirely when there is no direction to give', async () => {
+    const { provider, read } = capture(config(), stream([mp3Chunk()]));
+    await provider.synthesize('好耶');
+    expect(read()!.json.req_params).not.toHaveProperty('additions');
   });
 
   it('translates opus to the ogg_opus spelling the vendor uses', async () => {
