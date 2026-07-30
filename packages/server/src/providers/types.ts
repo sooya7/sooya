@@ -99,6 +99,12 @@ export interface TTSOptions {
   speed?: number;
   /** Optional diagnostic label saved by callers, not required by providers. */
   emotion?: string;
+  /**
+   * The vendor's own emotion word, when the caller knows it. Kept separate from
+   * `emotion` because that one is our internal label (`gentle` has no vendor
+   * equivalent) and is also what gets written next to the message.
+   */
+  apiEmotion?: string;
 }
 
 export interface TTSProvider {

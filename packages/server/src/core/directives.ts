@@ -91,6 +91,20 @@ export interface ModelDirectives {
   voice?: boolean;
   voiceOnly?: boolean;
   stickerOnly?: boolean;
+  /** The mood she asked for, e.g. `[[voice:emotion=happy]]`. */
+  voiceEmotion?: string;
+}
+
+/**
+ * Reads the mood out of a voice marker argument. Kept lenient about spacing and
+ * case because the model writes these by hand, but the word itself is bounded so
+ * a stray sentence cannot ride along into a provider request.
+ */
+export function parseEmotionArg(arg: string | null | undefined): string | null {
+  // The lookahead makes an over-long run fail outright: silently truncating a
+  // 40-character blob to 24 would hand a provider a word nobody wrote.
+  const m = /emotion\s*=\s*([A-Za-z_-]{1,24})(?![A-Za-z_-])/i.exec(arg ?? '');
+  return m ? m[1]!.toLowerCase() : null;
 }
 
 const MARKER_KINDS = ['sticker', 'image', 'voice', 'voice-only', 'sticker-only'] as const;
@@ -158,10 +172,15 @@ export function stripModelDirectives(raw: string): StripResult {
       const value = (arg ?? '').trim();
       if (k === 'sticker') directives.sticker = value || 'auto';
       else if (k === 'image') directives.imagePrompt = value || null;
-      else if (k === 'voice') directives.voice = true;
-      else if (k === 'voice-only') {
+      else if (k === 'voice') {
+        directives.voice = true;
+        const mood = parseEmotionArg(value);
+        if (mood) directives.voiceEmotion = mood;
+      } else if (k === 'voice-only') {
         directives.voice = true;
         directives.voiceOnly = true;
+        const mood = parseEmotionArg(value);
+        if (mood) directives.voiceEmotion = mood;
       } else if (k === 'sticker-only') {
         directives.sticker = value || 'auto';
         directives.stickerOnly = true;

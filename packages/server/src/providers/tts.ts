@@ -102,7 +102,17 @@ export class OpenAITTSProvider implements TTSProvider {
             response_format: this.cfg.format,
             speed
           };
-          if (instructions && shouldSendInstructions(this.cfg)) body.instructions = instructions;
+          const transport = resolveEmotionTransport(this.cfg, opts.voice ?? this.cfg.voice);
+          if (transport === 'instruction' && instructions && shouldSendInstructions(this.cfg)) {
+            body.instructions = instructions;
+          }
+          if (transport === 'enum') {
+            const enumEmotion = officialEmotion(opts.apiEmotion ?? opts.emotion);
+            if (enumEmotion) {
+              body.emotion = enumEmotion;
+              body.emotion_scale = this.cfg.emotionScale;
+            }
+          }
 
           const res = await this.fetchImpl(this.endpoint(), {
             method: 'POST',
@@ -200,6 +210,48 @@ function makeSpeechFriendly(text: string, emotion: Emotion): string {
     out = out.replace(/([。！？!?])\s+/g, '$1 … ');
   }
   return out.trim();
+}
+
+/**
+ * The emotion words the 「多情感」 voices accept. Anything outside the list is
+ * dropped rather than guessed: each of those voices supports a *different*
+ * subset, so inventing a word buys a request that either errors or is silently
+ * ignored. `gentle` deliberately has no entry — it is an instruction-only mood.
+ */
+const OFFICIAL_EMOTIONS = new Set([
+  'happy',
+  'sad',
+  'angry',
+  'surprised',
+  'fear',
+  'hate',
+  'excited',
+  'coldness',
+  'depressed',
+  'neutral'
+]);
+
+export function officialEmotion(word: string | null | undefined): string | null {
+  const key = (word ?? '').trim().toLowerCase();
+  return OFFICIAL_EMOTIONS.has(key) ? key : null;
+}
+
+/** Voices that carry the enum, spelled the way the official list spells them. */
+const ENUM_VOICE_RE = /_emo(_v\d+)?_/i;
+
+export type EmotionTransport = 'instruction' | 'enum' | 'off';
+
+/**
+ * Which channel this voice can actually hear emotion on. `auto` reads the voice
+ * id because that is the ground truth the vendor publishes; an explicit mode is
+ * still honoured so a gateway that behaves differently can be pinned by hand.
+ */
+export function resolveEmotionTransport(cfg: TtsModelConfig, voice: string): EmotionTransport {
+  if (!cfg.expressive) return 'off';
+  if (cfg.emotionMode === 'off') return 'off';
+  if (cfg.emotionMode === 'instruction') return 'instruction';
+  if (cfg.emotionMode === 'enum') return 'enum';
+  return ENUM_VOICE_RE.test(voice) ? 'enum' : 'instruction';
 }
 
 function shouldSendInstructions(cfg: TtsModelConfig): boolean {

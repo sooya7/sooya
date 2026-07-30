@@ -34,6 +34,8 @@ export interface ContextOptions {
   /** Include images as vision content when the model supports it. */
   allowVision: boolean;
   stickerCatalogue: string;
+  /** Mood words the voice presets actually define, so the prompt cannot drift. */
+  voiceMoods: string;
   capabilityNotes: string[];
   contextWindow: number;
   maxOutputTokens: number;
@@ -278,6 +280,10 @@ function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): st
   if (persona.voicePolicy.enabled) {
     lines.push('· [[voice]] 把这条文字同时用语音发出来。');
     lines.push('· [[voice-only]] 这一条只发语音，不显示文字（文字会作为语音文稿保留）。');
+    if (opts.voiceMoods) {
+      lines.push(`· [[voice:emotion=情绪]] 或 [[voice-only:emotion=情绪]] 用指定情绪说。可用情绪：${opts.voiceMoods}`);
+      lines.push('不加 emotion 时由系统根据文字自动判断，通常不用特意指定；只在语气和字面意思不一致时才写。');
+    }
   }
   lines.push('主动选择建议：情绪回应、调侃、晚安、安慰和短互动适合表情包；需要温度、亲密感或语气表达时适合语音；用户在描述、想象、设计或需要直观看效果时适合图片。');
   lines.push('不要机械等待关键词，也不要为了展示能力强行添加媒体。通常一条回复主动选择一种最合适的媒体即可，除非同时使用确实更自然。');

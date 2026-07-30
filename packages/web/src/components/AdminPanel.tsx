@@ -388,6 +388,17 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         {selected === 'tts' && <>
           <label>音色<input value={String(config.voice ?? '')} onChange={(e) => update('voice', e.target.value)} /></label>
           <label>语速<input type="number" step="0.1" value={String(config.speed ?? '')} onChange={(e) => update('speed', Number(e.target.value))} /></label>
+          <label className="admin-form-wide">
+            情绪投递方式
+            <select value={String(config.emotionMode ?? 'auto')} onChange={(e) => update('emotionMode', e.target.value)}>
+              <option value="auto">自动（按音色 ID 判断，推荐）</option>
+              <option value="instruction">自然语言指令（豆包 2.0「指令遵循」音色）</option>
+              <option value="enum">emotion 枚举（仅「多情感」音色，ID 带 _emo_）</option>
+              <option value="off">不传情绪</option>
+            </select>
+            <small>两种音色家族收情绪的方式不一样。自动模式看音色 ID 里有没有 <code>_emo_</code>，换音色就自动跟着切。</small>
+          </label>
+          <label>情绪强度（仅枚举方式，1~5）<input type="number" step="1" min="1" max="5" value={String(config.emotionScale ?? 4)} onChange={(e) => update('emotionScale', Number(e.target.value))} /></label>
         </>}
         {selected === 'stt' && <label>识别语言<input value={String(config.language ?? '')} onChange={(e) => update('language', e.target.value)} /></label>}
         {selected === 'embedding' && <label>向量维度<input type="number" value={String(config.dimensions ?? '')} onChange={(e) => update('dimensions', Number(e.target.value))} /></label>}

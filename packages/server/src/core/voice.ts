@@ -30,6 +30,17 @@ const DETECTED_TO_SAVED: Record<string, string> = {
   neutral: 'neutral'
 };
 
+/**
+ * Renders the configured moods for the prompt, as `key(中文标签)` pairs. Built
+ * from the live presets so editing them in the panel cannot leave her being told
+ * about a mood that no longer exists.
+ */
+export function voiceMoodCatalogue(saved: VoiceEmotionMap): string {
+  return Object.entries(saved)
+    .map(([key, preset]) => `${key}(${preset.label})`)
+    .join('、');
+}
+
 export function resolveVoiceDelivery(
   text: string,
   requestedEmotion: string | null | undefined,

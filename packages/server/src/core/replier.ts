@@ -18,7 +18,7 @@ import {
 import { stripSpeakerPrefix } from './speakerPrefix.js';
 import { ProviderNotConfiguredError, type GeneratedImage } from '../providers/types.js';
 import { HttpTimeoutError } from '../util/http.js';
-import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from './voice.js';
+import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, voiceMoodCatalogue, type VoiceEmotionMap } from './voice.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
 
 export interface ReplyOptions {
@@ -118,6 +118,9 @@ export class Replier {
         memoryLimit: opts.memoryLimit,
         allowVision,
         stickerCatalogue: this.deps.stickers.catalogueForPrompt(),
+        voiceMoods: voiceMoodCatalogue(
+          this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS)
+        ),
         capabilityNotes,
         contextWindow,
         maxOutputTokens
@@ -327,7 +330,7 @@ export class Replier {
         });
         try {
           const emotions = this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
-          const delivery = resolveVoiceDelivery(clipped, null, emotions);
+          const delivery = resolveVoiceDelivery(clipped, modelDirectives.voiceEmotion ?? null, emotions);
           const audio = await this.deps.capabilities.ttsProvider().synthesize(clipped, delivery);
           const media = await this.deps.media.save({
             kind: 'audio',
