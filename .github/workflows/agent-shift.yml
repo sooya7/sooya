@@ -15,8 +15,9 @@ name: agent shift
 
 on:
   schedule:
-    # 每小时 :07（UTC）。GitHub 的定时是 best-effort，高峰时可能晚十几分钟。
-    - cron: '7 * * * *'
+    # 每 20 分钟（UTC）。GitHub 的定时是 best-effort：高峰时会晚十几分钟，
+    # 也可能整次跳过，所以实际间隔往往大于 20 分钟。
+    - cron: '*/20 * * * *'
   workflow_dispatch:
     inputs:
       text:
