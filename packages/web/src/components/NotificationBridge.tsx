@@ -1,9 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { requestPushApi } from '../lib/pushApi.js';
 import { disablePushSubscription } from '../lib/pushToggle.js';
 import { createVisibilitySynchronizer } from '../lib/visibilitySync.js';
 
 type PushState = 'unsupported' | 'prompt' | 'subscribed' | 'denied' | 'working' | 'error';
+
+/** Remembers that the user already dealt with this bar, so it stops occupying the chat. */
+const HIDDEN_KEY = 'sooya.push.optin.hidden';
+
+function readHidden(): boolean {
+  try {
+    return window.localStorage.getItem(HIDDEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeHidden(hidden: boolean): void {
+  try {
+    if (hidden) window.localStorage.setItem(HIDDEN_KEY, '1');
+    else window.localStorage.removeItem(HIDDEN_KEY);
+  } catch {
+    // Storage denied: the bar simply comes back next load.
+  }
+}
 
 function fromBase64Url(value: string): ArrayBuffer {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
@@ -34,17 +54,29 @@ export function NotificationBridge() {
   const [state, setState] = useState<PushState>(() => !supported ? 'unsupported' : Notification.permission === 'denied' ? 'denied' : 'prompt');
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [hidden, setHidden] = useState(() => supported && readHidden());
+  const mounted = useRef(true);
+
+  useEffect(() => () => { mounted.current = false; }, []);
+
+  /**
+   * The browser is the only authority on whether this device is subscribed. Every
+   * action ends here, so the button can never disagree with reality — that mismatch
+   * is what made the toggle look stuck: an action that threw left the old label in
+   * place with no visible change.
+   */
+  const syncFromBrowser = useCallback(async (): Promise<PushSubscription | null> => {
+    const value = await currentSubscription();
+    if (!mounted.current) return value;
+    setSubscription(value);
+    setState(value ? 'subscribed' : Notification.permission === 'denied' ? 'denied' : 'prompt');
+    return value;
+  }, []);
 
   useEffect(() => {
     if (!supported) return;
-    let active = true;
-    void currentSubscription().then((value) => {
-      if (!active) return;
-      setSubscription(value);
-      setState(value ? 'subscribed' : Notification.permission === 'denied' ? 'denied' : 'prompt');
-    }).catch(() => active && setState('error'));
-    return () => { active = false; };
-  }, [supported]);
+    void syncFromBrowser().catch(() => { if (mounted.current) setState('error'); });
+  }, [supported, syncFromBrowser]);
 
   useEffect(() => {
     if (!subscription) return;
@@ -74,42 +106,64 @@ export function NotificationBridge() {
     setState('working');
     setMessage(null);
     try {
-      const value = await subscribe();
-      setSubscription(value);
-      setState('subscribed');
-      setMessage('后台通知已开启');
+      await subscribe();
+      await syncFromBrowser();
+      if (mounted.current) setMessage('后台通知已开启');
     } catch (error) {
-      setState(Notification.permission === 'denied' ? 'denied' : 'error');
+      // Re-read first: the subscription may exist even though a later step failed.
+      await syncFromBrowser().catch(() => undefined);
+      if (!mounted.current) return;
+      if (Notification.permission === 'denied') setState('denied');
       setMessage((error as Error).message);
     }
   };
 
   const disable = async () => {
-    if (!subscription) return;
+    const target = subscription;
+    if (!target) return;
     setState('working');
     setMessage(null);
     try {
-      const result = await disablePushSubscription(subscription);
-      setSubscription(null);
-      setState('prompt');
-      setMessage(result.warning ?? '后台通知已关闭');
+      const result = await disablePushSubscription(target);
+      const remaining = await syncFromBrowser();
+      if (!mounted.current) return;
+      setMessage(remaining ? '订阅仍然存在，请再试一次' : result.warning ?? '后台通知已关闭');
     } catch (error) {
-      setState('error');
-      setMessage((error as Error).message);
+      await syncFromBrowser().catch(() => undefined);
+      if (mounted.current) setMessage((error as Error).message);
     }
   };
 
+  const dismiss = () => {
+    writeHidden(true);
+    setMessage(null);   // otherwise the "keep showing while there is a message" rule wins
+    setHidden(true);
+  };
+
   if (state === 'denied') {
-    return <div className="notification-optin" role="status"><span>通知权限已被浏览器禁用，请在站点设置中重新允许。</span></div>;
+    if (hidden) return null;
+    return (
+      <div className="notification-optin" role="status">
+        <span>通知权限已被浏览器禁用，请在站点设置中重新允许。</span>
+        <button type="button" className="notification-dismiss" aria-label="不再提示" onClick={dismiss}>×</button>
+      </div>
+    );
   }
 
+  // Once the user has answered, the bar has nothing left to ask; keeping it on screen
+  // forever was the \"stuck\" part of this bug. It comes back from browser settings or
+  // by clearing the flag, and never hides a pending action or an error.
+  if (hidden && state !== 'working' && !message) return null;
+
+  const on = Boolean(subscription);
   return (
-    <div className="notification-optin" role="status" data-testid="push-controls">
-      <span>{subscription ? 'SOOYA 后台通知已开启' : '开启通知，PWA 关闭后也能收到回复'}</span>
+    <div className="notification-optin" role="status" data-testid="push-controls" data-push-state={state}>
+      <span>{on ? 'SOOYA 后台通知已开启' : '开启通知，PWA 关闭后也能收到回复'}</span>
       {message && <small>{message}</small>}
-      <button type="button" disabled={state === 'working'} onClick={() => void (subscription ? disable() : enable())}>
-        {state === 'working' ? '处理中…' : subscription ? '关闭通知' : '开启通知'}
+      <button type="button" disabled={state === 'working'} onClick={() => void (on ? disable() : enable())}>
+        {state === 'working' ? '处理中…' : on ? '关闭通知' : '开启通知'}
       </button>
+      <button type="button" className="notification-dismiss" aria-label="收起通知提示" onClick={dismiss}>×</button>
     </div>
   );
 }

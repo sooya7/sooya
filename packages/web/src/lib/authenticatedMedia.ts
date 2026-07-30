@@ -79,9 +79,11 @@ export async function fetchAuthenticatedMedia(
 /**
  * Failures worth another attempt. `missing` is included on purpose: a freshly
  * generated image can be announced over the stream a beat before its bytes are
- * readable, and a permanent 404 costs only two extra requests.
+ * readable, and a permanent 404 costs only two extra requests. `blob` and `empty`
+ * are the same story seen from the body: a truncated or still-growing file aborts
+ * the read, which used to surface as a dead "媒体内容读取失败" with no way back.
  */
-const RETRIABLE_CODES = new Set(['network', 'server', 'rate_limit', 'missing']);
+const RETRIABLE_CODES = new Set(['network', 'server', 'rate_limit', 'missing', 'blob', 'empty']);
 
 export function isRetriableMediaError(error: unknown): boolean {
   return error instanceof AuthenticatedMediaError && RETRIABLE_CODES.has(error.code);

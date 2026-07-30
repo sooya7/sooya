@@ -44,11 +44,19 @@ export function AudioBubble({ part, mine }: Props) {
   const duration = part.duration ?? part.media?.duration ?? elementDuration ?? 0;
   const transcript = part.transcript ?? part.media?.transcript ?? null;
 
+  const src = media.url ?? '';
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    // Also keyed on src: loading a new source resets playbackRate to 1, so a user
+    // who picked 2x would silently drop back to normal speed.
     audio.playbackRate = SPEEDS[speedIdx] ?? 1;
-  }, [speedIdx]);
+  }, [speedIdx, src]);
+
+  // A retry (or a newly arrived url) must clear a previous failure, otherwise the
+  // bubble stays stuck on "音频加载失败" forever.
+  useEffect(() => { setLoadError(false); }, [src]);
 
   if (part.status === 'failed') {
     return (
@@ -66,7 +74,6 @@ export function AudioBubble({ part, mine }: Props) {
     );
   }
 
-  const src = media.url ?? '';
   // A stable pseudo-waveform: derived from the media id so the same voice note
   // always looks the same, without decoding audio just to draw 24 bars.
   const bars = waveform(part.media.id, Math.max(14, Math.min(28, Math.round(duration * 1.6) || 18)));
@@ -101,6 +108,7 @@ export function AudioBubble({ part, mine }: Props) {
           type="button"
           className="audio-play"
           onClick={toggle}
+          disabled={!src}
           aria-label={playing ? '暂停语音' : '播放语音'}
           data-testid="audio-play"
         >
@@ -123,7 +131,7 @@ export function AudioBubble({ part, mine }: Props) {
           tabIndex={0}
           aria-label="语音进度"
           aria-valuemin={0}
-          aria-valuemax={Math.round(duration)}
+          aria-valuemax={Math.max(1, Math.round(duration))}
           aria-valuenow={Math.round(current)}
           onKeyDown={(e) => {
             const audio = audioRef.current;
@@ -136,7 +144,7 @@ export function AudioBubble({ part, mine }: Props) {
             {bars.map((height, i) => (
               <i
                 key={i}
-                className={i / bars.length <= progress ? 'played' : ''}
+                className={(i + 1) / bars.length <= progress ? 'played' : ''}
                 style={{ height: `${Math.round(height * 100)}%` }}
               />
             ))}
@@ -158,7 +166,7 @@ export function AudioBubble({ part, mine }: Props) {
 
         <audio
           ref={audioRef}
-          src={src}
+          {...(src ? { src } : {})}
           preload="metadata"
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
@@ -181,7 +189,13 @@ export function AudioBubble({ part, mine }: Props) {
         </button>
       )}
       {showTranscript && transcript && <div className="audio-transcript">{transcript}</div>}
-      {(media.error || loadError) && <div className="audio-transcript error">{media.error ?? '音频加载失败'}</div>}
+      {!src && !media.error && !loadError && <div className="audio-transcript loading">语音加载中…</div>}
+      {(media.error || loadError) && (
+        <div className="audio-transcript error">
+          {media.error ?? '音频加载失败'}
+          {media.retriable && <button type="button" className="audio-retry" onClick={media.retry}>重试</button>}
+        </div>
+      )}
     </div>
   );
 }
