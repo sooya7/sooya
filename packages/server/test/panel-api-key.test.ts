@@ -56,6 +56,15 @@ describe('面板里直接填 API Key', () => {
     expect(tts.voice).toBe('nova');
   });
 
+  it('leaves the environment authoritative for config the panel never touched', async () => {
+    // A deployment must still be able to rotate a stale key in a hand-written
+    // models.json; only a key the operator saved deliberately outranks the env.
+    h = await boot({ SOOYA_CHAT_API_KEY: 'sk-env-rotated-2222' });
+    const models = h.app.config.getModels();
+    expect(models.chat.configSource).toBe('environment');
+    expect(models.chat.apiKey).toBe('sk-env-rotated-2222');
+  });
+
   it('survives a reload, so the key really is on disk', async () => {
     h = await boot();
     await put({ tts: { provider: 'openai-tts', baseUrl: 'https://api.example.com/v1', model: 'tts-1', voice: 'alloy', apiKey: 'sk-persisted-7777' } });
