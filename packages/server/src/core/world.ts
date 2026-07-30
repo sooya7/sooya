@@ -67,7 +67,7 @@ export class WorldEngine {
         this.errors.add('world.extract.validation', validated.error.message, { output: result.text.slice(0, 1000) });
         return heuristicCandidates(userText);
       }
-      return dedupe(validated.data.entries);
+      return dropVolatileSystemFacts(dedupe(validated.data.entries));
     } catch (err) {
       this.errors.add('world.extract', (err as Error).message);
       return heuristicCandidates(userText);
@@ -106,6 +106,40 @@ export class WorldEngine {
       authority: entry.authority ?? 'admin'
     })));
   }
+}
+
+/*
+ * The extractor kept turning the assistant's own capability disclaimers into
+ * permanent world facts. Production had 14 of them out of 29 rows -- "图片发送
+ * 功能当前状态 → 暂时不可用", "助手语音功能 → 未调试完成" -- all written while a
+ * feature was mid-debug, then injected into every later prompt as 当前世界状态.
+ * One claiming image sending was unavailable was frozen at 07-29T19:14Z; an
+ * image was generated at 07-30T01:40Z. The entry was lying to the model about
+ * what it could do, and it is self-reinforcing: the model reads "you cannot do
+ * X", says so, and the extractor records it again.
+ *
+ * Capability state has an authoritative live source already -- the capability
+ * registry, put in the prompt as `capabilityNotes` -- so a frozen second copy
+ * can only ever contradict it.
+ *
+ * A row is dropped only when it names a piece of the software AND talks about
+ * that piece's state or availability. Both halves are required: "助手角色 / 拥有
+ * / 兔子发箍" names the character and survives, while "助手 / 无法调用 / 生图工具"
+ * does not. The trade-off is that a genuine roleplay limit phrased with this
+ * vocabulary ("助手 / 无法 / 吃辣") is also dropped; that is worth accepting,
+ * because the failure it prevents is the assistant refusing to use features it
+ * actually has.
+ */
+const SOFTWARE_SUBJECTS = /助手|系统|客户端|界面|应用|服务端|机器人|功能|工具|模型|接口|服务|插件|权限|标识|库存|气泡|api/i;
+const STATE_VOCABULARY = /不可用|可用|无法|不能|没法|未能|失败|报错|出错|异常|调试|当前状态|状态为|能力|限制|权限|配置|暂时|尚未|暂无|已不再|不再|无需|本质|性质|属性为|支持|不支持|已修复|上线|部署/;
+
+export function isVolatileSystemFact(candidate: WorldCandidate): boolean {
+  const text = `${candidate.subject} ${candidate.predicate} ${candidate.object}`;
+  return SOFTWARE_SUBJECTS.test(text) && STATE_VOCABULARY.test(text);
+}
+
+function dropVolatileSystemFacts(entries: WorldCandidate[]): WorldCandidate[] {
+  return entries.filter((entry) => !isVolatileSystemFact(entry));
 }
 
 function heuristicCandidates(userText: string): WorldCandidate[] {
