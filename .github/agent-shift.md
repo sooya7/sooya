@@ -16,9 +16,7 @@ This message was queued by the `agent shift` GitHub Actions workflow, not typed 
 
 4. IF BLOCKED. Anything only the user can do (secrets, their server, a product decision) goes in the "needs the user" list in HANDOFF instead of stalling; move to the next queue item. Email 779083953@qq.com at most once per shift, and only for a dead push token (403) or CI red on main. If the queue has nothing actionable left, say so in that mail and tell them to disable this workflow so it stops waking you.
 
-5. TIME. The user reads time as 北京时间 (UTC+8). The machine, `date`, git commit
-   timestamps and GitHub cron are all UTC. When you report a time to them, give
-   Beijing time — `TZ=Asia/Shanghai date` — and only mention UTC when it matters,
-   such as when quoting a cron expression.
+5. TIME. Report every time to the user in 北京时间 (UTC+8) — `TZ=Asia/Shanghai date`.
+   The machine, git timestamps and cron are all UTC.
 
 Edit this file to change what a shift does — the workflow reads it at run time, so no workflow edit is needed.
