@@ -398,6 +398,11 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
             </select>
             <small>两种音色家族收情绪的方式不一样。自动模式看音色 ID 里有没有 <code>_emo_</code>，换音色就自动跟着切。</small>
           </label>
+          <label className="admin-form-wide">
+            Resource-Id（仅火山官方协议）
+            <input value={String(config.resourceId ?? '')} placeholder="seed-tts-2.0" onChange={(e) => update('resourceId', e.target.value)} />
+            <small>它同时决定模型版本和计费商品。官方说明：语音模型不支持通过 Auto 或控制台切换，必须在这里指定。</small>
+          </label>
           <label>情绪强度（仅枚举方式，1~5）<input type="number" step="1" min="1" max="5" value={String(config.emotionScale ?? 4)} onChange={(e) => update('emotionScale', Number(e.target.value))} /></label>
         </>}
         {selected === 'stt' && <label>识别语言<input value={String(config.language ?? '')} onChange={(e) => update('language', e.target.value)} /></label>}

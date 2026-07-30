@@ -24,7 +24,7 @@ export const SLOT_PROVIDERS: Record<ModelSlot, string[]> = {
   summary: ['openai-chat', 'openai-responses', 'anthropic-messages', 'openai-compatible'],
   embedding: ['openai-embeddings', 'openai-compatible'],
   image: ['openai-images', 'openai-compatible'],
-  tts: ['openai-tts', 'openai-compatible'],
+  tts: ['openai-tts', 'volc-tts', 'openai-compatible'],
   stt: ['openai-transcriptions', 'openai-compatible']
 };
 
@@ -37,6 +37,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   'openai-embeddings': 'OpenAI Embeddings',
   'openai-images': 'OpenAI Images',
   'openai-tts': 'OpenAI TTS',
+  'volc-tts': '火山引擎语音合成（官方协议）',
   'openai-transcriptions': 'OpenAI Transcriptions'
 };
 
