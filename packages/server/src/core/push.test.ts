@@ -1,6 +1,6 @@
 import { createECDH, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { PushService } from './push.js';
+import { PushService, normalizeVapidSubject } from './push.js';
 import type { PushSubscriptionRow } from '../db/repos/feature.repo.js';
 import type { SettingsRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
 
@@ -118,5 +118,67 @@ describe('PushService.send', () => {
 
     expect(summary.attempted).toBe(1);
     expect(summary.delivered).toBe(1);
+  });
+});
+
+/**
+ * The VAPID `sub` claim. iOS notifications were being dropped for weeks with nothing
+ * visible in the UI: `error_log` held four `push.deliver` 403s from
+ * `web.push.apple.com` and nothing else, because the subject was hardcoded to
+ * `mailto:admin@localhost` and Apple rejects it. Chrome accepts anything, so the bug
+ * was invisible on every other device.
+ */
+describe('normalizeVapidSubject', () => {
+  it('接受能真正联系到人的两种形式', () => {
+    expect(normalizeVapidSubject('mailto:admin@sooya.icu')).toBe('mailto:admin@sooya.icu');
+    expect(normalizeVapidSubject('  https://echo.sooya.icu  ')).toBe('https://echo.sooya.icu');
+    expect(normalizeVapidSubject('https://echo.sooya.icu/contact')).toBe('https://echo.sooya.icu/contact');
+  });
+
+  it('拒绝苹果会回 403 的那些值 —— 包括曾经硬编码的默认值', () => {
+    for (const bad of ['mailto:admin@localhost', 'https://localhost', 'mailto:admin', 'admin@sooya.icu', 'http://echo.sooya.icu', '', '   ', undefined, null]) {
+      expect(normalizeVapidSubject(bad)).toBeNull();
+    }
+  });
+});
+
+describe('PushService VAPID subject', () => {
+  const capture = async (configured?: string, stored?: string) => {
+    const h = harness([row('https://web.push.apple.com/device')]);
+    if (stored) {
+      // Simulate an install whose keys were generated before this was configurable.
+      const service = new PushService(h.subscriptions as never, h.settings, h.errors, (async () => new Response('', { status: 201 })) as never);
+      const keys = (h.settings.get as (k: string, f: unknown) => Record<string, unknown>)('push.vapid', {});
+      h.settings.set('push.vapid', { ...keys, subject: stored });
+      void service;
+    }
+    let authorization = '';
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      authorization = String((init.headers as Record<string, string>).Authorization ?? '');
+      return new Response('', { status: 201 });
+    }) as unknown as typeof fetch;
+    const service = new PushService(h.subscriptions as never, h.settings, h.errors, fetchImpl, configured);
+    await service.send({ id: 'm1', role: 'assistant', content: [{ id: 'p1', type: 'text', text: '在的' }] } as never);
+    const token = /vapid t=([^,]+)/.exec(authorization)?.[1] ?? '';
+    const claims = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')) as { sub: string; aud: string };
+    return { claims, errors: h.errors.add as unknown as ReturnType<typeof vi.fn> };
+  };
+
+  it('用配置的 subject 签名，而不是库里存着的那个', async () => {
+    const { claims } = await capture('mailto:admin@sooya.icu', 'mailto:admin@localhost');
+
+    // The stored value is the broken legacy one; config has to win or existing
+    // installs stay broken forever.
+    expect(claims.sub).toBe('mailto:admin@sooya.icu');
+    expect(claims.aud).toBe('https://web.push.apple.com');
+  });
+
+  it('配置值非法时不静默降级，写进 error_log 说明后果', async () => {
+    const { claims, errors } = await capture('mailto:admin@localhost');
+
+    expect(claims.sub).not.toBe('mailto:admin@localhost');
+    const logged = errors.mock.calls.find((call) => call[0] === 'push.config');
+    expect(logged).toBeDefined();
+    expect(String(logged?.[1])).toContain('SOOYA_PUSH_SUBJECT');
   });
 });

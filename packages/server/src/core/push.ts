@@ -33,18 +33,69 @@ export interface PushSendSummary {
 }
 
 const SETTINGS_KEY = 'push.vapid';
+/** Sent only when nothing usable is configured; the error log says so at the same time. */
+const FALLBACK_SUBJECT = 'https://github.com/sooya7/sooya';
+
+/**
+ * RFC 8292 allows any URI here, but push services disagree on how much they check.
+ * Apple is the strict one: a mailto without a real domain — `mailto:admin@localhost`,
+ * the old hardcoded default — is answered with 403 and the notification is dropped.
+ * So accept only the two forms every service takes, and reject the rest loudly.
+ */
+export function normalizeVapidSubject(value: string | undefined | null): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  if (/^https:\/\//i.test(raw)) {
+    try {
+      const url = new URL(raw);
+      // A bare hostname with no dot is localhost or an intranet name: not reachable
+      // contact information, and rejected by the same services that reject the mailto.
+      return url.hostname.includes('.') ? url.origin + (url.pathname === '/' ? '' : url.pathname) : null;
+    } catch {
+      return null;
+    }
+  }
+  const mailto = /^mailto:([^\s@]+)@([^\s@]+)$/i.exec(raw);
+  if (!mailto) return null;
+  const domain = mailto[2] ?? '';
+  if (!domain.includes('.') || domain.startsWith('.') || domain.endsWith('.')) return null;
+  return `mailto:${mailto[1]}@${domain}`;
+}
 const FRONTEND_ACTIVE_MS = 35_000;
 
 export class PushService {
   private readonly keys: StoredVapidKeys;
+  private readonly subject: string;
 
   constructor(
     private readonly subscriptions: PushSubscriptionRepo,
     private readonly settings: SettingsRepo,
     private readonly errors: ErrorLogRepo,
-    private readonly fetchImpl: typeof fetch = fetch
+    private readonly fetchImpl: typeof fetch = fetch,
+    configuredSubject?: string
   ) {
     this.keys = this.loadOrCreateKeys();
+    this.subject = this.resolveSubject(configuredSubject);
+  }
+
+  /**
+   * The `sub` claim is configuration, not part of the keypair, so it is resolved here
+   * rather than read back from the stored record — installs created before this was
+   * configurable have `mailto:admin@localhost` persisted, and Apple answers 403 to it.
+   * Signing from config is what lets those installs be fixed without a migration.
+   */
+  private resolveSubject(configured?: string): string {
+    const candidates = [configured, this.keys.subject];
+    for (const candidate of candidates) {
+      const valid = normalizeVapidSubject(candidate);
+      if (valid) return valid;
+    }
+    this.errors.add(
+      'push.config',
+      'no usable VAPID subject; set SOOYA_PUSH_SUBJECT to an https URL or a mailto with a real domain',
+      { rejected: configured ?? this.keys.subject, consequence: 'Apple Web Push answers 403 and iOS devices receive nothing' }
+    );
+    return FALLBACK_SUBJECT;
   }
 
   publicKey(): string {
@@ -122,7 +173,7 @@ export class PushService {
   private async deliver(subscription: PushSubscriptionRow, payload: Buffer): Promise<Response> {
     const encrypted = encryptPayload(payload, subscription.p256dh, subscription.auth);
     const audience = new URL(subscription.endpoint).origin;
-    const token = makeVapidJwt(this.keys, audience);
+    const token = makeVapidJwt(this.keys, audience, this.subject);
     return await this.fetchImpl(subscription.endpoint, {
       method: 'POST',
       headers: {
@@ -178,9 +229,9 @@ function encryptPayload(payload: Buffer, clientPublicKey: string, authSecret: st
   return Buffer.concat([header, ciphertext]);
 }
 
-function makeVapidJwt(keys: StoredVapidKeys, audience: string): string {
+function makeVapidJwt(keys: StoredVapidKeys, audience: string, subject: string): string {
   const header = base64url(Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
-  const claims = base64url(Buffer.from(JSON.stringify({ aud: audience, exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60, sub: keys.subject })));
+  const claims = base64url(Buffer.from(JSON.stringify({ aud: audience, exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60, sub: subject })));
   const unsigned = `${header}.${claims}`;
   const privateKey = createPrivateKey({ key: keys.privateJwk, format: 'jwk' });
   const signature = sign('sha256', Buffer.from(unsigned), { key: privateKey, dsaEncoding: 'ieee-p1363' });
