@@ -3,6 +3,11 @@ name: Comprehensive Test
 on:
   pull_request:
     branches: [main]
+  # Hardening work happens on long-lived `test/**` branches that have no PR open
+  # yet, so a pull_request-only trigger meant the browser e2e job had never run
+  # against any of it. Push events on those branches now exercise the same jobs.
+  push:
+    branches: [main, 'test/**']
   workflow_dispatch:
 
 permissions:
@@ -21,7 +26,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20.10.0'
+          # Test tooling only, NOT the supported runtime: the other jobs stay on
+          # 20.10.0, which is what `engines` promises and what the container ships.
+          # jsdom reaches `html-encoding-sniffer`, which `require()`s the ES module
+          # `@exodus/bytes`, and that only works from Node 22.12. On 20.10.0 the
+          # jsdom worker cannot start at all, so useAuthenticatedMedia.test.tsx
+          # never ran and took the rest of the suite down with it.
+          node-version: '22.12.0'
           cache: npm
       - run: npm ci
 
@@ -45,6 +56,13 @@ jobs:
         name: Server unit, integration and API tests
         continue-on-error: true
         run: npm test
+      # `npm test` at the root runs the server workspace only, so the web suite
+      # (hook, admin console contract and model preset tests) was never checked
+      # by CI even though most recent work is web side.
+      - id: web_tests
+        name: Web unit tests
+        continue-on-error: true
+        run: npm run test -w @sooya/web
 
       - name: Fail when any code validation failed
         if: always()
@@ -54,6 +72,7 @@ jobs:
           SERVER_BUILD: ${{ steps.server_build.outcome }}
           WEB_BUILD: ${{ steps.web_build.outcome }}
           SERVER_TESTS: ${{ steps.server_tests.outcome }}
+          WEB_TESTS: ${{ steps.web_tests.outcome }}
         shell: bash
         run: |
           printf 'server typecheck: %s\n' "$SERVER_TYPECHECK"
@@ -61,11 +80,13 @@ jobs:
           printf 'server build:    %s\n' "$SERVER_BUILD"
           printf 'web build:       %s\n' "$WEB_BUILD"
           printf 'server tests:    %s\n' "$SERVER_TESTS"
+          printf 'web tests:       %s\n' "$WEB_TESTS"
           test "$SERVER_TYPECHECK" = success \
             -a "$WEB_TYPECHECK" = success \
             -a "$SERVER_BUILD" = success \
             -a "$WEB_BUILD" = success \
-            -a "$SERVER_TESTS" = success
+            -a "$SERVER_TESTS" = success \
+            -a "$WEB_TESTS" = success
 
   e2e:
     name: Browser end-to-end tests

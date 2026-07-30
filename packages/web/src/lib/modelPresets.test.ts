@@ -1,0 +1,92 @@
+import { describe, expect, it } from 'vitest';
+import {
+  emptyPreset,
+  MAX_PRESETS,
+  normalizePreset,
+  presetsBySlot,
+  removePreset,
+  suggestId,
+  upsertPreset,
+  validatePreset,
+  type ModelPreset
+} from './modelPresets.js';
+
+const chatPreset: ModelPreset = {
+  id: 'glm-4-6',
+  name: 'GLM-4.6 主聊',
+  slot: 'chat',
+  provider: 'openai-compatible',
+  model: 'glm-4.6',
+  baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+  apiKeyEnv: 'GLM_API_KEY',
+  notes: '日常对话'
+};
+
+describe('model preset validation', () => {
+  it('accepts a complete preset', () => {
+    expect(validatePreset(chatPreset, [])).toBeNull();
+  });
+
+  it('names the missing field instead of failing generically', () => {
+    expect(validatePreset({ ...chatPreset, id: '' }, [])).toBe('请填写预设 ID');
+    expect(validatePreset({ ...chatPreset, name: '' }, [])).toBe('请填写预设名称');
+    expect(validatePreset({ ...chatPreset, model: '' }, [])).toBe('请填写模型名');
+  });
+
+  it('rejects an id the server would reject', () => {
+    expect(validatePreset({ ...chatPreset, id: 'has spaces' }, [])).toContain('只能包含');
+    expect(validatePreset({ ...chatPreset, id: '主聊' }, [])).toContain('只能包含');
+    expect(validatePreset({ ...chatPreset, id: 'a'.repeat(65) }, [])).toContain('64');
+  });
+
+  it('refuses a provider the slot cannot use', () => {
+    expect(validatePreset({ ...chatPreset, slot: 'tts', provider: 'openai-chat' }, [])).toBe('语音合成不支持该接口协议');
+    expect(validatePreset({ ...chatPreset, slot: 'tts', provider: 'openai-tts' }, [])).toBeNull();
+  });
+
+  it('blocks a duplicate id but lets the same preset be edited', () => {
+    expect(validatePreset(chatPreset, [chatPreset])).toBe('预设 ID 已存在：glm-4-6');
+    expect(validatePreset({ ...chatPreset, name: '改个名' }, [chatPreset], 'glm-4-6')).toBeNull();
+  });
+
+  it('stops at the library cap for new presets only', () => {
+    const full = Array.from({ length: MAX_PRESETS }, (_, i) => ({ ...chatPreset, id: `p${i}` }));
+    expect(validatePreset({ ...chatPreset, id: 'one-more' }, full)).toBe(`最多保存 ${MAX_PRESETS} 个预设`);
+    expect(validatePreset({ ...chatPreset, id: 'p0' }, full, 'p0')).toBeNull();
+  });
+});
+
+describe('model preset editing', () => {
+  it('trims every field before sending', () => {
+    const messy = { ...chatPreset, id: ' glm-4-6 ', name: '  主聊  ', model: ' glm-4.6 ', apiKeyEnv: ' KEY ' };
+    expect(normalizePreset(messy)).toMatchObject({ id: 'glm-4-6', name: '主聊', model: 'glm-4.6', apiKeyEnv: 'KEY' });
+  });
+
+  it('appends a new preset and replaces an edited one in place', () => {
+    const second = { ...chatPreset, id: 'gpt-image', slot: 'image' as const, provider: 'openai-images', model: 'gpt-image-1' };
+    const list = upsertPreset(upsertPreset([], chatPreset), second);
+    expect(list.map((p) => p.id)).toEqual(['glm-4-6', 'gpt-image']);
+
+    const edited = upsertPreset(list, { ...chatPreset, name: '新名字' }, 'glm-4-6');
+    expect(edited).toHaveLength(2);
+    expect(edited[0]?.name).toBe('新名字');
+    expect(edited.map((p) => p.id)).toEqual(['glm-4-6', 'gpt-image']);
+  });
+
+  it('removes by id and groups the rest by slot', () => {
+    const list = [chatPreset, { ...chatPreset, id: 'img', slot: 'image' as const, provider: 'openai-images' }];
+    expect(removePreset(list, 'glm-4-6').map((p) => p.id)).toEqual(['img']);
+    expect(presetsBySlot(list).map(([slot, items]) => [slot, items.length])).toEqual([['chat', 1], ['image', 1]]);
+  });
+
+  it('suggests an id from the name and leaves non-ASCII names to the operator', () => {
+    expect(suggestId('GPT Image 1')).toBe('gpt-image-1');
+    expect(suggestId('  Claude 3.5 Sonnet ')).toBe('claude-3-5-sonnet');
+    expect(suggestId('主聊模型')).toBe('');
+  });
+
+  it('starts a new draft on a provider the chosen slot supports', () => {
+    expect(validatePreset({ ...emptyPreset('tts'), id: 'x', name: 'x', model: 'x' }, [])).toBeNull();
+    expect(validatePreset({ ...emptyPreset('image'), id: 'x', name: 'x', model: 'x' }, [])).toBeNull();
+  });
+});

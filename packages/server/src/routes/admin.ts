@@ -3,7 +3,7 @@ import os from 'node:os';
 import { z } from 'zod';
 import type { SooyaApp } from '../app.js';
 import { requireAdminToken } from './auth.js';
-import { PersonaSchema } from '../config/schema.js';
+import { MODEL_SLOTS, ModelPresetsSchema, PersonaSchema, type ModelPreset } from '../config/schema.js';
 import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
 
 /** Admin API used by the built-in management panel. */
@@ -27,6 +27,62 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'invalid_persona', message: (err as Error).message };
     }
+  });
+
+  /** Saved model library. Settings-backed so it survives config reloads. */
+  const PRESETS_KEY = 'models.presets';
+  const readPresets = (): ModelPreset[] => {
+    const parsed = ModelPresetsSchema.safeParse(repos.settings.get(PRESETS_KEY, []));
+    return parsed.success ? parsed.data : [];
+  };
+
+  server.get('/api/admin/model-presets', guard, async () => ({
+    presets: readPresets(),
+    slots: MODEL_SLOTS
+  }));
+
+  server.put('/api/admin/model-presets', guard, async (req, reply) => {
+    const parsed = ModelPresetsSchema.safeParse((req.body as { presets?: unknown } | null)?.presets);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'bad_request', issues: parsed.error.issues };
+    }
+    const seen = new Set<string>();
+    for (const preset of parsed.data) {
+      if (seen.has(preset.id)) {
+        reply.code(400);
+        return { error: 'duplicate_id', message: `预设 id 重复：${preset.id}` };
+      }
+      seen.add(preset.id);
+    }
+    repos.settings.set(PRESETS_KEY, parsed.data);
+    return { presets: parsed.data };
+  });
+
+  /** Assign a saved preset to its capability slot and rebuild the providers. */
+  server.post('/api/admin/model-presets/:id/apply', guard, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const preset = readPresets().find((item) => item.id === id);
+    if (!preset) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    try {
+      config.setModels({
+        [preset.slot]: {
+          configSource: 'panel',
+          provider: preset.provider,
+          model: preset.model,
+          ...(preset.baseUrl ? { baseUrl: preset.baseUrl } : {}),
+          ...(preset.apiKeyEnv ? { apiKeyEnv: preset.apiKeyEnv } : {})
+        }
+      });
+    } catch (err) {
+      reply.code(400);
+      return { error: 'invalid_preset', message: (err as Error).message.slice(0, 500) };
+    }
+    services.capabilities.rebuild();
+    return { applied: preset.slot, models: config.safeModels() };
   });
 
   server.get('/api/admin/models', guard, async () => ({ models: config.safeModels() }));

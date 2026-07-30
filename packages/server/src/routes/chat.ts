@@ -5,7 +5,6 @@ import { requireChatToken } from './auth.js';
 import { SendMessageSchema, type ChatMessage } from '../core/types.js';
 import { parseUserDirectives } from '../core/directives.js';
 import { maintenanceCoordinator } from '../core/maintenance.js';
-import { nowIso } from '../util/ids.js';
 
 const HistoryQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30), before: z.coerce.number().int().min(0).optional(), since: z.coerce.number().int().min(0).optional() });
 
@@ -36,7 +35,16 @@ export function registerChatRoutes(app: SooyaApp): void {
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
     const { limit, before, since } = parsed.data;
     const cursorBefore = services.bus.lastSeq();
-    if (since !== undefined) return { messages: repos.messages.since(since, limit), hasMore: false, lastEventSeq: cursorBefore, lastMessageSeq: repos.messages.maxSeq() };
+    if (since !== undefined) {
+      const catchUp = repos.messages.pageSince(since, limit);
+      return {
+        messages: catchUp.messages,
+        hasMore: catchUp.hasMore,
+        nextSince: catchUp.nextSince,
+        lastEventSeq: cursorBefore,
+        lastMessageSeq: repos.messages.maxSeq(),
+      };
+    }
     const page = repos.messages.page(limit, before ?? null);
     return { messages: page.messages, hasMore: page.hasMore, lastEventSeq: cursorBefore, lastMessageSeq: repos.messages.maxSeq(), oldestSeq: page.messages[0]?.seq ?? null };
   });
@@ -57,13 +65,18 @@ export function registerChatRoutes(app: SooyaApp): void {
     if (validation) { reply.code(400); return validation; }
     const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
     const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
-    const { message, created } = repos.messages.create({
-      role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-      parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
-      meta: { directives }
+    const tx = app.db.transaction(() => {
+      const created = repos.messages.createInTransaction({
+        role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
+        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
+        meta: { directives }
+      });
+      const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
+      return { ...created, event };
     });
+    const { message, created, event } = tx();
     if (!created) return { message, duplicate: true, replyPending: false };
-    services.bus.publish('message.received', { message });
+    services.bus.fanout(event!);
     void lock.run(async () => {
       const outcome = await services.replier.reply(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
       enqueuePostReply(app, message.id, outcome.messageId);
@@ -81,13 +94,18 @@ export function registerChatRoutes(app: SooyaApp): void {
     if (validation) { reply.code(400); return validation; }
     const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
     const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
-    const { message, created } = repos.messages.create({
-      role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-      parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
-      meta: { directives }
+    const tx = app.db.transaction(() => {
+      const created = repos.messages.createInTransaction({
+        role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
+        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
+        meta: { directives }
+      });
+      const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
+      return { ...created, event };
     });
+    const { message, created, event } = tx();
     if (!created) return { message, duplicate: true, reply: findReply(app, message.id) };
-    services.bus.publish('message.received', { message });
+    services.bus.fanout(event!);
     const outcome = await lock.run(() => services.replier.reply(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }));
     enqueuePostReply(app, message.id, outcome.messageId);
     return { message, duplicate: false, reply: repos.messages.get(outcome.messageId), outcome };
@@ -97,21 +115,28 @@ export function registerChatRoutes(app: SooyaApp): void {
     const blocked = rejectBlockedWrite(reply);
     if (blocked) return blocked;
     const id = (req.params as { id: string }).id;
-    const message = repos.messages.get(id);
-    if (!message) { reply.code(404); return { error: 'not_found' }; }
-    if (message.role !== 'user' || message.meta?.withdrawnAt) { reply.code(409); return { error: 'not_withdrawable' }; }
-    if (Date.now() - Date.parse(message.createdAt) > 5 * 60_000) { reply.code(409); return { error: 'withdraw_window_expired', message: '只能撤回五分钟内发送的消息' }; }
-    const meta = { ...(message.meta ?? {}), withdrawnAt: nowIso(), originalPartTypes: message.content.map((part) => part.type) };
+    const now = Date.now();
+    const windowMs = 5 * 60_000;
+    // Coordinate eligibility, conditional state transition, parts replacement,
+    // audit and the durable message.updated event in one SQLite transaction.
+    // Only the winning caller (kind === 'withdrawn') persists an event; the
+    // live fanout happens strictly after the transaction commits.
     const tx = app.db.transaction(() => {
-      app.db.prepare('DELETE FROM message_parts WHERE message_id = ?').run(id);
-      app.db.prepare(`INSERT INTO message_parts(id, message_id, idx, type, text, media_id, status, error, duration, transcript, meta_json) VALUES (?, ?, 0, 'text', ?, NULL, 'sent', NULL, NULL, NULL, '{}')`).run(`withdrawn_${id}`, id, '[消息已撤回]');
-      app.db.prepare('UPDATE messages SET meta_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(meta), nowIso(), id);
+      const result = repos.messages.withdraw(id, now, windowMs);
+      if (result.kind === 'withdrawn') {
+        repos.audit.add('message', 'withdrawn', id, { preservedPlaceholder: true });
+        const event = services.bus.persist('message.updated', { message: result.message });
+        return { result, event };
+      }
+      return { result, event: null };
     });
-    tx();
-    const updated = repos.messages.get(id)!;
-    repos.audit.add('message', 'withdrawn', id, { preservedPlaceholder: true });
-    services.bus.publish('message.updated', { message: updated });
-    return { message: updated };
+    const { result, event } = tx();
+    if (result.kind === 'not_found') { reply.code(404); return { error: 'not_found' }; }
+    if (result.kind === 'not_withdrawable') { reply.code(409); return { error: 'not_withdrawable' }; }
+    if (result.kind === 'expired') { reply.code(409); return { error: 'withdraw_window_expired', message: '只能撤回五分钟内发送的消息' }; }
+    if (result.kind === 'already_withdrawn') { return { duplicate: true, message: result.message }; }
+    services.bus.fanout(event!);
+    return { message: result.message };
   });
 
   server.get('/api/stickers', { preHandler: auth }, async () => ({ stickers: services.stickerLibrary.available().map((sticker) => ({ id: sticker.id, name: sticker.name, emotion: sticker.emotion, tags: sticker.tags, url: sticker.url, mediaId: sticker.mediaId })) }));

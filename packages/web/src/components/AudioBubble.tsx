@@ -2,6 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 import type { MessagePart } from '../lib/types.js';
 
+/** Deterministic bar heights in 0.25..1 from a media id. */
+function waveform(seed: string, count: number): number[] {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    h = (h ^ seed.charCodeAt(i)) * 16777619;
+  }
+  const out: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    h = (h ^ (h >>> 13)) * 1274126177;
+    out.push(0.25 + (Math.abs(h >>> 8) % 1000) / 1000 * 0.75);
+  }
+  return out;
+}
+
 const SPEEDS = [1, 1.5, 2];
 
 function formatTime(sec: number): string {
@@ -53,6 +67,9 @@ export function AudioBubble({ part, mine }: Props) {
   }
 
   const src = media.url ?? '';
+  // A stable pseudo-waveform: derived from the media id so the same voice note
+  // always looks the same, without decoding audio just to draw 24 bars.
+  const bars = waveform(part.media.id, Math.max(14, Math.min(28, Math.round(duration * 1.6) || 18)));
   const progress = duration > 0 ? Math.min(current / duration, 1) : 0;
   // Width scales with length, like a familiar messenger voice bubble.
   const width = Math.min(70 + Math.min(duration, 60) * 3.2, 260);
@@ -115,7 +132,15 @@ export function AudioBubble({ part, mine }: Props) {
             if (e.key === 'ArrowLeft') audio.currentTime = Math.max(0, audio.currentTime - 3);
           }}
         >
-          <div className="audio-track-fill" style={{ width: `${progress * 100}%` }} />
+          <div className="audio-wave" aria-hidden="true">
+            {bars.map((height, i) => (
+              <i
+                key={i}
+                className={i / bars.length <= progress ? 'played' : ''}
+                style={{ height: `${Math.round(height * 100)}%` }}
+              />
+            ))}
+          </div>
         </div>
 
         <span className="audio-time" data-testid="audio-duration">

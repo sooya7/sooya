@@ -134,6 +134,32 @@ export const SttModelSchema = z.object({
 });
 export type SttModelConfig = z.infer<typeof SttModelSchema>;
 
+/** The fixed capability slots a model can be assigned to. */
+export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'stt'] as const;
+export const ModelSlotSchema = z.enum(MODEL_SLOTS);
+export type ModelSlot = z.infer<typeof ModelSlotSchema>;
+
+/**
+ * A named model the operator saved for reuse. The slots above are fixed, so
+ * without this a panel user cannot "add a model" at all — only overwrite one of
+ * seven. A preset deliberately holds no secret: only the name of the env var
+ * that carries the key, so the library can be listed, exported and diffed
+ * without spreading credentials into settings rows.
+ */
+export const ModelPresetSchema = z.object({
+  id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, 'id 只能包含字母、数字、下划线和连字符'),
+  name: z.string().min(1).max(80),
+  slot: ModelSlotSchema,
+  provider: z.string().min(1).max(64),
+  model: z.string().min(1).max(200),
+  baseUrl: z.string().max(300).default(''),
+  apiKeyEnv: z.string().max(120).default(''),
+  notes: z.string().max(300).default('')
+});
+export type ModelPreset = z.infer<typeof ModelPresetSchema>;
+
+export const ModelPresetsSchema = z.array(ModelPresetSchema).max(60);
+
 export const ModelsConfigSchema = z.object({
   chat: ChatModelSchema.default({}),
   vision: ChatModelSchema.optional(),

@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { adminApi, getAdminToken, setAdminToken, type AdminPersona } from '../lib/admin.js';
+import type { AdminPersona } from '../lib/admin.js';
 import { adminMediaUrl, featureApi, type WorldEntry } from '../lib/features.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 
 const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'gentle'] as const;
-const FEATURE_TABS = [
-  { id: 'avatar', label: '双方头像' },
-  { id: 'voice', label: '情绪语音' },
-  { id: 'world', label: '世界引擎' },
-  { id: 'storage', label: '存储治理' }
-] as const;
 const EMOTION_LABELS: Record<string, string> = { neutral: '中性', happy: '开心', sad: '难过', angry: '生气', gentle: '温柔' };
 const WORLD_KINDS = [
   ['entity', '实体'],
@@ -33,7 +27,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : '操作失败';
 }
 
-function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona; onPersona: (p: AdminPersona) => void; onNotice: (s: string) => void }) {
+export function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona; onPersona: (p: AdminPersona) => void; onNotice: (s: string) => void }) {
   const assistantMedia = useAuthenticatedMedia(persona.avatar, 'admin', 'image');
   const userMedia = useAuthenticatedMedia(persona.userAvatar, 'admin', 'image');
   persona = { ...persona, avatar: assistantMedia.url ?? '', userAvatar: userMedia.url ?? '' };
@@ -49,7 +43,7 @@ function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona;
   };
   return (
     <section className="admin-form-card" data-testid="avatar-settings">
-      <div className="admin-panel-heading"><div><h2>双方头像</h2><p>分别上传 SOOYA 与用户头像，保存后聊天页面会即时刷新。</p></div></div>
+      <div className="admin-panel-heading"><div><p>分别上传 SOOYA 与用户头像。选好文件就会立即上传，聊天页面随即刷新。</p></div></div>
       <div className="admin-summary">
         <label className="admin-card"><strong>SOOYA 头像</strong><img src={adminMediaUrl(persona.avatar)} alt="SOOYA 头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} />{assistantMedia.error && <small role="status">{assistantMedia.error}</small>}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('assistant', event.target.files?.[0])} /></label>
         <label className="admin-card"><strong>用户头像</strong><img src={adminMediaUrl(persona.userAvatar)} alt="用户头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} />{userMedia.error && <small role="status">{userMedia.error}</small>}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('user', event.target.files?.[0])} /></label>
@@ -58,7 +52,7 @@ function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona;
   );
 }
 
-function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
+export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [data, setData] = useState<Record<string, any> | null>(null);
   const [text, setText] = useState('你好呀，我是 SOOYA。');
   const [emotion, setEmotion] = useState('neutral');
@@ -102,7 +96,7 @@ function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const capability = data.capability ?? {};
   return (
     <section className="admin-form-card" data-testid="voice-settings">
-      <div className="admin-panel-heading"><div><h2>情绪语音</h2><p>{capability.ok || capability.configured ? 'TTS 能力可用' : `TTS 不可用：${capability.detail ?? '尚未配置'}`}</p></div></div>
+      <div className="admin-panel-heading"><div><p>{capability.ok || capability.configured ? 'TTS 能力可用' : `TTS 不可用：${capability.detail ?? '尚未配置'}`}</p></div></div>
       <label><span>启用语音</span><input type="checkbox" checked={Boolean(policy.enabled)} onChange={(event) => setPolicy('enabled', event.target.checked)} /></label>
       <label>发送频率<select value={String(policy.frequency ?? 'medium')} onChange={(event) => setPolicy('frequency', event.target.value)}><option value="never">从不</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
       <label>单段最大字符<input type="number" min={20} max={2000} value={Number(policy.maxCharsPerClip ?? 300)} onChange={(event) => setPolicy('maxCharsPerClip', Number(event.target.value))} /></label>
@@ -120,7 +114,7 @@ function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
   );
 }
 
-function WorldEditor({ onNotice }: { onNotice: (s: string) => void }) {
+export function WorldEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [entries, setEntries] = useState<WorldEntry[]>([]);
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<WorldDraft>({ kind: 'fact', subject: '', predicate: '', object: '' });
@@ -179,7 +173,7 @@ function WorldEditor({ onNotice }: { onNotice: (s: string) => void }) {
   };
   return (
     <section className="admin-form-card" data-testid="world-settings">
-      <div className="admin-panel-heading"><div><h2>世界引擎</h2><p>查看、搜索、编辑、禁用、删除、导入与重建持久化世界状态。</p></div></div>
+      <div className="admin-panel-heading"><div><p>查看、搜索、编辑、禁用、删除、导入与重建持久化世界状态。</p></div></div>
       <div className="admin-actions"><input placeholder="搜索实体、关系或事实" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void load(); }} /><button type="button" onClick={() => void load()}>搜索</button><button type="button" onClick={() => void featureApi.rebuildWorld().then(() => onNotice('世界重建任务已进入队列')).catch((error) => onNotice(errorText(error)))}>从对话重建</button><button type="button" onClick={() => void exportData()}>导出</button><button type="button" onClick={() => importRef.current?.click()}>导入</button><input ref={importRef} hidden type="file" accept="application/json" onChange={(event) => void importData(event.target.files?.[0])} /></div>
       <div className="admin-list-row"><select value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value as WorldEntry['kind'] })}>{WORLD_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input placeholder="主体" value={draft.subject} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} /><input placeholder="关系/属性" value={draft.predicate} onChange={(event) => setDraft({ ...draft, predicate: event.target.value })} /><input placeholder="内容" value={draft.object} onChange={(event) => setDraft({ ...draft, object: event.target.value })} /><button type="button" disabled={!draft.subject || !draft.predicate || !draft.object} onClick={() => void create()}>新增</button></div>
       {entries.length === 0 ? <div className="admin-empty">暂无匹配的世界条目</div> : entries.map((entry) => editingId === entry.id ? <div className="admin-list-row world-edit-row" key={entry.id}><select aria-label="编辑世界类型" value={edit.kind} onChange={(event) => setEdit({ ...edit, kind: event.target.value as WorldEntry['kind'] })}>{WORLD_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input aria-label="编辑主体" value={edit.subject} onChange={(event) => setEdit({ ...edit, subject: event.target.value })} /><input aria-label="编辑关系" value={edit.predicate} onChange={(event) => setEdit({ ...edit, predicate: event.target.value })} /><input aria-label="编辑内容" value={edit.object} onChange={(event) => setEdit({ ...edit, object: event.target.value })} /><button type="button" disabled={!edit.subject || !edit.predicate || !edit.object} onClick={() => void saveEdit()}>保存编辑</button><button type="button" onClick={() => setEditingId(null)}>取消</button></div> : <div className="admin-list-row" key={entry.id}><span><strong>{entry.subject}</strong> · {entry.predicate} → {entry.object}<small> {entry.kind} / {entry.authority}{entry.conflict_of ? ' / 冲突候选' : ''}</small></span><button type="button" onClick={() => startEdit(entry)}>编辑</button><button type="button" onClick={() => void featureApi.updateWorld(entry.id, { active: !(entry.active === 1 || entry.active === true) }).then(load).catch((error) => onNotice(errorText(error)))}>{entry.active === 1 || entry.active === true ? '禁用' : '启用'}</button><button type="button" className="admin-danger" onClick={() => { if (window.confirm('确认删除该世界条目？')) void featureApi.deleteWorld(entry.id).then(load).catch((error) => onNotice(errorText(error))); }}>删除</button></div>)}
@@ -254,7 +248,7 @@ function CleanupReportView({ result }: { result: Record<string, any> }) {
   );
 }
 
-function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
+export function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [data, setData] = useState<Record<string, any> | null>(null);
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const load = () => featureApi.storage().then(setData).catch((error) => onNotice(errorText(error)));
@@ -274,7 +268,7 @@ function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
   if (!data) return <section className="admin-card">正在读取存储状态…</section>;
   return (
     <section className="admin-form-card" data-testid="storage-settings">
-      <div className="admin-panel-heading"><div><h2>存储治理</h2><p>当前媒体 {bytes(data.mediaBytes)}，备份 {bytes(data.backupBytes)}，可用空间 {data.freeBytes == null ? '未知' : bytes(data.freeBytes)}。</p></div></div>
+      <div className="admin-panel-heading"><div><p>当前媒体 {bytes(data.mediaBytes)}，备份 {bytes(data.backupBytes)}，可用空间 {data.freeBytes == null ? '未知' : bytes(data.freeBytes)}。</p></div></div>
       {data.warning && <div className="admin-inline-error">已达到{data.warning === 'hard' ? '硬' : '软'}限额</div>}
       <label>软限额（MB）<input type="number" value={Math.round(Number(policy.softLimitBytes ?? 0) / 1024 / 1024)} onChange={(event) => setPolicy('softLimitBytes', Number(event.target.value) * 1024 * 1024)} /></label>
       <label>硬限额（MB）<input type="number" value={Math.round(Number(policy.hardLimitBytes ?? 0) / 1024 / 1024)} onChange={(event) => setPolicy('hardLimitBytes', Number(event.target.value) * 1024 * 1024)} /></label>
@@ -284,25 +278,5 @@ function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
       <div className="admin-actions"><button type="button" onClick={() => void featureApi.updateStorage(policy).then(() => { void load(); onNotice('存储策略已保存'); }).catch((error) => onNotice(errorText(error)))}>保存策略</button><button type="button" onClick={() => void preview(false)}>预览清理</button><button type="button" className="admin-danger" disabled={!report || report.applied} onClick={() => { if (window.confirm('只会删除预览报告中仍满足安全条件的项目，确认执行？')) void preview(true); }}>执行安全清理</button></div>
       {report && <CleanupReportView result={report} />}
     </section>
-  );
-}
-
-export default function FeatureAdminPage() {
-  const [token, setTokenState] = useState(() => getAdminToken() ?? '');
-  const [authorized, setAuthorized] = useState(() => Boolean(getAdminToken()));
-  const [persona, setPersona] = useState<AdminPersona | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<'avatar' | 'voice' | 'world' | 'storage'>('avatar');
-  useEffect(() => { if (authorized) void adminApi.persona().then((result) => setPersona(result.persona)).catch((error) => setNotice(errorText(error))); }, [authorized]);
-  const title = useMemo(() => ({ avatar: '头像', voice: '情绪语音', world: '世界引擎', storage: '存储治理' }[tab]), [tab]);
-  if (!authorized) return <main className="admin-page admin-v2 admin-lock-page"><form className="admin-lock-card" data-testid="admin-lock" onSubmit={(event) => { event.preventDefault(); if (!token.trim()) return; setAdminToken(token.trim()); setAuthorized(true); }}><h1>SOOYA 功能中心</h1><p>输入管理令牌以管理 1–9 功能。</p><input type="password" value={token} onChange={(event) => setTokenState(event.target.value)} /><button type="submit">进入</button></form></main>;
-  return (
-    <main className="admin-page admin-v2">
-      <div className="admin-shell">
-        <aside className="admin-sidebar"><div className="admin-brand"><span className="admin-brand-mark">S</span><span className="admin-brand-copy"><strong>SOOYA</strong><small>1–9 功能中心</small></span></div><nav className="admin-side-nav">{FEATURE_TABS.map((item) => <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><span className="admin-nav-copy"><strong>{item.label}</strong></span></button>)}</nav><div className="admin-sidebar-footer"><a className="admin-side-action" href="/gallery">图库与回收站</a><a className="admin-side-action" href="/admin">基础管理面板</a><a className="admin-side-action" href="/">返回聊天</a></div></aside>
-        <header className="admin-mobile-header"><div className="admin-mobile-brand"><span className="admin-mobile-icon">S</span><div><strong>SOOYA 功能中心</strong><small>{title}</small></div></div><a className="admin-return" href="/">返回对话</a></header>
-        <section className="admin-main"><nav className="admin-mobile-tabs" aria-label="功能中心导航">{FEATURE_TABS.map((item) => <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</nav><header className="admin-topbar"><div><span className="admin-eyebrow">SOOYA 1–9</span><h1>{title}</h1></div></header>{notice && <div className="admin-inline-error" role="status">{notice}</div>}<div className="admin-content-area">{tab === 'avatar' && persona && <AvatarEditor persona={persona} onPersona={setPersona} onNotice={setNotice} />}{tab === 'voice' && <VoiceEditor onNotice={setNotice} />}{tab === 'world' && <WorldEditor onNotice={setNotice} />}{tab === 'storage' && <StorageEditor onNotice={setNotice} />}</div></section>
-      </div>
-    </main>
   );
 }

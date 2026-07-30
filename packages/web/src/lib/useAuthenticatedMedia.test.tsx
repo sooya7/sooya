@@ -4,6 +4,19 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAuthenticatedMedia } from './useAuthenticatedMedia.js';
 
+/**
+ * Response bodies are bytes, never a `Blob`.
+ *
+ * `Response` here is Node's (undici) while `Blob` is jsdom's, and undici builds
+ * a body by calling `.stream()` on what it is handed — which jsdom's Blob does
+ * not implement, so `new Response(new Blob([...]))` throws
+ * `TypeError: object.stream is not a function`. In the first test that surfaced
+ * directly; in the second it was swallowed, because a throwing fetch is
+ * classified `network`, which is retriable, so the hook sat in its 400ms backoff
+ * while the assertion looked at an img that had no src yet.
+ */
+const bytes = (seed: string) => new TextEncoder().encode(seed);
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
@@ -40,7 +53,7 @@ describe('useAuthenticatedMedia lifecycle', () => {
     await act(async () => { root.render(<Probe path="/api/media/new" />); });
 
     await act(async () => {
-      newResponse.resolve(new Response(new Blob(['new'], { type: 'image/png' }), {
+      newResponse.resolve(new Response(bytes('new'), {
         status: 200,
         headers: { 'content-type': 'image/png' }
       }));
@@ -49,7 +62,7 @@ describe('useAuthenticatedMedia lifecycle', () => {
     expect(container.querySelector('img')?.src).toBe('blob:new');
 
     await act(async () => {
-      oldResponse.resolve(new Response(new Blob(['old'], { type: 'image/png' }), {
+      oldResponse.resolve(new Response(bytes('old'), {
         status: 200,
         headers: { 'content-type': 'image/png' }
       }));
@@ -69,7 +82,7 @@ describe('useAuthenticatedMedia lifecycle', () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     localStorage.setItem('sooya.token', 'chat-secret');
     vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(
-      new Blob([url], { type: 'image/png' }),
+      bytes(url),
       { status: 200, headers: { 'content-type': 'image/png' } }
     )));
     const create = vi.fn()

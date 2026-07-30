@@ -93,7 +93,39 @@ export interface ModelDirectives {
   stickerOnly?: boolean;
 }
 
-const MARKER_RE = /\[\[\s*(sticker|image|voice|voice-only|sticker-only)\s*(?::\s*([^\]]*))?\]\]/gi;
+const MARKER_KINDS = ['sticker', 'image', 'voice', 'voice-only', 'sticker-only'] as const;
+const KIND_ALT = 'sticker-only|voice-only|sticker|image|voice';
+
+/**
+ * The prompt teaches `[[marker]]`, but models emit the single-bracket form and
+ * attribute syntax (`[voice:emotion=gentle]`) often enough that treating those
+ * as literal text leaks protocol into the conversation. Accept one or two
+ * brackets on each side; unknown attributes are parsed and discarded.
+ */
+const MARKER_RE = new RegExp(String.raw`\[{1,2}\s*(${KIND_ALT})\s*(?::\s*([^\]]*))?\s*\]{1,2}`, 'gi');
+
+/** Whole-span form of {@link MARKER_RE}, for deciding on a buffered chunk. */
+const MARKER_EXACT_RE = new RegExp(String.raw`^\[{1,2}\s*(?:${KIND_ALT})\s*(?::\s*[^\]]*)?\s*\]{1,2}$`, 'i');
+
+/** How far past a `[` to wait for its `]` before giving up and emitting text. */
+const MARKER_LOOKAHEAD = 48;
+
+/**
+ * True for a truncated marker such as "[voic" or "[[sticker:开" — that is, a
+ * span that is still capable of becoming a marker once more text arrives.
+ * Anything already ruled out (`[备注`, `[这是一段正文`) must return false so the
+ * streaming filter releases it instead of holding prose hostage.
+ */
+function isPartialMarker(rest: string): boolean {
+  const m = /^\[{1,2}\s*([a-z-]*)\s*(.?)/i.exec(rest);
+  if (!m) return false;
+  const kind = (m[1] ?? '').toLowerCase();
+  // Text follows the kind: only ':' can still lead to a marker, and only when
+  // the kind is already complete (the rest is then a free-form argument).
+  if (m[2]) return m[2] === ':' && MARKER_KINDS.some((k) => k === kind);
+  // Nothing after the kind yet, so any marker it prefixes is still reachable.
+  return MARKER_KINDS.some((k) => k.startsWith(kind));
+}
 
 /**
  * An unterminated marker at the very end, such as "...[[sticker:开".
@@ -101,6 +133,9 @@ const MARKER_RE = /\[\[\s*(sticker|image|voice|voice-only|sticker-only)\s*(?::\s
  * marker is never shown to the user.
  */
 const TRAILING_PARTIAL_RE = /\[\[[^\]]*$/;
+
+/** A truncated single-bracket marker at the very end, such as "...[voic". */
+const TRAILING_SINGLE_PARTIAL_RE = new RegExp(String.raw`\[\s*(?:${KIND_ALT})?[a-z-]*\s*(?::[^\]]*)?$`, 'i');
 
 export interface StripResult {
   text: string;
@@ -114,7 +149,9 @@ export interface StripResult {
 export function stripModelDirectives(raw: string): StripResult {
   const directives: ModelDirectives = {};
   const partial = TRAILING_PARTIAL_RE.exec(raw);
-  const cleaned = partial ? raw.slice(0, partial.index) : raw;
+  let cleaned = partial ? raw.slice(0, partial.index) : raw;
+  const singlePartial = TRAILING_SINGLE_PARTIAL_RE.exec(cleaned);
+  if (singlePartial && isPartialMarker(singlePartial[0])) cleaned = cleaned.slice(0, singlePartial.index);
   const text = cleaned
     .replace(MARKER_RE, (_m, kind: string, arg?: string) => {
       const k = kind.toLowerCase();
@@ -148,25 +185,36 @@ export class StreamingDirectiveFilter {
     this.pending += chunk;
     let out = '';
     for (;;) {
-      const open = this.pending.indexOf('[[');
+      const open = this.pending.indexOf('[');
       if (open < 0) {
-        // Keep a single trailing '[' in case the next chunk completes '[['.
-        if (this.pending.endsWith('[')) {
-          out += this.pending.slice(0, -1);
-          this.pending = '[';
-        } else {
+        out += this.pending;
+        this.pending = '';
+        break;
+      }
+      out += this.pending.slice(0, open);
+      this.pending = this.pending.slice(open);
+
+      const close = this.pending.indexOf(']');
+      if (close < 0) {
+        // Still waiting for the closing bracket. Bail out once it is clear this
+        // is prose rather than a marker, so plain text is never held hostage.
+        if (this.pending.length > MARKER_LOOKAHEAD || !isPartialMarker(this.pending)) {
           out += this.pending;
           this.pending = '';
         }
         break;
       }
-      out += this.pending.slice(0, open);
-      const close = this.pending.indexOf(']]', open);
-      if (close < 0) {
-        this.pending = this.pending.slice(open);
-        break;
-      }
-      this.pending = this.pending.slice(close + 2);
+
+      // A marker may close with ']' or ']]'. When the ']' is the last byte we
+      // have, a second one may still be coming in the next chunk, so wait
+      // rather than emit the leftover bracket as text. flush() decides if the
+      // stream ends here.
+      if (close === this.pending.length - 1 && MARKER_EXACT_RE.test(this.pending)) break;
+
+      const end = this.pending[close + 1] === ']' ? close + 2 : close + 1;
+      const span = this.pending.slice(0, end);
+      this.pending = this.pending.slice(end);
+      if (!MARKER_EXACT_RE.test(span)) out += span;
     }
     return out;
   }
@@ -175,8 +223,8 @@ export class StreamingDirectiveFilter {
   flush(): string {
     const rest = this.pending;
     this.pending = '';
-    if (rest.startsWith('[[')) return '';
     if (rest === '[') return '[';
+    if (MARKER_EXACT_RE.test(rest) || isPartialMarker(rest)) return '';
     return rest;
   }
 }

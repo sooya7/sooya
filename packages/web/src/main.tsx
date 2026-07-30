@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.js';
 import GalleryPage from './components/GalleryPage.js';
-import FeatureAdminPage from './components/FeatureAdminPage.js';
+import AdminPanel from './components/AdminPanel.js';
 import { ImageViewerHost } from './components/ImageViewerHost.js';
 import { NotificationBridge } from './components/NotificationBridge.js';
 import './styles.css';
@@ -17,7 +17,7 @@ const featureAdminRoute = window.location.pathname === '/admin/features' || wind
 
 createRoot(container).render(
   <StrictMode>
-    {galleryRoute ? <GalleryPage /> : featureAdminRoute ? <FeatureAdminPage /> : <App />}
+    {galleryRoute ? <GalleryPage /> : featureAdminRoute ? <AdminPanel initialTab="avatar" /> : <App />}
     {!galleryRoute && !featureAdminRoute && <ImageViewerHost />}
     {!galleryRoute && !featureAdminRoute && <NotificationBridge />}
   </StrictMode>

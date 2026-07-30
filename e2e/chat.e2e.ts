@@ -364,7 +364,14 @@ test('chat model failure is shown to the user instead of hanging', async ({ page
   await page.goto('/');
   await send(page, '你好');
   await waitForReply(page);
-  await expect(page.locator('[data-testid="message"][data-role="assistant"]').last()).toContainText(/失败|超时/);
+  // A failing chat provider is reported with the `provider_unavailable` copy from
+  // core/public-error.ts ('模型服务暂时不可用，请稍后重试。'), not the `reply_failed`
+  // one this assertion was originally written against, so the old /失败|超时/
+  // pattern could never match even though the user was told. Accept any of the
+  // public failure messages: what matters is that the bubble explains itself.
+  await expect(page.locator('[data-testid="message"][data-role="assistant"]').last()).toContainText(
+    /失败|超时|不可用|无法处理/
+  );
 });
 
 test('PWA: manifest, icons and service worker are served correctly', async ({ page, request }) => {

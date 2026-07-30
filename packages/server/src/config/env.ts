@@ -29,6 +29,14 @@ const intish = (def: number) =>
       return Math.trunc(n);
     });
 
+const originList = z
+  .string()
+  .optional()
+  .transform((value) => {
+    if (!value?.trim()) return [];
+    return [...new Set(value.split(',').map((origin) => origin.trim()).filter(Boolean))];
+  });
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('production'),
   HOST: z.string().default('0.0.0.0'),
@@ -41,6 +49,7 @@ const EnvSchema = z.object({
 
   WEB_CHAT_TOKEN: z.string().optional(),
   ADMIN_API_TOKEN: z.string().optional(),
+  CORS_ALLOWED_ORIGINS: originList,
 
   MAX_BODY_BYTES: intish(2 * 1024 * 1024),
   MAX_UPLOAD_BYTES: intish(25 * 1024 * 1024),

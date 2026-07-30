@@ -1,4 +1,5 @@
 import { ApiError } from './api.js';
+import type { ModelPreset, ModelSlot } from './modelPresets.js';
 
 const ADMIN_TOKEN_KEY = 'sooya.admin-token';
 
@@ -183,6 +184,14 @@ export const adminApi = {
     }),
   deleteSticker: (id: string) =>
     adminRequest<{ deleted: boolean }>(`/api/admin/stickers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  modelPresets: () => adminRequest<{ presets: ModelPreset[]; slots: ModelSlot[] }>('/api/admin/model-presets'),
+  saveModelPresets: (presets: ModelPreset[]) =>
+    adminRequest<{ presets: ModelPreset[] }>('/api/admin/model-presets', { method: 'PUT', body: { presets } }),
+  applyModelPreset: (id: string) =>
+    adminRequest<{ applied: string; models: AdminModels }>(
+      `/api/admin/model-presets/${encodeURIComponent(id)}/apply`,
+      { method: 'POST' }
+    ),
   memories: () => adminRequest<{ memories: AdminMemory[]; stats: Record<string, unknown> }>('/api/admin/memories'),
   deleteMemory: (id: string) =>
     adminRequest<{ deleted: boolean }>(`/api/admin/memories/${encodeURIComponent(id)}`, { method: 'DELETE' }),

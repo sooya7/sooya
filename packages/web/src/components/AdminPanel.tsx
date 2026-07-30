@@ -1,5 +1,19 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../lib/api.js';
+import { AvatarEditor, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js';
+import {
+  emptyPreset,
+  MODEL_SLOTS,
+  presetsBySlot,
+  removePreset,
+  SLOT_LABELS,
+  SLOT_PROVIDERS,
+  suggestId,
+  upsertPreset,
+  validatePreset,
+  type ModelPreset,
+  type ModelSlot
+} from '../lib/modelPresets.js';
 import {
   adminApi,
   clearAdminToken,
@@ -17,7 +31,16 @@ import {
   type AdminSystemStatus
 } from '../lib/admin.js';
 
-type Tab = 'overview' | 'persona' | 'models' | 'content' | 'operations';
+type Tab =
+  | 'overview'
+  | 'persona'
+  | 'avatar'
+  | 'voice'
+  | 'world'
+  | 'models'
+  | 'content'
+  | 'storage'
+  | 'operations';
 type Dashboard = { system: AdminSystemStatus; capabilities: AdminCapabilities; backups: AdminBackup[] };
 type IconName = 'overview' | 'persona' | 'models' | 'content' | 'operations' | 'message' | 'cpu' | 'storage' | 'backup' | 'lock';
 
@@ -31,19 +54,31 @@ const CAPABILITIES = [
   ['stt', '语音识别模型']
 ] as const;
 
-const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: IconName }> = [
-  { id: 'overview', label: '概览', description: '运行状态与资源', icon: 'overview' },
-  { id: 'persona', label: '助手配置', description: '人设与表达方式', icon: 'persona' },
-  { id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
-  { id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
-  { id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' }
+/** Nav groups, so nine sections read as a structure instead of a list. */
+const NAV_GROUPS = ['运行状态', '助手与表达', '内容与系统'] as const;
+type NavGroup = (typeof NAV_GROUPS)[number];
+
+const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: IconName; group: NavGroup }> = [
+  { group: '运行状态', id: 'overview', label: '概览', description: '运行状态与资源', icon: 'overview' },
+  { group: '助手与表达', id: 'persona', label: '助手配置', description: '人设与表达方式', icon: 'persona' },
+  { group: '内容与系统', id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
+  { group: '助手与表达', id: 'avatar', label: '双方头像', description: '助手与用户头像', icon: 'persona' },
+  { group: '助手与表达', id: 'voice', label: '情绪语音', description: '语气与语音合成', icon: 'message' },
+  { group: '助手与表达', id: 'world', label: '世界引擎', description: '世界设定与检索', icon: 'cpu' },
+  { group: '内容与系统', id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
+  { group: '内容与系统', id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
+  { group: '内容与系统', id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' }
 ];
 
 const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
   overview: { title: '系统概览', description: '查看 SOOYA 当前运行状态和资源使用情况。' },
   persona: { title: '助手配置', description: '调整助手身份、语气和关系设定。' },
   models: { title: '模型配置', description: '管理每项能力对应的接口与模型。' },
+  avatar: { title: '双方头像', description: '上传助手与用户头像，聊天页面即时生效。' },
+  voice: { title: '情绪语音', description: '配置语音合成的情绪、语速与表达方式。' },
+  world: { title: '世界引擎', description: '维护世界设定条目，供对话检索引用。' },
   content: { title: '内容管理', description: '管理长期记忆、表情包、媒体和聊天记录。' },
+  storage: { title: '存储治理', description: '预览并执行媒体清理，回收磁盘空间。' },
   operations: { title: '运维与备份', description: '检查错误与后台任务，并管理数据备份。' }
 };
 
@@ -161,6 +196,127 @@ function PersonaPanel({ onNotice }: { onNotice: (v: string) => void }) {
   );
 }
 
+/**
+ * The saved model library. The seven capability slots are fixed, so this is the
+ * only place an operator can add a model rather than overwrite one; applying a
+ * preset is what actually assigns it to its slot on the server.
+ */
+function ModelLibrary({ onNotice, onApplied }: { onNotice: (v: string) => void; onApplied: (models: AdminModels) => void }) {
+  const [presets, setPresets] = useState<ModelPreset[] | null>(null);
+  const [draft, setDraft] = useState<ModelPreset | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void adminApi.modelPresets().then((r) => setPresets(r.presets)).catch((e) => onNotice(errorText(e)));
+  }, [onNotice]);
+
+  const commit = async (next: ModelPreset[], message: string) => {
+    setBusy(true);
+    try {
+      const saved = await adminApi.saveModelPresets(next);
+      setPresets(saved.presets);
+      setDraft(null);
+      setEditingId(null);
+      onNotice(message);
+    } catch (e) {
+      onNotice(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = () => {
+    if (!draft || !presets) return;
+    const problem = validatePreset(draft, presets, editingId);
+    if (problem) {
+      onNotice(problem);
+      return;
+    }
+    void commit(upsertPreset(presets, draft, editingId), editingId ? '预设已更新' : '预设已添加');
+  };
+
+  const apply = async (preset: ModelPreset) => {
+    setBusy(true);
+    try {
+      const result = await adminApi.applyModelPreset(preset.id);
+      onApplied(result.models);
+      onNotice(`已把「${preset.name}」指派给${SLOT_LABELS[preset.slot]}`);
+    } catch (e) {
+      onNotice(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const update = (patch: Partial<ModelPreset>) => setDraft((prev) => {
+    if (!prev) return prev;
+    const next = { ...prev, ...patch };
+    // A slot change can strand the provider on something that slot rejects.
+    if (patch.slot && !SLOT_PROVIDERS[patch.slot].includes(next.provider)) {
+      next.provider = SLOT_PROVIDERS[patch.slot][0] ?? '';
+    }
+    return next;
+  });
+
+  if (!presets) return <p className="admin-muted">正在读取模型库…</p>;
+  const groups = presetsBySlot(presets);
+
+  return (
+    <section className="admin-model-library" data-testid="admin-model-library">
+      <PanelHeading title="模型库" description="保存任意多个模型预设，随时指派给某项能力。预设只记录密钥的环境变量名，不保存密钥本身。" />
+      {groups.length === 0 && <p className="admin-muted">还没有预设。添加一个，就能在不同模型之间随时切换。</p>}
+      {groups.map(([slot, items]) => (
+        <div className="admin-preset-group" key={slot}>
+          <h3>{SLOT_LABELS[slot]}</h3>
+          {items.map((preset) => (
+            <div className={editingId === preset.id ? 'admin-preset-row active' : 'admin-preset-row'} key={preset.id} data-testid={`admin-preset-${preset.id}`}>
+              <div className="admin-preset-copy">
+                <strong>{preset.name}</strong>
+                <small>{preset.model} · {preset.provider}{preset.baseUrl ? ` · ${preset.baseUrl}` : ''}{preset.apiKeyEnv ? ` · 密钥取自 ${preset.apiKeyEnv}` : ''}</small>
+                {preset.notes && <small>{preset.notes}</small>}
+              </div>
+              <div className="admin-preset-actions">
+                <button type="button" className="primary" disabled={busy} onClick={() => void apply(preset)}>指派</button>
+                <button type="button" disabled={busy} onClick={() => { setDraft(preset); setEditingId(preset.id); }}>编辑</button>
+                <button type="button" className="danger" disabled={busy} onClick={() => void commit(removePreset(presets, preset.id), '预设已删除')}>删除</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+
+      {draft ? (
+        <div className="admin-preset-form" data-testid="admin-preset-form">
+          <label>预设名称<input value={draft.name} onChange={(e) => {
+            const name = e.target.value;
+            update(editingId ? { name } : { name, id: draft.id || suggestId(name) });
+          }} /></label>
+          <label>预设 ID<input value={draft.id} disabled={Boolean(editingId)} onChange={(e) => update({ id: e.target.value })} /></label>
+          <label>指派能力<select value={draft.slot} onChange={(e) => update({ slot: e.target.value as ModelSlot })}>
+            {MODEL_SLOTS.map((slot) => <option key={slot} value={slot}>{SLOT_LABELS[slot]}</option>)}
+          </select></label>
+          <label>接口协议<select value={draft.provider} onChange={(e) => update({ provider: e.target.value })}>
+            {SLOT_PROVIDERS[draft.slot].map((provider) => <option key={provider} value={provider}>{provider}</option>)}
+          </select></label>
+          <label>模型名<input value={draft.model} onChange={(e) => update({ model: e.target.value })} /></label>
+          <label>接口地址<input value={draft.baseUrl} placeholder="留空则用默认地址" onChange={(e) => update({ baseUrl: e.target.value })} /></label>
+          <label>密钥环境变量<input value={draft.apiKeyEnv} placeholder="例如 GLM_API_KEY" onChange={(e) => update({ apiKeyEnv: e.target.value })} /></label>
+          <label>备注<input value={draft.notes} onChange={(e) => update({ notes: e.target.value })} /></label>
+          <div className="admin-preset-form-actions">
+            <button type="button" className="admin-primary" disabled={busy} onClick={submit}>{editingId ? '保存修改' : '添加到模型库'}</button>
+            <button type="button" disabled={busy} onClick={() => { setDraft(null); setEditingId(null); }}>取消</button>
+          </div>
+        </div>
+      ) : (
+        <div className="admin-preset-form-actions">
+          <button type="button" className="admin-primary" data-testid="admin-preset-add" onClick={() => { setDraft(emptyPreset()); setEditingId(null); }}>添加模型</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [models, setModels] = useState<AdminModels | null>(null);
   const [selected, setSelected] = useState<string>('chat');
@@ -201,6 +357,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
       </aside>
       <div className="admin-form-card">
         <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description="编辑当前能力使用的真实服务端配置。" />
+        <ModelLibrary onNotice={onNotice} onApplied={setModels} />
         <label>接口协议<select value={String(config.provider ?? 'none')} onChange={(e) => update('provider', e.target.value)}>
           <option value="none">未配置</option>
           <option value="openai-chat">OpenAI Chat Completions</option>
@@ -351,14 +508,36 @@ function OperationsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   );
 }
 
+/** Loads the persona the avatar editor edits, which the old page shell owned. */
+function AvatarPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [persona, setPersona] = useState<AdminPersona | null>(null);
+  useEffect(() => {
+    void adminApi.persona().then((r) => setPersona(r.persona)).catch((e) => onNotice(errorText(e)));
+  }, [onNotice]);
+  if (!persona) return <p className="admin-muted">正在读取头像设置…</p>;
+  return <AvatarEditor persona={persona} onPersona={setPersona} onNotice={onNotice} />;
+}
+
 function TabButtons({ tab, setTab, mobile }: { tab: Tab; setTab: (tab: Tab) => void; mobile: boolean }) {
   return (
     <nav className={mobile ? 'admin-mobile-tabs' : 'admin-side-nav'} aria-label="管理面板导航">
-      {TABS.map((item) => (
-        <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
-          {mobile ? item.label : <><span className="admin-nav-icon"><Icon name={item.icon} /></span><span className="admin-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span></>}
-        </button>
-      ))}
+      {mobile
+        ? TABS.map((item) => (
+          <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+            {item.label}
+          </button>
+        ))
+        : NAV_GROUPS.map((group) => (
+          <Fragment key={group}>
+            <p className="admin-nav-group">{group}</p>
+            {TABS.filter((item) => item.group === group).map((item) => (
+              <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+                <span className="admin-nav-icon"><Icon name={item.icon} /></span>
+                <span className="admin-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
+              </button>
+            ))}
+          </Fragment>
+        ))}
     </nav>
   );
 }
@@ -386,10 +565,10 @@ function Overview({ data, counts, onRefresh }: { data: Dashboard; counts: { avai
   </>;
 }
 
-export default function AdminPanel() {
+export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: Tab } = {}) {
   const [token, setToken] = useState(() => getAdminToken());
   const [tokenInput, setTokenInput] = useState('');
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [data, setData] = useState<Dashboard | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -458,11 +637,19 @@ export default function AdminPanel() {
     ? <Overview data={data} counts={counts} onRefresh={() => void loadOverview()} />
     : tab === 'persona'
       ? <PersonaPanel onNotice={setNotice} />
-      : tab === 'models'
-        ? <ModelsPanel onNotice={setNotice} />
-        : tab === 'content'
-          ? <ContentPanel onNotice={setNotice} />
-          : <OperationsPanel onNotice={setNotice} />;
+      : tab === 'avatar'
+        ? <AvatarPanel onNotice={setNotice} />
+        : tab === 'voice'
+          ? <VoiceEditor onNotice={setNotice} />
+          : tab === 'world'
+            ? <WorldEditor onNotice={setNotice} />
+            : tab === 'models'
+              ? <ModelsPanel onNotice={setNotice} />
+              : tab === 'content'
+                ? <ContentPanel onNotice={setNotice} />
+                : tab === 'storage'
+                  ? <StorageEditor onNotice={setNotice} />
+                  : <OperationsPanel onNotice={setNotice} />;
 
   return (
     <main className="admin-page admin-v2" data-testid="admin-dashboard">

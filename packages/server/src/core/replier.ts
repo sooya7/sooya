@@ -1,12 +1,13 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { MediaStore } from '../media/store.js';
+import type { MediaRow } from '../db/repos/media.repo.js';
 import type { StickerLibrary } from '../media/stickers.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ContextBuilder } from './context.js';
 import type { EventBus } from '../events/bus.js';
 import type { ConfigStore } from '../config/store.js';
 import type { ErrorLogRepo, SettingsRepo } from '../db/repos/misc.repo.js';
-import type { ChatMessage } from './types.js';
+import type { ChatMessage, StreamEventType } from './types.js';
 import {
   parseUserDirectives,
   stripModelDirectives,
@@ -14,9 +15,10 @@ import {
   type ModelDirectives,
   type UserDirectives
 } from './directives.js';
-import { ProviderNotConfiguredError } from '../providers/types.js';
+import { ProviderNotConfiguredError, type GeneratedImage } from '../providers/types.js';
 import { HttpTimeoutError } from '../util/http.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from './voice.js';
+import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
 
 export interface ReplyOptions {
   recentMessages: number;
@@ -28,7 +30,7 @@ export interface ReplyOutcome {
   ok: boolean;
   parts: string[];
   degraded: string[];
-  error?: string;
+  error?: PublicFailure;
 }
 
 const NO_MODEL_FALLBACK =
@@ -77,14 +79,23 @@ export class Replier {
     const userDirectives = mergeDirectives(parseUserDirectives(userText), userMessage.meta?.directives as UserDirectives);
 
     // 1. Create the assistant shell message up front.
-    const { message: shell } = this.deps.messages.create({
-      role: 'assistant',
-      status: 'sending',
-      replyTo: userMessage.id,
-      parts: [],
-      meta: { replyTo: userMessage.id }
-    });
-    this.deps.bus.publish('reply.thinking', { messageId: shell.id, replyTo: userMessage.id });
+    let shell: ChatMessage;
+    try {
+      shell = this.stableBoundary(
+        () => this.deps.messages.createInTransaction({
+          role: 'assistant',
+          status: 'sending',
+          replyTo: userMessage.id,
+          parts: [],
+          meta: { replyTo: userMessage.id }
+        }).message,
+        'reply.thinking',
+        (message) => ({ messageId: message.id, replyTo: userMessage.id })
+      );
+    } catch (error) {
+      this.active = false;
+      throw error;
+    }
 
     try {
       const caps = this.deps.capabilities;
@@ -160,16 +171,20 @@ export class Replier {
           );
         } catch (err) {
           const e = err as Error;
-          this.deps.errorLog.add('reply.chat', e.message);
+          const failure = publicFailure('provider_unavailable');
+          this.deps.errorLog.add('reply.chat', failure.code, {
+            incidentId: failure.incidentId,
+            diagnostic: redactDiagnostic(e)
+          });
           if (!visibleText) {
             const note =
               e instanceof HttpTimeoutError
                 ? '（模型响应超时了，稍后再试一次吧。）'
-                : `（模型请求失败：${shortError(e)}）`;
+                : `（${failure.message}）`;
             pushDelta(note);
-            degraded.push(`chat:${e.name}`);
+            degraded.push('chat:provider_unavailable');
           } else {
-            degraded.push(`chat-partial:${e.name}`);
+            degraded.push('chat:provider_unavailable');
           }
         }
       } else {
@@ -247,13 +262,17 @@ export class Replier {
       // 3b. Image
       if (plan.imagePrompt) {
         this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: plan.imagePrompt.slice(0, 200) });
+        const reference = await this.referenceImage(userMessage);
         const partId = this.deps.messages.appendPart(shell.id, {
           type: 'image',
           status: 'pending',
-          meta: { prompt: plan.imagePrompt.slice(0, 500) }
+          meta: {
+            prompt: plan.imagePrompt.slice(0, 500),
+            ...(reference ? { referenceMediaId: reference.row.id } : {})
+          }
         });
         try {
-          const img = await this.deps.capabilities.imageProvider().generate(plan.imagePrompt);
+          const img = await this.generateImage(plan.imagePrompt, reference);
           const media = await this.deps.media.save({
             kind: 'image',
             origin: 'generated',
@@ -267,10 +286,14 @@ export class Replier {
           this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'image', mediaId: media.id });
         } catch (err) {
           const e = err as Error;
-          const reason = e instanceof ProviderNotConfiguredError ? '图片生成没有配置' : shortError(e);
-          this.deps.messages.updatePart(partId, { status: 'failed', error: reason });
-          this.deps.errorLog.add('reply.image', e.message);
-          degraded.push(`image:${e.name}`);
+          const failure = publicFailure('provider_unavailable');
+          const reason = e instanceof ProviderNotConfiguredError ? '图片生成服务没有配置。' : failure.message;
+          this.deps.messages.updatePart(partId, { status: 'failed', error: reason, meta: { failure: { ...failure, message: reason } } });
+          this.deps.errorLog.add('reply.image', failure.code, {
+            incidentId: failure.incidentId,
+            diagnostic: redactDiagnostic(e)
+          });
+          degraded.push('image:provider_unavailable');
           // Never lose the text: add an explanatory note instead.
           if (!finalText) {
             this.deps.messages.appendPart(shell.id, {
@@ -333,10 +356,14 @@ export class Replier {
           this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'audio', mediaId: media.id });
         } catch (err) {
           const e = err as Error;
-          const reason = e instanceof ProviderNotConfiguredError ? '语音合成没有配置' : shortError(e);
-          this.deps.messages.updatePart(partId, { status: 'failed', error: reason });
-          this.deps.errorLog.add('reply.tts', e.message);
-          degraded.push(`tts:${e.name}`);
+          const failure = publicFailure('provider_unavailable');
+          const reason = e instanceof ProviderNotConfiguredError ? '语音合成服务没有配置。' : failure.message;
+          this.deps.messages.updatePart(partId, { status: 'failed', error: reason, meta: { failure: { ...failure, message: reason } } });
+          this.deps.errorLog.add('reply.tts', failure.code, {
+            incidentId: failure.incidentId,
+            diagnostic: redactDiagnostic(e)
+          });
+          degraded.push('audio:provider_unavailable');
           // TTS failure falls back to text — which is already present. When it
           // is not, restore the FULL text rather than the clip that would have
           // been spoken, otherwise a TTS outage silently truncates the reply.
@@ -357,40 +384,117 @@ export class Replier {
       }
 
       // 4. Guarantee a non-empty message.
-      let finalMessage = this.deps.messages.get(shell.id)!;
-      const visibleParts = finalMessage.content.filter((p) => p.status !== 'failed');
-      if (visibleParts.length === 0) {
-        this.deps.messages.appendPart(shell.id, {
-          type: 'text',
-          text: '（这次没能生成内容，再说一次好吗？）',
-          status: 'sent'
-        });
-        producedParts.push('text');
-        degraded.push('empty-reply-guard');
-        finalMessage = this.deps.messages.get(shell.id)!;
-      }
+      this.stableBoundary(() => {
+        const current = this.deps.messages.get(shell.id)!;
+        const visibleParts = current.content.filter((p) => p.status !== 'failed');
+        if (visibleParts.length === 0) {
+          this.deps.messages.appendPart(shell.id, {
+            type: 'text',
+            text: '（这次没能生成内容，再说一次好吗？）',
+            status: 'sent'
+          });
+          producedParts.push('text');
+          degraded.push('empty-reply-guard');
+        }
 
-      this.deps.messages.setStatus(shell.id, 'sent', degraded.length ? degraded.join(',') : null);
-      finalMessage = this.deps.messages.get(shell.id)!;
-      this.deps.bus.publish('reply.content.done', { messageId: shell.id, parts: producedParts });
-      this.deps.bus.publish('reply.completed', { message: finalMessage, degraded });
+        this.deps.messages.setStatus(shell.id, 'sent', degraded.length ? degraded.join(',') : null);
+        return this.deps.messages.get(shell.id)!;
+      }, 'reply.completed', (message) => ({ message, degraded }), () => [
+        { type: 'reply.content.done', payload: { messageId: shell.id, parts: producedParts } }
+      ]);
       return { messageId: shell.id, ok: true, parts: producedParts, degraded };
     } catch (err) {
       const e = err as Error;
-      this.deps.errorLog.add('reply', e.message, { stack: e.stack?.slice(0, 1000) });
-      this.deps.messages.setStatus(shell.id, 'failed', shortError(e));
-      const failed = this.deps.messages.get(shell.id);
-      if (failed && failed.content.length === 0) {
-        this.deps.messages.appendPart(shell.id, { type: 'text', text: `（回复失败：${shortError(e)}）`, status: 'sent' });
-      }
-      this.deps.bus.publish('reply.failed', {
-        messageId: shell.id,
-        error: shortError(e),
-        message: this.deps.messages.get(shell.id)
+      const failure = publicFailure('reply_failed');
+      this.deps.errorLog.add('reply', failure.code, {
+        incidentId: failure.incidentId,
+        diagnostic: redactDiagnostic(e)
       });
-      return { messageId: shell.id, ok: false, parts: producedParts, degraded, error: shortError(e) };
+      this.stableBoundary(() => {
+        this.deps.messages.setStatus(shell.id, 'failed', failure.message);
+        this.deps.messages.updateMeta(shell.id, { failure });
+        const failed = this.deps.messages.get(shell.id);
+        if (failed && failed.content.length === 0) {
+          this.deps.messages.appendPart(shell.id, {
+            type: 'text',
+            text: `（${failure.message} 事件编号：${failure.incidentId}）`,
+            status: 'sent',
+            meta: { failure }
+          });
+        }
+        return this.deps.messages.get(shell.id)!;
+      }, 'reply.failed', (message) => ({
+        messageId: shell.id,
+        code: failure.code,
+        error: failure.message,
+        incidentId: failure.incidentId,
+        message
+      }));
+      return { messageId: shell.id, ok: false, parts: producedParts, degraded, error: failure };
     } finally {
       this.active = false;
+    }
+  }
+
+  private stableBoundary<T>(
+    mutation: () => T,
+    type: StreamEventType,
+    payload: (value: T) => Record<string, unknown>,
+    preceding: (value: T) => Array<{ type: StreamEventType; payload: Record<string, unknown> }> = () => []
+  ): T {
+    let events: Array<ReturnType<EventBus['persist']>> = [];
+    const value = this.deps.messages.inTransaction(() => {
+      const result = mutation();
+      events = [
+        ...preceding(result).map((spec) => this.deps.bus.persist(spec.type, spec.payload)),
+        this.deps.bus.persist(type, payload(result))
+      ];
+      return result;
+    });
+    for (const event of events) this.deps.bus.fanout(event);
+    return value;
+  }
+
+  /**
+   * An image the user attached to the message being answered. Only the current
+   * message counts: reaching further back would silently edit an unrelated
+   * picture when the prompt has nothing to do with it.
+   */
+  private async referenceImage(userMessage: ChatMessage): Promise<{ row: MediaRow; data: Buffer } | null> {
+    for (let i = userMessage.content.length - 1; i >= 0; i -= 1) {
+      const part = userMessage.content[i];
+      if (part?.type !== 'image') continue;
+      const id = part.media?.id ?? part.mediaId ?? null;
+      if (!id) continue;
+      try {
+        const found = await this.deps.media.read(id);
+        if (found) return found;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Editing the reference keeps the user's picture recognisable. A provider
+   * that rejects the edits endpoint still gets to produce something, so fall
+   * back to generating from the prompt alone.
+   */
+  private async generateImage(
+    prompt: string,
+    reference: { row: MediaRow; data: Buffer } | null
+  ): Promise<GeneratedImage> {
+    const provider = this.deps.capabilities.imageProvider();
+    if (!reference) return await provider.generate(prompt);
+    try {
+      return await provider.edit(prompt, reference.data, { mime: reference.row.mime });
+    } catch (err) {
+      if (err instanceof ProviderNotConfiguredError) throw err;
+      this.deps.errorLog.add('reply.image.edit', 'image_edit_unavailable', {
+        diagnostic: redactDiagnostic(err as Error)
+      });
+      return await provider.generate(prompt);
     }
   }
 
@@ -487,8 +591,4 @@ export function guessEmotion(text: string): string {
     if (re.test(text)) return emotion;
   }
   return '开心';
-}
-
-function shortError(err: Error): string {
-  return `${err.name}: ${err.message}`.slice(0, 200);
 }

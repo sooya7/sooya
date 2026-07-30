@@ -15,9 +15,17 @@ export class EventBus {
     this.emitter.setMaxListeners(64);
   }
 
-  publish(type: StreamEventType, payload: Record<string, unknown> = {}): StreamEvent {
-    const event = this.repo.append(type, payload);
+  persist(type: StreamEventType, payload: Record<string, unknown> = {}): StreamEvent {
+    return this.repo.append(type, payload);
+  }
+
+  fanout(event: StreamEvent): void {
     this.emitter.emit('event', event);
+  }
+
+  publish(type: StreamEventType, payload: Record<string, unknown> = {}): StreamEvent {
+    const event = this.persist(type, payload);
+    this.fanout(event);
     return event;
   }
 

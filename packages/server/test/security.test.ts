@@ -11,6 +11,61 @@ afterEach(async () => {
 const CHAT_TOKEN = 'chat-token-abcdefgh';
 const ADMIN_TOKEN = 'admin-token-12345678';
 
+describe('browser cross-origin access', () => {
+  it('allows only configured exact origins without credentialed CORS', async () => {
+    h = await createHarness({
+      env: { CORS_ALLOWED_ORIGINS: ' https://echo.sooya.icu,https://admin.sooya.icu,https://echo.sooya.icu ' }
+    });
+
+    expect(h.app.env.CORS_ALLOWED_ORIGINS).toEqual([
+      'https://echo.sooya.icu',
+      'https://admin.sooya.icu'
+    ]);
+
+    const allowed = await h.app.server.inject({
+      method: 'OPTIONS',
+      url: '/api/messages',
+      headers: {
+        origin: 'https://echo.sooya.icu',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type,x-sooya-token,authorization'
+      }
+    });
+    expect(allowed.statusCode).toBe(204);
+    expect(allowed.headers['access-control-allow-origin']).toBe('https://echo.sooya.icu');
+    expect(allowed.headers['access-control-allow-credentials']).toBeUndefined();
+    expect(allowed.headers['access-control-allow-headers']).toBe(
+      'content-type, x-sooya-token, x-admin-token, authorization'
+    );
+
+    const hostile = await h.app.server.inject({
+      method: 'OPTIONS',
+      url: '/api/messages',
+      headers: {
+        origin: 'https://hostile.example',
+        'access-control-request-method': 'POST'
+      }
+    });
+    expect(hostile.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('keeps same-origin requests working while an empty list grants no cross-origin access', async () => {
+    h = await createHarness({ env: { CORS_ALLOWED_ORIGINS: '' } });
+
+    const sameOrigin = await h.app.server.inject({ method: 'GET', url: '/health/live' });
+    expect(sameOrigin.statusCode).toBe(200);
+    expect(sameOrigin.headers['access-control-allow-origin']).toBeUndefined();
+
+    const crossOrigin = await h.app.server.inject({
+      method: 'GET',
+      url: '/health/live',
+      headers: { origin: 'https://echo.sooya.icu' }
+    });
+    expect(crossOrigin.statusCode).toBe(200);
+    expect(crossOrigin.headers['access-control-allow-origin']).toBeUndefined();
+  });
+});
+
 describe('WEB_CHAT_TOKEN', () => {
   it('rejects chat API access without a token', async () => {
     h = await createHarness({ env: { WEB_CHAT_TOKEN: CHAT_TOKEN } });

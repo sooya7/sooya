@@ -53,6 +53,13 @@ export interface CreateMessageInput {
   meta?: Record<string, unknown>;
 }
 
+export type WithdrawResult =
+  | { kind: 'withdrawn'; message: ChatMessage }
+  | { kind: 'not_found' }
+  | { kind: 'not_withdrawable' }
+  | { kind: 'expired' }
+  | { kind: 'already_withdrawn'; message: ChatMessage };
+
 export class MessageRepo {
   private readonly media: MediaRepo;
 
@@ -65,13 +72,25 @@ export class MessageRepo {
    * returned untouched (and `created` is false).
    */
   create(input: CreateMessageInput): { message: ChatMessage; created: boolean } {
+    return this.inTransaction(() => this.createInTransaction(input));
+  }
+
+  inTransaction<T>(operation: () => T): T {
+    return this.db.transaction(operation)();
+  }
+
+  /**
+   * Create within a transaction already coordinated by the caller.
+   * This deliberately does not start another transaction.
+   */
+  createInTransaction(input: CreateMessageInput): { message: ChatMessage; created: boolean } {
     if (input.clientMsgId) {
       const existing = this.getByClientId(input.clientMsgId);
       if (existing) return { message: existing, created: false };
     }
     const id = input.id ?? newMessageId();
     const ts = nowIso();
-    const tx = this.db.transaction(() => {
+    try {
       const seq = nextSeq(this.db, 'message_seq');
       this.db
         .prepare(
@@ -91,11 +110,6 @@ export class MessageRepo {
           JSON.stringify(input.meta ?? {})
         );
       input.parts.forEach((p, idx) => this.insertPart(id, idx, p));
-      return seq;
-    });
-
-    try {
-      tx();
     } catch (err) {
       // Unique index race on client_msg_id -> return the winner.
       if (input.clientMsgId) {
@@ -105,6 +119,67 @@ export class MessageRepo {
       throw err;
     }
     return { message: this.get(id)!, created: true };
+  }
+
+  /**
+   * Conditional withdrawal state transition for a user message.
+   *
+   * Reads eligibility, then atomically claims the withdrawal with a
+   * conditional UPDATE whose WHERE clause re-checks `withdrawnAt` absence and
+   * the time window against the live row — so only one concurrent caller can
+   * complete the transition. A losing caller gets zero affected rows and
+   * re-reads the authoritative final state as `already_withdrawn`.
+   *
+   * Performs message-row and parts writes only. It deliberately opens no
+   * transaction of its own (to avoid nesting) and must run inside a
+   * caller-managed transaction when atomicity with audit/event writes is
+   * required. It does not depend on the EventBus.
+   */
+  withdraw(id: string, now: number, windowMs: number): WithdrawResult {
+    const message = this.get(id);
+    if (!message) return { kind: 'not_found' };
+    if (message.role !== 'user') return { kind: 'not_withdrawable' };
+    if (message.meta?.withdrawnAt) return { kind: 'already_withdrawn', message };
+    if (now - Date.parse(message.createdAt) > windowMs) return { kind: 'expired' };
+
+    const withdrawnAt = new Date(now).toISOString();
+    const cutoff = new Date(now - windowMs).toISOString();
+    const nextMeta = {
+      ...(message.meta ?? {}),
+      withdrawnAt,
+      originalPartTypes: message.content.map((part) => part.type)
+    };
+
+    // Atomic guard: only succeeds while the row is still a non-withdrawn user
+    // message within the window. A concurrent winner sets withdrawnAt first,
+    // so this UPDATE affects zero rows and we re-read below.
+    const guard = this.db
+      .prepare(
+        `UPDATE messages SET meta_json = ?, updated_at = ?
+         WHERE id = ? AND role = 'user'
+           AND json_extract(meta_json, '$.withdrawnAt') IS NULL
+           AND created_at >= ?`
+      )
+      .run(JSON.stringify(nextMeta), withdrawnAt, id, cutoff);
+
+    if (guard.changes === 1) {
+      this.db.prepare('DELETE FROM message_parts WHERE message_id = ?').run(id);
+      this.db
+        .prepare(
+          `INSERT INTO message_parts(id, message_id, idx, type, text, media_id, status, error, duration, transcript, meta_json)
+           VALUES (?, ?, 0, 'text', ?, NULL, 'sent', NULL, NULL, NULL, '{}')`
+        )
+        .run(`part_${randomId(14)}`, id, '[消息已撤回]');
+      return { kind: 'withdrawn', message: this.get(id)! };
+    }
+
+    // Lost the race (or the row changed between read and write): re-read and
+    // report the true final state.
+    const current = this.get(id);
+    if (!current) return { kind: 'not_found' };
+    if (current.meta?.withdrawnAt) return { kind: 'already_withdrawn', message: current };
+    if (now - Date.parse(current.createdAt) > windowMs) return { kind: 'expired' };
+    return { kind: 'not_withdrawable' };
   }
 
   private insertPart(messageId: string, idx: number, p: CreatePartInput): string {
@@ -214,6 +289,22 @@ export class MessageRepo {
       .prepare('SELECT * FROM messages WHERE conversation_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?')
       .all(CONVERSATION_ID, seq, limit) as MessageRow[];
     return this.hydrate(rows);
+  }
+
+  /**
+   * Oldest-first page of messages strictly after `seq`, for bounded reconnect
+   * catch-up. Reads one extra row to decide `hasMore` without a second query.
+   * `nextSince` is the cursor the client should send to fetch the next page.
+   */
+  pageSince(seq: number, limit = 200): { messages: ChatMessage[]; hasMore: boolean; nextSince: number } {
+    const capped = Math.max(1, Math.min(limit, 200));
+    const rows = this.db
+      .prepare('SELECT * FROM messages WHERE conversation_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?')
+      .all(CONVERSATION_ID, seq, capped + 1) as MessageRow[];
+    const hasMore = rows.length > capped;
+    const page = rows.slice(0, capped);
+    const nextSince = page[page.length - 1]?.seq ?? seq;
+    return { messages: this.hydrate(page), hasMore, nextSince };
   }
 
   range(fromSeq: number, toSeq: number): ChatMessage[] {

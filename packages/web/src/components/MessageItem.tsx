@@ -6,6 +6,18 @@ import type { ChatMessage, MessagePart } from '../lib/types.js';
 import { AudioBubble } from './AudioBubble.js';
 import { AuthenticatedImage } from './AuthenticatedMedia.js';
 
+/** One line of the quoted message: its text, or what kind of media it was. */
+function quotedPreview(message: ChatMessage): string {
+  for (const part of message.content) {
+    if (part.type === 'text' && part.text?.trim()) return part.text.trim();
+    if (part.type === 'audio') return part.transcript?.trim() ? `[语音] ${part.transcript.trim()}` : '[语音]';
+    if (part.type === 'image') return '[图片]';
+    if (part.type === 'sticker') return '[表情]';
+    if (part.type === 'file') return `[文件] ${part.media?.name ?? ''}`.trim();
+  }
+  return '[空消息]';
+}
+
 function formatClock(iso: string): string { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; }
 function formatBytes(n: number): string { return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`; }
 function messageText(message: ChatMessage): string { return message.content.map((part) => part.type === 'text' ? part.text ?? '' : part.type === 'audio' ? part.transcript ?? '' : '').filter(Boolean).join('\n'); }
@@ -51,10 +63,12 @@ function FilePart({ part }: { part: MessagePart }) { if (!part.media) return <di
 
 interface Props {
   message: ChatMessage; personaName: string; avatar: string; userAvatar: string; showAvatar: boolean;
+  /** The message being replied to, when it is still loaded. */
+  quoted?: ChatMessage | null; quotedLabel?: string;
   onRetry?: (message: ChatMessage) => void; onResend?: (message: ChatMessage) => void; onQuote?: (message: ChatMessage) => void; onWithdraw?: (message: ChatMessage) => void; onOpenImage?: (mediaId: string) => void; onNotice?: (text: string) => void;
 }
 
-export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
+export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, quoted, quotedLabel, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
   const mine = message.role === 'user';
   const visible = message.content.filter((part) => part.type !== 'system');
   const failedMessage = message.status === 'failed';
@@ -121,7 +135,12 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
       onPointerUp={cancelPress} onPointerCancel={cancelPress} onLostPointerCapture={cancelPress}>
       <div className="avatar-slot">{showAvatar && <AuthenticatedImage className="avatar" path={mine ? userAvatar : avatar} scope="user" alt={mine ? '我' : personaName} draggable={false} />}</div>
       <div className="msg-body">
-        {message.replyTo && <div className="message-reply-preview">回复消息 · {message.replyTo.slice(-8)}</div>}
+        {message.replyTo && (
+          <div className="message-reply-preview" data-testid="reply-preview">
+            <span className="reply-author">{quotedLabel || '原消息'}</span>
+            <span className="reply-text">{quoted ? quotedPreview(quoted) : '原消息已不在当前记录中'}</span>
+          </div>
+        )}
         <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': return part.text ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{part.text}</div> : null; case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} />; default: return null; } })}</div>
         <div className="msg-meta"><span className="clock">{formatClock(message.createdAt)}</span>{message.pendingLocal && message.status !== 'failed' && <span className="sending-dot" aria-label="发送中" />}{failedMessage && <span className="failed-flag">发送失败{onRetry && <button type="button" className="retry-btn" onClick={() => onRetry(message)}>重试</button>}</span>}<button type="button" className="message-menu-button" aria-label="消息操作" onClick={(event) => openMenu(event.clientX, event.clientY)}>···</button></div>
       </div>

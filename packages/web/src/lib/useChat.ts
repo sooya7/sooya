@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api.js';
 import { ChatStream } from './stream.js';
+import { fetchAllMessagePages, replaceFailedMessage } from './messageSync.js';
 import type { ActivityState, ChatMessage, ConnectionState, PersonaInfo } from './types.js';
 
 const PAGE_SIZE = 30;
+/** Matches the server's `?since=` cap; catch-up walks pages of this size. */
+const CATCHUP_PAGE_SIZE = 100;
 function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   if (!incoming.length) return existing;
   const byId = new Map(existing.map((m) => [m.id, m]));
@@ -36,7 +39,22 @@ export function useChat() {
   }, [trackSeq]);
 
   const resync = useCallback(async () => {
-    try { const since = maxSeqRef.current; const result = since > 0 ? await api.messages({ since, limit: 100 }) : await api.messages({ limit: PAGE_SIZE }); applyMessages(result.messages); if (!since) setHasMore(result.hasMore); setError(null); }
+    try {
+      const since = maxSeqRef.current;
+      if (since > 0) {
+        // The server caps each catch-up page, so walk the cursor until it is drained (H6).
+        const caught = await fetchAllMessagePages(since, async (cursor) => {
+          const page = await api.messages({ since: cursor, limit: CATCHUP_PAGE_SIZE });
+          return { messages: page.messages, hasMore: page.hasMore, nextSince: page.nextSince };
+        });
+        applyMessages(caught);
+      } else {
+        const first = await api.messages({ limit: PAGE_SIZE });
+        applyMessages(first.messages);
+        setHasMore(first.hasMore);
+      }
+      setError(null);
+    }
     catch (err) { if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else setError((err as Error).message); }
   }, [applyMessages]);
 
@@ -98,8 +116,24 @@ export function useChat() {
 
   const resend = useCallback(async (message: ChatMessage) => {
     const content = message.content.filter((part) => part.type !== 'system').map((part) => part.type === 'text' ? { type: 'text', text: part.text ?? '' } : part.type === 'audio' ? { type: 'audio', mediaId: part.mediaId, duration: part.duration ?? undefined, transcript: part.transcript ?? undefined } : { type: part.type, mediaId: part.mediaId }).filter((part) => part.type === 'text' ? Boolean(part.text) : Boolean(part.mediaId));
-    return await send(content, undefined, message.replyTo ?? undefined);
-  }, [send]);
+    // Reuse the original clientMsgId so a retry the server already accepted
+    // dedupes to the same message instead of posting a second copy (H10).
+    if (!message.clientMsgId) return await send(content, undefined, message.replyTo ?? undefined);
+    const clientMsgId = message.clientMsgId;
+    setMessages((prev) => prev.map((m) => m.id === message.id ? { ...m, status: 'pending', error: null } : m));
+    setError(null);
+    try {
+      const result = await api.send({ clientMsgId, content, replyTo: message.replyTo ?? undefined });
+      trackSeq([result.message]);
+      setMessages((prev) => replaceFailedMessage(prev, clientMsgId, result.message));
+      return result;
+    } catch (err) {
+      setMessages((prev) => prev.map((m) => m.id === message.id ? { ...m, status: 'failed', error: (err as Error).message } : m));
+      if (err instanceof ApiError && err.status === 401) setConnection('unauthorized');
+      setError((err as Error).message);
+      throw err;
+    }
+  }, [send, trackSeq]);
 
   const withdraw = useCallback(async (message: ChatMessage) => { const result = await api.withdraw(message.id); applyMessages([result.message]); return result; }, [applyMessages]);
 
