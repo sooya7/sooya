@@ -51,10 +51,21 @@ describe('life routine resolves from the clock alone', () => {
     const again = resolveActivity(localTime('2026-07-31T21:50')).activity;
     expect(again).toBe(first);
 
-    const week = new Set(
-      Array.from({ length: 7 }, (_, i) => resolveActivity(localTime(`2026-08-0${i + 1}T20:10`)).activity)
+    /*
+     * Asserting merely "more than one" was too weak: a single-multiply hash put
+     * consecutive days in the same bucket, so she ate the same breakfast every
+     * morning and this still passed. Over ten days a four-option slot has to
+     * actually use most of its options.
+     */
+    const tenDays = new Set(
+      Array.from({ length: 10 }, (_, i) => resolveActivity(localTime(`2026-08-${String(i + 1).padStart(2, '0')}T20:10`)).activity)
     );
-    expect(week.size).toBeGreaterThan(1);
+    expect(tenDays.size).toBeGreaterThanOrEqual(3);
+
+    const mornings = new Set(
+      Array.from({ length: 10 }, (_, i) => resolveActivity(localTime(`2026-08-${String(i + 1).padStart(2, '0')}T09:10`)).activity)
+    );
+    expect(mornings.size).toBeGreaterThanOrEqual(2);
   });
 
   it('knows when she is asleep for messaging purposes', () => {

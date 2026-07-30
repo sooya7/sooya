@@ -27,7 +27,7 @@ export interface LifeSlot {
 export const DEFAULT_ROUTINE: LifeSlot[] = [
   { from: 0, kind: 'sleep', options: ['睡着了', '睡得正熟', '抱着被子睡'], moods: ['安静'] },
   { from: 8, kind: 'wake', options: ['刚醒，还赖在床上', '洗漱', '在阳台发呆醒神'], moods: ['迷糊', '慢慢清醒'] },
-  { from: 9, kind: 'meal', options: ['吃早饭', '煎蛋配吐司', '热了杯牛奶'], moods: ['餓', '满足'] },
+  { from: 9, kind: 'meal', options: ['吃早饭', '煎蛋配吐司', '热了杯牛奶'], moods: ['饿', '满足'] },
   { from: 10, kind: 'chore', options: ['收拾房间', '晒被子', '浇花', '洗衣服'], moods: ['勤快', '哼着歌'] },
   { from: 12, kind: 'meal', options: ['吃午饭', '煮了面', '点了外卖'], moods: ['满足', '有点撑'] },
   { from: 13, kind: 'rest', options: ['午睡', '躺着刷手机', '窝在沙发上打盹'], moods: ['困', '懒'] },
@@ -83,8 +83,14 @@ function localParts(at: Date, tzOffsetMinutes: number): { dayIndex: number; hour
  * consecutive days differ.
  */
 function pick<T>(options: T[], dayIndex: number, slotIndex: number): T {
-  const hash = Math.abs(Math.imul(dayIndex * 31 + slotIndex * 7 + 17, 2654435761)) % options.length;
-  return options[hash]!;
+  // Mixed properly rather than multiplied once: with only two or three options
+  // a single multiply put consecutive days in the same bucket, so she ate the
+  // same breakfast every morning -- which defeats the point of the variety.
+  let hash = Math.imul(dayIndex + 0x9e37, 0x85ebca6b) ^ Math.imul(slotIndex + 0x165667b1, 0xc2b2ae35);
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 0x2545f491);
+  hash ^= hash >>> 13;
+  return options[Math.abs(hash) % options.length]!;
 }
 
 export function resolveActivity(at: Date, config: LifeConfig = DEFAULT_LIFE_CONFIG): ResolvedActivity {
