@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { requestPushApi } from '../lib/pushApi.js';
+import { disablePushSubscription } from '../lib/pushToggle.js';
 import { createVisibilitySynchronizer } from '../lib/visibilitySync.js';
 
 type PushState = 'unsupported' | 'prompt' | 'subscribed' | 'denied' | 'working' | 'error';
@@ -26,11 +27,6 @@ async function subscribe(): Promise<PushSubscription> {
   const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromBase64Url(publicKey) });
   await requestPushApi('/api/push/subscribe', { method: 'POST', body: JSON.stringify(subscription.toJSON()) });
   return subscription;
-}
-
-async function unsubscribe(subscription: PushSubscription): Promise<void> {
-  await requestPushApi('/api/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: subscription.endpoint }) });
-  await subscription.unsubscribe();
 }
 
 export function NotificationBridge() {
@@ -93,10 +89,10 @@ export function NotificationBridge() {
     setState('working');
     setMessage(null);
     try {
-      await unsubscribe(subscription);
+      const result = await disablePushSubscription(subscription);
       setSubscription(null);
       setState('prompt');
-      setMessage('后台通知已关闭');
+      setMessage(result.warning ?? '后台通知已关闭');
     } catch (error) {
       setState('error');
       setMessage((error as Error).message);
