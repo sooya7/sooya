@@ -59,6 +59,9 @@ export class ContextBuilder {
 
     const systemParts: string[] = [];
     systemParts.push(trimToTokenEstimate(persona.systemPrompt.trim(), Math.max(96, Math.floor(inputBudget * 0.4))));
+    // 这是一对一私聊。上下文里的摘要是 `用户: …` 这种转录格式，模型看了会跟着
+    // 在回复开头加名牌，所以明确禁掉一次；万一还是加了，replier 会再剥一层。
+    systemParts.push('你们是一对一私聊，不是群聊。直接说话，回复开头不要加「名字：」这类前缀，也不要复述对方的名字当标签。');
     tryAddSystemPart(systemParts, [], `说话风格：${persona.speakingStyle}`, inputBudget);
     tryAddSystemPart(systemParts, [], `你们的关系：${persona.relationshipContext}`, inputBudget);
 
