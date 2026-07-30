@@ -11,6 +11,7 @@ import {
 import type { SettingsRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { PushSubscriptionRepo, PushSubscriptionRow } from '../db/repos/feature.repo.js';
 import type { ChatMessage } from './types.js';
+import { HttpTimeoutError } from '../util/http.js';
 
 interface StoredVapidKeys {
   publicJwk: JsonWebKey;
@@ -62,6 +63,12 @@ export function normalizeVapidSubject(value: string | undefined | null): string 
   return `mailto:${mailto[1]}@${domain}`;
 }
 const FRONTEND_ACTIVE_MS = 35_000;
+/**
+ * Push endpoints must answer quickly. Node's fetch has no default timeout, so without this a
+ * blackholed endpoint hangs the sequential delivery loop forever and starves every other
+ * subscription. Failures are already isolated per subscription; a stall was not.
+ */
+const DELIVER_TIMEOUT_MS = 10_000;
 
 export class PushService {
   private readonly keys: StoredVapidKeys;
@@ -72,7 +79,8 @@ export class PushService {
     private readonly settings: SettingsRepo,
     private readonly errors: ErrorLogRepo,
     private readonly fetchImpl: typeof fetch = fetch,
-    configuredSubject?: string
+    configuredSubject?: string,
+    private readonly timeoutMs: number = DELIVER_TIMEOUT_MS
   ) {
     this.keys = this.loadOrCreateKeys();
     this.subject = this.resolveSubject(configuredSubject);
@@ -176,6 +184,7 @@ export class PushService {
     const token = makeVapidJwt(this.keys, audience, this.subject);
     return await this.fetchImpl(subscription.endpoint, {
       method: 'POST',
+      signal: AbortSignal.timeout(this.timeoutMs),
       headers: {
         TTL: '300',
         Urgency: 'normal',
@@ -184,6 +193,12 @@ export class PushService {
         Authorization: `vapid t=${token}, k=${this.keys.publicKey}`
       },
       body: encrypted
+    }).catch((err: Error) => {
+      // AbortSignal.timeout rejects with a vague DOMException; name the cause for error_log.
+      if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+        throw new HttpTimeoutError(`push endpoint timed out after ${this.timeoutMs}ms`);
+      }
+      throw err;
     });
   }
 
