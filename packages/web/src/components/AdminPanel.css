@@ -1281,3 +1281,11 @@
   opacity: 0.55;
   box-shadow: none;
 }
+
+/* 她的生活：状态、主动开口诊断与生活日志 */
+.life-now .life-activity { font-size: 17px; margin: 6px 0 10px; }
+.life-now .life-activity strong { color: var(--accent, #8ea2ff); }
+.life-progress { height: 6px; border-radius: 4px; background: rgba(255, 255, 255, 0.08); overflow: hidden; margin-bottom: 6px; }
+.life-progress i { display: block; height: 100%; background: linear-gradient(90deg, #4d63d6, #7ce2b0); }
+.admin-count-badge.life-ok { background: rgba(124, 226, 176, 0.18); color: #7ce2b0; }
+[data-testid='life-reach-out'] small { display: block; color: var(--muted, #8d97b2); margin-top: 4px; }

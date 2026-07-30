@@ -21,6 +21,49 @@ export interface FeatureMedia {
   references?: { total: number; messages?: number; stickers?: number };
 }
 
+export interface LifeSnapshot {
+  activity: string;
+  kind: string;
+  mood: string;
+  startedAt: string;
+  endsAt: string;
+  recent: Array<{ activity: string; startedAt: string; endedAt: string }>;
+}
+
+export interface LifeSettings {
+  reachOut: boolean;
+  quietGapMinutes: number;
+  maxReachOutsPerDay: number;
+  silentFrom: number;
+  silentTo: number;
+  tzOffsetMinutes: number;
+}
+
+export interface LifeLogRow {
+  id: string;
+  activity: string;
+  kind: string;
+  mood: string;
+  started_at: string;
+  ended_at: string;
+  shared: number;
+}
+
+export interface LifePanelData {
+  snapshot: LifeSnapshot;
+  log: LifeLogRow[];
+  reachOut: {
+    reach: boolean;
+    reason: string;
+    candidate: { id: string; activity: string; endedAt: string } | null;
+    sharedLastDay: number;
+    lastUserAt: string | null;
+    lastAssistantAt: string | null;
+    enabledByDeployment: boolean;
+  };
+  settings: LifeSettings;
+}
+
 export interface WorldEntry {
   id: string;
   kind: 'entity' | 'relation' | 'fact' | 'scene' | 'timeline';
@@ -89,6 +132,11 @@ export const featureApi = {
     return request<Record<string, any>>('/api/admin/voice');
   },
   previewVoice: (text: string, emotion: string) => request<Blob>('/api/admin/voice/preview', { method: 'POST', body: { text, emotion }, raw: true }),
+
+  life: () => request<LifePanelData>('/api/admin/life'),
+  updateLifeSettings: (body: Partial<LifeSettings>) =>
+    request<{ settings: LifeSettings }>('/api/admin/life/settings', { method: 'PUT', body }),
+  tickLife: () => request<{ changed: boolean; activity: string; snapshot: LifeSnapshot }>('/api/admin/life/tick', { method: 'POST' }),
 
   world: (query: { search?: string; kind?: string; active?: boolean; limit?: number; offset?: number } = {}) =>
     request<{ entries: WorldEntry[]; total: number }>(`/api/admin/world${params(query)}`),
