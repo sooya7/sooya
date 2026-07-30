@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { TtsModelConfig } from '../config/schema.js';
 import { assertSafeUrl, withRetry, HttpTimeoutError } from '../util/http.js';
 import { probeAudioDuration } from '../util/audio.js';
@@ -153,6 +154,147 @@ export class OpenAITTSProvider implements TTSProvider {
   }
 }
 
+/**
+ * 火山引擎 (Volcengine) 大模型语音合成, spoken natively instead of through an
+ * OpenAI-shaped shim.
+ *
+ * Two things make this its own provider rather than a flag on the OpenAI one:
+ * auth is `X-Api-Key` + `X-Api-Resource-Id` headers (the resource id picks the
+ * model version *and* the billing product, and the console says speech models
+ * cannot be switched via Auto), and the reply is a stream of JSON lines each
+ * carrying a base64 audio chunk — the exact payload the OpenAI provider is
+ * right to reject as "text masquerading as audio".
+ *
+ * Emotion lives at `req_params.audio_params.emotion`, which is why the flat
+ * `emotion` field that was hand-patched onto the shim was always a no-op.
+ */
+export class VolcTTSProvider implements TTSProvider {
+  readonly name = 'volc-tts';
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(
+    private readonly cfg: TtsModelConfig,
+    private readonly deps: ProviderDeps
+  ) {
+    this.fetchImpl = deps.fetchImpl ?? fetch;
+  }
+
+  get configured(): boolean {
+    return !!this.cfg.baseUrl && !!this.cfg.apiKey && !!this.cfg.voice && !!this.cfg.resourceId;
+  }
+
+  async synthesize(text: string, opts: TTSOptions = {}): Promise<SynthesizedAudio> {
+    if (!this.configured) throw new ProviderNotConfiguredError('tts');
+    const spokenText = text.trim();
+    if (!spokenText) throw new ProviderRequestError('tts requires non-empty text');
+
+    return withRetry(
+      async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(
+          () => controller.abort(new HttpTimeoutError(`tts timed out after ${this.cfg.timeoutMs}ms`)),
+          this.cfg.timeoutMs
+        );
+        const onAbort = () => controller.abort(opts.signal?.reason);
+        opts.signal?.addEventListener('abort', onAbort, { once: true });
+        try {
+          await assertSafeUrl(this.cfg.baseUrl, this.deps.allowPrivateNetwork);
+          const voice = opts.voice ?? this.cfg.voice;
+          const audioParams: Record<string, unknown> = {
+            format: this.cfg.format === 'opus' ? 'ogg_opus' : this.cfg.format,
+            sample_rate: 24_000
+          };
+          const transport = resolveEmotionTransport(this.cfg, voice);
+          if (transport === 'enum') {
+            const word = officialEmotion(opts.apiEmotion ?? opts.emotion);
+            if (word) {
+              audioParams.emotion = word;
+              audioParams.emotion_scale = this.cfg.emotionScale;
+            }
+          }
+          const reqParams: Record<string, unknown> = { text: spokenText, speaker: voice, audio_params: audioParams };
+          if (this.cfg.model) reqParams.model = this.cfg.model;
+          if (transport === 'instruction' && opts.instructions && shouldSendInstructions(this.cfg)) {
+            // 2.0 音色 follow a spoken direction; the vendor reads it off the text
+            // stream, so it is prefixed rather than sent as a separate field.
+            reqParams.text = `（${opts.instructions}）${spokenText}`;
+          }
+
+          const res = await this.fetchImpl(this.cfg.baseUrl, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'X-Api-Key': this.cfg.apiKey,
+              'X-Api-Resource-Id': this.cfg.resourceId,
+              'X-Api-Request-Id': randomUUID()
+            },
+            body: JSON.stringify({ user: { uid: 'sooya' }, req_params: reqParams }),
+            signal: controller.signal
+          });
+          if (!res.ok) throw new ProviderRequestError(`tts failed with status ${res.status}: ${await safeText(res)}`, res.status);
+          const data = decodeVolcStream(await res.text());
+          if (data.byteLength < 128) {
+            throw new ProviderRequestError(`tts returned suspiciously small payload (${data.byteLength} bytes)`);
+          }
+          const format = this.cfg.format;
+          const mime = FORMAT_MIME[format] ?? 'application/octet-stream';
+          return { data, mime, format, durationSec: probeAudioDuration(data, mime) ?? undefined };
+        } catch (err) {
+          throw normalizeAbort(err, this.cfg.timeoutMs);
+        } finally {
+          clearTimeout(timer);
+          opts.signal?.removeEventListener('abort', onAbort);
+        }
+      },
+      { retries: this.cfg.maxRetries }
+    );
+  }
+
+  async inspectHealth(): Promise<HealthStatus> {
+    return {
+      capability: 'tts',
+      configured: this.configured,
+      ok: this.configured,
+      provider: this.name,
+      model: this.cfg.resourceId,
+      detail: this.configured
+        ? `configured (speaker=${this.cfg.voice}, resource=${this.cfg.resourceId}, emotion=${this.cfg.emotionMode})`
+        : 'not configured',
+      checkedAt: new Date().toISOString()
+    };
+  }
+}
+
+/**
+ * Concatenates the base64 chunks out of 火山's JSON-lines reply.
+ *
+ * Every line is inspected rather than only the first: the vendor reports failure
+ * mid-stream with a non-zero `code`, and a caller that stopped at the first line
+ * would happily return a truncated clip as success.
+ */
+export function decodeVolcStream(raw: string): Buffer {
+  const chunks: Buffer[] = [];
+  let sawLine = false;
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim().replace(/^data:\s*/, '');
+    if (!trimmed) continue;
+    sawLine = true;
+    let parsed: { code?: number; message?: string; data?: string };
+    try {
+      parsed = JSON.parse(trimmed) as typeof parsed;
+    } catch {
+      throw new ProviderRequestError('tts returned a non-JSON line in the audio stream');
+    }
+    if (parsed.code !== undefined && parsed.code !== 0 && parsed.code !== 20_000_000) {
+      throw new ProviderRequestError(`tts failed: ${parsed.code} ${parsed.message ?? ''}`.trim());
+    }
+    if (parsed.data) chunks.push(Buffer.from(parsed.data, 'base64'));
+  }
+  if (!sawLine) throw new ProviderRequestError('tts returned an empty stream');
+  if (!chunks.length) throw new ProviderRequestError('tts stream carried no audio');
+  return Buffer.concat(chunks);
+}
+
 export class UnconfiguredTTSProvider implements TTSProvider {
   readonly name = 'none';
   readonly configured = false;
@@ -173,6 +315,7 @@ export class UnconfiguredTTSProvider implements TTSProvider {
 
 export function createTTSProvider(cfg: TtsModelConfig, deps: ProviderDeps): TTSProvider {
   if (cfg.provider === 'none') return new UnconfiguredTTSProvider();
+  if (cfg.provider === 'volc-tts') return new VolcTTSProvider(cfg, deps);
   return new OpenAITTSProvider(cfg, deps);
 }
 

@@ -102,12 +102,18 @@ export type ImageModelConfig = z.infer<typeof ImageModelSchema>;
 
 export const TtsModelSchema = z.object({
   configSource: ModelConfigSourceSchema,
-  provider: z.enum(['openai-tts', 'openai-compatible', 'none']).default('none'),
+  provider: z.enum(['openai-tts', 'openai-compatible', 'volc-tts', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
   apiKeyEnv: z.string().optional(),
   model: z.string().default(''),
   voice: z.string().default('alloy'),
+  /**
+   * 火山 `X-Api-Resource-Id`. It selects the model version *and* the billing
+   * product, and the console states speech models cannot be switched through
+   * Auto or the console — it has to be named here.
+   */
+  resourceId: z.string().default('seed-tts-2.0'),
   format: z.enum(['mp3', 'wav', 'opus', 'aac', 'flac']).default('mp3'),
   speed: z.number().min(0.25).max(4).default(1),
   /** Enable automatic emotion detection, pacing and delivery instructions. */
