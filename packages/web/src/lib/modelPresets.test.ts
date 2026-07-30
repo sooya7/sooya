@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   emptyPreset,
   interfaceOptions,
+  looksLikeSecret,
   MAX_PRESETS,
   MODEL_SLOTS,
   normalizePreset,
@@ -192,5 +193,39 @@ describe('presetFromConfig（把当前配置存进模型库）', () => {
   it('stops at the library cap', () => {
     const full = Array.from({ length: MAX_PRESETS }, (_, i) => ({ ...(presetFromConfig('chat', cfg, []) as ModelPreset), id: `p${i}` }));
     expect(presetFromConfig('chat', cfg, full)).toMatch(/最多/);
+  });
+});
+
+describe('looksLikeSecret（拦住把密钥粘进变量名字段）', () => {
+  it('accepts the variable names the resolver actually looks up', () => {
+    for (const name of ['SOOYA_CHAT_API_KEY', 'OPENAI_API_KEY', 'VOLC_SPEECH_API_KEY', 'GLM_API_KEY', '_PRIVATE_KEY']) {
+      expect(looksLikeSecret(name)).toBe(false);
+    }
+    expect(looksLikeSecret('')).toBe(false);
+    expect(looksLikeSecret('   ')).toBe(false);
+  });
+
+  it('flags the key shapes that were actually pasted into that field in production', () => {
+    // Assembled at runtime rather than written out: secret scanners match on
+    // shape, so even an invented key in a public repo trips push protection.
+    const vendor = (prefix: string, sep: string, len: number) => `${prefix}${sep}${'a1'.repeat(len)}`;
+    expect(looksLikeSecret(vendor('ark', '-', 16))).toBe(true);
+    expect(looksLikeSecret(vendor('sk', '-', 18))).toBe(true);
+    expect(looksLikeSecret(vendor('ghp', '_', 18))).toBe(true);
+  });
+
+  it('flags a long mixed-case blob even without a known prefix', () => {
+    expect(looksLikeSecret('a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5')).toBe(true);
+  });
+
+  it('does not flag a short lower-case name, which is a plausible variable', () => {
+    expect(looksLikeSecret('my_key')).toBe(false);
+  });
+
+  it('still flags a short underscore-style key, which the length rule alone would miss', () => {
+    // Valid variable-name shape, under the length threshold: only the vendor
+    // prefix distinguishes it from a legitimate name.
+    expect(looksLikeSecret('sk_live_9f2')).toBe(true);
+    expect(looksLikeSecret('ark_7c1')).toBe(true);
   });
 });

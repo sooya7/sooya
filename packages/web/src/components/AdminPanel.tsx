@@ -3,6 +3,7 @@ import { ApiError } from '../lib/api.js';
 import { AvatarEditor, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js';
 import {
   interfaceOptions,
+  looksLikeSecret,
   MODEL_SLOTS,
   presetsBySlot,
   removePreset,
@@ -268,7 +269,7 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
   return (
     <section className="admin-model-library" data-testid="admin-model-library">
       <PanelHeading title="模型库" description="保存任意多个模型预设，随时指派给某项能力。预设只记录密钥的环境变量名，不保存密钥本身。" />
-      {groups.length === 0 && <p className="admin-muted">还没有预设。添加一个，就能在不同模型之间随时切换。</p>}
+      {groups.length === 0 && <p className="admin-muted">还没有预设。把下面的配置填好后点「添加配置」，就能在不同模型之间随时切换。</p>}
       {groups.map(([slot, items]) => (
         <div className="admin-preset-group" key={slot}>
           <h3>{SLOT_LABELS[slot]}</h3>
@@ -413,7 +414,15 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           </small>
         </label>
         <label className="admin-form-wide">接口地址<input value={String(config.baseUrl ?? '')} onChange={(e) => update('baseUrl', e.target.value)} /></label>
-        <label>密钥环境变量<input value={String(config.apiKeyEnv ?? '')} placeholder="留空则保持当前密钥" onChange={(e) => update('apiKeyEnv', e.target.value || undefined)} /></label>
+        <label>
+          密钥环境变量
+          <input value={String(config.apiKeyEnv ?? '')} placeholder="留空则保持当前密钥" onChange={(e) => update('apiKeyEnv', e.target.value || undefined)} />
+          {looksLikeSecret(String(config.apiKeyEnv ?? ''))
+            ? <small className="admin-field-warning" data-testid="admin-apikeyenv-warning">
+                这里要填<strong>环境变量名</strong>（例如 SOOYA_CHAT_API_KEY），不是密钥本身。填了密钥会查不到这个变量，然后静默回退到别的密钥——之前图片生成一直 401 就是这么来的。
+              </small>
+            : <small>填变量名，密钥存在服务器的 .env 里。留空则沿用当前密钥。</small>}
+        </label>
         <label>请求超时（毫秒）<input type="number" value={String(config.timeoutMs ?? '')} onChange={(e) => update('timeoutMs', Number(e.target.value))} /></label>
         {['chat', 'vision', 'summary'].includes(selected) && <>
           <label>最大输出 Token<input type="number" value={String(config.maxTokens ?? '')} onChange={(e) => update('maxTokens', Number(e.target.value))} /></label>

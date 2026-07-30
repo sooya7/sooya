@@ -126,6 +126,24 @@ export function validatePreset(
 }
 
 /**
+ * True when a field that should hold an environment variable *name* is holding
+ * what looks like the credential itself.
+ *
+ * This mistake is silent and expensive: the lookup misses, the resolver falls
+ * back to another variable, and the slot runs with the wrong key — which is how
+ * image generation sat on a 401 while the panel showed the key right there.
+ * Deliberately narrow: real names are SHOUT_CASE, so anything with a lowercase
+ * letter or a vendor prefix is the giveaway.
+ */
+export function looksLikeSecret(value: string): boolean {
+  const v = value.trim();
+  if (!v) return false;
+  if (/^(sk|ark|gsk|ghp|xai|pk)[-_]/i.test(v)) return true;
+  // An env var name is upper case, digits and underscores, nothing else.
+  return !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v) || (v.length >= 24 && /[a-z]/.test(v) && /\d/.test(v));
+}
+
+/**
  * Turns the config currently being edited into a library entry, so "添加配置"
  * needs no second form.
  *
