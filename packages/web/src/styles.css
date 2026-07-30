@@ -5,8 +5,14 @@
   --panel: #ffffff;
   --panel-alt: #fbfbfc;
   --ink: #1f2329;
-  --ink-soft: #6b7280;
+  /* #6b7280 measured 4.46:1 on --bg, just under the 4.5 AA floor. */
+  --ink-soft: #667085;
+  /* Decorative only (status dot, hairline borders, fills): never put text in it,
+     it measures 2.41:1 on --bg. Small meta text uses --ink-meta instead. */
   --ink-faint: #9aa1ac;
+  /* Faint-looking but AA-compliant (4.6:1 on --bg) for 11-12px meta text such as
+     timestamps and the per-message menu, which sit on every single message. */
+  --ink-meta: #667085;
   --line: #e6e8ec;
   /* Shared with the admin console so the two halves read as one product. */
   --accent: #6d5efc;
@@ -15,11 +21,17 @@
   --grad-soft: linear-gradient(135deg, #f0edff, #e8f2ff);
   /* Accent at low alpha, for tints and focus rings. A token because a literal
      rgba() of the old blue accent had been left behind in two places. */
+  /* Was referenced by .sw-update-accept but never defined, so the button fell back
+     to the inherited dark ink: 3.5:1 on --accent, under AA. */
+  --accent-ink: #ffffff;
   --accent-tint: rgba(109, 94, 252, 0.12);
   --accent-line: rgba(109, 94, 252, 0.28);
   --mine: var(--grad);
   --mine-ink: #ffffff;
   --danger: #e5484d;
+  /* #e5484d is only 3.62:1 on --bg. Text uses this deeper red (5.1:1); the two
+     `background: var(--danger)` fills keep the brighter one. */
+  --danger-ink: #c9252b;
   --radius-lg: 18px;
   --radius-sm: 10px;
   --shadow-soft: 0 2px 6px rgba(16, 26, 48, 0.06), 0 12px 28px -12px rgba(16, 26, 48, 0.18);
@@ -213,7 +225,7 @@ button {
   padding: 10px 0;
 }
 .history-hint.muted {
-  color: var(--ink-faint);
+  color: var(--ink-meta);
 }
 
 .empty-state {
@@ -398,7 +410,7 @@ button {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--ink-faint);
+  color: var(--ink-meta);
   padding: 0 4px;
 }
 
@@ -418,7 +430,7 @@ button {
 }
 
 .failed-flag {
-  color: var(--danger);
+  color: var(--danger-ink);
   display: inline-flex;
   gap: 6px;
   align-items: center;
@@ -434,7 +446,7 @@ button {
 
 .failed-text {
   font-size: 13px;
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .typing {
@@ -578,7 +590,7 @@ button {
   max-width: 300px;
 }
 .audio-transcript.error {
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 /* ------------------------------- composer ------------------------------- */
@@ -1569,7 +1581,8 @@ button {
   font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   border-radius: 999px; padding: 6px 14px; border: 1px solid transparent;
 }
-.sw-update-accept { background: var(--accent); color: var(--accent-ink); }
+/* --accent-deep rather than --accent: 5.35:1 against white instead of 4.51:1. */
+.sw-update-accept { background: var(--accent-deep); color: var(--accent-ink); }
 .sw-update-accept:hover { filter: brightness(1.1); }
 .sw-update-later { background: transparent; color: var(--ink-soft); border-color: var(--line); }
 .sw-update-later:hover { color: var(--ink); border-color: var(--accent-line); }
@@ -1621,4 +1634,98 @@ button {
 .notification-bell svg { width: 16px; height: 16px; display: block; fill: currentColor; }
 .notification-bell .notification-bell-slash {
   fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round;
+}
+
+/* ---- Touch targets ------------------------------------------------------ */
+
+/*
+ * Measured on production: the per-message menu is 19x15 CSS px, 重试 22x16, the speed
+ * toggle 30x16, the transcript toggle 56x17, the top-bar icons 30x30 -- all well under
+ * the 44x44 guideline, on a PWA used from a phone.
+ *
+ * The area is grown with a centred pseudo-element so nothing moves visually. The size
+ * is capped per group by the *measured* distance to the nearest other button, because a
+ * blanket 44px provably steals taps: 重试 and ··· sit 26px apart centre-to-centre, the
+ * bell and the admin entry 38px, and 查看文字 / 重试 34px vertically. A first attempt
+ * with 44px everywhere was hit-tested with elementFromPoint and the bell's right edge
+ * resolved to the admin entry. With the caps below, 50 probe points all resolve to their
+ * own button.
+ */
+.message-menu-button,
+.retry-btn,
+.audio-speed,
+.audio-transcript-toggle,
+.audio-retry,
+.audio-play,
+.notification-bell,
+.topbar-admin-entry,
+.icon-btn {
+  position: relative;
+}
+
+.message-menu-button::after,
+.retry-btn::after,
+.audio-speed::after,
+.audio-transcript-toggle::after,
+.audio-retry::after,
+.audio-play::after,
+.notification-bell::after,
+.topbar-admin-entry::after,
+.icon-btn::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  /* Invisible; it only catches pointer events. */
+  background: transparent;
+}
+
+/* 26px apart, so 26 wide; vertical room is free. 19x15 -> 26x36 is 3.3x the area. */
+.message-menu-button::after,
+.retry-btn::after {
+  width: max(100%, 26px);
+  height: max(100%, 36px);
+}
+
+/* Bell and admin entry are 38px apart, inside a 56px top bar. */
+.notification-bell::after,
+.topbar-admin-entry::after {
+  width: max(100%, 38px);
+  height: max(100%, 38px);
+}
+
+/* Stacked rows under a voice note, 34px apart vertically. */
+.audio-transcript-toggle::after,
+.audio-retry::after {
+  width: max(100%, 44px);
+  height: max(100%, 30px);
+}
+
+.audio-speed::after {
+  width: max(100%, 40px);
+  height: max(100%, 30px);
+}
+
+/* Nearest other button is 126px away, so these take the full 44px. */
+.audio-play::after,
+.icon-btn::after {
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+}
+
+/* A mouse does not need the enlarged area. */
+@media (pointer: fine) {
+  .message-menu-button::after,
+  .retry-btn::after,
+  .audio-speed::after,
+  .audio-transcript-toggle::after,
+  .audio-retry::after,
+  .audio-play::after,
+  .notification-bell::after,
+  .topbar-admin-entry::after,
+  .icon-btn::after {
+    width: 100%;
+    height: 100%;
+  }
 }

@@ -7,7 +7,10 @@
   --admin-line: #e2e8f0;
   --admin-line-strong: #d4dce7;
   --admin-text: #172033;
-  --admin-muted: #6c7689;
+  /* #6c7689 measured 4.22:1 on --admin-bg, under the 4.5 AA floor. */
+  --admin-muted: #616c80;
+  /* Decorative tier; 2.38:1, so text must not use it -- .admin-empty now uses
+     --admin-muted instead. */
   --admin-faint: #98a2b3;
   --admin-primary: #398fe6;
   --admin-primary-deep: #2377ca;
@@ -237,7 +240,8 @@
 .admin-v2 .admin-eyebrow {
   display: block;
   margin-bottom: 4px;
-  color: var(--admin-primary-deep);
+  /* --admin-primary-deep is only 4.25:1 on --admin-bg at this 11px size. */
+  color: var(--admin-primary-deeper);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -675,7 +679,7 @@
   display: grid;
   place-items: center;
   min-height: 84px;
-  color: var(--admin-faint);
+  color: var(--admin-muted);
   font-size: 12px;
   text-align: center;
 }

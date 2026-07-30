@@ -494,3 +494,84 @@ describe('documentation accuracy', () => {
     expect(report).toMatch(/regression\.test\.ts/);
   });
 });
+
+/* ========================================================================== */
+/* Defect 7: non-streaming models retried twice over, (maxRetries + 1)^2 calls */
+/* ========================================================================== */
+
+/**
+ * `stream()` wraps `streamOnce` in a retry ladder, and `streamOnce` delegates to
+ * `complete()` when the model cannot stream -- but `complete()` runs a ladder of its
+ * own. The two multiplied: with maxRetries = 2 a failing request was sent 9 times
+ * instead of 3, burning three times the tokens and tripling the stall before the
+ * failure surfaced. `supportsStreaming: false` is a normal setting for
+ * OpenAI-compatible gateways, so this hit real users of those gateways.
+ */
+describe('defect 7: a non-streaming model must not stack two retry ladders', () => {
+  function nonStreamingProvider(maxRetries: number, fetchImpl: typeof fetch) {
+    const cfg = ChatModelSchema.parse({
+      provider: 'openai-chat',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-unit-test-key-000000',
+      model: 'm',
+      supportsStreaming: false,
+      maxRetries,
+      timeoutMs: 5000
+    });
+    return new OpenAIChatProvider(cfg, { allowPrivateNetwork: true, fetchImpl });
+  }
+
+  function jsonReply(text: string): Response {
+    return new Response(JSON.stringify({ choices: [{ message: { content: text }, finish_reason: 'stop' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  }
+
+  it('sends exactly maxRetries + 1 requests when every attempt fails', async () => {
+    let calls = 0;
+    const provider = nonStreamingProvider(2, async () => {
+      calls++;
+      return new Response('upstream overloaded', { status: 503 });
+    });
+
+    await expect(
+      provider.stream({ messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }, () => undefined)
+    ).rejects.toThrow(/503/);
+
+    // 3, not 9: one ladder, not two multiplied.
+    expect(calls).toBe(3);
+  });
+
+  it('still retries a non-streaming model until it succeeds, emitting the text once', async () => {
+    let calls = 0;
+    const provider = nonStreamingProvider(2, async () => {
+      calls++;
+      if (calls < 3) return new Response('upstream overloaded', { status: 503 });
+      return jsonReply('终于成功了');
+    });
+
+    const chunks: string[] = [];
+    const result = await provider.stream(
+      { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] },
+      (chunk) => chunks.push(chunk.delta)
+    );
+
+    expect(calls).toBe(3);
+    expect(result.text).toBe('终于成功了');
+    expect(chunks.join('')).toBe('终于成功了');
+  });
+
+  it('sends one request when retries are disabled', async () => {
+    let calls = 0;
+    const provider = nonStreamingProvider(0, async () => {
+      calls++;
+      return new Response('down', { status: 503 });
+    });
+
+    await expect(
+      provider.stream({ messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }, () => undefined)
+    ).rejects.toThrow(/503/);
+    expect(calls).toBe(1);
+  });
+});
