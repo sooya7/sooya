@@ -3,6 +3,7 @@ import { ApiError } from '../lib/api.js';
 import { AvatarEditor, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js';
 import {
   emptyPreset,
+  interfaceOptions,
   MODEL_SLOTS,
   presetsBySlot,
   removePreset,
@@ -319,7 +320,7 @@ function ModelLibrary({ onNotice, onApplied }: { onNotice: (v: string) => void; 
 
 function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [models, setModels] = useState<AdminModels | null>(null);
-  const [selected, setSelected] = useState<string>('chat');
+  const [selected, setSelected] = useState<ModelSlot>('chat');
 
   useEffect(() => {
     void adminApi.models().then((r) => setModels(r.models)).catch((e) => onNotice(errorText(e)));
@@ -359,15 +360,9 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description="编辑当前能力使用的真实服务端配置。" />
         <ModelLibrary onNotice={onNotice} onApplied={setModels} />
         <label>接口协议<select value={String(config.provider ?? 'none')} onChange={(e) => update('provider', e.target.value)}>
-          <option value="none">未配置</option>
-          <option value="openai-chat">OpenAI Chat Completions</option>
-          <option value="openai-responses">OpenAI Responses</option>
-          <option value="anthropic-messages">Anthropic Messages</option>
-          <option value="openai-compatible">OpenAI Compatible</option>
-          <option value="openai-embeddings">OpenAI Embeddings</option>
-          <option value="openai-images">OpenAI Images</option>
-          <option value="openai-tts">OpenAI TTS</option>
-          <option value="openai-transcriptions">OpenAI Transcriptions</option>
+          {interfaceOptions(selected, config.provider == null ? null : String(config.provider)).map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
         </select></label>
         <label>模型名<input value={String(config.model ?? '')} onChange={(e) => update('model', e.target.value)} /></label>
         <label className="admin-form-wide">接口地址<input value={String(config.baseUrl ?? '')} onChange={(e) => update('baseUrl', e.target.value)} /></label>
@@ -379,6 +374,16 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           <label>上下文窗口<input type="number" value={String(config.contextWindow ?? '')} onChange={(e) => update('contextWindow', Number(e.target.value))} /></label>
           <label>最大重试次数<input type="number" value={String(config.maxRetries ?? '')} onChange={(e) => update('maxRetries', Number(e.target.value))} /></label>
         </>}
+        {['chat', 'vision'].includes(selected) && (
+          <label className="admin-form-wide">
+            声明支持读图
+            <select value={config.supportsVision ? 'yes' : 'no'} onChange={(e) => update('supportsVision', e.target.value === 'yes')}>
+              <option value="no">否（发来的图片不会送给这个模型）</option>
+              <option value="yes">是（模型真的能读图才选）</option>
+            </select>
+            <small>谎报为「是」会让带图的回复整条失败，而不是降级成纯文字。</small>
+          </label>
+        )}
         {selected === 'image' && <label>图片尺寸<input value={String(config.size ?? '')} onChange={(e) => update('size', e.target.value)} /></label>}
         {selected === 'tts' && <>
           <label>音色<input value={String(config.voice ?? '')} onChange={(e) => update('voice', e.target.value)} /></label>

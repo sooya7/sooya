@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   emptyPreset,
+  interfaceOptions,
   MAX_PRESETS,
+  MODEL_SLOTS,
   normalizePreset,
   presetsBySlot,
+  PROVIDER_LABELS,
   removePreset,
+  SLOT_PROVIDERS,
   suggestId,
   upsertPreset,
   validatePreset,
@@ -88,5 +92,53 @@ describe('model preset editing', () => {
   it('starts a new draft on a provider the chosen slot supports', () => {
     expect(validatePreset({ ...emptyPreset('tts'), id: 'x', name: 'x', model: 'x' }, [])).toBeNull();
     expect(validatePreset({ ...emptyPreset('image'), id: 'x', name: 'x', model: 'x' }, [])).toBeNull();
+  });
+});
+
+describe('interface options per capability', () => {
+  it('offers 语音合成 only the speech interfaces', () => {
+    expect(interfaceOptions('tts').map((o) => o.value)).toEqual(['none', 'openai-tts', 'openai-compatible']);
+  });
+
+  it('never offers one capability the interface of another', () => {
+    const foreign: Record<string, string[]> = {
+      chat: ['openai-tts', 'openai-transcriptions', 'openai-images', 'openai-embeddings'],
+      tts: ['anthropic-messages', 'openai-chat', 'openai-transcriptions'],
+      stt: ['openai-tts', 'openai-chat'],
+      embedding: ['openai-chat', 'openai-images'],
+      image: ['openai-chat', 'openai-tts']
+    };
+    for (const [slot, banned] of Object.entries(foreign)) {
+      const offered = interfaceOptions(slot as never).map((o) => o.value);
+      for (const bad of banned) expect(offered, `${slot} must not offer ${bad}`).not.toContain(bad);
+    }
+  });
+
+  it('labels every interface it offers, so no raw slug reaches the operator', () => {
+    for (const slot of MODEL_SLOTS) {
+      for (const option of interfaceOptions(slot)) {
+        expect(option.label, `${slot}/${option.value} needs a label`).not.toEqual(option.value);
+        expect(option.label.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('gives every server-accepted provider a label so the table cannot drift', () => {
+    for (const slot of MODEL_SLOTS) {
+      for (const provider of SLOT_PROVIDERS[slot]) {
+        expect(PROVIDER_LABELS[provider], `${provider} has no label`).toBeTruthy();
+      }
+    }
+  });
+
+  it('keeps a saved value the capability does not allow, instead of blanking the select', () => {
+    const offered = interfaceOptions('tts', 'anthropic-messages');
+    expect(offered.map((o) => o.value)).toContain('anthropic-messages');
+    expect(offered.at(-1)?.label).toContain('此能力不适用');
+  });
+
+  it('does not duplicate a saved value that is already legal', () => {
+    const values = interfaceOptions('tts', 'openai-tts').map((o) => o.value);
+    expect(values.filter((v) => v === 'openai-tts')).toHaveLength(1);
   });
 });
