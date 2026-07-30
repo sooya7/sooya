@@ -15,6 +15,7 @@ import {
   type ModelDirectives,
   type UserDirectives
 } from './directives.js';
+import { stripSpeakerPrefix } from './speakerPrefix.js';
 import { ProviderNotConfiguredError, type GeneratedImage } from '../providers/types.js';
 import { HttpTimeoutError } from '../util/http.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from './voice.js';
@@ -203,7 +204,8 @@ export class Replier {
       const stripped = stripModelDirectives(rawText);
       const modelDirectives = stripped.directives;
       // Prefer the fully-stripped text (handles markers split across chunks).
-      const finalText = stripped.text || visibleText.trim();
+      // 一对一私聊里不该出现「名字：」名牌，模型却常自带一个。
+      const finalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
       if (textPartId) {
         if (finalText) this.deps.messages.updatePart(textPartId, { text: finalText, status: 'sent' });
         else {
