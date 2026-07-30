@@ -1211,8 +1211,36 @@
   text-transform: uppercase;
 }
 
+/* Primary action. It used to set only the gradient background and inherit the
+   default button text colour, which left dark grey text on saturated purple —
+   low contrast and the reason this button looked wrong. */
 .admin-primary {
   background: var(--admin-grad);
   border-color: transparent;
+  color: #fff;
+  font-weight: 650;
+  letter-spacing: 0.01em;
   box-shadow: 0 8px 18px -8px rgba(109, 94, 252, 0.66);
+  transition: filter 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
+}
+
+.admin-primary:hover:not(:disabled) {
+  filter: brightness(1.07) saturate(1.04);
+  box-shadow: 0 10px 24px -8px rgba(109, 94, 252, 0.82);
+}
+
+.admin-primary:active:not(:disabled) {
+  transform: translateY(1px);
+  filter: brightness(0.98);
+  box-shadow: 0 4px 12px -9px rgba(109, 94, 252, 0.7);
+}
+
+.admin-primary:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.admin-primary:disabled {
+  opacity: 0.55;
+  box-shadow: none;
 }
