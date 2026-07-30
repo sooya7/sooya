@@ -65,29 +65,54 @@ export default function GalleryPage() {
     setError(null);
     try {
       const result = await featureApi.gallery(query(append ? media.length : 0));
-      const resolved = await Promise.all(result.media.map(async (item) => {
-        if (!item.exists) return item;
-        const loaded = await fetchAuthenticatedMedia(item.url, {
-          scope: 'admin',
-          token: getAdminToken(),
-          expected: item.kind === 'image' ? 'image' : item.kind === 'audio' ? 'audio' : 'file'
-        });
-        objectUrls.current.add(loaded.url);
-        return { ...item, url: loaded.url };
-      }));
-      if (!append) {
-        for (const url of objectUrls.current) {
-          if (!resolved.some((item) => item.url === url)) {
-            releaseMediaUrl(url);
-            objectUrls.current.delete(url);
-          }
-        }
-      }
-      const next = append ? [...media, ...resolved.filter((item) => !media.some((old) => old.id === item.id))] : resolved;
-      setMedia(next);
-      setStats(result.stats ?? { count: next.length, bytes: next.reduce((sum, item) => sum + item.bytes, 0) });
+      // The counts come from the list response and do not depend on a single byte of
+      // image data, so publish them now. Holding them until every blob had
+      // transferred made the header read "0 个媒体记录" for the whole download.
+      setStats(result.stats ?? { count: 0, bytes: 0 });
       setTotal(result.total);
-      setHasMore(resolved.length === PAGE_SIZE);
+      setHasMore(result.media.length === PAGE_SIZE);
+
+      const base = append ? media : [];
+      if (!append) {
+        for (const url of objectUrls.current) releaseMediaUrl(url);
+        objectUrls.current.clear();
+        setMedia([]);
+      }
+      // Rows land in server order as their blobs arrive instead of all at once at the
+      // end: a page of full-size originals is tens of megabytes, and Promise.all kept
+      // the grid empty until the last one finished. `batch` preserves the order, so
+      // publishing the non-null entries never reshuffles what is already on screen.
+      const batch: Array<FeatureMedia | null> = result.media.map(() => null);
+      const fresh = result.media.filter((item) => !base.some((old) => old.id === item.id));
+      const publish = () => {
+        const rows = batch.filter((item): item is FeatureMedia => item !== null);
+        setMedia([...base, ...rows]);
+      };
+      let failed = 0;
+      // allSettled, not all: one unreadable image used to reject the whole batch and
+      // blank a gallery whose other items were perfectly fine.
+      await Promise.all(
+        fresh.map(async (item, index) => {
+          try {
+            let row = item;
+            if (item.exists) {
+              const loaded = await fetchAuthenticatedMedia(item.url, {
+                scope: 'admin',
+                token: getAdminToken(),
+                expected: item.kind === 'image' ? 'image' : item.kind === 'audio' ? 'audio' : 'file'
+              });
+              objectUrls.current.add(loaded.url);
+              row = { ...item, url: loaded.url };
+            }
+            batch[index] = row;
+            publish();
+          } catch {
+            failed += 1;
+          }
+        })
+      );
+      const next = [...base, ...batch.filter((item): item is FeatureMedia => item !== null)];
+      if (failed > 0) setError(`${failed} 张图片加载失败，其余已显示`);
       setSelected((before) => new Set([...before].filter((id) => next.some((item) => item.id === id))));
     } catch (err) {
       setError(err instanceof Error ? err.message : '图库加载失败');
@@ -164,6 +189,7 @@ export default function GalleryPage() {
 
       {error && <div className="gallery-error" role="status">{error}</div>}
       {loading && images.length === 0 && <div className="gallery-empty">正在加载图库…</div>}
+      {loading && images.length > 0 && <div className="gallery-loading-more" role="status">正在加载剩余图片…</div>}
       {!loading && images.length === 0 && <div className="gallery-empty">当前筛选下没有图片</div>}
 
       <section className="gallery-grid">

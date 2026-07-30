@@ -1,0 +1,169 @@
+// @vitest-environment jsdom
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * The gallery downloaded every full-size original with `await Promise.all(...)` before
+ * it set any state, which produced two user-visible failures that no test covered:
+ * the grid stayed empty and the header read "共 0 个媒体记录" until the last of tens of
+ * megabytes had transferred (over 24s in production), and a single unreadable image
+ * rejected the batch and blanked a gallery whose other items were fine.
+ *
+ * These tests hold the blob loader open on purpose so "before the images arrive" is an
+ * observable state rather than a race.
+ */
+
+const gallery = vi.fn();
+const fetchAuthenticatedMedia = vi.fn();
+
+vi.mock('../lib/features.js', () => ({
+  featureApi: {
+    gallery: (...args: unknown[]) => gallery(...args),
+    patchMedia: vi.fn(),
+    galleryBatch: vi.fn()
+  },
+  adminMediaUrl: (url: string) => url
+}));
+
+vi.mock('../lib/admin.js', () => ({
+  getAdminToken: () => 'admin-secret',
+  setAdminToken: vi.fn(),
+  clearAdminToken: vi.fn()
+}));
+
+vi.mock('../lib/authenticatedMedia.js', () => ({
+  fetchAuthenticatedMedia: (...args: unknown[]) => fetchAuthenticatedMedia(...args),
+  releaseMediaUrl: vi.fn(),
+  blobForMediaUrl: () => null,
+  safeDownloadName: (name: string) => name
+}));
+
+let GalleryPage: typeof import('./GalleryPage.js').default;
+let container: HTMLDivElement;
+let root: Root;
+
+function item(id: string, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    kind: 'image',
+    mime: 'image/png',
+    bytes: 2_100_000,
+    url: `/api/media/${id}`,
+    name: `${id}.png`,
+    origin: 'generated',
+    exists: true,
+    createdAt: '2026-07-30T00:00:00.000Z',
+    ...extra
+  };
+}
+
+/** A blob load we can resolve or reject by hand, one deferred per media id. */
+function deferredLoader() {
+  const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
+  fetchAuthenticatedMedia.mockImplementation(
+    (path: string) =>
+      new Promise((resolve, reject) => {
+        const id = path.split('/').pop() as string;
+        pending.set(id, { resolve, reject });
+      })
+  );
+  return {
+    async settle(id: string, ok = true) {
+      const d = pending.get(id);
+      if (!d) throw new Error(`no pending load for ${id}`);
+      await act(async () => {
+        if (ok) d.resolve({ url: `blob:${id}`, blob: new Blob(['x']), contentType: 'image/png' });
+        else d.reject(new Error('媒体内容读取失败'));
+      });
+    },
+    get size() {
+      return pending.size;
+    }
+  };
+}
+
+const text = () => container.textContent ?? '';
+const thumbs = () => [...container.querySelectorAll('.gallery-item')].map((el) => el.getAttribute('data-media-id'));
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  localStorage.clear();
+  ({ default: GalleryPage } = await import('./GalleryPage.js'));
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+});
+
+async function mount(items: ReturnType<typeof item>[], total = items.length) {
+  gallery.mockResolvedValue({ media: items, stats: { count: items.length, bytes: 14_400_000 }, total });
+  await act(async () => {
+    root.render(<GalleryPage />);
+  });
+}
+
+describe('GalleryPage 渐进加载', () => {
+  it('图片还没到就先显示总数，不再谎报 0 个媒体记录', async () => {
+    const loader = deferredLoader();
+    await mount([item('a'), item('b')], 255);
+
+    // 此刻两张图的 blob 都还挂着
+    expect(loader.size).toBe(2);
+    expect(thumbs()).toEqual([]);
+    expect(text()).toContain('255');
+    expect(text()).not.toContain('共 0 个媒体记录');
+  });
+
+  it('每张图各自到达就各自出现，不必等最慢的那张', async () => {
+    const loader = deferredLoader();
+    await mount([item('a'), item('b'), item('c')]);
+
+    await loader.settle('b');
+    expect(thumbs()).toEqual(['b']);
+
+    await loader.settle('a');
+    // 服务端顺序是 a,b,c —— 即使 b 先到，a 也要排回前面
+    expect(thumbs()).toEqual(['a', 'b']);
+
+    await loader.settle('c');
+    expect(thumbs()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('一张坏图不再让整个图库变空', async () => {
+    const loader = deferredLoader();
+    await mount([item('a'), item('b'), item('c')]);
+
+    await loader.settle('a');
+    await loader.settle('b', false);
+    await loader.settle('c');
+
+    expect(thumbs()).toEqual(['a', 'c']);
+    expect(text()).toContain('1 张图片加载失败');
+  });
+
+  it('全部失败时报告失败数量而不是静默空白', async () => {
+    const loader = deferredLoader();
+    await mount([item('a'), item('b')]);
+
+    await loader.settle('a', false);
+    await loader.settle('b', false);
+
+    expect(thumbs()).toEqual([]);
+    expect(text()).toContain('2 张图片加载失败');
+  });
+
+  it('不存在的媒体不触发 blob 请求也不算失败', async () => {
+    const loader = deferredLoader();
+    await mount([item('a'), item('gone', { exists: false })]);
+
+    // 只有 a 需要 blob
+    expect(loader.size).toBe(1);
+    await loader.settle('a');
+    expect(text()).not.toContain('加载失败');
+  });
+});
