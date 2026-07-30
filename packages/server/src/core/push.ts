@@ -34,13 +34,6 @@ export interface PushSendSummary {
 
 const SETTINGS_KEY = 'push.vapid';
 const FRONTEND_ACTIVE_MS = 35_000;
-/**
- * A push service only answers 404/410 for an endpoint it still knows about. One that
- * keeps timing out or 5xx-ing is never cleaned up by that path, so `fail_count` was
- * written on every failure and read by nobody: dead endpoints accumulated forever and
- * every later send paid for them. Six consecutive failures is a dead endpoint.
- */
-const MAX_CONSECUTIVE_FAILURES = 6;
 
 export class PushService {
   private readonly keys: StoredVapidKeys;
@@ -114,25 +107,16 @@ export class PushService {
           summary.removed++;
           continue;
         }
+        this.subscriptions.markFailure(subscription.endpoint);
         summary.failed++;
         this.errors.add('push.deliver', `push endpoint returned ${response.status}`, { endpoint: originOnly(subscription.endpoint) });
-        if (this.retire(subscription.endpoint)) summary.removed++;
       } catch (err) {
+        this.subscriptions.markFailure(subscription.endpoint);
         summary.failed++;
         this.errors.add('push.deliver', (err as Error).message, { endpoint: originOnly(subscription.endpoint) });
-        if (this.retire(subscription.endpoint)) summary.removed++;
       }
     }
     return summary;
-  }
-
-  /** Count one failure and drop the endpoint once it is clearly dead. */
-  private retire(endpoint: string): boolean {
-    const failures = this.subscriptions.markFailure(endpoint);
-    if (failures < MAX_CONSECUTIVE_FAILURES) return false;
-    this.subscriptions.remove(endpoint);
-    this.errors.add('push.retire', `dropped endpoint after ${failures} consecutive failures`, { endpoint: originOnly(endpoint) });
-    return true;
   }
 
   private async deliver(subscription: PushSubscriptionRow, payload: Buffer): Promise<Response> {

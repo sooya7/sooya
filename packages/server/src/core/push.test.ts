@@ -5,19 +5,22 @@ import type { PushSubscriptionRow } from '../db/repos/feature.repo.js';
 import type { SettingsRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
 
 /**
- * A push service only answers 404/410 for endpoints it still knows about, so an
- * endpoint that keeps timing out was never cleaned up: `fail_count` was written on
- * every failure and read by nobody. These tests pin the retirement rule.
+ * `test/push-retry.test.ts` owns the end-to-end expiry contract against a real database.
+ * These are the two unit-level rules that are cheap to get wrong when touching `send()`:
+ * a transient failure must never cost a subscription, and a tab that is demonstrably in
+ * the foreground must not be pushed to at all.
+ *
+ * Note for anyone tempted to prune on `fail_count`: that was tried and reverted. The
+ * contract test deliberately drives seven consecutive failures and still requires the
+ * row to survive, because a push service outage must not silently unsubscribe every
+ * device — only the user reopening the app can ever re-subscribe.
  */
 
-/**
- * Real client keys. A malformed p256dh makes payload encryption throw *before* the
- * fetch, which silently turns every case into the generic failure path — the first
- * version of this file passed for that reason and never reached the 410 branch.
- */
 const client = (() => {
   const ecdh = createECDH('prime256v1');
   ecdh.generateKeys();
+  // A malformed p256dh makes encryption throw before the fetch, which quietly turns
+  // every case into the same generic failure path.
   return { p256dh: ecdh.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') };
 })();
 
@@ -36,7 +39,7 @@ function row(endpoint: string, overrides: Partial<PushSubscriptionRow> = {}): Pu
   } as PushSubscriptionRow;
 }
 
-function harness(rows: PushSubscriptionRow[], failuresReturned: number) {
+function harness(rows: PushSubscriptionRow[]) {
   const removed: string[] = [];
   const failures: string[] = [];
   const subscriptions = {
@@ -47,76 +50,73 @@ function harness(rows: PushSubscriptionRow[], failuresReturned: number) {
     remove: (endpoint: string) => { removed.push(endpoint); return true; },
     markVisibility: vi.fn(),
     markSuccess: vi.fn(),
-    markFailure: (endpoint: string) => { failures.push(endpoint); return failuresReturned; }
+    markFailure: (endpoint: string) => { failures.push(endpoint); return failures.length; }
   };
   const store = new Map<string, unknown>();
   const settings = {
     get: <T>(key: string, fallback: T): T => (store.has(key) ? store.get(key) as T : fallback),
     set: (key: string, value: unknown) => { store.set(key, value); }
   } as unknown as SettingsRepo;
-  const logged: Array<{ scope: string; message: string }> = [];
-  const errors = { add: (scope: string, message: string) => { logged.push({ scope, message }); } } as unknown as ErrorLogRepo;
-  return { subscriptions, settings, errors, removed, failures, logged };
+  const errors = { add: vi.fn() } as unknown as ErrorLogRepo;
+  return { subscriptions, settings, errors, removed, failures };
 }
 
-const failingFetch = async () => new Response('nope', { status: 500 });
+describe('PushService.send', () => {
+  it('临时故障只记失败，绝不删订阅', async () => {
+    const h = harness([row('https://push.example.com/flaky')]);
+    const service = new PushService(h.subscriptions as never, h.settings, h.errors, (async () => new Response('nope', { status: 503 })) as never);
 
-describe('PushService 失败端点回收', () => {
-  it('偶发失败只记一次，不删订阅', async () => {
-    const h = harness([row('https://push.example.com/a')], 2);
-    const service = new PushService(h.subscriptions as never, h.settings, h.errors, failingFetch as never);
-
-    const summary = await service.send({ title: 'hi' });
-
-    expect(summary.failed).toBe(1);
-    expect(summary.removed).toBe(0);
-    expect(h.failures).toEqual(['https://push.example.com/a']);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const summary = await service.send({ title: 'hi' });
+      expect(summary.failed).toBe(1);
+      expect(summary.removed).toBe(0);
+    }
     expect(h.removed).toEqual([]);
+    expect(h.failures).toHaveLength(8);
   });
 
-  it('连续失败达到阈值就删掉端点，并记一条可查的日志', async () => {
-    const h = harness([row('https://push.example.com/dead')], 6);
-    const service = new PushService(h.subscriptions as never, h.settings, h.errors, failingFetch as never);
-
-    const summary = await service.send({ title: 'hi' });
-
-    expect(summary.failed).toBe(1);
-    expect(summary.removed).toBe(1);
-    expect(h.removed).toEqual(['https://push.example.com/dead']);
-    expect(h.logged.some((entry) => entry.scope === 'push.retire')).toBe(true);
-  });
-
-  it('网络直接抛错也走同一条回收路径', async () => {
-    const h = harness([row('https://push.example.com/timeout')], 6);
-    const thrower = async () => { throw new Error('connect ETIMEDOUT'); };
+  it('网络层直接抛错也一样不删订阅', async () => {
+    const h = harness([row('https://push.example.com/timeout')]);
+    const thrower = async () => { throw Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' }); };
     const service = new PushService(h.subscriptions as never, h.settings, h.errors, thrower as never);
 
     const summary = await service.send({ title: 'hi' });
 
-    expect(summary.removed).toBe(1);
-    expect(h.removed).toEqual(['https://push.example.com/timeout']);
+    expect(summary.failed).toBe(1);
+    expect(h.removed).toEqual([]);
   });
 
-  it('410 仍然立刻删除，不必等阈值', async () => {
-    const h = harness([row('https://push.example.com/gone')], 1);
-    const gone = async () => new Response('', { status: 410 });
-    const service = new PushService(h.subscriptions as never, h.settings, h.errors, gone as never);
+  it('410 是永久失效，立刻删除且不计入失败', async () => {
+    const h = harness([row('https://push.example.com/gone')]);
+    const service = new PushService(h.subscriptions as never, h.settings, h.errors, (async () => new Response('', { status: 410 })) as never);
 
     const summary = await service.send({ title: 'hi' });
 
     expect(summary.removed).toBe(1);
     expect(summary.failed).toBe(0);
+    expect(h.removed).toEqual(['https://push.example.com/gone']);
     expect(h.failures).toEqual([]);
   });
 
-  it('前台刚活跃过的订阅直接跳过，不计失败', async () => {
-    const h = harness([row('https://push.example.com/foreground', { visible: 1, last_seen_at: new Date().toISOString() })], 6);
-    const service = new PushService(h.subscriptions as never, h.settings, h.errors, failingFetch as never);
+  it('前台刚活跃过的设备直接跳过，不占推送配额', async () => {
+    const h = harness([row('https://push.example.com/foreground', { visible: 1, last_seen_at: new Date().toISOString() })]);
+    const fetchImpl = vi.fn(async () => new Response('', { status: 201 }));
+    const service = new PushService(h.subscriptions as never, h.settings, h.errors, fetchImpl as never);
 
     const summary = await service.send({ title: 'hi' });
 
     expect(summary.attempted).toBe(0);
-    expect(h.failures).toEqual([]);
-    expect(h.removed).toEqual([]);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('前台记录过期后照常推送', async () => {
+    const stale = new Date(Date.now() - 60_000).toISOString();
+    const h = harness([row('https://push.example.com/stale', { visible: 1, last_seen_at: stale })]);
+    const service = new PushService(h.subscriptions as never, h.settings, h.errors, (async () => new Response('', { status: 201 })) as never);
+
+    const summary = await service.send({ title: 'hi' });
+
+    expect(summary.attempted).toBe(1);
+    expect(summary.delivered).toBe(1);
   });
 });
