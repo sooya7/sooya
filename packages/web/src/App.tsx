@@ -6,6 +6,7 @@ import { Composer } from './components/Composer.js';
 import { setToken } from './lib/api.js';
 import { useAuthenticatedMedia } from './lib/useAuthenticatedMedia.js';
 import type { ChatMessage } from './lib/types.js';
+import type { ServiceWorkerUpdateController } from './lib/serviceWorkerUpdate.js';
 
 const NEAR_BOTTOM_PX = 120;
 export default function App() { return window.location.pathname === '/admin' || window.location.pathname === '/admin/' ? <AdminPanel /> : <ChatApp />; }
@@ -26,7 +27,7 @@ function ChatApp() {
   const personaAvatar = useAuthenticatedMedia(chat.persona?.avatar, 'user', 'image');
   const userAvatar = useAuthenticatedMedia(chat.persona?.userAvatar, 'user', 'image');
   const scrollerRef = useRef<HTMLDivElement | null>(null); const bottomRef = useRef<HTMLDivElement | null>(null); const sentinelRef = useRef<HTMLDivElement | null>(null); const messagesRef = useRef<HTMLDivElement | null>(null);
-  const [stickToBottom, setStickToBottom] = useState(true); const [unread, setUnread] = useState(0); const [notice, setNotice] = useState<string | null>(null); const [tokenInput, setTokenInput] = useState(''); const [quote, setQuote] = useState<ChatMessage | null>(null);
+  const [stickToBottom, setStickToBottom] = useState(true); const [unread, setUnread] = useState(0); const [notice, setNotice] = useState<string | null>(null); const [tokenInput, setTokenInput] = useState(''); const [quote, setQuote] = useState<ChatMessage | null>(null); const [swUpdate, setSwUpdate] = useState<ServiceWorkerUpdateController | null>(null);
   const stickToBottomRef = useRef(true); const prevCountRef = useRef(0); const prevHeightRef = useRef(0); const prevLastIdRef = useRef<string | null>(null); const loadingOlderRef = useRef(false); const didInitialScrollRef = useRef(false);
 
   const handleScroll = useCallback(() => { const el = scrollerRef.current; if (!el) return; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX; stickToBottomRef.current = atBottom; setStickToBottom(atBottom); if (atBottom) setUnread(0); }, []);
@@ -42,6 +43,12 @@ function ChatApp() {
 
   useEffect(() => { const scroller = scrollerRef.current; const content = messagesRef.current; if (!scroller || !content || typeof ResizeObserver === 'undefined') return; const observer = new ResizeObserver(() => { if (!loadingOlderRef.current && stickToBottomRef.current) scroller.scrollTop = scroller.scrollHeight; }); observer.observe(content); return () => observer.disconnect(); }, []);
   useEffect(() => { const sentinel = sentinelRef.current; const scroller = scrollerRef.current; if (!sentinel || !scroller) return; const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting && chat.hasMore && !chat.loadingOlder) { loadingOlderRef.current = true; prevHeightRef.current = scroller.scrollHeight; void chat.loadOlder(); } }, { root: scroller, rootMargin: '120px 0px 0px 0px' }); observer.observe(sentinel); return () => observer.disconnect(); }, [chat.hasMore, chat.loadOlder, chat.loadingOlder]);
+  useEffect(() => {
+    // main.tsx registers the worker and forwards a waiting update here.
+    const onReady = (event: Event) => setSwUpdate((event as CustomEvent<ServiceWorkerUpdateController>).detail);
+    window.addEventListener('sooya:sw-update-ready', onReady);
+    return () => window.removeEventListener('sooya:sw-update-ready', onReady);
+  }, []);
   useEffect(() => { if (!chat.error) return; setNotice(chat.error); const timer = window.setTimeout(() => { setNotice(null); chat.clearError(); }, 5000); return () => clearTimeout(timer); }, [chat.error]);
   useEffect(() => {
     const mediaError = personaAvatar.error ?? userAvatar.error;
@@ -60,6 +67,7 @@ function ChatApp() {
     <div className="scroller" ref={scrollerRef} onScroll={handleScroll} data-testid="scroller"><div ref={sentinelRef} className="load-sentinel" />{chat.loadingOlder && <div className="history-hint">正在加载更早的消息…</div>}{!chat.hasMore && chat.ready && chat.messages.length > 0 && <div className="history-hint muted">这是你们聊天的开始</div>}{chat.ready && chat.messages.length === 0 && <div className="empty-state"><img src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /><p>和 {persona?.name ?? 'SOOYA'} 说点什么吧</p></div>}
       <div className="messages" ref={messagesRef}>{chat.messages.map((message) => { const showAvatar = message.role !== lastRole; lastRole = message.role; return <MessageItem key={message.id} message={message} quoted={message.replyTo ? chat.messages.find((m) => m.id === message.replyTo) ?? null : null} quotedLabel={message.replyTo ? quotedLabel(chat.messages.find((m) => m.id === message.replyTo) ?? null, persona?.name ?? 'SOOYA') : ''} personaName={persona?.name ?? 'SOOYA'} avatar={persona?.avatar ?? '/avatars/sooya.svg'} userAvatar={persona?.userAvatar ?? '/avatars/user.svg'} showAvatar={showAvatar} onRetry={(m) => void action(() => chat.resend(m), '已重新发送')} onResend={(m) => void action(() => chat.resend(m), '已重新发送')} onQuote={setQuote} onWithdraw={(m) => void action(() => chat.withdraw(m), '消息已撤回并保留上下文占位')} onNotice={setNotice} onOpenImage={(id) => window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id } }))} />; })}{chat.activity.thinking && !hasStreamingBubble(chat.messages) && <div className="msg-row theirs" data-testid="typing-indicator"><div className="avatar-slot"><img className="avatar" src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /></div><div className="msg-body"><div className="bubble bubble-text theirs typing"><span className="typing-dots"><i /><i /><i /></span></div></div></div>}</div><div ref={bottomRef} className="bottom-anchor" /></div>
     {unread > 0 && !stickToBottom && <button type="button" className="unread-pill" data-testid="unread-pill" onClick={jumpToBottom}>{unread} 条新消息 ↓</button>}
+    {swUpdate && <div className="sw-update" role="status" data-testid="sw-update"><span>有新版本可用</span><button type="button" className="sw-update-accept" onClick={() => { swUpdate.accept(); setSwUpdate(null); }}>立即更新</button><button type="button" className="sw-update-later" onClick={() => { swUpdate.dismiss(); setSwUpdate(null); }}>稍后</button></div>}
     {notice && <div className="toast" role="status"><span>{notice}</span><button type="button" className="toast-close" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button></div>}
     {quote && <div className="composer-quote"><div><strong>引用{quote.role === 'user' ? '我的' : persona?.name ?? 'SOOYA'}消息</strong><span>{preview(quote)}</span></div><button type="button" aria-label="取消引用" onClick={() => setQuote(null)}>×</button></div>}
     <Composer key="chat-composer" disabled={chat.connection === 'connecting' && !chat.ready} onSend={async (content) => { const result = await chat.send(content, undefined, quote?.id); setQuote(null); return result; }} onNotice={setNotice} />

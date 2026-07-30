@@ -45,6 +45,23 @@ describe('authenticated media', () => {
     expect(source).toContain('const SHELL_CACHE = `sooya-shell-${BUILD_MANIFEST.version}`');
     expect(source).toContain("keys.filter((key) => key !== SHELL_CACHE && key.startsWith('sooya'))");
   });
+
+  it('hands over only when the page asks, and keeps the old shell until it confirms', () => {
+    const source = fs.readFileSync(fileURLToPath(new URL('../../public/sw.js', import.meta.url)), 'utf8');
+    const install = source.slice(source.indexOf("addEventListener('install'"), source.indexOf("addEventListener('activate'"));
+    const activate = source.slice(source.indexOf("addEventListener('activate'"), source.indexOf("addEventListener('message'"));
+    // Taking over unasked would swap the app out from under a live conversation.
+    // Matching the call, not the word, so an explanatory comment cannot satisfy it.
+    expect(install).not.toMatch(/skipWaiting\s*\(/);
+    // Deleting the previous shell before the reload succeeds leaves nothing to fall back to.
+    expect(activate).not.toMatch(/caches\.delete\s*\(/);
+    expect(activate).not.toMatch(/deleteObsoleteShellCaches\s*\(/);
+    expect(source).toContain("if (type === 'SKIP_WAITING')");
+    expect(source).toContain("if (type === 'CLIENT_READY')");
+    expect(source).toContain('event.waitUntil(deleteObsoleteShellCaches())');
+    // Credentialed requests are per-user and must never reach a shared cache.
+    expect(source).toContain("request.headers.has('authorization') || url.searchParams.has('token')");
+  });
   it('uses scoped headers without putting credentials in the URL', async () => {
     const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:media-1');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);

@@ -8,12 +8,34 @@ const BUILD_MANIFEST = /*__SOOYA_BUILD_MANIFEST__*/ {
 const SHELL_CACHE = `sooya-shell-${BUILD_MANIFEST.version}`;
 const SHELL_ASSETS = BUILD_MANIFEST.assets;
 
+/** Drop every shell cache except the one this worker serves. */
+async function deleteObsoleteShellCaches() {
+  const keys = await caches.keys();
+  await Promise.all(keys.filter((key) => key !== SHELL_CACHE && key.startsWith('sooya')).map((key) => caches.delete(key)));
+}
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS).catch(() => undefined)).then(() => self.skipWaiting()));
+  // No skipWaiting here on purpose: a new build must not replace the running one
+  // while the user is mid-conversation. It waits until the page says to go ahead.
+  event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS).catch(() => undefined)));
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== SHELL_CACHE && key.startsWith('sooya')).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
+  // Claim clients, but keep the previous shell cache: if the reload that follows
+  // fails, the old shell is still the only thing left to serve from.
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener('message', (event) => {
+  const type = event.data && event.data.type;
+  if (type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+  if (type === 'CLIENT_READY') {
+    // A controlled client reloaded successfully, so the old shell is now dead weight.
+    event.waitUntil(deleteObsoleteShellCaches());
+  }
 });
 
 self.addEventListener('push', (event) => {
@@ -55,6 +77,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/health') || url.pathname === '/api/stream' || url.pathname === '/api/events') return;
+  // Anything carrying credentials is per-user and must never land in a shared cache.
+  if (request.headers.has('authorization') || url.searchParams.has('token')) return;
 
   if (url.pathname.startsWith('/api/media/') && !url.pathname.endsWith('/meta')) {
     // Protected media is fetched with Authorization and is never persisted in Cache API.

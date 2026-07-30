@@ -1549,3 +1549,20 @@ button {
   border-color: transparent;
   box-shadow: 0 10px 22px -10px rgba(109, 94, 252, 0.8);
 }
+
+/* Service-worker update prompt: only appears when a new build is parked and waiting. */
+.sw-update {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--composer-h, 76px) + 18px);
+  z-index: 40; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px 10px 16px; border-radius: 999px;
+  background: var(--surface-raised); border: 1px solid var(--accent-line);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45); color: var(--ink); font-size: 14px;
+}
+.sw-update button {
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  border-radius: 999px; padding: 6px 14px; border: 1px solid transparent;
+}
+.sw-update-accept { background: var(--accent); color: var(--accent-ink); }
+.sw-update-accept:hover { filter: brightness(1.1); }
+.sw-update-later { background: transparent; color: var(--ink-soft); border-color: var(--line); }
+.sw-update-later:hover { color: var(--ink); border-color: var(--accent-line); }
