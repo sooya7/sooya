@@ -1,24 +1,15 @@
-# 用 GitHub 的定时器从外部激活 Browser Use 会话。
+# 手动向 Browser Use 会话发送一条消息。
 #
-# 为什么需要它：Browser Use 的 scheduled jobs 在 Free 计划上不投递——定时记录能建，
-# 但会话空闲时那一轮不会自己跑起来。而公开 API 的 session queue 接口可以从外部往
-# 会话里塞一条消息，等于替人“发了一句话”，会话因此被激活并开始干活。
+# 需要配置：
+#   1. secret  BROWSER_USE_API_KEY
+#   2. variable BU_SESSION_ID
+# 路径：Settings → Secrets and variables → Actions。
 #
-# 需要配置两样东西（只需一次）：
-#   1. secret  BROWSER_USE_API_KEY  —— cloud.browser-use.com/settings?tab=api-keys 创建，bu_ 开头
-#   2. variable BU_SESSION_ID       —— 要被唤醒的会话 id
-# 都在 Settings → Secrets and variables → Actions。
-#
-# 关掉它：Actions 页面停用这个 workflow，或删掉本文件。
+# 当前已关闭定时运行，只能在 Actions 页面手动触发。
 
 name: agent shift
 
 on:
-  schedule:
-    # 每 20 分钟一班（落在每小时的 :00 / :20 / :40，与时区无关）。
-    # GitHub 的定时是 best-effort：高峰会晚十几分钟，也可能整次跳过。
-    # 想固定钟点则要减 8 小时，cron 只认 UTC：北京 09:00 = '0 1 * * *'。
-    - cron: '*/20 * * * *'
   workflow_dispatch:
     inputs:
       text:
