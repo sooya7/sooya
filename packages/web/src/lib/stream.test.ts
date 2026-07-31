@@ -60,6 +60,39 @@ describe('ChatStream 重连', () => {
     stream.stop();
   });
 
+  /**
+   * useChat 的 onEvent 处理 persona.updated 与 life.updated，但事件解析层的类型
+   * 白名单是从 EventSource 时代继承的，没有这两个类型 —— 帧在 dispatch 之前就被
+   * 丢弃：管理面板改完人设聊天页头顶不更新，她换了活动生活面板也不动。
+   */
+  it('useChat 已处理的 persona.updated / life.updated 必须送达 onEvent', async () => {
+    const encoder = new TextEncoder();
+    const frames = [
+      'id: 11\nevent: life.updated\ndata: {"activity":"看书","kind":"hobby"}\n\n',
+      'id: 12\nevent: persona.updated\ndata: {"persona":{"name":"SOOYA"}}\n\n'
+    ].map((frame) => encoder.encode(frame));
+    let index = 0;
+    const body = {
+      getReader: () => ({
+        read: async (): Promise<{ done: boolean; value?: Uint8Array }> =>
+          index < frames.length ? { done: false, value: frames[index++]! } : new Promise(() => {}),
+        releaseLock: () => {}
+      })
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, body }) as unknown as Response));
+    const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+    const stream = new ChatStream({ onEvent: (type, data) => events.push({ type, data }), onStateChange: () => {}, onGap: () => {} });
+
+    stream.start();
+    await flush();
+
+    expect(events.map((event) => event.type)).toEqual(['life.updated', 'persona.updated']);
+    expect(events[0]!.data).toMatchObject({ activity: '看书' });
+    expect(events[1]!.data).toMatchObject({ persona: { name: 'SOOYA' } });
+
+    stream.stop();
+  });
+
   it('切回前台撞上挂起的重连计时器时同样不重复连接', async () => {
     const calls: Array<ReturnType<typeof deferred<Response>>> = [];
     vi.stubGlobal('fetch', vi.fn(() => {
