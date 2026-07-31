@@ -114,6 +114,26 @@ export interface SooyaApp {
 
 const VERSION = '1.0.0';
 
+/** Vite 产物：`index-D9-2lj-S.js` 这类文件名里带内容哈希，内容变了文件名一定会变。 */
+const HASHED_ASSET = /\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
+/** 文件名固定、内容会随发布改变的入口文件：缓存住就等于发布不上去。 */
+const ALWAYS_REVALIDATE = /(?:\.html|\/sw\.js|\.webmanifest)$/;
+/** 图标、头像这类文件名带版本后缀（sooya-photo-v2-192.png），一天足够短也足够省。 */
+const STATIC_ASSET_MAX_AGE_S = 86400;
+
+/*
+ * @fastify/static 不传 maxAge 时，底层 @fastify/send 会发 `Cache-Control: public, max-age=0`，
+ * 于是每一次加载、每一个静态文件都要回源验证一次：浏览器发条件请求，Cloudflare 边缘也只能
+ * 是 REVALIDATED 而不是 HIT，实测每个文件因此多花 0.3–0.5s（隧道回源的往返）。
+ * 带哈希的产物永远可以 immutable；入口文件必须 no-cache，否则发新版用户看不到。
+ */
+export function staticCacheControl(filePath: string): string {
+  const pathname = filePath.split(path.sep).join('/');
+  if (ALWAYS_REVALIDATE.test(pathname)) return 'no-cache';
+  if (HASHED_ASSET.test(pathname)) return 'public, max-age=31536000, immutable';
+  return `public, max-age=${STATIC_ASSET_MAX_AGE_S}`;
+}
+
 export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const env = loadEnv({ ...process.env, ...opts.env } as NodeJS.ProcessEnv);
   const logger = opts.logger ?? createLogger({ level: env.LOG_LEVEL, logDir: env.NODE_ENV === 'test' ? null : env.logDir, pretty: env.NODE_ENV === 'development' });
@@ -335,7 +355,21 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const configuredWebDir = env.webDir;
   const webDir = configuredWebDir ?? resolveWebDir();
   if (webDir && fs.existsSync(path.join(webDir, 'index.html'))) {
-    await server.register(fastifyStatic, { root: webDir, prefix: '/', index: ['index.html'], wildcard: false });
+    await server.register(fastifyStatic, {
+      root: webDir,
+      prefix: '/',
+      index: ['index.html'],
+      wildcard: false,
+      // send 的默认值是 max-age=0，见 staticCacheControl 的注释。
+      cacheControl: false,
+      // @fastify/static v10 把 reply 交给 setHeaders，不是 raw res。
+      setHeaders: (reply, filePath) => {
+        (reply as unknown as { header: (k: string, v: string) => unknown }).header(
+          'cache-control',
+          staticCacheControl(filePath)
+        );
+      }
+    });
     server.get('/admin', async (_req, reply) => reply.type('text/html').sendFile('index.html'));
     server.get('/admin/', async (_req, reply) => reply.type('text/html').sendFile('index.html'));
     server.setNotFoundHandler((req, reply) => {
