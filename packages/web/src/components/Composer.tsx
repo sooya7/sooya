@@ -14,14 +14,14 @@ export interface PendingAttachment {
 
 interface Props {
   disabled: boolean;
+  stickers: StickerInfo[];
   onSend: (content: Array<Record<string, unknown>>) => Promise<unknown>;
   onNotice: (text: string) => void;
 }
 
-export function Composer({ disabled, onSend, onNotice }: Props) {
+export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
-  const [stickers, setStickers] = useState<StickerInfo[]>([]);
   const [showStickers, setShowStickers] = useState(false);
   const [recording, setRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -31,13 +31,6 @@ export function Composer({ disabled, onSend, onNotice }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    void api
-      .stickers()
-      .then((r) => setStickers(r.stickers))
-      .catch(() => setStickers([]));
-  }, []);
 
   const autoGrow = useCallback(() => {
     const el = textareaRef.current;

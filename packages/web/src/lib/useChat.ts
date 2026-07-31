@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api.js';
 import { ChatStream } from './stream.js';
 import { fetchAllMessagePages, replaceFailedMessage } from './messageSync.js';
-import type { ActivityState, ChatMessage, ConnectionState, LifeState, PersonaInfo } from './types.js';
+import type { ActivityState, ChatMessage, ConnectionState, LifeState, PersonaInfo, StickerInfo } from './types.js';
 
 const PAGE_SIZE = 30;
 /** Matches the server's `?since=` cap; catch-up walks pages of this size. */
@@ -27,6 +27,7 @@ export function useChat() {
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [life, setLife] = useState<LifeState | null>(null);
+  const [stickers, setStickers] = useState<StickerInfo[]>([]);
   const streamRef = useRef<ChatStream | null>(null);
   const maxSeqRef = useRef(0);
   const draftRef = useRef(new Map<string, string>());
@@ -35,7 +36,7 @@ export function useChat() {
   const applyMessages = useCallback((incoming: ChatMessage[]) => { trackSeq(incoming); setMessages((prev) => mergeMessages(prev, incoming)); }, [trackSeq]);
 
   const reload = useCallback(async () => {
-    try { maxSeqRef.current = 0; draftRef.current.clear(); const [conv, page] = await Promise.all([api.conversation(), api.messages({ limit: PAGE_SIZE })]); setPersona(conv.persona); trackSeq(page.messages); setMessages(page.messages); setHasMore(page.hasMore); streamRef.current?.setLastEventId(page.lastEventSeq); setActivity({ thinking: false, label: null }); setError(null); }
+    try { maxSeqRef.current = 0; draftRef.current.clear(); const boot = await api.bootstrap(); setPersona(boot.conversation.persona); trackSeq(boot.messages.messages); setMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); streamRef.current?.setLastEventId(boot.messages.lastEventSeq); setActivity({ thinking: false, label: null }); setError(null); }
     catch (err) { if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else setError((err as Error).message); }
   }, [trackSeq]);
 
@@ -69,10 +70,9 @@ export function useChat() {
     let cancelled = false;
     void (async () => {
       try {
-        const [conv, page] = await Promise.all([api.conversation(), api.messages({ limit: PAGE_SIZE })]);
+        const boot = await api.bootstrap();
         if (cancelled) return;
-        setPersona(conv.persona); applyMessages(page.messages); setHasMore(page.hasMore); setReady(true);
-        void refreshLife();
+        setPersona(boot.conversation.persona); applyMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); setReady(true);
         const stream = new ChatStream({
           onStateChange: setConnection,
           onGap: () => void resync(),
@@ -98,7 +98,7 @@ export function useChat() {
             }
           }
         });
-        stream.setLastEventId(page.lastEventSeq ?? conv.lastEventSeq ?? 0); stream.start(); streamRef.current = stream;
+        stream.setLastEventId(boot.messages.lastEventSeq ?? boot.conversation.lastEventSeq ?? 0); stream.start(); streamRef.current = stream;
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else { setConnection('offline'); setError((err as Error).message); }
@@ -150,7 +150,7 @@ export function useChat() {
 
   useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') void resync(); }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [resync]);
 
-  return { messages, persona, connection, activity, life, hasMore, loadingOlder, error, ready, send, resend, withdraw, loadOlder, resync, reload, clearError: () => setError(null) };
+  return { messages, persona, connection, activity, life, stickers, hasMore, loadingOlder, error, ready, send, resend, withdraw, loadOlder, resync, reload, clearError: () => setError(null) };
 }
 
 function applyDraft(messages: ChatMessage[], messageId: string, text: string): ChatMessage[] {

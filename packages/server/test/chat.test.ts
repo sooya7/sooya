@@ -84,6 +84,39 @@ describe('idempotency and concurrency', () => {
   });
 });
 
+describe('bootstrap', () => {
+  it('returns conversation, latest page, stickers and life in one shot', async () => {
+    h = await createHarness({ chat: { script: [['你好呀']] } });
+    await sendText(h.app, '在吗');
+    const res = await h.app.server.inject({ method: 'GET', url: '/api/bootstrap' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.conversation.conversationId).toBe('main');
+    expect(body.conversation.persona.name).toBeTruthy();
+    expect(body.conversation.messageCount).toBe(2);
+    expect(body.messages.messages).toHaveLength(2);
+    expect(body.messages.messages[1].content[0].text).toBe('你好呀');
+    expect(body.messages.hasMore).toBe(false);
+    expect(body.messages.lastEventSeq).toBe(body.conversation.lastEventSeq);
+    expect(Array.isArray(body.stickers)).toBe(true);
+    expect(body.stickers.length).toBeGreaterThanOrEqual(10);
+    expect(typeof body.life.activity).toBe('string');
+  });
+
+  it('honours the limit query and rejects a bad one', async () => {
+    h = await createHarness({ chat: { script: [['一', '二', '三']] } });
+    await sendText(h.app, '第一条');
+    await sendText(h.app, '第二条');
+    const res = await h.app.server.inject({ method: 'GET', url: '/api/bootstrap?limit=2' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.messages.messages).toHaveLength(2);
+    expect(body.messages.hasMore).toBe(true);
+    const bad = await h.app.server.inject({ method: 'GET', url: '/api/bootstrap?limit=abc' });
+    expect(bad.statusCode).toBe(400);
+  });
+});
+
 describe('stickers', () => {
   it('imports the built-in pack as real files', async () => {
     h = await createHarness();
