@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getAdminToken, setAdminToken } from '../lib/admin.js';
 import { adminMediaUrl, featureApi, type FeatureMedia } from '../lib/features.js';
-import { fetchAuthenticatedMedia, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
+import { fetchAuthenticatedMedia, mediaThumbnailPath, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
+import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 import { ImageViewer, type ViewerImage } from './ImageViewer.js';
 
 const PAGE_SIZE = 60;
+/**
+ * 网格缩略图的显示宽度（CSS 像素）：网格项 `minmax(170px, 1fr)`，最宽布局下内容区
+ * 约 160–180。`mediaThumbnailPath` 会乘设备像素比并向上取档（240/480/960）。
+ */
+const GALLERY_THUMB_CSS_WIDTH = 180;
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
@@ -16,23 +22,29 @@ function extension(media: FeatureMedia): string {
   return media.mime.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
 }
 
-async function downloadMedia(media: FeatureMedia): Promise<void> {
-  const src = adminMediaUrl(media.url);
-  const response = await fetch(src);
-  if (!response.ok) throw new Error(`媒体下载失败（${response.status}）`);
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
+/*
+ * 保存必须拿原图：网格行的 `url` 已经是缩略图 blob，直接 fetch 它会把缩略图存下来。
+ * originalPath 是加载时记下的服务端路径（不带 w）。
+ */
+async function downloadMedia(media: FeatureMedia, originalPath: string): Promise<void> {
+  const loaded = await fetchAuthenticatedMedia(originalPath, {
+    scope: 'admin',
+    token: getAdminToken(),
+    expected: media.kind === 'image' ? 'image' : media.kind === 'audio' ? 'audio' : 'file'
+  });
   const link = document.createElement('a');
-  link.href = objectUrl;
+  link.href = loaded.url;
   link.download = safeDownloadName(media.name, `sooya-${media.id}.${extension(media)}`);
   document.body.appendChild(link);
   link.click();
   link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+  window.setTimeout(() => releaseMediaUrl(loaded.url), 1500);
 }
 
 export default function GalleryPage() {
   const objectUrls = useRef(new Set<string>());
+  /** id → 服务端原图路径（行的 url 会被缩略图 blob 取代，大图与保存要靠这份路径取原图）。 */
+  const originalPathById = useRef(new Map<string, string>());
   const [token, setTokenState] = useState(() => getAdminToken() ?? '');
   const [media, setMedia] = useState<FeatureMedia[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -57,6 +69,17 @@ export default function GalleryPage() {
   const viewerImages = useMemo<ViewerImage[]>(() => images.map((item) => ({ id: item.id, src: adminMediaUrl(item.url), alt: item.name ?? `SOOYA 图片 ${item.id}` })), [images]);
   const viewerIndex = Math.max(0, viewerImages.findIndex((item) => item.id === viewerId));
   const selectedMedia = useMemo(() => media.filter((item) => selected.has(item.id)), [media, selected]);
+
+  /*
+   * 网格里挂的是缩略图（`?w=`），大图查看器和「保存」都要原图。原图单独取一份：
+   * 拿到之前查看器先显示缩略图，所以点开是即时的，清晰度随后补上。做法与
+   * ImageViewerHost 一致；原图路径在加载时按 id 记下（行的 url 已被缩略图 blob 取代）。
+   */
+  const original = useAuthenticatedMedia(viewerId ? originalPathById.current.get(viewerId) ?? null : null, 'admin', 'image');
+  const shownViewerImages = useMemo<ViewerImage[]>(
+    () => (original.url ? viewerImages.map((image, at) => (at === viewerIndex ? { ...image, src: original.url as string } : image)) : viewerImages),
+    [viewerImages, viewerIndex, original.url]
+  );
 
   const query = (offset = 0) => ({ trash, search: search.trim() || undefined, origin: origin || undefined, favorite: favorite || undefined, from: from || undefined, to: to || undefined, limit: PAGE_SIZE, offset });
 
@@ -88,10 +111,11 @@ export default function GalleryPage() {
       if (!append) {
         for (const url of objectUrls.current) releaseMediaUrl(url);
         objectUrls.current.clear();
+        originalPathById.current.clear();
         setMedia([]);
       }
       // Rows land in server order as their blobs arrive instead of all at once at the
-      // end: a page of full-size originals is tens of megabytes, and Promise.all kept
+      // end: even as thumbnails a page is dozens of requests, and Promise.all kept
       // the grid empty until the last one finished. `batch` preserves the order, so
       // publishing the non-null entries never reshuffles what is already on screen.
       const batch: Array<FeatureMedia | null> = result.media.map(() => null);
@@ -106,9 +130,12 @@ export default function GalleryPage() {
       await Promise.all(
         fresh.map(async (item, index) => {
           try {
+            originalPathById.current.set(item.id, item.url);
             let row = item;
             if (item.exists) {
-              const loaded = await fetchAuthenticatedMedia(item.url, {
+              // 网格只显示缩略图：60 张原图是几十 MB，缩略图（?w= 向上取档）是一两个量级。
+              const path = item.kind === 'image' ? mediaThumbnailPath(item.url, GALLERY_THUMB_CSS_WIDTH) : item.url;
+              const loaded = await fetchAuthenticatedMedia(path, {
                 scope: 'admin',
                 token: getAdminToken(),
                 expected: item.kind === 'image' ? 'image' : item.kind === 'audio' ? 'audio' : 'file'
@@ -177,7 +204,7 @@ export default function GalleryPage() {
     try {
       // Browser-compatible export: download the exact selected result set one by one.
       for (const item of selectedMedia) {
-        await downloadMedia(item);
+        await downloadMedia(item, originalPathById.current.get(item.id) ?? item.url);
         await new Promise((resolve) => window.setTimeout(resolve, 120));
       }
     } catch (err) { setError(err instanceof Error ? err.message : '导出失败'); }
@@ -217,12 +244,12 @@ export default function GalleryPage() {
         {images.map((item) => {
           const src = adminMediaUrl(item.url);
           const checked = selected.has(item.id);
-          return <article className={`gallery-item ${checked ? 'selected' : ''}`} data-media-id={item.id} key={item.id}><button type="button" className="gallery-thumb" onClick={() => setViewerId(item.id)} aria-label="查看图片"><img src={src} alt={item.name ?? '图库图片'} loading="lazy" /></button><label className="gallery-select"><input type="checkbox" checked={checked} onChange={() => toggle(item.id)} />选择</label><div className="gallery-item-actions"><button type="button" aria-label={item.favorite ? '取消收藏' : '收藏'} onClick={() => void featureApi.patchMedia(item.id, { favorite: !item.favorite }).then(() => load(false)).catch((e) => setError(e.message))}>{item.favorite ? '★ 已收藏' : '☆ 收藏'}</button><button type="button" onClick={() => void downloadMedia(item)}>保存</button>{trash ? <><button type="button" onClick={() => void batch('restore', [item.id])}>恢复</button><button type="button" className="gallery-danger" onClick={() => void batch('permanent', [item.id])}>永久删除</button></> : <button type="button" className="gallery-danger" onClick={() => void batch('trash', [item.id])}>移入回收站</button>}</div><small>{new Date(item.createdAt).toLocaleString()} · {formatBytes(item.bytes)} · {item.origin}</small>{item.references && item.references.total > 0 && <small>被引用 {item.references.total} 次</small>}</article>;
+          return <article className={`gallery-item ${checked ? 'selected' : ''}`} data-media-id={item.id} key={item.id}><button type="button" className="gallery-thumb" onClick={() => setViewerId(item.id)} aria-label="查看图片"><img src={src} alt={item.name ?? '图库图片'} loading="lazy" /></button><label className="gallery-select"><input type="checkbox" checked={checked} onChange={() => toggle(item.id)} />选择</label><div className="gallery-item-actions"><button type="button" aria-label={item.favorite ? '取消收藏' : '收藏'} onClick={() => void featureApi.patchMedia(item.id, { favorite: !item.favorite }).then(() => load(false)).catch((e) => setError(e.message))}>{item.favorite ? '★ 已收藏' : '☆ 收藏'}</button><button type="button" onClick={() => void downloadMedia(item, originalPathById.current.get(item.id) ?? item.url)}>保存</button>{trash ? <><button type="button" onClick={() => void batch('restore', [item.id])}>恢复</button><button type="button" className="gallery-danger" onClick={() => void batch('permanent', [item.id])}>永久删除</button></> : <button type="button" className="gallery-danger" onClick={() => void batch('trash', [item.id])}>移入回收站</button>}</div><small>{new Date(item.createdAt).toLocaleString()} · {formatBytes(item.bytes)} · {item.origin}</small>{item.references && item.references.total > 0 && <small>被引用 {item.references.total} 次</small>}</article>;
         })}
       </section>
 
       {hasMore && <div className="gallery-empty"><button type="button" disabled={loading} onClick={() => void load(true)}>加载更多</button></div>}
-      {viewerId && viewerImages.length > 0 && <ImageViewer images={viewerImages} index={viewerIndex} onIndexChange={(index) => setViewerId(viewerImages[index]?.id ?? viewerId)} onClose={() => setViewerId(null)} />}
+      {viewerId && viewerImages.length > 0 && <ImageViewer images={shownViewerImages} index={viewerIndex} onIndexChange={(index) => setViewerId(viewerImages[index]?.id ?? viewerId)} onClose={() => setViewerId(null)} />}
     </main>
   );
 }
