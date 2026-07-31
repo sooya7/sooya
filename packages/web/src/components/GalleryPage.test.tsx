@@ -167,3 +167,39 @@ describe('GalleryPage 渐进加载', () => {
     expect(text()).not.toContain('加载失败');
   });
 });
+
+describe('GalleryPage 代次守卫', () => {
+  /**
+   * load(false) 之间没有任何串行化：切筛选发起新加载后，旧加载的迟到响应照样
+   * setMedia([]) 再逐张发布，把新筛选的结果冲掉。全量加载必须带代次，迟到的旧
+   * 代次响应直接作废。
+   */
+  it('旧筛选迟到的响应不覆盖新筛选的结果', async () => {
+    const loader = deferredLoader();
+    const pending: Array<(value: unknown) => void> = [];
+    gallery.mockImplementation(() => new Promise((resolve) => { pending.push(resolve); }));
+
+    await act(async () => { root.render(<GalleryPage />); });
+    expect(gallery).toHaveBeenCalledTimes(1);
+
+    // 打开回收站，触发第二次全量加载（新筛选）
+    const toggle = [...container.querySelectorAll('button')].find((b) => b.textContent === '打开回收站')!;
+    await act(async () => { toggle.click(); });
+    expect(gallery).toHaveBeenCalledTimes(2);
+
+    // 新筛选先回来
+    await act(async () => {
+      pending[1]!({ media: [item('fresh')], stats: { count: 1, bytes: 2_100_000 }, total: 1 });
+    });
+    await loader.settle('fresh');
+    expect(thumbs()).toEqual(['fresh']);
+
+    // 旧筛选姗姗来迟：不得清空、不得覆盖、也不再为旧结果发 blob 请求
+    await act(async () => {
+      pending[0]!({ media: [item('stale')], stats: { count: 9, bytes: 9 }, total: 9 });
+    });
+    expect(thumbs()).toEqual(['fresh']);
+    expect(loader.size).toBe(1);
+    expect(text()).toContain('1 张');
+  });
+});

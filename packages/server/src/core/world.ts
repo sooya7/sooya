@@ -83,7 +83,15 @@ export class WorldEngine {
 
   async rebuild(limit = 400): Promise<{ cleared: number; processed: number; stored: number; conflicts: number }> {
     const rows = this.messages.recent(Math.max(2, Math.min(1000, limit))).slice().reverse();
-    const cleared = this.repo.clear();
+    /*
+     * Admin entries came in through the panel or an import file, not from
+     * messages, so re-extraction can never bring them back -- wiping them here
+     * destroyed hand-written world state for good. They are kept, and the
+     * authority ranking in apply() keeps re-extracted facts from silently
+     * replacing them (same subject+predicate with a different object lands as
+     * a conflict instead).
+     */
+    const cleared = this.repo.clearExcept('admin');
     let processed = 0;
     let stored = 0;
     let conflicts = 0;

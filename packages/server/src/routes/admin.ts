@@ -292,6 +292,19 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(404);
       return { error: 'not_found' };
     }
+    /*
+     * A sticker that was sent in chat lives on as a message part pointing at
+     * the sticker's media. Deleting the media here used to turn every such
+     * history bubble into a broken image, silently and irreversibly -- the same
+     * failure permanent media deletion already refuses with a 409. The
+     * `stickers` bucket of references() counts this sticker's own row, so only
+     * the other buckets mean something else would break.
+     */
+    const references = repos.media.references(sticker.mediaId);
+    if (references.messageParts > 0 || references.worldEntries > 0) {
+      reply.code(409);
+      return { error: 'sticker_is_referenced', references };
+    }
     repos.stickers.delete(sticker.id);
     await services.mediaStore.delete(sticker.mediaId);
     repos.audit.add('sticker', 'deleted', sticker.id);
