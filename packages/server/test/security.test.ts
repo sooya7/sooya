@@ -114,7 +114,14 @@ describe('WEB_CHAT_TOKEN', () => {
       headers: { authorization: `Bearer ${CHAT_TOKEN}` }
     });
     expect(chatResponse.statusCode).toBe(200);
-    expect(chatResponse.headers['cache-control']).toBe('private, no-store');
+    /*
+     * 这里原来钉死 `private, no-store`。改成可缓存是刻意的：no-store 意味着每次挂载都要
+     * 重传整张原图（画廊一页 60 张），而一个 id 的字节永远不会被改写。安全上真正要守的是
+     * 「凭证只走请求头」和「private，绝不落到共享缓存或 CDN」，这两条仍然由本用例守着；
+     * 代价是私有图片会进用户自己浏览器的本地缓存，最长 7 天。
+     */
+    expect(chatResponse.headers['cache-control']).toBe('private, max-age=604800, immutable');
+    expect(chatResponse.headers['cache-control']).not.toContain('public');
     expect(chatResponse.headers['content-type']).toBe('image/png');
     expect((await h.app.server.inject({
       method: 'GET',
