@@ -355,6 +355,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
     database: {
       recovered: app.state.dbRecovered,
       recoveredFrom: app.state.dbRecoveredFrom ?? null,
+      inconsistent: app.state.dbInconsistent ?? null,
       messages: repos.messages.count(),
       media: repos.media.count(),
       memories: repos.memories.count(),

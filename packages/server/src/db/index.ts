@@ -11,8 +11,43 @@ export interface OpenDbResult {
   db: Db;
   /** True when a corrupted database was quarantined and replaced. */
   recovered: boolean;
-  recoveredFrom?: 'backup' | 'fresh';
+  recoveredFrom?: 'backup';
   quarantinePath?: string;
+  /**
+   * Set when the file opened and holds readable data but `foreign_key_check`
+   * reported violations. That is an inconsistency, not corruption: the process
+   * keeps serving and only shouts about it.
+   */
+  inconsistent?: string;
+}
+
+/**
+ * Why a database could not be used.
+ *
+ * `corrupt`   sqlite itself says the bytes are damaged — the only case where
+ *             replacing the file is ever justified.
+ * `unusable`  the file could not be opened at all: a missing native module,
+ *             wrong permissions, a full disk, a locked file. The data is very
+ *             probably fine and must not be touched.
+ * `inconsistent` opens and reads fine, but referential integrity is off.
+ */
+export type DbFailureKind = 'corrupt' | 'unusable' | 'inconsistent';
+
+/**
+ * Thrown instead of destroying data. Production incident 2026-07-31: a missing
+ * `better_sqlite3.node` was read as "database corrupt", the live database was
+ * renamed away and replaced with an empty one, and the service happily served
+ * 0 messages. Refusing to start is always the better failure.
+ */
+export class DatabaseUnusableError extends Error {
+  readonly kind: DbFailureKind;
+  readonly reason: string;
+  constructor(kind: DbFailureKind, reason: string, hint: string) {
+    super(`${hint} (${kind}: ${reason})`);
+    this.name = 'DatabaseUnusableError';
+    this.kind = kind;
+    this.reason = reason;
+  }
 }
 
 export interface OpenDbOptions {
@@ -43,6 +78,26 @@ export function checkIntegrity(db: Db): string | null {
   } catch (err) {
     return `integrity_check failed: ${(err as Error).message}`;
   }
+}
+
+/**
+ * Only sqlite's own corruption verdicts count as corruption. Anything else —
+ * `Could not locate the bindings file`, EACCES, ENOSPC, SQLITE_CANTOPEN,
+ * SQLITE_BUSY — means "cannot open", which says nothing about the bytes.
+ */
+export function classifyDbError(err: unknown): DbFailureKind {
+  const code = typeof (err as { code?: unknown })?.code === 'string' ? ((err as { code: string }).code) : '';
+  if (code.startsWith('SQLITE_CORRUPT') || code.startsWith('SQLITE_NOTADB')) return 'corrupt';
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (msg.includes('disk image is malformed') || msg.includes('file is not a database')) return 'corrupt';
+  return 'unusable';
+}
+
+/** Classifies the string `checkIntegrity` returns. */
+export function classifyIntegrityFailure(failure: string): DbFailureKind {
+  if (failure.startsWith('integrity_check:')) return 'corrupt';
+  if (failure.startsWith('foreign_key_check:')) return 'inconsistent';
+  return classifyDbError(new Error(failure.replace(/^integrity_check failed: /, '')));
 }
 
 export function migrate(db: Db): number {
@@ -85,6 +140,26 @@ function quarantine(file: string, log: OpenDbOptions['onLog']): string {
   }
   log?.('error', 'database quarantined', { file, target });
   return target;
+}
+
+/** Undo a quarantine so a failed restore leaves the original bytes in place. */
+function unquarantine(file: string, target: string, log: OpenDbOptions['onLog']): void {
+  for (const suffix of ['', '-wal', '-shm']) {
+    try {
+      fs.rmSync(`${file}${suffix}`, { force: true });
+    } catch {
+      /* ignore */
+    }
+    const src = `${target}${suffix}`;
+    if (fs.existsSync(src)) {
+      try {
+        fs.renameSync(src, `${file}${suffix}`);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  log?.('error', 'restore failed, the original database was put back', { file, target });
 }
 
 function latestValidBackup(backupDir: string): string | null {
@@ -131,55 +206,107 @@ export function openDatabase(opts: OpenDbOptions): OpenDbResult {
   };
 
   let db: Db | null = null;
-  let failure: string | null = null;
+  let failure: { kind: DbFailureKind; reason: string } | null = null;
   try {
     db = tryOpen();
-    failure = checkIntegrity(db);
+    const integrity = checkIntegrity(db);
+    if (integrity) failure = { kind: classifyIntegrityFailure(integrity), reason: integrity };
   } catch (err) {
-    failure = (err as Error).message;
+    failure = { kind: classifyDbError(err), reason: (err as Error).message };
   }
 
-  if (failure && autoRecover) {
-    onLog?.('error', 'database unhealthy, starting recovery', { reason: failure });
+  if (!failure) {
+    migrate(db!);
+    return { db: db!, recovered: false };
+  }
+
+  if (!autoRecover) {
     try {
       db?.close();
     } catch {
       /* ignore */
     }
-    const quarantinePath = quarantine(file, onLog);
-    const backup = backupDir ? latestValidBackup(backupDir) : null;
-    let recoveredFrom: 'backup' | 'fresh' = 'fresh';
-    if (backup) {
-      fs.copyFileSync(backup, file);
-      recoveredFrom = 'backup';
-      onLog?.('warn', 'database restored from backup', { backup });
-    } else {
-      onLog?.('warn', 'no valid backup found, starting with a fresh database');
-    }
-    let recoveredDb: Db;
-    try {
-      recoveredDb = tryOpen();
-      if (checkIntegrity(recoveredDb) !== null) throw new Error('restored database still corrupt');
-    } catch (err) {
-      // Backup itself was unusable: fall back to fresh.
+    throw new DatabaseUnusableError(failure.kind, failure.reason, 'database unhealthy');
+  }
+
+  /*
+   * Readable data with broken references. Replacing the file would trade a
+   * fixable inconsistency for real data loss, so keep serving and be loud.
+   */
+  if (failure.kind === 'inconsistent') {
+    onLog?.('error', 'database has referential inconsistencies; serving it as-is, NOT replacing it', {
+      reason: failure.reason
+    });
+    migrate(db!);
+    return { db: db!, recovered: false, inconsistent: failure.reason };
+  }
+
+  try {
+    db?.close();
+  } catch {
+    /* ignore */
+  }
+
+  /*
+   * "Cannot open" is not "corrupt". The native module can be missing, the file
+   * can be root-owned, the disk can be full — in every one of those cases the
+   * data is intact and the only safe move is to stop and say so.
+   */
+  if (failure.kind === 'unusable') {
+    onLog?.('error', 'database could not be opened; refusing to quarantine or replace it', {
+      reason: failure.reason
+    });
+    throw new DatabaseUnusableError(
+      failure.kind,
+      failure.reason,
+      'refusing to start: the database could not be opened. It has been left untouched — fix the cause (native module, permissions, disk space) rather than replacing the file'
+    );
+  }
+
+  // From here on sqlite itself says the bytes are damaged.
+  const backup = backupDir ? latestValidBackup(backupDir) : null;
+  if (!backup) {
+    onLog?.('error', 'database is corrupt and no usable backup was found; refusing to replace it', {
+      reason: failure.reason
+    });
+    throw new DatabaseUnusableError(
+      failure.kind,
+      failure.reason,
+      'refusing to start: the database is corrupt and no restorable backup was found. The file is left in place — never serve an empty database in its stead'
+    );
+  }
+
+  onLog?.('error', 'database corrupt, restoring from a verified backup', { reason: failure.reason, backup });
+  const quarantinePath = quarantine(file, onLog);
+  try {
+    fs.copyFileSync(backup, file);
+    const recoveredDb = tryOpen();
+    const integrity = checkIntegrity(recoveredDb);
+    if (integrity && classifyIntegrityFailure(integrity) === 'corrupt') {
       try {
-        fs.rmSync(file, { force: true });
-        fs.rmSync(`${file}-wal`, { force: true });
-        fs.rmSync(`${file}-shm`, { force: true });
+        recoveredDb.close();
       } catch {
         /* ignore */
       }
-      onLog?.('error', 'restore failed, creating fresh database', { error: (err as Error).message });
-      recoveredDb = tryOpen();
-      recoveredFrom = 'fresh';
+      throw new Error(`restored database still corrupt: ${integrity}`);
     }
     migrate(recoveredDb);
-    return { db: recoveredDb, recovered: true, recoveredFrom, quarantinePath };
+    onLog?.('warn', 'database restored from backup', { backup });
+    return {
+      db: recoveredDb,
+      recovered: true,
+      recoveredFrom: 'backup',
+      quarantinePath,
+      ...(integrity ? { inconsistent: integrity } : {})
+    };
+  } catch (err) {
+    unquarantine(file, quarantinePath, onLog);
+    throw new DatabaseUnusableError(
+      'corrupt',
+      (err as Error).message,
+      'refusing to start: restoring the verified backup failed, so the original database was put back untouched'
+    );
   }
-
-  if (failure) throw new Error(`database unhealthy: ${failure}`);
-  migrate(db!);
-  return { db: db!, recovered: false };
 }
 
 export function closeDatabase(db: Db): void {

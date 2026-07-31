@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 import pino from 'pino';
 import { createHarness, sendText, ASSETS_DIR, type Harness } from './helpers/harness.js';
 import { buildApp } from '../src/app.js';
-import { openDatabase, checkIntegrity, migrate } from '../src/db/index.js';
+import { openDatabase, checkIntegrity, migrate, classifyDbError, classifyIntegrityFailure } from '../src/db/index.js';
 import { MIGRATIONS, LATEST_VERSION } from '../src/db/migrations.js';
 
 /**
@@ -124,29 +124,93 @@ describe('database corruption recovery', () => {
     expect(quarantined.length).toBeGreaterThan(0);
   });
 
-  it('starts fresh when no valid backup exists, instead of crashing', () => {
-    const dir = makeTempDir('sooya-corrupt2-');
+  /*
+   * Everything below encodes the production incident of 2026-07-31: a missing
+   * `better_sqlite3.node` was classified as "database corrupt", the live file was
+   * renamed away, no backup could be opened (same missing module), and the code
+   * created an EMPTY database and kept serving it. Refusing to start beats
+   * serving nothing, so these tests assert refusal plus an untouched file.
+   */
+  it('refuses to start — and touches nothing — when it cannot even open the file', () => {
+    const dir = makeTempDir('sooya-cantopen-');
+    // A directory where the database should be: sqlite reports SQLITE_CANTOPEN,
+    // which stands in for the real cause (missing native module, EACCES, ENOSPC).
     const dbFile = path.join(dir, 'sooya.db');
-    fs.writeFileSync(dbFile, Buffer.from('this is definitely not a sqlite database file, at all'));
-    const recovered = openDatabase({ file: dbFile, backupDir: path.join(dir, 'backups') });
-    expect(recovered.recovered).toBe(true);
-    expect(recovered.recoveredFrom).toBe('fresh');
-    expect(checkIntegrity(recovered.db)).toBeNull();
-    expect((recovered.db.prepare('SELECT COUNT(*) c FROM messages').get() as { c: number }).c).toBe(0);
-    recovered.db.close();
+    fs.mkdirSync(dbFile);
+    fs.writeFileSync(path.join(dbFile, 'sentinel'), 'still here');
+
+    expect(() => openDatabase({ file: dbFile, backupDir: path.join(dir, 'backups') })).toThrow(
+      /could not be opened/i
+    );
+    // Not quarantined, not deleted, not replaced.
+    expect(fs.readdirSync(dir).filter((f) => f.includes('.corrupt-'))).toHaveLength(0);
+    expect(fs.readFileSync(path.join(dbFile, 'sentinel'), 'utf8')).toBe('still here');
   });
 
-  it('ignores an invalid backup and still recovers', () => {
+  it('classifies a missing native module as unusable, never as corruption', () => {
+    expect(classifyDbError(new Error('Could not locate the bindings file. Tried: …'))).toBe('unusable');
+    expect(classifyDbError(Object.assign(new Error('unable to open database file'), { code: 'SQLITE_CANTOPEN' }))).toBe(
+      'unusable'
+    );
+    expect(classifyDbError(Object.assign(new Error('disk I/O error'), { code: 'SQLITE_IOERR' }))).toBe('unusable');
+    expect(classifyDbError(Object.assign(new Error('malformed'), { code: 'SQLITE_CORRUPT' }))).toBe('corrupt');
+    expect(classifyDbError(new Error('file is not a database'))).toBe('corrupt');
+    expect(classifyIntegrityFailure('integrity_check: page 3 is never used')).toBe('corrupt');
+    expect(classifyIntegrityFailure('foreign_key_check: 2 violation(s)')).toBe('inconsistent');
+  });
+
+  it('refuses to replace a corrupt database when there is no usable backup', () => {
+    const dir = makeTempDir('sooya-corrupt2-');
+    const dbFile = path.join(dir, 'sooya.db');
+    const garbage = Buffer.from('this is definitely not a sqlite database file, at all');
+    fs.writeFileSync(dbFile, garbage);
+
+    expect(() => openDatabase({ file: dbFile, backupDir: path.join(dir, 'backups') })).toThrow(
+      /no restorable backup/i
+    );
+    // The original bytes are still exactly where they were: recoverable by hand.
+    expect(fs.readFileSync(dbFile)).toEqual(garbage);
+    expect(fs.readdirSync(dir).filter((f) => f.includes('.corrupt-'))).toHaveLength(0);
+  });
+
+  it('refuses when the only backup is unusable, instead of starting empty', () => {
     const dir = makeTempDir('sooya-corrupt3-');
     const dbFile = path.join(dir, 'sooya.db');
     const backupDir = path.join(dir, 'backups');
     fs.mkdirSync(backupDir, { recursive: true });
     fs.writeFileSync(path.join(backupDir, 'bad.db'), Buffer.from('garbage backup'));
-    fs.writeFileSync(dbFile, Buffer.from('garbage live db'));
-    const recovered = openDatabase({ file: dbFile, backupDir });
-    expect(recovered.recovered).toBe(true);
-    expect(recovered.recoveredFrom).toBe('fresh');
-    recovered.db.close();
+    const live = Buffer.from('garbage live db');
+    fs.writeFileSync(dbFile, live);
+
+    expect(() => openDatabase({ file: dbFile, backupDir })).toThrow(/no restorable backup/i);
+    expect(fs.readFileSync(dbFile)).toEqual(live);
+  });
+
+  it('serves a database with foreign key violations as-is rather than replacing it', () => {
+    const dir = makeTempDir('sooya-fk-');
+    const dbFile = path.join(dir, 'sooya.db');
+    const backupDir = path.join(dir, 'backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+
+    const { db } = openDatabase({ file: dbFile });
+    db.prepare(
+      "INSERT INTO messages(id, conversation_id, role, created_at, updated_at, seq, status, meta_json) VALUES ('keep','main','user',?,?,1,'sent','{}')"
+    ).run(new Date().toISOString(), new Date().toISOString());
+    db.pragma('foreign_keys = OFF');
+    // A part pointing at a message that does not exist: an inconsistency, not corruption.
+    db.prepare(
+      "INSERT INTO message_parts(id, message_id, idx, type, text, status) VALUES ('orphan','ghost',0,'text','hi','sent')"
+    ).run();
+    db.close();
+
+    const logs: Array<{ level: string; msg: string }> = [];
+    const opened = openDatabase({ file: dbFile, backupDir, onLog: (level, msg) => logs.push({ level, msg }) });
+    expect(opened.recovered).toBe(false);
+    expect(opened.inconsistent).toMatch(/foreign_key_check/);
+    expect(logs.some((l) => l.level === 'error' && /NOT replacing it/.test(l.msg))).toBe(true);
+    expect((opened.db.prepare("SELECT id FROM messages WHERE id = 'keep'").get() as { id: string }).id).toBe('keep');
+    opened.db.close();
+    expect(fs.readdirSync(dir).filter((f) => f.includes('.corrupt-'))).toHaveLength(0);
   });
 });
 

@@ -180,6 +180,24 @@ describe('deployment safety regressions', () => {
     expect(code).toMatch(/npm ci --omit=dev --build-from-source=better-sqlite3/);
   });
 
+  /*
+   * The 2026-07-31 outage: a release with a broken native module became `current`,
+   * and the app mistook "cannot load the module" for "the database is corrupt".
+   * The gate must run as the service user and must actually open a database, and
+   * it must sit BEFORE the symlink switch, otherwise it protects nothing.
+   */
+  it('proves the release can open a sqlite database before making it current', () => {
+    const code = executableLines(upgrade);
+    expect(code).toMatch(/sudo -u "\$SERVICE_USER"[^\n]*"\$NODE_BIN"/);
+    expect(code).toMatch(/CREATE TABLE probe/);
+    expect(code).toMatch(/integrity_check/);
+    expect(code).toMatch(/not switching, the current release keeps serving/);
+    const gate = code.indexOf('CREATE TABLE probe');
+    const flip = code.indexOf('mv -Tf "$BASE_DIR/current.new" "$BASE_DIR/current"');
+    expect(gate).toBeGreaterThan(-1);
+    expect(flip).toBeGreaterThan(gate);
+  });
+
   it('verifies a restore before stopping the service and rolls back unhealthy restores', () => {
     expect(restore).toMatch(/checking backup database integrity before stopping SOOYA/);
     expect(restore).toMatch(/integrity_check/);
