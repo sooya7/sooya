@@ -11,6 +11,13 @@
 
 const ACCEPTED_KEY = 'sooya:sw-update-accepted';
 
+/**
+ * How often a page that stays open re-checks for a new build. `register()` only
+ * checks once, at load; a chat app left open on a phone for days would never
+ * notice a deploy without this.
+ */
+const UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+
 export interface ServiceWorkerUpdateController {
   /** Let the waiting worker take over; the page reloads once. */
   accept(): void;
@@ -23,6 +30,8 @@ export interface ServiceWorkerUpdateController {
 export interface RegisterOptions {
   /** Injectable for tests; defaults to a real page reload. */
   reload?: () => void;
+  /** Injectable for tests; minimum gap between update checks. */
+  updateCheckIntervalMs?: number;
 }
 
 type WaitingHandler = (controller: ServiceWorkerUpdateController) => void;
@@ -56,7 +65,10 @@ export async function registerServiceWorkerUpdate(
   if (!container) return () => undefined;
 
   const reload = options.reload ?? (() => window.location.reload());
-  const registration = await container.register('/sw.js');
+  // `updateViaCache: 'none'` keeps the HTTP cache out of the update check: the
+  // edge/CDN may hand `sw.js` a long browser TTL, and that must not decide when
+  // a new build becomes visible.
+  const registration = await container.register('/sw.js', { updateViaCache: 'none' });
 
   // This load is the one that followed an accepted update: the new worker is in
   // control, so it may now discard the old shell cache.
@@ -123,6 +135,29 @@ export async function registerServiceWorkerUpdate(
   };
   container.addEventListener('controllerchange', onControllerChange);
   cleanups.push(() => container.removeEventListener('controllerchange', onControllerChange));
+
+  // Look for a new build on a timer and whenever the tab comes back to the
+  // foreground. Throttled by the same interval so app switching on a phone does
+  // not turn into a request per focus. A failed check is not worth reporting:
+  // offline is the normal reason, and the next check retries.
+  const intervalMs = options.updateCheckIntervalMs ?? UPDATE_CHECK_INTERVAL_MS;
+  let lastCheck = Date.now();
+  const checkForUpdate = () => {
+    if (disposed) return;
+    const now = Date.now();
+    if (now - lastCheck < intervalMs) return;
+    lastCheck = now;
+    void registration.update().catch(() => undefined);
+  };
+
+  const timer = setInterval(checkForUpdate, intervalMs);
+  cleanups.push(() => clearInterval(timer));
+
+  const onVisible = () => {
+    if (document.visibilityState === 'visible') checkForUpdate();
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  cleanups.push(() => document.removeEventListener('visibilitychange', onVisible));
 
   return () => {
     disposed = true;

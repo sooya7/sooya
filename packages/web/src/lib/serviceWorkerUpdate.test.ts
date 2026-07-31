@@ -19,6 +19,7 @@ class FakeWorker extends EventTarget {
 class FakeRegistration extends EventTarget {
   installing: FakeWorker | null = null;
   waiting: FakeWorker | null = null;
+  update = vi.fn(async () => undefined);
   /** Mirrors the browser: a new worker installs, then parks in `waiting`. */
   startUpdate(): FakeWorker {
     const worker = new FakeWorker();
@@ -51,15 +52,23 @@ function install(container_: FakeContainer): void {
 }
 
 /** Register and collect whatever update controllers get surfaced. */
-async function start(): Promise<{
+async function start(updateCheckIntervalMs?: number): Promise<{
   seen: ServiceWorkerUpdateController[];
   reload: ReturnType<typeof vi.fn>;
   teardown: () => void;
 }> {
   const seen: ServiceWorkerUpdateController[] = [];
   const reload = vi.fn();
-  const teardown = await registerServiceWorkerUpdate((controller) => seen.push(controller), { reload });
+  const teardown = await registerServiceWorkerUpdate((controller) => seen.push(controller), {
+    reload,
+    updateCheckIntervalMs
+  });
   return { seen, reload, teardown };
+}
+
+function setVisibility(state: 'visible' | 'hidden'): void {
+  Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+  document.dispatchEvent(new Event('visibilitychange'));
 }
 
 beforeEach(() => {
@@ -151,6 +160,12 @@ describe('registerServiceWorkerUpdate', () => {
     second.teardown();
   });
 
+  it('keeps the HTTP cache out of the update check', async () => {
+    const { teardown } = await start();
+    expect(container.register).toHaveBeenCalledWith('/sw.js', { updateViaCache: 'none' });
+    teardown();
+  });
+
   it('stops listening after teardown', async () => {
     container.controller = new FakeWorker();
     const { seen, reload, teardown } = await start();
@@ -161,5 +176,75 @@ describe('registerServiceWorkerUpdate', () => {
 
     expect(seen).toHaveLength(0);
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+describe('update checks on a long-lived page', () => {
+  const INTERVAL = 60_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setVisibility('visible');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('polls for a new build while the page stays open', async () => {
+    const { teardown } = await start(INTERVAL);
+    expect(container.registration.update).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    expect(container.registration.update).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    expect(container.registration.update).toHaveBeenCalledTimes(2);
+    teardown();
+  });
+
+  it('checks on foreground even when the background froze the timer', async () => {
+    const { teardown } = await start(INTERVAL);
+    setVisibility('hidden');
+    // What a phone actually does to a background tab: timers stop, wall clock
+    // keeps going. The poll never fires, so the foreground event is the check.
+    vi.setSystemTime(Date.now() + INTERVAL + 1);
+    setVisibility('visible');
+
+    expect(container.registration.update).toHaveBeenCalledTimes(1);
+    teardown();
+  });
+
+  it('throttles app switching: rapid foreground events cost one check', async () => {
+    const { teardown } = await start(INTERVAL);
+    await vi.advanceTimersByTimeAsync(INTERVAL + 1);
+    expect(container.registration.update).toHaveBeenCalledTimes(1);
+
+    for (let i = 0; i < 5; i += 1) {
+      setVisibility('hidden');
+      setVisibility('visible');
+    }
+    expect(container.registration.update).toHaveBeenCalledTimes(1);
+    teardown();
+  });
+
+  it('a failed check is swallowed and the next one still runs', async () => {
+    container.registration.update.mockRejectedValueOnce(new Error('offline'));
+    const { teardown } = await start(INTERVAL);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    expect(container.registration.update).toHaveBeenCalledTimes(2);
+    teardown();
+  });
+
+  it('teardown stops the polling', async () => {
+    const { teardown } = await start(INTERVAL);
+    teardown();
+
+    await vi.advanceTimersByTimeAsync(INTERVAL * 3);
+    setVisibility('hidden');
+    setVisibility('visible');
+    expect(container.registration.update).not.toHaveBeenCalled();
   });
 });
