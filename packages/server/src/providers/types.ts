@@ -45,6 +45,12 @@ export interface ChatResult {
   finishReason?: string;
   usage?: { promptTokens?: number; completionTokens?: number };
   model: string;
+  /**
+   * `jsonMode` was asked for, but the endpoint cannot enforce it: the request
+   * was served with a prompt constraint instead, so the text needs lenient
+   * parsing rather than being trusted as strict JSON.
+   */
+  jsonModeDegraded?: boolean;
 }
 
 export interface ChatProvider {

@@ -17,6 +17,8 @@ export interface FakeChatOptions {
   delayMs?: number;
   /** Answer 400 "no image input" whenever a request carries an image part. */
   rejectImages?: boolean;
+  /** Answer 400 "response_format not supported" whenever the request asks for JSON mode. */
+  rejectJsonMode?: boolean;
 }
 
 export interface FakeProviderState {
@@ -150,6 +152,12 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
           status: 400,
           headers: { 'content-type': 'application/json' }
         });
+      }
+      if (opts.chat?.rejectJsonMode && (body as { response_format?: unknown } | null)?.response_format) {
+        return new Response(
+          JSON.stringify({ error: { message: "Unsupported parameter: 'response_format' is not supported by this model", type: 'invalid_request_error' } }),
+          { status: 400, headers: { 'content-type': 'application/json' } }
+        );
       }
       const chunks = script[Math.min(callIndex++, script.length - 1)] ?? ['好的。'];
       const isStream = (body as { stream?: boolean } | null)?.stream === true;

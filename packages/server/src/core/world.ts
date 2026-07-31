@@ -3,6 +3,7 @@ import type { WorldRepo, WorldCandidate, WorldEntryRow } from '../db/repos/featu
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { MessageRepo } from '../db/repos/message.repo.js';
+import { extractJsonObject } from '../util/json-extract.js';
 
 const CandidateSchema = z.object({
   kind: z.enum(['entity', 'relation', 'fact', 'scene', 'timeline']),
@@ -23,6 +24,8 @@ export class WorldEngine {
     private readonly errors: ErrorLogRepo,
     private readonly messages: MessageRepo
   ) {}
+
+  private jsonModeNoticed = false;
 
   contextFor(query: string, limit = 18): string {
     const entries = this.repo.relevant(query, limit);
@@ -61,6 +64,10 @@ export class WorldEngine {
         maxTokens: 1200,
         jsonMode: true
       });
+      if (result.jsonModeDegraded && !this.jsonModeNoticed) {
+        this.jsonModeNoticed = true;
+        this.errors.add('world.extract', 'json_mode_unsupported', { model: result.model });
+      }
       const parsed = parseJson(result.text);
       const validated = ExtractSchema.safeParse(parsed);
       if (!validated.success) {
@@ -180,13 +187,9 @@ function dedupe(entries: WorldCandidate[]): WorldCandidate[] {
 }
 
 function parseJson(text: string): unknown {
-  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  try { return JSON.parse(trimmed); } catch {
-    const first = trimmed.indexOf('{');
-    const last = trimmed.lastIndexOf('}');
-    if (first >= 0 && last > first) return JSON.parse(trimmed.slice(first, last + 1));
-    throw new Error('world extractor did not return JSON');
-  }
+  const parsed = extractJsonObject(text);
+  if (parsed === null) throw new Error('world extractor did not return JSON');
+  return parsed;
 }
 
 function textOf(message: { content: Array<{ type: string; text?: string | null; transcript?: string | null }> }): string {
