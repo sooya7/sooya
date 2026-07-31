@@ -187,7 +187,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   worker.register('maintenance', async () => {
     deps.jobs.purgeDone();
     await cleanupTempFiles(deps.tmpDirs);
-    const orphans = await deps.media.collectOrphans();
+    const orphans = await deps.media.collectOrphans(undefined, deps.storage.avatarMediaIds());
     if (orphans.length > 0) deps.bus.publish('system.notice', { notice: 'cleaned orphan media', count: orphans.length });
     deps.memory.purgeExpired?.();
     const cleanup = await deps.storage.cleanup({

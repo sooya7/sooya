@@ -53,7 +53,10 @@ function ChatApp() {
   useEffect(() => { if (!chat.error) return; setNotice(chat.error); const timer = window.setTimeout(() => { setNotice(null); chat.clearError(); }, 5000); return () => clearTimeout(timer); }, [chat.error]);
   useEffect(() => {
     const mediaError = personaAvatar.error ?? userAvatar.error;
-    if (mediaError) setNotice(mediaError);
+    if (!mediaError) return;
+    setNotice(mediaError);
+    const timer = window.setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(timer);
   }, [personaAvatar.error, userAvatar.error]);
 
   const jumpToBottom = () => { stickToBottomRef.current = true; setStickToBottom(true); setUnread(0); bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); };

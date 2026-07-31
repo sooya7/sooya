@@ -204,11 +204,12 @@ export class MediaStore {
     return true;
   }
 
-  async collectOrphans(minAgeMs = 2 * 60 * 60 * 1000): Promise<string[]> {
+  async collectOrphans(minAgeMs = 2 * 60 * 60 * 1000, protectedIds?: ReadonlySet<string>): Promise<string[]> {
     const cutoff = new Date(Date.now() - minAgeMs).toISOString();
     const rows = this.repo.listOrphanUploads(cutoff, 500);
     const removed: string[] = [];
     for (const row of rows) {
+      if (protectedIds?.has(row.id)) continue;
       await fsp.rm(this.absolutePath(row), { force: true });
       if (!this.repo.delete(row.id)) throw new Error('orphan media database record deletion failed');
       removed.push(row.id);

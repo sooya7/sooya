@@ -330,7 +330,7 @@ export class StorageService {
     return this.avatarMediaIds().has(id);
   }
 
-  private avatarMediaIds(): Set<string> {
+  avatarMediaIds(): Set<string> {
     const persona = this.config.getPersona();
     return new Set([mediaIdFromUrl(persona.avatar), mediaIdFromUrl(persona.userAvatar)].filter(Boolean) as string[]);
   }

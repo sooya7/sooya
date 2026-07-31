@@ -183,6 +183,7 @@ export class MediaRepo {
         AND m.kind != 'sticker'
         AND m.created_at < ?
         AND m.deleted_at IS NULL
+        AND m.meta_json NOT LIKE '%"avatar"%'
         AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
         AND NOT EXISTS (

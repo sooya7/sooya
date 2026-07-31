@@ -467,6 +467,33 @@ describe('media integrity', () => {
     expect(h.app.services.stickerLibrary.count()).toBe(stickerBefore);
   });
 
+  it('never garbage-collects persona avatar uploads', async () => {
+    h = await createHarness();
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64'
+    );
+    const store = h.app.services.mediaStore;
+
+    // Uploads tagged meta:{avatar:slot} are excluded by the query itself.
+    const tagged = await store.save({ kind: 'image', origin: 'upload', data: png, declaredMime: 'image/png', filename: 'avatar.png', meta: { avatar: 'user' } });
+    const taggedPath = store.absolutePath(h.app.repos.media.get(tagged.id)!);
+    expect(await store.collectOrphans(0)).not.toContain(tagged.id);
+    expect(h.app.repos.media.get(tagged.id)).toBeTruthy();
+    expect(fs.existsSync(taggedPath)).toBe(true);
+
+    // Anything the persona points at is protected via the caller-supplied set,
+    // even without the avatar meta tag (e.g. older rows).
+    const plain = await store.save({ kind: 'image', origin: 'upload', data: png, declaredMime: 'image/png', filename: 'plain.png' });
+    h.app.config.setPersona({ userAvatar: `/api/media/${plain.id}` });
+    expect(await store.collectOrphans(0, h.app.services.storage.avatarMediaIds())).not.toContain(plain.id);
+    expect(h.app.repos.media.get(plain.id)).toBeTruthy();
+
+    // Once the persona no longer references it and no meta tag exists, it is collectable again.
+    h.app.config.setPersona({ userAvatar: '/avatars/user.svg' });
+    expect(await store.collectOrphans(0, h.app.services.storage.avatarMediaIds())).toContain(plain.id);
+  });
+
   it('reconciles media rows whose files vanished', async () => {
     h = await createHarness();
     const sticker = h.app.services.stickerLibrary.available()[0]!;
