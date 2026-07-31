@@ -11,8 +11,8 @@ SOOYA 的请求构造、流解析、媒体落盘、失败降级和重试路径�
 | 能力 | 当前已验证 | 仍需验证或注意 |
 | --- | --- | --- |
 | OpenAI Chat Completions / OpenAI 兼容接口 | 真实生产对话链路、SSE 解析、超时与重试 | 不同兼容服务的错误格式、限流策略和能力声明可能不同 |
-| OpenAI Responses | 适配器已实现（`providers/chat/openai.ts`） | 仓库内没有针对该协议的自动化测试，也缺真实供应商端到端验收 |
-| Anthropic Messages | 适配器已实现（`providers/chat/openai.ts`） | 仓库内没有针对该协议的自动化测试，也缺真实供应商端到端验收 |
+| OpenAI Responses | 适配器已实现，并有协议级测试（`test/provider-responses.test.ts`：请求体、`output_text` 解析、流式增量、错误映射） | 仍缺真实供应商端到端验收 |
+| Anthropic Messages | 适配器已实现，并有协议级测试（`test/provider-anthropic.test.ts`：请求头与请求体、`content[]` 解析、流式增量、错误映射） | 仍缺真实供应商端到端验收 |
 | 图片生成 | 真实网关链路曾返回并落盘图片；`b64_json` 与 URL 两条代码路径有测试 | 上游账号池、额度、模型尺寸和返回格式仍可能不同 |
 | Embedding | 维度校验、存储、召回和降级有测试 | 真实向量的长期召回质量需要实际数据评估 |
 | STT | 上传、转写调用与失败处理有测试 | 火山 ASR 是独立的 WebSocket 二进制协议，尚未接入；准确率依赖供应商和音频格式 |
@@ -68,7 +68,7 @@ SOOYA 的请求构造、流解析、媒体落盘、失败降级和重试路径�
 - `supportsVision` 等静态字段可能与真实模型能力不一致。
 - `vision`、`summary` 未单独配置时可能回退到聊天模型，图片输入和 JSON mode 需要分别验证。
 - 能力不匹配、网络超时和上游 5xx 的错误提示仍可能过于相似。
-- 图片输入被上游 4xx 拒绝时已有降级：`replier` 丢弃图片改用纯文本重试一次，并记 `chat:vision_unsupported`。该路径目前只有代码，尚无回归测试。
+- 图片输入被上游 4xx 拒绝时已有降级：`replier` 丢弃图片改用纯文本重试一次，并记 `chat:vision_unsupported`。该路径有回归测试（`test/vision-fallback.test.ts`）。
 
 ### 4.4 多媒体
 
@@ -118,7 +118,7 @@ SOOYA 的请求构造、流解析、媒体落盘、失败降级和重试路径�
 
 ## 6. 建议的后续工作
 
-1. 为 Responses 与 Anthropic 适配器补协议级测试（请求构造、流式增量解析、错误状态映射），再做真实供应商端到端验收。
+1. 对 Responses 与 Anthropic 适配器做真实供应商端到端验收（协议级测试已补齐，仓库内无法验证真实网关行为）。
 2. 完成真实 STT 的端到端验收。
 3. 增加 SSE 重连和图库并发加载的回归测试。
 4. 历史消息增长后增加虚拟滚动。
