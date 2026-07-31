@@ -18,6 +18,7 @@ import { ErrorLogRepo, EventRepo, JobRepo, SettingsRepo, SummaryRepo } from './d
 import { AuditRepo, PushSubscriptionRepo, StorageSampleRepo, WorldRepo } from './db/repos/feature.repo.js';
 import { MediaStore } from './media/store.js';
 import { StickerLibrary } from './media/stickers.js';
+import { ImageVariantService } from './media/variants.js';
 import { CapabilityRegistry } from './core/capabilities.js';
 import { MemoryService } from './core/memory.js';
 import { ContextBuilder } from './core/context.js';
@@ -81,6 +82,7 @@ export interface SooyaApp {
   };
   services: {
     mediaStore: MediaStore;
+    mediaVariants: ImageVariantService;
     stickerLibrary: StickerLibrary;
     capabilities: CapabilityRegistry;
     memory: MemoryService;
@@ -163,6 +165,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   };
 
   const mediaStore = new MediaStore(env.mediaDirs, repos.media, { maxUploadBytes: env.MAX_UPLOAD_BYTES });
+  const mediaVariants = new ImageVariantService(env.mediaDirs.variants, (message, id) => repos.errors.add('media.variant', message, { id }));
   const stickerLibrary = new StickerLibrary(repos.stickers, repos.media, mediaStore);
   const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl: opts.fetchImpl });
   const bus = new EventBus(repos.events);
@@ -329,7 +332,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, stickerLibrary, capabilities, memory, world, life, push, storage, context, summarizer, replier, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, world, life, push, storage, context, summarizer, replier, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     reopenDatabase: () => {
