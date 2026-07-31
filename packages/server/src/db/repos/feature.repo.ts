@@ -114,6 +114,8 @@ export class WorldRepo {
   }
   remove(id: string): boolean { return this.db.prepare('DELETE FROM world_entries WHERE id=?').run(id).changes > 0; }
   clear(): number { return this.db.prepare('DELETE FROM world_entries').run().changes; }
+  /* Entries with this authority are not message-derived, so a rebuild cannot bring them back; keep them. */
+  clearExcept(authority: WorldAuthority): number { return this.db.prepare('DELETE FROM world_entries WHERE authority != ?').run(authority).changes; }
   count(active?: boolean): number { return active === undefined ? (this.db.prepare('SELECT COUNT(*) c FROM world_entries').get() as { c: number }).c : (this.db.prepare('SELECT COUNT(*) c FROM world_entries WHERE active=?').get(active ? 1 : 0) as { c: number }).c; }
   private insert(candidate: WorldCandidate, sourceMessageId: string | null, active: boolean, conflictOf: string | null): WorldEntryRow { const id=`world_${randomId(16)}`; const ts=nowIso(); this.db.prepare('INSERT INTO world_entries(id,kind,subject,subject_key,predicate,predicate_key,object,value_json,confidence,authority,source_message_id,active,conflict_of,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(id,candidate.kind,candidate.subject,worldIdentityKey(candidate.subject),candidate.predicate,worldIdentityKey(candidate.predicate),candidate.object,JSON.stringify(candidate.value ?? {}),candidate.confidence ?? 0.6,candidate.authority ?? 'model',sourceMessageId,active ? 1 : 0,conflictOf,ts,ts); if (sourceMessageId) this.addSource(id,sourceMessageId); return this.get(id)!; }
   private addSource(entryId: string, messageId: string): void { this.db.prepare('INSERT OR IGNORE INTO world_sources(entry_id,message_id,created_at) VALUES(?,?,?)').run(entryId,messageId,nowIso()); }

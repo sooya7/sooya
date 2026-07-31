@@ -60,11 +60,23 @@ export default function GalleryPage() {
 
   const query = (offset = 0) => ({ trash, search: search.trim() || undefined, origin: origin || undefined, favorite: favorite || undefined, from: from || undefined, to: to || undefined, limit: PAGE_SIZE, offset });
 
+  /*
+   * Reloads used to race: change filters while a page was still streaming in
+   * and the older, slower response would setMedia([]) and republish on top of
+   * the newer filter's results. Every full reload bumps a generation; anything
+   * awaiting an older generation drops its result instead of publishing.
+   * Appends belong to whatever generation is current.
+   */
+  const generation = useRef(0);
+
   const load = async (append = false) => {
+    const gen = append ? generation.current : ++generation.current;
+    const stale = () => gen !== generation.current;
     setLoading(true);
     setError(null);
     try {
       const result = await featureApi.gallery(query(append ? media.length : 0));
+      if (stale()) return;
       // The counts come from the list response and do not depend on a single byte of
       // image data, so publish them now. Holding them until every blob had
       // transferred made the header read "0 个媒体记录" for the whole download.
@@ -101,9 +113,15 @@ export default function GalleryPage() {
                 token: getAdminToken(),
                 expected: item.kind === 'image' ? 'image' : item.kind === 'audio' ? 'audio' : 'file'
               });
+              if (stale()) {
+                // A newer reload owns the grid now; this blob has no home.
+                releaseMediaUrl(loaded.url);
+                return;
+              }
               objectUrls.current.add(loaded.url);
               row = { ...item, url: loaded.url };
             }
+            if (stale()) return;
             batch[index] = row;
             publish();
           } catch {
@@ -111,13 +129,16 @@ export default function GalleryPage() {
           }
         })
       );
+      if (stale()) return;
       const next = [...base, ...batch.filter((item): item is FeatureMedia => item !== null)];
       if (failed > 0) setError(`${failed} 张图片加载失败，其余已显示`);
       setSelected((before) => new Set([...before].filter((id) => next.some((item) => item.id === id))));
     } catch (err) {
+      if (stale()) return;
       setError(err instanceof Error ? err.message : '图库加载失败');
     } finally {
-      setLoading(false);
+      // A superseded load must not clear the spinner its successor is using.
+      if (!stale()) setLoading(false);
     }
   };
 
