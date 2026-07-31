@@ -19,6 +19,11 @@ export interface FakeChatOptions {
   rejectImages?: boolean;
   /** Answer 400 "response_format not supported" whenever the request asks for JSON mode. */
   rejectJsonMode?: boolean;
+  /**
+   * Full control over a chat response, called before the built-in behaviours.
+   * Return null to fall through to `chatError` / `rejectImages` / the script.
+   */
+  respond?: (ctx: { body: unknown; index: number }) => Response | null;
 }
 
 export interface FakeProviderState {
@@ -146,6 +151,10 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     if (url.includes('/chat/completions')) {
       state.chatCalls.push({ body, url });
       if (opts.chat?.delayMs) await new Promise((r) => setTimeout(r, opts.chat!.delayMs));
+      if (opts.chat?.respond) {
+        const custom = opts.chat.respond({ body, index: state.chatCalls.length - 1 });
+        if (custom) return custom;
+      }
       if (chatError) throw chatError;
       if (opts.chat?.rejectImages && JSON.stringify(body).includes('image_url')) {
         return new Response(JSON.stringify({ error: { message: 'This model does not support image input', type: 'invalid_request_error' } }), {
