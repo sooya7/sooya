@@ -3,6 +3,7 @@ import { cosineSimilarity, normalizeMemoryText } from '../db/repos/memory.repo.j
 import type { CapabilityRegistry } from './capabilities.js';
 import type { MemoryRecord } from './types.js';
 import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
+import { extractJsonObject } from '../util/json-extract.js';
 
 export interface MemoryCandidate {
   kind: MemoryKind;
@@ -38,6 +39,8 @@ export class MemoryService {
     private readonly opts: { disabled?: boolean } = {}
   ) {}
 
+  private jsonModeNoticed = false;
+
   get disabled(): boolean {
     return this.opts.disabled === true;
   }
@@ -69,6 +72,12 @@ export class MemoryService {
         jsonMode: true,
         signal
       });
+      // Say it once: "the endpoint has no JSON mode" is a setup fact, and the
+      // silent version of it used to look like "nothing worth remembering".
+      if (result.jsonModeDegraded && !this.jsonModeNoticed) {
+        this.jsonModeNoticed = true;
+        this.errorLog.add('memory.extract', 'json_mode_unsupported', { model: result.model });
+      }
       return parseCandidates(result.text);
     } catch (err) {
       this.errorLog.add('memory.extract', (err as Error).message);
@@ -287,19 +296,8 @@ function clamp01(v: number): number {
 }
 
 export function parseCandidates(raw: string): MemoryCandidate[] {
-  const text = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    const m = /\{[\s\S]*\}/.exec(text);
-    if (!m) return [];
-    try {
-      parsed = JSON.parse(m[0]);
-    } catch {
-      return [];
-    }
-  }
+  const parsed = extractJsonObject(raw);
+  if (parsed === null) return [];
   const obj = parsed as { worth?: boolean; items?: unknown };
   if (obj.worth === false) return [];
   if (!Array.isArray(obj.items)) return [];

@@ -1,5 +1,6 @@
 import type { ChatModelConfig } from '../../config/schema.js';
 import { assertSafeUrl, withRetry, defaultRetryable, HttpTimeoutError } from '../../util/http.js';
+import { withJsonInstruction } from '../../util/json-extract.js';
 import {
   ProviderNotConfiguredError,
   ProviderRequestError,
@@ -94,6 +95,12 @@ async function readSse(response: Response, onEvent: (data: string) => void): Pro
 export class OpenAIChatProvider implements ChatProvider {
   readonly name: string;
   private readonly fetchImpl: typeof fetch;
+  /**
+   * Observed, not configured: flipped off the first time the endpoint refuses
+   * `response_format`. Providers are rebuilt whenever model config changes, so
+   * this never outlives the setup it was learned from.
+   */
+  private jsonModeSupported = true;
 
   constructor(
     private readonly cfg: ChatModelConfig,
@@ -120,8 +127,13 @@ export class OpenAIChatProvider implements ChatProvider {
   }
 
   private body(req: ChatRequest, stream: boolean): Record<string, unknown> {
+    // `jsonMode` is what the caller needs, `response_format` is only one way to
+    // get it. When the endpoint has rejected that field once, the constraint
+    // moves into the prompt instead of being dropped on the floor.
+    const nativeJson = req.jsonMode === true && this.jsonModeSupported;
+    const system = req.jsonMode === true && !nativeJson ? withJsonInstruction(req.system) : req.system;
     const messages: Array<Record<string, unknown>> = [];
-    if (req.system) messages.push({ role: 'system', content: req.system });
+    if (system) messages.push({ role: 'system', content: system });
     for (const turn of req.messages) messages.push(toOpenAiMessage(turn));
     const body: Record<string, unknown> = {
       model: this.cfg.model,
@@ -130,12 +142,33 @@ export class OpenAIChatProvider implements ChatProvider {
       temperature: req.temperature ?? this.cfg.temperature,
       stream
     };
-    if (req.jsonMode) body.response_format = { type: 'json_object' };
+    if (nativeJson) body.response_format = { type: 'json_object' };
     return body;
   }
 
+  /**
+   * Config declares JSON mode the same way it declares vision: statically. An
+   * endpoint that 4xx's on `response_format` used to fail the whole extraction,
+   * which the callers then swallowed as "no memories worth keeping" -- a silent
+   * downgrade with no visible symptom. Retry once under a prompt constraint and
+   * remember the answer, so later calls skip the doomed request entirely.
+   */
   async complete(req: ChatRequest): Promise<ChatResult> {
     if (!this.configured) throw new ProviderNotConfiguredError('chat');
+    const wantsJson = req.jsonMode === true;
+    const degradedAlready = wantsJson && !this.jsonModeSupported;
+    try {
+      const result = await this.completeOnce(req);
+      return degradedAlready ? { ...result, jsonModeDegraded: true } : result;
+    } catch (err) {
+      if (!wantsJson || !this.jsonModeSupported || !isJsonModeRejection(err as Error)) throw err;
+      this.jsonModeSupported = false;
+      const result = await this.completeOnce(req);
+      return { ...result, jsonModeDegraded: true };
+    }
+  }
+
+  private async completeOnce(req: ChatRequest): Promise<ChatResult> {
     return withRetry(
       async () => {
         const { signal, cancel } = withTimeout(this.cfg.timeoutMs, req.signal);
@@ -626,6 +659,19 @@ export async function safeText(res: Response): Promise<string> {
   } catch {
     return '<no body>';
   }
+}
+
+/**
+ * A 4xx that names `response_format` / JSON mode, i.e. the endpoint does not
+ * implement the field. 5xx and timeouts are transient and must keep retrying
+ * the same way as before.
+ */
+const JSON_MODE_REJECTION = /response_format|json_object|json_schema|json mode|structured output/i;
+
+export function isJsonModeRejection(err: Error): boolean {
+  const status = (err as { status?: number }).status;
+  if (typeof status !== 'number' || status < 400 || status >= 500) return false;
+  return JSON_MODE_REJECTION.test(err.message);
 }
 
 export function normalizeAbort(err: unknown, timeoutMs: number): Error {
