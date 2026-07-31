@@ -13,13 +13,31 @@ function localTime(iso: string): Date {
   return new Date(`${iso}+08:00`);
 }
 
+let pinnedNow = localTime('2026-07-31T17:30');
+
 async function panelHarness(env: Record<string, string> = {}, at = '2026-07-31T17:30'): Promise<Harness> {
+  pinnedNow = localTime(at);
   harness = await createHarness({
     env: { ADMIN_API_TOKEN: 'admin-test-token', ENABLE_LIFE_ENGINE: 'true', ENABLE_LIFE_REACH_OUT: 'true', ENABLE_BACKGROUND_JOBS: 'false', ...env },
     startWorkers: false,
     clock: () => localTime(at)
   });
   return harness;
+}
+
+/**
+ * A user message at a known distance from the pinned engine clock.
+ *
+ * `messages.create` always stamps wall-clock now, so the gap the engine sees
+ * was "pinned clock minus real now" -- a number that depends on what time of
+ * day the suite runs, and goes negative after 17:30 Beijing. The quiet-gap
+ * assertions then measured the clock instead of the panel. Backdating the row
+ * makes the distance the test's own choice.
+ */
+function userMessageMinutesAgo(h: Harness, minutes: number, text: string): void {
+  const { message } = h.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text }] });
+  const stamp = new Date(pinnedNow.getTime() - minutes * 60_000).toISOString();
+  h.app.db.prepare('UPDATE messages SET created_at = ? WHERE id = ?').run(stamp, message.id);
 }
 
 async function get(h: Harness, url: string) {
@@ -52,10 +70,8 @@ describe('life panel', () => {
   });
 
   it('names the user as the reason while she is still inside the quiet gap', async () => {
-    // The message lands at wall-clock time while the engine's clock is pinned, so
-    // the gap has to be wide enough to cover the distance between the two.
-    const h = await panelHarness({ LIFE_QUIET_GAP_MINUTES: '1440' });
-    h.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '在吗' }] });
+    const h = await panelHarness({ LIFE_QUIET_GAP_MINUTES: '60' });
+    userMessageMinutesAgo(h, 10, '在吗');
     const { body } = await get(h, '/api/admin/life');
     expect(body.reachOut.reason).toBe('user_was_recently_here');
     expect(body.reachOut.lastUserAt).toBeTruthy();
@@ -79,10 +95,10 @@ describe('life panel', () => {
   });
 
   it('applies a changed quiet gap to the live decision without a restart', async () => {
-    // A day-long gap covers the message no matter when the suite runs; the point
-    // is that lowering it takes effect on the very next read.
+    // The message sits 60 minutes back: inside a 1440-minute gap, outside a
+    // 30-minute one. Lowering the setting must flip the answer on the next read.
     const h = await panelHarness({ LIFE_QUIET_GAP_MINUTES: '1440' });
-    h.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '我去洗澡' }] });
+    userMessageMinutesAgo(h, 60, '我去洗澡');
     const before = await get(h, '/api/admin/life');
     expect(before.body.reachOut.reason).toBe('user_was_recently_here');
     await put(h, '/api/admin/life/settings', { quietGapMinutes: 30 });
