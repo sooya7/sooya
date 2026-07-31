@@ -340,6 +340,31 @@ describe('user uploads', () => {
     expect(JSON.stringify(userTurn)).toContain('image_url');
   });
 
+  it('retries text-only when the endpoint rejects image input, instead of failing the turn', async () => {
+    h = await createHarness({ chat: { script: [['虽然看不了图，但还是回你']], rejectImages: true } });
+    const form = new FormData();
+    form.set('image', new Blob([new Uint8Array(TEST_PNG)], { type: 'image/png' }), 'a.png');
+    const mediaId = (await h.app.server.inject({ method: 'POST', url: '/api/media', payload: form })).json().media[0].id;
+
+    const res = await h.app.server.inject({
+      method: 'POST',
+      url: '/api/messages/sync',
+      payload: { clientMsgId: 'img-retry-1', content: [{ type: 'text', text: '看这个' }, { type: 'image', mediaId }] }
+    });
+    expect(res.statusCode).toBe(200);
+
+    // First attempt carried the image and was rejected; the retry is text-only.
+    expect(h.state.chatCalls.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(h.state.chatCalls[0]!.body)).toContain('image_url');
+    expect(JSON.stringify(h.state.chatCalls.at(-1)!.body)).not.toContain('image_url');
+
+    // The reply itself succeeded: the whole turn must not collapse into an error note.
+    const reply = h.app.repos.messages.recent(2).find((m) => m.role === 'assistant');
+    expect(reply?.status).toBe('sent');
+    expect(JSON.stringify(reply?.content)).toContain('虽然看不了图');
+    expect(JSON.stringify(reply?.content)).not.toContain('模型服务暂时不可用');
+  });
+
   it('accepts multiple images in a single upload request', async () => {
     h = await createHarness();
     const form = new FormData();
