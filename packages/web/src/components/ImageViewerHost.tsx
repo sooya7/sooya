@@ -31,8 +31,14 @@ export function ImageViewerHost() {
       .filter((image) => image.id && image.src);
   }, [openId, version]);
 
-  const index = Math.max(0, images.findIndex((image) => image.id === openId));
-  if (!openId || images.length === 0) return null;
+  /*
+   * The clicked image may not be in the list yet: its blob is still loading, so
+   * the scan above filtered it out. Clamping findIndex(-1) to 0 opened the
+   * first image instead — looking like the viewer works while showing the user
+   * a picture they never clicked. Not opening is the honest answer.
+   */
+  const index = images.findIndex((image) => image.id === openId);
+  if (!openId || index < 0) return null;
 
   return (
     <ImageViewer

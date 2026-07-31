@@ -83,6 +83,17 @@ export class ChatStream {
 
   private async connect(): Promise<void> {
     if (this.stopped) return;
+    /*
+     * One live connection at a time. An immediate reconnect (online event,
+     * foreground tab) must retire a pending retry timer, or it fires later and
+     * opens a second fetch whose completion overwrites `this.controller` — the
+     * first connection then runs forever, unreachable even by stop().
+     */
+    if (this.timer !== null) {
+      window.clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.controller !== null) return;
     this.handlers.onStateChange('connecting');
     const token = getToken();
     const request = buildStreamRequest(this.lastEventId, token);
@@ -165,6 +176,9 @@ export class ChatStream {
     if (this.timer) window.clearTimeout(this.timer);
     const delay = Math.min(1000 * 2 ** this.retry, 15_000) + Math.random() * 500;
     this.retry = Math.min(this.retry + 1, 5);
-    this.timer = window.setTimeout(() => void this.connect(), delay);
+    this.timer = window.setTimeout(() => {
+      this.timer = null;
+      void this.connect();
+    }, delay);
   }
 }

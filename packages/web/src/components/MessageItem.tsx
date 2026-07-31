@@ -59,7 +59,29 @@ function ImagePart({ part, onOpen }: { part: MessagePart; onOpen?: (mediaId: str
   return <button className="image-part" type="button" onClick={() => onOpen ? onOpen(part.media!.id) : window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id: part.media!.id } }))} aria-label="查看大图" data-media-id={part.media.id} data-src={url ?? ''} data-alt={alt}>{url && <img src={url} alt={alt} loading="lazy" style={ratio ? { aspectRatio: String(ratio) } : undefined} onError={() => setFailed(true)} />}</button>;
 }
 function StickerPart({ part }: { part: MessagePart }) { const [failed, setFailed] = useState(false); if (!part.media || failed) return null; return <AuthenticatedImage className="sticker-part" path={part.media.url} scope="user" alt={String(part.meta?.stickerName ?? '表情')} loading="lazy" onError={() => setFailed(true)} />; }
-function FilePart({ part }: { part: MessagePart }) { if (!part.media) return <div className="bubble bubble-note">文件不可用</div>; return <button className="bubble bubble-file" type="button" onClick={() => void savePart(part)}><span className="file-icon">▣</span><span className="file-meta"><span className="file-name">{part.media.name ?? '文件'}</span><span className="file-size">{formatBytes(part.media.bytes)}</span></span></button>; }
+function FilePart({ part }: { part: MessagePart }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!part.media) return <div className="bubble bubble-note">文件不可用</div>;
+  /* `void savePart(part)` used to drop the rejection on the floor: a cleaned-up
+   * or unreachable file failed with no visible trace, so the user just kept
+   * clicking. Surface it the same way a broken image does. */
+  const save = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await savePart(part);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '文件下载失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <>
+    <button className="bubble bubble-file" type="button" disabled={busy} onClick={() => void save()}><span className="file-icon">▣</span><span className="file-meta"><span className="file-name">{part.media.name ?? '文件'}</span><span className="file-size">{busy ? '下载中…' : formatBytes(part.media.bytes)}</span></span></button>
+    {error && <div className="bubble bubble-note file-error" role="status">{error}</div>}
+  </>;
+}
 
 interface Props {
   message: ChatMessage; personaName: string; avatar: string; userAvatar: string; showAvatar: boolean;

@@ -1,5 +1,6 @@
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../lib/api.js';
+import { useAutoNotice } from '../lib/autoNotice.js';
 import { AvatarEditor, LifePanel, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js';
 import {
   interfaceOptions,
@@ -658,7 +659,7 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
   const [tokenInput, setTokenInput] = useState('');
   const [tab, setTab] = useState<Tab>(initialTab);
   const [data, setData] = useState<Dashboard | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useAutoNotice();
   const [loading, setLoading] = useState(false);
   const isMobile = useIsMobile();
 
