@@ -16,7 +16,7 @@ import {
   type UserDirectives
 } from './directives.js';
 import { stripSpeakerPrefix } from './speakerPrefix.js';
-import { ProviderNotConfiguredError, type GeneratedImage } from '../providers/types.js';
+import { ProviderNotConfiguredError, type ChatTurn, type GeneratedImage } from '../providers/types.js';
 import { HttpTimeoutError } from '../util/http.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, voiceMoodCatalogue, type VoiceEmotionMap } from './voice.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
@@ -163,32 +163,48 @@ export class Replier {
       };
 
       if (provider.configured) {
-        try {
-          await provider.stream(
+        const streamTurns = (turns: ChatTurn[]) =>
+          provider.stream(
             {
               system: built.system,
-              messages: built.turns,
+              messages: turns,
               maxTokens: requestMaxTokens,
               temperature: undefined
             },
             (chunk) => pushDelta(chunk.delta)
           );
+        try {
+          await streamTurns(built.turns);
         } catch (err) {
-          const e = err as Error;
-          const failure = publicFailure('provider_unavailable');
-          this.deps.errorLog.add('reply.chat', failure.code, {
-            incidentId: failure.incidentId,
-            diagnostic: redactDiagnostic(e)
-          });
-          if (!visibleText) {
-            const note =
-              e instanceof HttpTimeoutError
-                ? '（模型响应超时了，稍后再试一次吧。）'
-                : `（${failure.message}）`;
-            pushDelta(note);
-            degraded.push('chat:provider_unavailable');
-          } else {
-            degraded.push('chat:provider_unavailable');
+          let streamError: Error | null = err as Error;
+          // Config can declare vision while the real endpoint has none: drop
+          // the pictures and retry as plain text before failing the turn.
+          if (built.visionUsed && isImageInputRejection(streamError)) {
+            this.deps.errorLog.add('reply.chat', 'vision_input_rejected', { diagnostic: redactDiagnostic(streamError) });
+            try {
+              await streamTurns(textOnlyTurns(built.turns));
+              degraded.push('chat:vision_unsupported');
+              streamError = null;
+            } catch (retryErr) {
+              streamError = retryErr as Error;
+            }
+          }
+          if (streamError) {
+            const failure = publicFailure('provider_unavailable');
+            this.deps.errorLog.add('reply.chat', failure.code, {
+              incidentId: failure.incidentId,
+              diagnostic: redactDiagnostic(streamError)
+            });
+            if (!visibleText) {
+              const note =
+                streamError instanceof HttpTimeoutError
+                  ? '（模型响应超时了，稍后再试一次吧。）'
+                  : `（${failure.message}）`;
+              pushDelta(note);
+              degraded.push('chat:provider_unavailable');
+            } else {
+              degraded.push('chat:provider_unavailable');
+            }
           }
         }
       } else {
@@ -576,6 +592,27 @@ export class Replier {
 function mergeDirectives(parsed: UserDirectives, explicit?: UserDirectives): UserDirectives {
   if (!explicit) return parsed;
   return { ...parsed, ...Object.fromEntries(Object.entries(explicit).filter(([, v]) => v !== undefined)) };
+}
+
+/** A 4xx whose body complains about image/vision input, not a transient failure. */
+const IMAGE_REJECTION = /image|vision|multimodal|图片/i;
+
+function isImageInputRejection(err: Error): boolean {
+  const status = (err as { status?: number }).status;
+  if (typeof status !== 'number' || status < 400 || status >= 500) return false;
+  return IMAGE_REJECTION.test(err.message);
+}
+
+/** Same conversation with image parts replaced by a plain-text marker. */
+function textOnlyTurns(turns: ChatTurn[]): ChatTurn[] {
+  return turns.map((turn) => {
+    if (turn.content.every((p) => p.type === 'text')) return turn;
+    const text = turn.content
+      .map((p) => (p.type === 'text' ? p.text : '[图片]'))
+      .filter((part) => part && part.trim())
+      .join('\n');
+    return { role: turn.role, content: [{ type: 'text', text: text || '[图片]' }] };
+  });
 }
 
 const EMOTION_HINTS: Array<[RegExp, string]> = [

@@ -15,6 +15,8 @@ export interface FakeChatOptions {
   chatError?: Error;
   /** Delay before the stream starts, to simulate slow models. */
   delayMs?: number;
+  /** Answer 400 "no image input" whenever a request carries an image part. */
+  rejectImages?: boolean;
 }
 
 export interface FakeProviderState {
@@ -143,6 +145,12 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       state.chatCalls.push({ body, url });
       if (opts.chat?.delayMs) await new Promise((r) => setTimeout(r, opts.chat!.delayMs));
       if (chatError) throw chatError;
+      if (opts.chat?.rejectImages && JSON.stringify(body).includes('image_url')) {
+        return new Response(JSON.stringify({ error: { message: 'This model does not support image input', type: 'invalid_request_error' } }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
       const chunks = script[Math.min(callIndex++, script.length - 1)] ?? ['好的。'];
       const isStream = (body as { stream?: boolean } | null)?.stream === true;
       if (!isStream) {
