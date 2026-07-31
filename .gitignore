@@ -5,10 +5,12 @@ coverage/
 *.log
 
 # Runtime data — never committed, never packaged.
-data/
-media/
-backups/
-logs/
+# 必须锚定到仓库根：不加前导斜杠时 `media/` 也会吞掉 `packages/server/src/media/`
+# 里的新文件（`src/media/variants.ts` 就是这样漏提交的，CI 才在别处报模块找不到）。
+/data/
+/media/
+/backups/
+/logs/
 .env
 .env.*
 !.env.example
