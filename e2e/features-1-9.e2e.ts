@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
 const ADMIN_TOKEN = 'e2e-admin-token';
 const CHAT_TOKEN = 'e2e-chat-token';
@@ -6,6 +6,21 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 
 async function installAdminToken(page: Page): Promise<void> {
   await page.addInitScript((token: string) => localStorage.setItem('sooya.admin-token', token), ADMIN_TOKEN);
+}
+
+/**
+ * 往图库里塞一张图片。必须走普通上传（`POST /api/media`）：头像上传的图片
+ * 按设计不进图库，不能再拿它当图库测试数据。
+ */
+async function uploadGalleryImage(request: APIRequestContext, name: string): Promise<string> {
+  const uploaded = await request.post('/api/media', {
+    headers: { 'x-sooya-token': CHAT_TOKEN },
+    multipart: { image: { name, mimeType: 'image/png', buffer: PNG } }
+  });
+  expect(uploaded.ok()).toBeTruthy();
+  const body = await uploaded.json() as { media: Array<{ id: string }> };
+  expect(body.media).toHaveLength(1);
+  return body.media[0]!.id;
 }
 
 test.describe('SOOYA 1-9 user flows', () => {
@@ -176,12 +191,7 @@ test.describe('SOOYA 1-9 user flows', () => {
       Object.defineProperty(navigator, 'share', { configurable: true, value: undefined });
       Object.defineProperty(navigator, 'canShare', { configurable: true, value: undefined });
     });
-    const uploaded = await request.post('/api/admin/persona/avatar/assistant', {
-      headers: { 'x-admin-token': ADMIN_TOKEN },
-      multipart: { file: { name: 'e2e-avatar.png', mimeType: 'image/png', buffer: PNG } }
-    });
-    expect(uploaded.ok()).toBeTruthy();
-    const mediaId = (await uploaded.json() as { media: { id: string } }).media.id;
+    const mediaId = await uploadGalleryImage(request, 'e2e-gallery.png');
 
     await installAdminToken(page);
     await page.goto(`/gallery?media=${encodeURIComponent(mediaId)}`);
@@ -239,14 +249,7 @@ test.describe('SOOYA 1-9 user flows', () => {
 
   test('image viewer preserves existing history state without growing entries while switching', async ({ page, request }, testInfo) => {
     const mediaIds: string[] = [];
-    for (const slot of ['assistant', 'user']) {
-      const uploaded = await request.post(`/api/admin/persona/avatar/${slot}`, {
-        headers: { 'x-admin-token': ADMIN_TOKEN },
-        multipart: { file: { name: `${slot}-history.png`, mimeType: 'image/png', buffer: PNG } }
-      });
-      expect(uploaded.ok()).toBeTruthy();
-      mediaIds.push((await uploaded.json() as { media: { id: string } }).media.id);
-    }
+    for (const name of ['first-history.png', 'second-history.png']) mediaIds.push(await uploadGalleryImage(request, name));
 
     await installAdminToken(page);
     await page.goto('/gallery');

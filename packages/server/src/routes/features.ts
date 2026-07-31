@@ -194,7 +194,9 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       favorite: q.favorite === '1' || q.favorite === 'true',
       search: q.search,
       from: q.from,
-      to: q.to
+      to: q.to,
+      // 头像图片默认不进图库；`avatar=1` 是排查用的显式入口，只列头像。
+      avatar: q.avatar === '1' || q.avatar === 'true'
     };
     const rows = repos.media.listGallery(query);
     return { media: rows.map((row) => galleryItem(app, row)), stats: repos.media.galleryStats(query), total: repos.media.count() };
