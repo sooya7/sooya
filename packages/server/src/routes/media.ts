@@ -62,7 +62,24 @@ export function registerMediaRoutes(app: SooyaApp): void {
       reply.code(404);
       return { error: 'not_ready', expected: row.bytes, available: stat.size };
     }
-    void reply.header('content-type', row.mime).header('cache-control', 'private, no-store').header('accept-ranges', 'bytes').header('x-content-type-options', 'nosniff');
+    /*
+     * 一个 id 的字节永远不会被改写：写盘只发生在创建时，之后的 UPDATE 只碰元数据
+     * （收藏、标签、转写、回收站）。所以这里可以给强 ETag 和 immutable，让浏览器
+     * 复用本地副本——之前的 no-store 意味着每次挂载都要重传整张原图，画廊一页 60 张。
+     * private 保证只有本人的浏览器缓存，不会落到任何共享缓存/CDN 上。
+     */
+    const etag = `"${id}-${stat.size}"`;
+    void reply
+      .header('content-type', row.mime)
+      .header('cache-control', 'private, max-age=604800, immutable')
+      .header('etag', etag)
+      .header('accept-ranges', 'bytes')
+      .header('x-content-type-options', 'nosniff');
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (ifNoneMatch && ifNoneMatch.split(',').some((candidate) => candidate.trim() === etag)) {
+      reply.code(304);
+      return reply.send();
+    }
     if (row.kind === 'file') void reply.header('content-disposition', `attachment; filename="${encodeURIComponent(row.rel_path)}"`);
     if (range) {
       const match = /bytes=(\d*)-(\d*)/.exec(range);

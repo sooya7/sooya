@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { getToken } from './api.js';
 import { getAdminToken } from './admin.js';
 import {
-  fetchAuthenticatedMediaWithRetry,
+  acquireAuthenticatedMedia,
   isRetriableMediaError,
-  releaseMediaUrl,
+  releaseCachedMedia,
+  takeCachedMedia,
   type ExpectedMedia,
   type MediaAuthScope
 } from './authenticatedMedia.js';
@@ -35,26 +36,43 @@ export function useAuthenticatedMedia(
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    let objectUrl: string | null = null;
-    setUrl(null);
+    // 引用是按「路径+作用域」持有的，卸载时必须还回去，否则条目永远不可淘汰。
+    let held = false;
     setError(null);
     setRetriable(false);
-    setLoading(false);
-    if (!path) return () => controller.abort();
+    const cleanup = () => {
+      active = false;
+      controller.abort();
+      if (held) releaseCachedMedia(path as string, { scope, expected });
+    };
+    if (!path) {
+      setUrl(null);
+      setLoading(false);
+      return cleanup;
+    }
     if (path.startsWith('blob:')) {
       setUrl(path);
-      return () => controller.abort();
+      setLoading(false);
+      return cleanup;
+    }
+    // 缓存命中同步显示：切标签页、画廊往回滚都不该再闪一下空白。
+    const cached = takeCachedMedia(path, { scope, expected });
+    if (cached) {
+      held = true;
+      setUrl(cached.url);
+      setLoading(false);
+      return cleanup;
     }
     const token = scope === 'admin' ? getAdminToken() : getToken();
+    setUrl(null);
     setLoading(true);
-    void fetchAuthenticatedMediaWithRetry(path, { scope, token, expected, signal: controller.signal })
+    void acquireAuthenticatedMedia(path, { scope, token, expected, signal: controller.signal })
       .then((result) => {
-        objectUrl = result.url;
         if (!active) {
-          releaseMediaUrl(objectUrl);
-          objectUrl = null;
+          releaseCachedMedia(path, { scope, expected });
           return;
         }
+        held = true;
         setUrl(result.url);
         setLoading(false);
       })
@@ -64,11 +82,7 @@ export function useAuthenticatedMedia(
         setRetriable(isRetriableMediaError(cause));
         setLoading(false);
       });
-    return () => {
-      active = false;
-      controller.abort();
-      releaseMediaUrl(objectUrl);
-    };
+    return cleanup;
   }, [path, scope, expected, attempt]);
 
   return { url, error, loading, retriable, retry };

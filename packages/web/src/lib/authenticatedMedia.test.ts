@@ -8,6 +8,12 @@ import {
   fetchAuthenticatedMediaWithRetry,
   isRetriableMediaError,
   releaseMediaUrl,
+  acquireAuthenticatedMedia,
+  releaseCachedMedia,
+  takeCachedMedia,
+  clearMediaCache,
+  mediaCacheStats,
+  MEDIA_CACHE_MAX_ENTRIES,
   MEDIA_RETRY_DELAYS_MS
 } from './authenticatedMedia.js';
 import { mediaUrl } from './api.js';
@@ -267,5 +273,99 @@ describe('media retry', () => {
       sleep
     )).rejects.toMatchObject({ name: 'AbortError' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/*
+ * 这些用例守的是「同一张图不该下载两次」。之前每个组件挂载都自己 fetch 一遍、卸载就撤销
+ * blob URL，所以切标签页或画廊往回滚一屏，一页 60 张原图会整批重传。
+ */
+describe('媒体缓存', () => {
+  const opts = { scope: 'user' as const, expected: 'image' as const, token: 'chat-secret' };
+  const key = { scope: 'user' as const, expected: 'image' as const };
+  let created = 0;
+
+  function stubMedia(bytes = 'image') {
+    created = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:cached-${++created}`);
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const fetchMock = vi.fn(async () => new Response(new Blob([bytes], { type: 'image/png' }), {
+      status: 200,
+      headers: { 'content-type': 'image/png' }
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  afterEach(() => clearMediaCache());
+
+  it('第二次取同一路径不再发请求，且复用同一个 blob URL', async () => {
+    const fetchMock = stubMedia();
+    const first = await acquireAuthenticatedMedia('/api/media/m1', opts);
+    const second = await acquireAuthenticatedMedia('/api/media/m1', opts);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(second.url).toBe(first.url);
+    expect(mediaCacheStats()).toMatchObject({ entries: 1, held: 1 });
+  });
+
+  it('并发取同一路径合并成一次请求', async () => {
+    const fetchMock = stubMedia();
+    const results = await Promise.all([
+      acquireAuthenticatedMedia('/api/media/m1', opts),
+      acquireAuthenticatedMedia('/api/media/m1', opts),
+      acquireAuthenticatedMedia('/api/media/m1', opts)
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(new Set(results.map((r) => r.url)).size).toBe(1);
+  });
+
+  it('放开引用不撤销 URL：回到上一屏是命中而不是重下', async () => {
+    const fetchMock = stubMedia();
+    const first = await acquireAuthenticatedMedia('/api/media/m1', opts);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    releaseCachedMedia('/api/media/m1', key);
+    expect(revoke).not.toHaveBeenCalled();
+    const hit = takeCachedMedia('/api/media/m1', key);
+    expect(hit?.url).toBe(first.url);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('缓存键忽略凭证查询参数但区分作用域', async () => {
+    const fetchMock = stubMedia();
+    await acquireAuthenticatedMedia('/api/media/m1?token=user-secret', opts);
+    await acquireAuthenticatedMedia('/api/media/m1', opts);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await acquireAuthenticatedMedia('/api/media/m1', { ...opts, scope: 'admin' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('超出条目上限时淘汰最久未用的空闲项，正在显示的不动', async () => {
+    stubMedia();
+    const pinned = await acquireAuthenticatedMedia('/api/media/pinned', opts);
+    for (let i = 0; i < MEDIA_CACHE_MAX_ENTRIES + 5; i += 1) {
+      await acquireAuthenticatedMedia(`/api/media/m${i}`, opts);
+      releaseCachedMedia(`/api/media/m${i}`, key);
+    }
+    expect(mediaCacheStats().entries).toBeLessThanOrEqual(MEDIA_CACHE_MAX_ENTRIES);
+    // 仍被持有的那张必须还在，撤销它会让界面变成裂图。
+    expect(takeCachedMedia('/api/media/pinned', key)?.url).toBe(pinned.url);
+    expect(takeCachedMedia('/api/media/m0', key)).toBeNull();
+  });
+
+  it('清空缓存会撤销所有 URL，不把私有媒体留在内存里', async () => {
+    stubMedia();
+    await acquireAuthenticatedMedia('/api/media/m1', opts);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    clearMediaCache();
+    expect(revoke).toHaveBeenCalledTimes(1);
+    expect(mediaCacheStats()).toMatchObject({ entries: 0, bytes: 0 });
+    expect(takeCachedMedia('/api/media/m1', key)).toBeNull();
+  });
+
+  it('媒体请求不再禁用 HTTP 缓存（服务端带 ETag 与 immutable）', async () => {
+    const fetchMock = stubMedia();
+    await acquireAuthenticatedMedia('/api/media/m1', opts);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(init?.cache).not.toBe('no-store');
   });
 });
