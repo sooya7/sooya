@@ -62,6 +62,41 @@ describe('bound storage cleanup reports', () => {
     )).toBe(true);
   });
 
+  it('keeps thumbnail variants of live media out of the orphan scan', async () => {
+    harness = await createHarness({ env: { ADMIN_API_TOKEN: 'admin-test-token' } });
+    const media = await harness.app.services.mediaStore.save({
+      kind: 'image',
+      origin: 'upload',
+      data: PNG,
+      declaredMime: 'image/png',
+      filename: 'variant-owner.png'
+    });
+    const variantsDir = harness.app.env.mediaDirs.variants;
+    const liveVariant = path.join(variantsDir, `${media.id}-w480.webp`);
+    const staleVariant = path.join(variantsDir, 'gone_media_id-w480.webp');
+    const strayFile = path.join(variantsDir, 'not-a-variant.txt');
+    fs.writeFileSync(liveVariant, 'live-variant');
+    fs.writeFileSync(staleVariant, 'stale-variant');
+    fs.writeFileSync(strayFile, 'stray');
+
+    const report = await preview();
+    const orphanPaths = report.report.candidates.orphanFiles.map((item: { path: string }) => item.path);
+    expect(orphanPaths).not.toContain(liveVariant);
+    expect(orphanPaths).toContain(staleVariant);
+    expect(orphanPaths).toContain(strayFile);
+
+    const applied = await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/admin/storage/cleanup',
+      headers: ADMIN,
+      payload: { apply: true, reportId: report.report.reportId, categories: ['orphanFiles'] }
+    });
+    expect(applied.statusCode).toBe(200);
+    expect(fs.existsSync(liveVariant)).toBe(true);
+    expect(fs.existsSync(staleVariant)).toBe(false);
+    expect(fs.existsSync(strayFile)).toBe(false);
+  });
+
   it('rejects apply without a confirmed report id', async () => {
     harness = await createHarness({ env: { ADMIN_API_TOKEN: 'admin-test-token' } });
     const response = await harness.app.server.inject({
