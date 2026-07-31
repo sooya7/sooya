@@ -162,9 +162,20 @@ export class StorageService {
     }
     const allMediaFiles = await walkFiles(this.env.mediaDir);
     const tempRoot = path.resolve(this.env.mediaDirs.tmp);
+    const variantsRoot = path.resolve(this.env.mediaDirs.variants);
+    const liveMediaIds = new Set(rows.map((row) => row.id));
     const orphanFiles = allMediaFiles.filter((file) => {
       const resolved = path.resolve(file.path);
-      return !knownPaths.has(resolved) && !resolved.startsWith(`${tempRoot}${path.sep}`);
+      if (knownPaths.has(resolved)) return false;
+      if (resolved.startsWith(`${tempRoot}${path.sep}`)) return false;
+      if (resolved.startsWith(`${variantsRoot}${path.sep}`)) {
+        // 变体是派生缓存（media/variants.ts），不在媒体表里登记，之前会被整目录
+        // 判成孤儿，导致每次维护任务把缩略图缓存全部删光再重算。正常删除路径
+        // 已由 removeVariants 清理；这里只把媒体记录已不存在的残留变体算孤儿。
+        const ownerId = /^([A-Za-z0-9_-]+)-w[1-9][0-9]*\.webp$/.exec(path.basename(resolved))?.[1];
+        return !ownerId || !liveMediaIds.has(ownerId);
+      }
+      return true;
     });
     const unreferencedMedia = this.media.listUnreferenced(1000)
       .filter((row) => Boolean(row.deleted_at) && !avatarIds.has(row.id))
