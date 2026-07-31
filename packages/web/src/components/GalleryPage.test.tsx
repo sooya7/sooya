@@ -16,6 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const gallery = vi.fn();
 const fetchAuthenticatedMedia = vi.fn();
+const mediaThumbnailPath = vi.fn((path: string, width: number) => `${path}?w=${width}`);
+const useAuthenticatedMedia = vi.fn();
 
 vi.mock('../lib/features.js', () => ({
   featureApi: {
@@ -34,9 +36,14 @@ vi.mock('../lib/admin.js', () => ({
 
 vi.mock('../lib/authenticatedMedia.js', () => ({
   fetchAuthenticatedMedia: (...args: unknown[]) => fetchAuthenticatedMedia(...args),
+  mediaThumbnailPath: (...args: unknown[]) => mediaThumbnailPath(...(args as [string, number])),
   releaseMediaUrl: vi.fn(),
   blobForMediaUrl: () => null,
   safeDownloadName: (name: string) => name
+}));
+
+vi.mock('../lib/useAuthenticatedMedia.js', () => ({
+  useAuthenticatedMedia: (...args: unknown[]) => useAuthenticatedMedia(...args)
 }));
 
 let GalleryPage: typeof import('./GalleryPage.js').default;
@@ -64,7 +71,8 @@ function deferredLoader() {
   fetchAuthenticatedMedia.mockImplementation(
     (path: string) =>
       new Promise((resolve, reject) => {
-        const id = path.split('/').pop() as string;
+        // 网格现在请求的是 `?w=` 缩略图路径，按 id 归拢时去掉查询串。
+        const id = (path.split('/').pop() as string).split('?')[0] as string;
         pending.set(id, { resolve, reject });
       })
   );
@@ -89,6 +97,7 @@ const thumbs = () => [...container.querySelectorAll('.gallery-item')].map((el) =
 beforeEach(async () => {
   vi.clearAllMocks();
   localStorage.clear();
+  useAuthenticatedMedia.mockReturnValue({ url: null, error: null, loading: false, retriable: false, retry: vi.fn() });
   ({ default: GalleryPage } = await import('./GalleryPage.js'));
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -201,5 +210,69 @@ describe('GalleryPage 代次守卫', () => {
     expect(thumbs()).toEqual(['fresh']);
     expect(loader.size).toBe(1);
     expect(text()).toContain('1 张');
+  });
+});
+
+describe('GalleryPage 缩略图', () => {
+  /**
+   * 网格以前对每项都拉原图（一页 60 张，几十 MB）。现在网格拿 `?w=` 缩略图，
+   * 大图查看器与「保存」仍按原图路径（不带 w）单独取。
+   */
+  it('网格请求带 w 的缩略图，不再拉原图', async () => {
+    const loader = deferredLoader();
+    await mount([item('a'), item('b')]);
+
+    const paths = fetchAuthenticatedMedia.mock.calls.map((call) => call[0] as string);
+    expect(paths).toEqual([
+      expect.stringMatching(/^\/api\/media\/a\?w=\d+$/),
+      expect.stringMatching(/^\/api\/media\/b\?w=\d+$/)
+    ]);
+    expect(mediaThumbnailPath).toHaveBeenCalledWith('/api/media/a', expect.any(Number));
+    await loader.settle('a');
+    await loader.settle('b');
+  });
+
+  it('大图查看器单独取原图（不带 w），拿到前先显示缩略图', async () => {
+    const loader = deferredLoader();
+    await mount([item('a')]);
+    await loader.settle('a');
+
+    const thumb = container.querySelector('.gallery-thumb') as HTMLButtonElement;
+    await act(async () => { thumb.click(); });
+
+    // 查看器按原图路径（无 w）单独取一份
+    expect(useAuthenticatedMedia).toHaveBeenCalledWith('/api/media/a', 'admin', 'image');
+    // 原图还没到：先显示网格那份缩略图 blob，点开是即时的
+    expect(container.querySelector('.image-viewer-current')?.getAttribute('src')).toBe('blob:a');
+  });
+
+  it('原图到达后查看器同一位置换成原图', async () => {
+    const loader = deferredLoader();
+    useAuthenticatedMedia.mockImplementation((path: string | null) => ({
+      url: path === '/api/media/a' ? 'blob:original-a' : null,
+      error: null,
+      loading: false,
+      retriable: false,
+      retry: vi.fn()
+    }));
+    await mount([item('a')]);
+    await loader.settle('a');
+
+    const thumb = container.querySelector('.gallery-thumb') as HTMLButtonElement;
+    await act(async () => { thumb.click(); });
+
+    expect(container.querySelector('.image-viewer-current')?.getAttribute('src')).toBe('blob:original-a');
+  });
+
+  it('「保存」仍取原图（不带 w）', async () => {
+    const loader = deferredLoader();
+    await mount([item('a')]);
+    await loader.settle('a');
+
+    const save = [...container.querySelectorAll<HTMLButtonElement>('.gallery-item button')].find((button) => button.textContent === '保存')!;
+    await act(async () => { save.click(); });
+
+    const paths = fetchAuthenticatedMedia.mock.calls.map((call) => call[0] as string);
+    expect(paths).toContainEqual('/api/media/a');
   });
 });
