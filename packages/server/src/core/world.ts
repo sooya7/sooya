@@ -82,7 +82,16 @@ export class WorldEngine {
   }
 
   async rebuild(limit = 400): Promise<{ cleared: number; processed: number; stored: number; conflicts: number }> {
-    const rows = this.messages.recent(Math.max(2, Math.min(1000, limit))).slice().reverse();
+    /*
+     * recent() already returns oldest first, and the pairing below relies on
+     * it: rows[i+1] must be the reply TO rows[i]. This used to walk the list
+     * reversed -- newest first -- where rows[i+1] is the *previous* round's
+     * reply, so every user message was extracted against the wrong assistant
+     * answer (and the newest one against nothing), with sourceMessageId
+     * pointing at that wrong message. Oldest-first also matches the order the
+     * live per-turn extraction applies facts in.
+     */
+    const rows = this.messages.recent(Math.max(2, Math.min(1000, limit)));
     /*
      * Admin entries came in through the panel or an import file, not from
      * messages, so re-extraction can never bring them back -- wiping them here

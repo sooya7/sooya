@@ -71,4 +71,36 @@ describe('world rebuild preserves unrecoverable admin entries', () => {
     // 重抽出的低权威条目只能成为冲突记录，不能顶掉管理员条目
     expect(result.conflicts).toBeGreaterThan(0);
   });
+
+  /**
+   * rebuild 曾经把 recent() 的时间正序再 reverse 成倒序遍历，却用 rows[i+1] 配对
+   * 助手回复 —— 倒序里 i+1 是时间上更早的那条，于是每轮用户消息都配上【上一轮】
+   * 的助手回复，最新一轮的用户消息甚至配不到回复；sourceMessageId 也跟着记错。
+   * 正序遍历才能让 rows[i+1] 恰好是本轮回复，且与线上逐轮抽取的顺序语义一致。
+   */
+  it('pairs each user message with its own assistant reply, oldest first', async () => {
+    harness = await createHarness();
+    const world = harness.app.services.world;
+    const repo = harness.app.repos.messages;
+
+    repo.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '第一轮问题', status: 'sent' }] });
+    const a1 = repo.create({ role: 'assistant', status: 'sent', parts: [{ type: 'text', text: '第一轮回答', status: 'sent' }] }).message.id;
+    repo.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '第二轮问题', status: 'sent' }] });
+    const a2 = repo.create({ role: 'assistant', status: 'sent', parts: [{ type: 'text', text: '第二轮回答', status: 'sent' }] }).message.id;
+
+    const seen: Array<{ user: string; assistant: string; source: string | null }> = [];
+    const original = world.extract.bind(world);
+    world.extract = async (userText: string, assistantText: string, sourceMessageId: string | null) => {
+      seen.push({ user: userText, assistant: assistantText, source: sourceMessageId });
+      return { stored: 0, merged: 0, conflicts: 0 };
+    };
+
+    await world.rebuild();
+    world.extract = original;
+
+    expect(seen).toEqual([
+      { user: '第一轮问题', assistant: '第一轮回答', source: a1 },
+      { user: '第二轮问题', assistant: '第二轮回答', source: a2 }
+    ]);
+  });
 });
