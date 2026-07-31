@@ -46,6 +46,12 @@ export class ChatStream {
     'reply.failed',
     'message.updated',
     'memory.updated',
+    // Handled by useChat but missing here for the longest time — the list was
+    // inherited from the EventSource era and silently dropped both frames
+    // before dispatch, so admin persona edits and her activity changes never
+    // reached the chat UI live.
+    'persona.updated',
+    'life.updated',
     'system.notice',
     'stream.ready'
   ];
