@@ -48,7 +48,20 @@ export interface GalleryQuery {
   search?: string;
   from?: string;
   to?: string;
+  /**
+   * 头像图片不属于图库内容：`undefined` / `false` 一律排除，`true` 只列头像。
+   * 头像仍然是 media 行（`/api/media/<id>` 要靠它出图），只是不进图库视图。
+   */
+  avatar?: boolean;
 }
+
+/**
+ * 判定一行 media 是不是头像上传（`meta.avatar` 为 `'assistant'` / `'user'`）。
+ * 用 `json_extract` 而不是 `meta_json LIKE '%"avatar"%'`：后者会把
+ * `{"name":"avatar"}` 这种普通图片误判成头像。`json_valid` 兜住历史脏数据，
+ * 否则 `json_extract` 会直接抛错。
+ */
+const AVATAR_META = `json_extract(CASE WHEN json_valid(m.meta_json) THEN m.meta_json ELSE '{}' END, '$.avatar')`;
 
 export interface MediaReferences {
   messageParts: number;
@@ -183,7 +196,7 @@ export class MediaRepo {
         AND m.kind != 'sticker'
         AND m.created_at < ?
         AND m.deleted_at IS NULL
-        AND m.meta_json NOT LIKE '%"avatar"%'
+        AND ${AVATAR_META} IS NULL
         AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
         AND NOT EXISTS (
@@ -212,6 +225,7 @@ function galleryWhere(input: GalleryQuery): { where: string[]; values: unknown[]
   if (input.origin) { where.push('m.origin = ?'); values.push(input.origin); }
   if (input.deleted === true) where.push('m.deleted_at IS NOT NULL');
   else if (input.deleted === false || input.deleted === undefined) where.push('m.deleted_at IS NULL');
+  where.push(input.avatar === true ? `${AVATAR_META} IS NOT NULL` : `${AVATAR_META} IS NULL`);
   if (input.favorite) where.push('m.favorite = 1');
   if (input.from) { where.push('m.created_at >= ?'); values.push(input.from); }
   if (input.to) { where.push('m.created_at <= ?'); values.push(input.to); }
