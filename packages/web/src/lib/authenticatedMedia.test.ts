@@ -289,7 +289,7 @@ describe('媒体缓存', () => {
     created = 0;
     vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:cached-${++created}`);
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
-    const fetchMock = vi.fn(async () => new Response(new Blob([bytes], { type: 'image/png' }), {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(new Blob([bytes], { type: 'image/png' }), {
       status: 200,
       headers: { 'content-type': 'image/png' }
     }));
