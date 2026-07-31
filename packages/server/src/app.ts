@@ -102,6 +102,8 @@ export interface SooyaApp {
     startedAt: string;
     dbRecovered: boolean;
     dbRecoveredFrom?: string;
+    /** `foreign_key_check` complaint the database opened with, if any. */
+    dbInconsistent?: string;
     version: string;
   };
   /** Injected in tests so routes can reach the network through a stub. */
@@ -243,7 +245,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   if (orphaned > 0) logger.warn({ orphaned }, 'marked interrupted assistant messages as failed');
   await cleanupTempFiles([env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files]);
 
-  const state = { startedAt: new Date().toISOString(), dbRecovered: opened.recovered, dbRecoveredFrom: opened.recoveredFrom, version: VERSION };
+  const state = { startedAt: new Date().toISOString(), dbRecovered: opened.recovered, dbRecoveredFrom: opened.recoveredFrom, dbInconsistent: opened.inconsistent, version: VERSION };
   const server: FastifyInstance = Fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, bodyLimit: env.MAX_BODY_BYTES, trustProxy: true });
   server.setErrorHandler((error, _request, reply) => {
     if (isSafeApplicationError(error)) {

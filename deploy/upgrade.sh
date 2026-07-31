@@ -94,6 +94,33 @@ node -e "require(require.resolve('better-sqlite3', { paths: [process.cwd() + '/p
 
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$RELEASE_DIR"
 
+# --------------------- 2b. native module gate (hard stop) --------------------
+# Incident 2026-07-31: a release whose better_sqlite3.node was missing became
+# `current`, the app read "cannot load the module" as "the database is corrupt",
+# renamed the live database away and served an empty one. Loading the module is
+# not enough — the ABI can mismatch — so the gate opens a real database, writes
+# to it and integrity-checks it, AS THE USER THAT WILL RUN THE SERVICE. Nothing
+# becomes `current` until that passes; the old release keeps serving.
+log "verifying the native sqlite module in the new release"
+PROBE_DIR="$(mktemp -d)"
+chown "$SERVICE_USER":"$SERVICE_USER" "$PROBE_DIR"
+# sudo resets PATH to secure_path, which may not contain the node the service uses.
+NODE_BIN="$(command -v node)" || die "node is not on PATH; cannot verify the release"
+if ! sudo -u "$SERVICE_USER" env PROBE_DIR="$PROBE_DIR" HOME="$PROBE_DIR" "$NODE_BIN" -e '
+  const path = require("path");
+  const Database = require(require.resolve("better-sqlite3", { paths: [process.cwd() + "/packages/server"] }));
+  const db = new Database(path.join(process.env.PROBE_DIR, "probe.db"));
+  db.exec("CREATE TABLE probe(x INTEGER)");
+  db.prepare("INSERT INTO probe(x) VALUES (1)").run();
+  if (db.pragma("integrity_check")[0].integrity_check !== "ok") throw new Error("probe database unhealthy");
+  db.close();
+  console.log("better-sqlite3 opens and writes a database as the service user");
+'; then
+  rm -rf "$PROBE_DIR"
+  die "the new release cannot open a SQLite database (broken native module) — not switching, the current release keeps serving"
+fi
+rm -rf "$PROBE_DIR"
+
 # ---------------------------------- 3. switch --------------------------------
 log "switching the current symlink"
 ln -sfn "$RELEASE_DIR" "$BASE_DIR/current.new"
