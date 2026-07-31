@@ -5,6 +5,7 @@ import { NotificationBridge } from './components/NotificationBridge.js';
 import { MessageItem } from './components/MessageItem.js';
 import { Composer } from './components/Composer.js';
 import { setToken } from './lib/api.js';
+import { AVATAR_IMAGE_CSS_WIDTH, mediaThumbnailPath } from './lib/authenticatedMedia.js';
 import { useAuthenticatedMedia } from './lib/useAuthenticatedMedia.js';
 import type { ChatMessage } from './lib/types.js';
 import type { ServiceWorkerUpdateController } from './lib/serviceWorkerUpdate.js';
@@ -25,8 +26,9 @@ function preview(message: ChatMessage): string {
 
 function ChatApp() {
   const chat = useChat();
-  const personaAvatar = useAuthenticatedMedia(chat.persona?.avatar, 'user', 'image');
-  const userAvatar = useAuthenticatedMedia(chat.persona?.userAvatar, 'user', 'image');
+  // 头像只显示几十像素，不需要原图。
+  const personaAvatar = useAuthenticatedMedia(chat.persona?.avatar ? mediaThumbnailPath(chat.persona.avatar, AVATAR_IMAGE_CSS_WIDTH) : chat.persona?.avatar, 'user', 'image');
+  const userAvatar = useAuthenticatedMedia(chat.persona?.userAvatar ? mediaThumbnailPath(chat.persona.userAvatar, AVATAR_IMAGE_CSS_WIDTH) : chat.persona?.userAvatar, 'user', 'image');
   const scrollerRef = useRef<HTMLDivElement | null>(null); const bottomRef = useRef<HTMLDivElement | null>(null); const sentinelRef = useRef<HTMLDivElement | null>(null); const messagesRef = useRef<HTMLDivElement | null>(null);
   const [stickToBottom, setStickToBottom] = useState(true); const [unread, setUnread] = useState(0); const [notice, setNotice] = useState<string | null>(null); const [tokenInput, setTokenInput] = useState(''); const [quote, setQuote] = useState<ChatMessage | null>(null); const [swUpdate, setSwUpdate] = useState<ServiceWorkerUpdateController | null>(null);
   const stickToBottomRef = useRef(true); const prevCountRef = useRef(0); const prevHeightRef = useRef(0); const prevLastIdRef = useRef<string | null>(null); const loadingOlderRef = useRef(false); const didInitialScrollRef = useRef(false);

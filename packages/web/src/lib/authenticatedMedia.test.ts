@@ -14,7 +14,9 @@ import {
   clearMediaCache,
   mediaCacheStats,
   MEDIA_CACHE_MAX_ENTRIES,
-  MEDIA_RETRY_DELAYS_MS
+  MEDIA_RETRY_DELAYS_MS,
+  mediaThumbnailPath,
+  BUBBLE_IMAGE_CSS_WIDTH
 } from './authenticatedMedia.js';
 import { mediaUrl } from './api.js';
 import { adminMediaUrl } from './features.js';
@@ -26,6 +28,40 @@ afterEach(() => {
 });
 
 describe('authenticated media', () => {
+  /*
+   * 气泡最宽 260 CSS 像素，以前拿的是原图。缩略图路径必须只作用在媒体端点上，
+   * 且缓存键按查询串区分，否则缩略图和原图会互相顶掉。
+   */
+  it('按显示宽度和设备像素比给媒体地址加上缩略图档位', () => {
+    vi.stubGlobal('window', { devicePixelRatio: 1, location: { origin: 'https://echo.example' } });
+    expect(mediaThumbnailPath('/api/media/media_1', BUBBLE_IMAGE_CSS_WIDTH)).toBe('/api/media/media_1?w=260');
+    vi.stubGlobal('window', { devicePixelRatio: 3, location: { origin: 'https://echo.example' } });
+    // 3 倍屏封顶到 2 倍：再高一档只换来肉眼难辨的锐度。
+    expect(mediaThumbnailPath('/api/media/media_1', BUBBLE_IMAGE_CSS_WIDTH)).toBe('/api/media/media_1?w=520');
+  });
+
+  it('缩略图改写只作用于媒体端点，blob 与其他路径原样返回', () => {
+    vi.stubGlobal('window', { devicePixelRatio: 1, location: { origin: 'https://echo.example' } });
+    expect(mediaThumbnailPath('blob:https://echo.example/abc', 260)).toBe('blob:https://echo.example/abc');
+    expect(mediaThumbnailPath('/api/stickers/sticker_1', 260)).toBe('/api/stickers/sticker_1');
+    expect(mediaThumbnailPath('/api/media/media_1/meta', 260)).toBe('/api/media/media_1/meta');
+    expect(mediaThumbnailPath('', 260)).toBe('');
+  });
+
+  it('缩略图和原图在媒体缓存里是两个条目', async () => {
+    clearMediaCache();
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      calls.push(String(input));
+      return new Response(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/webp' }), { status: 200, headers: { 'content-type': 'image/webp' } });
+    }));
+    await acquireAuthenticatedMedia('/api/media/media_1?w=260', { scope: 'user', token: 't', expected: 'image' });
+    await acquireAuthenticatedMedia('/api/media/media_1', { scope: 'user', token: 't', expected: 'image' });
+    expect(calls).toEqual(['/api/media/media_1?w=260', '/api/media/media_1']);
+    expect(mediaCacheStats().entries).toBe(2);
+    clearMediaCache();
+  });
+
   it('never appends long-lived credentials to media URLs', () => {
     expect(mediaUrl('/api/media/media_1?token=user-secret&v=1')).toBe('/api/media/media_1?v=1');
     expect(adminMediaUrl('/api/media/media_1?admin_token=admin-secret#leak')).toBe('/api/media/media_1');
