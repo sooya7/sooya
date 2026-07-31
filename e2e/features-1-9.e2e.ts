@@ -45,10 +45,6 @@ test.describe('SOOYA 1-9 user flows', () => {
       expect(request.authorization).toBe(`Bearer ${ADMIN_TOKEN}`);
     }
     expect(await page.locator('body').evaluate((body, token) => body.innerHTML.includes(token), ADMIN_TOKEN)).toBe(false);
-    await expect.poll(() => page.evaluate(() =>
-      (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls.length
-    )).toBeGreaterThan(0);
-
     await page.getByRole('button', { name: '情绪语音' }).click();
     await expect(page.getByTestId('voice-settings')).toBeVisible();
     await expect(page.getByText(/TTS 能力可用/)).toBeVisible();
@@ -78,6 +74,27 @@ test.describe('SOOYA 1-9 user flows', () => {
     await expect(page.getByTestId('storage-settings')).toBeVisible();
     await page.getByRole('button', { name: '预览清理' }).click();
     await expect(page.getByText('清理预览已生成，尚未删除任何内容')).toBeVisible();
+
+    /*
+     * 换头像后旧的 blob URL 不再立刻撤销——它留在共享媒体缓存里等淘汰，这正是「切页
+     * 回来不重下」的前提，所以这里守的不再是「有东西被撤销」，而是真正想要的性质：
+     * 逛了一圈其他面板再回到头像，同一张媒体不能被重新请求一次。
+     */
+    const alreadyFetched = new Set(mediaRequests.map((request) => new URL(request.url).pathname));
+    expect(alreadyFetched.size).toBeGreaterThan(0);
+    const requestsBefore = mediaRequests.length;
+    const revokedBefore = await page.evaluate(() =>
+      (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls.length);
+    await page.getByRole('button', { name: '双方头像' }).click();
+    await expect(page.getByTestId('avatar-settings')).toBeVisible();
+    await expect(avatarSettings.getByAltText('SOOYA 头像预览')).toHaveAttribute('src', /^blob:/);
+    await expect(avatarSettings.getByAltText('用户头像预览')).toHaveAttribute('src', /^blob:/);
+    expect(mediaRequests.slice(requestsBefore).map((request) => new URL(request.url).pathname)
+      .filter((pathname) => alreadyFetched.has(pathname))).toEqual([]);
+    // 撤销现在只该发生在缓存淘汰时；回到头像面板这一小段里不该撤销任何东西。
+    expect(await page.evaluate(() =>
+      (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls.length
+    )).toBe(revokedBefore);
   });
 
   test('storage cleanup report summarizes and paginates thousands of candidates', async ({ page }) => {
