@@ -76,7 +76,7 @@ function ChatApp() {
     {swUpdate && <div className="sw-update" role="status" data-testid="sw-update"><span>有新版本可用</span><button type="button" className="sw-update-accept" onClick={() => { swUpdate.accept(); setSwUpdate(null); }}>立即更新</button><button type="button" className="sw-update-later" onClick={() => { swUpdate.dismiss(); setSwUpdate(null); }}>稍后</button></div>}
     {notice && <div className="toast" role="status"><span>{notice}</span><button type="button" className="toast-close" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button></div>}
     {quote && <div className="composer-quote"><div><strong>引用{quote.role === 'user' ? '我的' : persona?.name ?? 'SOOYA'}消息</strong><span>{preview(quote)}</span></div><button type="button" aria-label="取消引用" onClick={() => setQuote(null)}>×</button></div>}
-    <Composer key="chat-composer" disabled={chat.connection === 'connecting' && !chat.ready} onSend={async (content) => { const result = await chat.send(content, undefined, quote?.id); setQuote(null); return result; }} onNotice={setNotice} />
+    <Composer key="chat-composer" disabled={chat.connection === 'connecting' && !chat.ready} stickers={chat.stickers} onSend={async (content) => { const result = await chat.send(content, undefined, quote?.id); setQuote(null); return result; }} onNotice={setNotice} />
   </div>;
 }
 

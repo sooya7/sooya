@@ -139,7 +139,30 @@ export function registerChatRoutes(app: SooyaApp): void {
     return { message: result.message };
   });
 
-  server.get('/api/stickers', { preHandler: auth }, async () => ({ stickers: services.stickerLibrary.available().map((sticker) => ({ id: sticker.id, name: sticker.name, emotion: sticker.emotion, tags: sticker.tags, url: sticker.url, mediaId: sticker.mediaId })) }));
+  server.get('/api/stickers', { preHandler: auth }, async () => ({ stickers: stickerList(app) }));
+
+  /*
+   * 首屏合并请求：会话信息 + 最新消息页 + 贴纸 + 生活状态一次返回，
+   * 客户端不必再为同一块首屏串行打四个回源请求。只取最新一页消息，
+   * 翻旧消息与断线追赶仍走 /api/messages。
+   */
+  server.get('/api/bootstrap', { preHandler: auth }, async (req, reply) => {
+    const parsed = HistoryQuerySchema.safeParse(req.query);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const persona = app.config.getPersona();
+    const lastEventSeq = services.bus.lastSeq();
+    const page = repos.messages.page(parsed.data.limit, null);
+    return {
+      conversation: { conversationId: 'main', persona: { name: persona.name, avatar: persona.avatar, userAvatar: persona.userAvatar, tagline: persona.tagline }, messageCount: repos.messages.count(), lastSeq: repos.messages.maxSeq(), lastEventSeq },
+      messages: { messages: page.messages, hasMore: page.hasMore, lastEventSeq, lastMessageSeq: repos.messages.maxSeq(), oldestSeq: page.messages[0]?.seq ?? null },
+      stickers: stickerList(app),
+      life: services.life.snapshot(),
+    };
+  });
+}
+
+function stickerList(app: SooyaApp) {
+  return app.services.stickerLibrary.available().map((sticker) => ({ id: sticker.id, name: sticker.name, emotion: sticker.emotion, tags: sticker.tags, url: sticker.url, mediaId: sticker.mediaId }));
 }
 
 function rejectBlockedWrite(reply: FastifyReply): Record<string, unknown> | null {
