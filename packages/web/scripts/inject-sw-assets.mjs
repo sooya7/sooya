@@ -56,9 +56,9 @@ export function isShellAsset(relative) {
 /**
  * Which icons deserve a place in the install-time precache: the ones the web app
  * manifest actually declares, plus `icon.svg` because the push handler names it.
- * `dist/icons/` also carries big unreferenced source images — 7.3 MB of them at the
- * time of writing, including two 2.6 MB 1024px photos — and precaching those would
- * make every install pay for artwork nothing renders.
+ * `dist/icons/` also carries big unreferenced source images — multi-hundred-KB
+ * 1024px photos among them — and precaching those would make every install pay
+ * for artwork nothing renders.
  */
 export function iconAllowList(distDir) {
   const allowed = new Set(['/icons/icon.svg']);
