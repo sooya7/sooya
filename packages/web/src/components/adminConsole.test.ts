@@ -60,4 +60,15 @@ describe('merged admin console', () => {
     const headings = [...EDITORS.matchAll(/<h[12]>([^<{]+)<\/h[12]>/g)].map((m) => m[1]);
     expect(headings.filter((h) => titles.includes(h))).toEqual([]);
   });
+
+  /**
+   * The console notice used to stay on screen forever once set — "人设已保存"
+   * outlived its welcome by hours. It goes through useAutoNotice now, whose
+   * 5-second auto-clear has behavioral tests in lib/autoNotice.test.tsx.
+   */
+  it('auto-dismisses the console notice instead of pinning it forever', () => {
+    expect(PANEL).toContain('useAutoNotice');
+    expect(PANEL).toContain('const [notice, setNotice] = useAutoNotice()');
+    expect(PANEL).not.toContain('const [notice, setNotice] = useState');
+  });
 });
