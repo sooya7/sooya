@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdminPersona } from '../lib/admin.js';
-import { adminMediaUrl, featureApi, type WorldEntry } from '../lib/features.js';
+import { adminMediaUrl, featureApi, type LifePanelData, type LifeSettings, type WorldEntry } from '../lib/features.js';
+import { formatGap, herClock, reachReasonText, slotProgress, sortedLog } from '../lib/lifeView.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 
 const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'gentle'] as const;
@@ -112,6 +113,102 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
       <div className="admin-actions"><button type="button" onClick={() => void save()}>保存语音配置</button></div>
     </section>
   );
+}
+
+/*
+ * 她的生活。这页存在的理由是「她为什么没说话」只有服务端知道：被上限挡住、在静默
+ * 时段、还是没有做完的事可说，从外面看全都是一片安静。所以状态、日志、原因、以及能
+ * 改的那几个阈值放在同一屏，看到原因就能直接改旁边的设置。
+ */
+export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
+  const [data, setData] = useState<LifePanelData | null>(null);
+  const [form, setForm] = useState<LifeSettings | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => featureApi.life().then((result) => { setData(result); setForm(result.settings); }).catch((error) => onNotice(errorText(error)));
+  useEffect(() => {
+    void load();
+    // 她的状态每 5 分钟才推进一次，30 秒刷新足够跟上，又不会把面板变成轮询机器
+    const timer = setInterval(() => { void load(); }, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  const save = async () => {
+    if (!form) return;
+    setBusy(true);
+    try {
+      await featureApi.updateLifeSettings({
+        reachOut: form.reachOut,
+        quietGapMinutes: form.quietGapMinutes,
+        maxReachOutsPerDay: form.maxReachOutsPerDay,
+        silentFrom: form.silentFrom,
+        silentTo: form.silentTo
+      });
+      await load();
+      onNotice('生活设置已保存');
+    } catch (error) {
+      onNotice(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!data || !form) return <section className="admin-form-card" data-testid="life-settings"><div className="admin-empty">读取中…</div></section>;
+  const tz = data.settings.tzOffsetMinutes;
+  const progress = slotProgress(data.snapshot);
+  const log = sortedLog(data.log);
+  return (
+    <section className="admin-form-card" data-testid="life-settings">
+      <div className="admin-card life-now">
+        <div className="admin-card-subtitle"><h2>此刻</h2><span className="admin-count-badge">{herClock(new Date().toISOString(), tz)}</span></div>
+        <p className="life-activity">正在<strong>{data.snapshot.activity}</strong>，心情{data.snapshot.mood}</p>
+        <div className="life-progress"><i style={{ width: `${progress.percent}%` }} /></div>
+        <small>已经 {progress.intoIt}，还有 {progress.left} 换下一件事（{herClock(data.snapshot.startedAt, tz)} – {herClock(data.snapshot.endsAt, tz)}）</small>
+        <div className="admin-actions">
+          <button type="button" disabled={busy} onClick={() => void featureApi.tickLife().then(() => load()).then(() => onNotice('已推进她的状态')).catch((error) => onNotice(errorText(error)))}>立即推进</button>
+        </div>
+      </div>
+
+      <div className="admin-card" data-testid="life-reach-out">
+        <div className="admin-card-subtitle"><h2>主动开口</h2><span className={`admin-count-badge ${data.reachOut.reach ? 'life-ok' : ''}`}>{data.reachOut.reach ? '就绪' : '暂不'}</span></div>
+        <p>{reachReasonText(data)}</p>
+        <small>今天已主动 {data.reachOut.sharedLastDay} / {data.settings.maxReachOutsPerDay} 条 · 你上次说话 {data.reachOut.lastUserAt ? `${formatGap(Date.now() - Date.parse(data.reachOut.lastUserAt))}前` : '无记录'}</small>
+        {data.reachOut.candidate ? <small>准备说的是：{data.reachOut.candidate.activity}</small> : null}
+      </div>
+
+      <div className="admin-form-wide">
+        <strong>规则</strong>
+        <div className="admin-list-row">
+          <span>允许主动开口</span>
+          <input aria-label="允许主动开口" type="checkbox" checked={form.reachOut} onChange={(event) => setForm({ ...form, reachOut: event.target.checked })} />
+          <span>安静间隔（分钟）</span>
+          <input aria-label="安静间隔" type="number" min={5} max={1440} value={form.quietGapMinutes} onChange={(event) => setForm({ ...form, quietGapMinutes: Number(event.target.value) })} />
+        </div>
+        <div className="admin-list-row">
+          <span>每天最多几条</span>
+          <input aria-label="每天最多几条" type="number" min={0} max={20} value={form.maxReachOutsPerDay} onChange={(event) => setForm({ ...form, maxReachOutsPerDay: Number(event.target.value) })} />
+          <span>静默时段</span>
+          <input aria-label="静默开始" type="number" min={0} max={23} value={form.silentFrom} onChange={(event) => setForm({ ...form, silentFrom: Number(event.target.value) })} />
+          <input aria-label="静默结束" type="number" min={0} max={23} value={form.silentTo} onChange={(event) => setForm({ ...form, silentTo: Number(event.target.value) })} />
+        </div>
+        <div className="admin-actions"><button type="button" disabled={busy} onClick={() => void save()}>保存生活设置</button></div>
+      </div>
+
+      <div className="admin-card">
+        <div className="admin-card-subtitle"><h2>做过的事</h2><span className="admin-count-badge">{log.length}</span></div>
+        {log.length === 0
+          ? <EmptyLife />
+          : log.map((row) => (
+            <div className="admin-list-row" key={row.id}>
+              <span>{herClock(row.started_at, tz)}–{herClock(row.ended_at, tz)} · {row.activity}<small> {row.mood}</small></span>
+              <small>{row.shared ? '已跟你说过' : '还没说'}</small>
+            </div>
+          ))}
+      </div>
+    </section>
+  );
+}
+
+/** 一条都没有通常不是坏了：只有换时段那一刻才落一条，睡整夜就是空的。 */
+function EmptyLife() {
+  return <div className="admin-empty">还没有记录。她每换一件事才记一条，所以刚重启或整夜睡觉时这里是空的。</div>;
 }
 
 export function WorldEditor({ onNotice }: { onNotice: (s: string) => void }) {

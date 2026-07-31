@@ -25,7 +25,7 @@ import { Summarizer } from './core/summarizer.js';
 import { Replier } from './core/replier.js';
 import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
 import { WorldEngine } from './core/world.js';
-import { LifeEngine, DEFAULT_LIFE_CONFIG } from './core/life.js';
+import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig } from './core/life.js';
 import { LifeRepo } from './db/repos/life.repo.js';
 import { PushService } from './core/push.js';
 import { StorageService } from './core/storage.js';
@@ -148,7 +148,26 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const world = new WorldEngine(repos.world, capabilities, repos.errors, repos.messages);
   const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, opts.fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
-  const life = new LifeEngine(repos.life, { ...DEFAULT_LIFE_CONFIG, tzOffsetMinutes: env.LIFE_TZ_OFFSET_MINUTES, quietGapMinutes: env.LIFE_QUIET_GAP_MINUTES, maxReachOutsPerDay: env.LIFE_MAX_REACH_OUTS_PER_DAY }, opts.clock);
+  /*
+   * Env vars stay the deployment default; anything the user set in the panel wins
+   * over them. Resolved per call so a panel change lands on the next 5-minute
+   * tick instead of waiting for a restart.
+   */
+  const lifeSettings = (): LifeConfig => {
+    const policy = config.getPersona().lifePolicy ?? {};
+    return {
+      ...DEFAULT_LIFE_CONFIG,
+      tzOffsetMinutes: env.LIFE_TZ_OFFSET_MINUTES,
+      quietGapMinutes: policy.quietGapMinutes ?? env.LIFE_QUIET_GAP_MINUTES,
+      maxReachOutsPerDay: policy.maxReachOutsPerDay ?? env.LIFE_MAX_REACH_OUTS_PER_DAY,
+      silentHours: {
+        from: policy.silentFrom ?? DEFAULT_LIFE_CONFIG.silentHours.from,
+        to: policy.silentTo ?? DEFAULT_LIFE_CONFIG.silentHours.to
+      },
+      reachOut: policy.reachOut ?? true
+    };
+  };
+  const life = new LifeEngine(repos.life, lifeSettings, opts.clock);
   const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, world, env.ENABLE_LIFE_ENGINE ? life : undefined);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,

@@ -26,17 +26,17 @@ describe('merged admin console', () => {
   });
 
   it('offers every section in one navigation', () => {
-    for (const label of ['概览', '助手配置', '双方头像', '情绪语音', '世界引擎', '模型配置', '内容管理', '存储治理', '运维与备份']) {
+    for (const label of ['概览', '助手配置', '双方头像', '情绪语音', '她的生活', '世界引擎', '模型配置', '内容管理', '存储治理', '运维与备份']) {
       expect(PANEL).toContain(`label: '${label}'`);
     }
   });
 
   it('renders each feature section from the shared editors', () => {
-    for (const editor of ['AvatarEditor', 'VoiceEditor', 'WorldEditor', 'StorageEditor']) {
+    for (const editor of ['AvatarEditor', 'LifePanel', 'VoiceEditor', 'WorldEditor', 'StorageEditor']) {
       expect(EDITORS).toContain(`export function ${editor}(`);
     }
-    expect(PANEL).toContain("import { AvatarEditor, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js'");
-    for (const branch of ["tab === 'avatar'", "tab === 'voice'", "tab === 'world'", "tab === 'storage'"]) {
+    expect(PANEL).toContain("import { AvatarEditor, LifePanel, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js'");
+    for (const branch of ["tab === 'avatar'", "tab === 'voice'", "tab === 'life'", "tab === 'world'", "tab === 'storage'"]) {
       expect(PANEL).toContain(branch);
     }
   });

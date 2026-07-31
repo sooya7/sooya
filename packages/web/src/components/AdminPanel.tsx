@@ -1,6 +1,6 @@
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '../lib/api.js';
-import { AvatarEditor, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js';
+import { AvatarEditor, LifePanel, StorageEditor, VoiceEditor, WorldEditor } from './FeatureAdminPage.js';
 import {
   interfaceOptions,
   MODEL_SLOTS,
@@ -37,6 +37,7 @@ type Tab =
   | 'persona'
   | 'avatar'
   | 'voice'
+  | 'life'
   | 'world'
   | 'models'
   | 'content'
@@ -65,6 +66,7 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: I
   { group: '内容与系统', id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
   { group: '助手与表达', id: 'avatar', label: '双方头像', description: '助手与用户头像', icon: 'persona' },
   { group: '助手与表达', id: 'voice', label: '情绪语音', description: '语气与语音合成', icon: 'message' },
+  { group: '助手与表达', id: 'life', label: '她的生活', description: '此刻在做什么与主动开口', icon: 'message' },
   { group: '助手与表达', id: 'world', label: '世界引擎', description: '世界设定与检索', icon: 'cpu' },
   { group: '内容与系统', id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
   { group: '内容与系统', id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
@@ -77,6 +79,7 @@ const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
   models: { title: '模型配置', description: '管理每项能力对应的接口与模型。' },
   avatar: { title: '双方头像', description: '上传助手与用户头像，聊天页面即时生效。' },
   voice: { title: '情绪语音', description: '配置语音合成的情绪、语速与表达方式。' },
+  life: { title: '她的生活', description: '她此刻在做什么、今天做过什么，以及她为什么还没主动开口。' },
   world: { title: '世界引擎', description: '维护世界设定条目，供对话检索引用。' },
   content: { title: '内容管理', description: '管理长期记忆、表情包、媒体和聊天记录。' },
   storage: { title: '存储治理', description: '预览并执行媒体清理，回收磁盘空间。' },
@@ -726,15 +729,17 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
         ? <AvatarPanel onNotice={setNotice} />
         : tab === 'voice'
           ? <VoiceEditor onNotice={setNotice} />
-          : tab === 'world'
-            ? <WorldEditor onNotice={setNotice} />
-            : tab === 'models'
-              ? <ModelsPanel onNotice={setNotice} />
-              : tab === 'content'
-                ? <ContentPanel onNotice={setNotice} />
-                : tab === 'storage'
-                  ? <StorageEditor onNotice={setNotice} />
-                  : <OperationsPanel onNotice={setNotice} />;
+          : tab === 'life'
+            ? <LifePanel onNotice={setNotice} />
+            : tab === 'world'
+              ? <WorldEditor onNotice={setNotice} />
+              : tab === 'models'
+                ? <ModelsPanel onNotice={setNotice} />
+                : tab === 'content'
+                  ? <ContentPanel onNotice={setNotice} />
+                  : tab === 'storage'
+                    ? <StorageEditor onNotice={setNotice} />
+                    : <OperationsPanel onNotice={setNotice} />;
 
   return (
     <main className="admin-page admin-v2" data-testid="admin-dashboard">

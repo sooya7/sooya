@@ -4,6 +4,7 @@ import { requireAdminToken, requireChatToken } from './auth.js';
 import { mediaMeta, toMediaRef, type MediaRow } from '../db/repos/media.repo.js';
 import type { BrowserPushSubscription } from '../core/push.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from '../core/voice.js';
+import { LifePolicySchema } from '../config/schema.js';
 
 const IdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,80}$/);
 const WorldCandidateSchema = z.object({
@@ -81,6 +82,68 @@ export function registerFeatureRoutes(app: SooyaApp): void {
   server.post('/api/admin/life/tick', adminGuard, async () => {
     const result = services.life.tick();
     return { ...result, snapshot: services.life.snapshot() };
+  });
+
+  /*
+   * Everything needed to answer "what is she doing, and why hasn't she said
+   * anything". The reach-out reason is the useful half: without it the only
+   * observable is silence, which looks identical whether she is capped, inside
+   * quiet hours, or simply has nothing finished worth mentioning.
+   */
+  server.get('/api/admin/life', adminGuard, async () => {
+    const recent = repos.messages.recent(40);
+    const lastUser = [...recent].reverse().find((msg) => msg.role === 'user');
+    const lastAssistant = [...recent].reverse().find((msg) => msg.role === 'assistant');
+    const decision = services.life.shouldReachOut(
+      lastUser ? new Date(lastUser.createdAt) : null,
+      lastAssistant ? new Date(lastAssistant.createdAt) : null
+    );
+    const settings = services.life.settings;
+    return {
+      snapshot: services.life.snapshot(),
+      log: repos.life.recent(24),
+      reachOut: {
+        reach: decision.reach,
+        reason: decision.reason,
+        candidate: decision.candidate ? { id: decision.candidate.id, activity: decision.candidate.activity, endedAt: decision.candidate.ended_at } : null,
+        sharedLastDay: repos.life.countSharedSince(new Date(Date.now() - 86_400_000).toISOString()),
+        lastUserAt: lastUser?.createdAt ?? null,
+        lastAssistantAt: lastAssistant?.createdAt ?? null,
+        // The env var is a kill switch the panel cannot override, so say so.
+        enabledByDeployment: app.env.ENABLE_LIFE_ENGINE && app.env.ENABLE_LIFE_REACH_OUT
+      },
+      settings: {
+        reachOut: settings.reachOut,
+        quietGapMinutes: settings.quietGapMinutes,
+        maxReachOutsPerDay: settings.maxReachOutsPerDay,
+        silentFrom: settings.silentHours.from,
+        silentTo: settings.silentHours.to,
+        tzOffsetMinutes: settings.tzOffsetMinutes
+      }
+    };
+  });
+
+  server.put('/api/admin/life/settings', adminGuard, async (req, reply) => {
+    const parsed = LifePolicySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid_life_policy', message: parsed.error.message.slice(0, 300) };
+    }
+    const persona = config.setPersona({ lifePolicy: { ...config.getPersona().lifePolicy, ...parsed.data } });
+    repos.audit.add('life', 'settings', null, parsed.data as Record<string, unknown>);
+    services.bus.publish('life.updated', { settings: true });
+    const settings = services.life.settings;
+    return {
+      lifePolicy: persona.lifePolicy,
+      settings: {
+        reachOut: settings.reachOut,
+        quietGapMinutes: settings.quietGapMinutes,
+        maxReachOutsPerDay: settings.maxReachOutsPerDay,
+        silentFrom: settings.silentHours.from,
+        silentTo: settings.silentHours.to,
+        tzOffsetMinutes: settings.tzOffsetMinutes
+      }
+    };
   });
 
   server.get('/api/push/public-key', chatGuard, async () => ({ publicKey: services.push.publicKey(), status: services.push.status() }));
