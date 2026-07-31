@@ -98,7 +98,7 @@ export function useChat() {
             }
           }
         });
-        stream.setLastEventId(boot.messages.lastEventSeq ?? boot.conversation.lastEventSeq ?? 0); stream.start(); streamRef.current = stream;
+        stream.setLastEventId(boot.messages.lastEventSeq); stream.start(); streamRef.current = stream;
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else { setConnection('offline'); setError((err as Error).message); }
