@@ -93,7 +93,7 @@ export interface AppEnv extends RawEnv {
   configDir: string;
   dbDir: string;
   mediaDir: string;
-  mediaDirs: { images: string; audio: string; stickers: string; files: string; tmp: string };
+  mediaDirs: { images: string; audio: string; stickers: string; files: string; tmp: string; variants: string };
   backupDir: string;
   logDir: string;
   webDir: string | null;
@@ -120,7 +120,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
       audio: path.join(mediaDir, 'audio'),
       stickers: path.join(mediaDir, 'stickers'),
       files: path.join(mediaDir, 'files'),
-      tmp: path.join(mediaDir, 'tmp')
+      tmp: path.join(mediaDir, 'tmp'),
+      // 派生的缩略图缓存：可随时删除重建，不属于任何一种媒体 kind。
+      variants: path.join(mediaDir, 'variants')
     },
     backupDir: path.join(dataDir, 'backups'),
     logDir: path.join(dataDir, 'logs'),

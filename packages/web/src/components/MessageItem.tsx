@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { getToken } from '../lib/api.js';
-import { fetchAuthenticatedMedia, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
+import { BUBBLE_IMAGE_CSS_WIDTH, fetchAuthenticatedMedia, mediaThumbnailPath, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 import type { ChatMessage, MessagePart } from '../lib/types.js';
 import { AudioBubble } from './AudioBubble.js';
@@ -48,7 +48,8 @@ async function savePart(part: MessagePart): Promise<void> {
 
 function ImagePart({ part, onOpen }: { part: MessagePart; onOpen?: (mediaId: string) => void }) {
   const [failed, setFailed] = useState(false);
-  const media = useAuthenticatedMedia(part.media?.url, 'user', 'image');
+  // 气泡显示缩略图；点开大图时由 ImageViewerHost 换成原图。
+  const media = useAuthenticatedMedia(part.media?.url ? mediaThumbnailPath(part.media.url, BUBBLE_IMAGE_CSS_WIDTH) : part.media?.url, 'user', 'image');
   if (part.status === 'failed') return <div className="bubble bubble-note">图片没有发出去{part.error ? `：${part.error}` : ''}</div>;
   if (part.status === 'pending' || !part.media) return <div className="bubble bubble-note pulsing">图片生成中…</div>;
   if (failed) return <div className="bubble bubble-note">图片加载失败</div>;

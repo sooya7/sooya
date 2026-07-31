@@ -5,6 +5,7 @@ import { requireChatToken } from './auth.js';
 import { MediaValidationError } from '../media/store.js';
 import { PathTraversalError } from '../util/fsx.js';
 import { toMediaRef } from '../db/repos/media.repo.js';
+import { resolveVariantWidth } from '../media/variants.js';
 
 const KIND_BY_FIELD: Record<string, 'image' | 'audio' | 'file'> = { image: 'image', images: 'image', audio: 'audio', voice: 'audio', file: 'file', files: 'file' };
 
@@ -68,19 +69,32 @@ export function registerMediaRoutes(app: SooyaApp): void {
      * 复用本地副本——之前的 no-store 意味着每次挂载都要重传整张原图，画廊一页 60 张。
      * private 保证只有本人的浏览器缓存，不会落到任何共享缓存/CDN 上。
      */
-    const etag = `"${id}-${stat.size}"`;
+    /*
+     * `?w=` 请求缩略图：聊天气泡和画廊只显示几百像素，原图动辄 2 MB。变体落盘复用，
+     * 宽度不合法、不是可缩放的图片或原图本来就更小时，回退成原图而不是报错。
+     */
+    const requestedWidth = resolveVariantWidth((req.query as { w?: string }).w);
+    const variant = requestedWidth === null ? null : await services.mediaVariants.get(row, located.path, requestedWidth);
+    const servePath = variant?.path ?? located.path;
+    const serveSize = variant?.bytes ?? stat.size;
+    const etag = variant ? `"${id}-w${variant.width}-${serveSize}"` : `"${id}-${stat.size}"`;
     void reply
-      .header('content-type', row.mime)
+      .header('content-type', variant?.mime ?? row.mime)
       .header('cache-control', 'private, max-age=604800, immutable')
       .header('etag', etag)
-      .header('accept-ranges', 'bytes')
       .header('x-content-type-options', 'nosniff');
+    if (!variant) void reply.header('accept-ranges', 'bytes');
     const ifNoneMatch = req.headers['if-none-match'];
     if (ifNoneMatch && ifNoneMatch.split(',').some((candidate) => candidate.trim() === etag)) {
       reply.code(304);
       return reply.send();
     }
     if (row.kind === 'file') void reply.header('content-disposition', `attachment; filename="${encodeURIComponent(row.rel_path)}"`);
+    if (variant) {
+      // 变体只有几十 KB，没有分段续传的必要；一次发完比维护两套 range 逻辑更安全。
+      void reply.header('content-length', String(serveSize));
+      return reply.send(streamFile(servePath, app));
+    }
     if (range) {
       const match = /bytes=(\d*)-(\d*)/.exec(range);
       if (match) { const start = match[1] ? Number(match[1]) : 0; const end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1; if (start >= stat.size || start > end) { reply.code(416).header('content-range', `bytes */${stat.size}`); return reply.send(); } void reply.code(206).header('content-range', `bytes ${start}-${end}/${stat.size}`).header('content-length', String(end - start + 1)); return reply.send(streamFile(located.path, app, { start, end })); }

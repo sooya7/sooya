@@ -231,8 +231,15 @@ Authorization: Bearer <WEB_CHAT_TOKEN>
 ### `GET /api/media/:id`
 
 返回文件本身。支持 `Range`（语音拖动进度依赖它），带
-`Cache-Control: private, max-age=31536000, immutable` 和 `X-Content-Type-Options: nosniff`。
+`Cache-Control: private, max-age=604800, immutable` 和 `X-Content-Type-Options: nosniff`。
 `kind=file` 时附 `Content-Disposition: attachment`。
+
+可选 `?w=<像素宽度>` 返回缩略图：宽度向上取到档位 `240 / 480 / 960`，响应是
+`image/webp`，ETag 形如 `"<id>-w<档位>-<字节数>"`，变体落盘复用。不支持分段续传
+（变体只有几十 KB，不返回 `Accept-Ranges`）。以下情况静默回退原图，不报错：
+`w` 不是 1–99999 的整数、超过最大档位、原图本来就不比档位宽、不是可缩放的图片
+（GIF 可能是动图、BMP 无解码器）、或解码失败。前端气泡和头像默认按显示宽度乘设备
+像素比（封顶 2 倍）请求缩略图，点开大图时再取原图。
 
 路径穿越受多层防护：id 必须匹配 `^[A-Za-z0-9_-]{1,64}$`，磁盘路径经过 `safeJoin`
 （处理 `..`、URL 编码、绝对路径、符号链接逃逸）。即使数据库里被塞入

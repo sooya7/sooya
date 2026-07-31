@@ -6,6 +6,7 @@ import type { MediaRepo, MediaRow } from '../db/repos/media.repo.js';
 import { atomicWriteFile, ensureDirSync, safeJoin } from '../util/fsx.js';
 import { newMediaId, sha256 } from '../util/ids.js';
 import { probeAudioDuration } from '../util/audio.js';
+import { removeVariants } from './variants.js';
 
 export interface MediaDirs {
   images: string;
@@ -13,6 +14,8 @@ export interface MediaDirs {
   stickers: string;
   files: string;
   tmp: string;
+  /** 派生缩略图缓存目录，见 media/variants.ts。 */
+  variants: string;
 }
 
 export const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'image/avif']);
@@ -200,6 +203,7 @@ export class MediaStore {
     const row = this.repo.get(id);
     if (!row) return false;
     await fsp.rm(this.absolutePath(row), { force: true });
+    await removeVariants(this.dirs.variants, id);
     if (!this.repo.delete(id)) throw new Error('media database record deletion failed');
     return true;
   }
@@ -211,6 +215,7 @@ export class MediaStore {
     for (const row of rows) {
       if (protectedIds?.has(row.id)) continue;
       await fsp.rm(this.absolutePath(row), { force: true });
+      await removeVariants(this.dirs.variants, row.id);
       if (!this.repo.delete(row.id)) throw new Error('orphan media database record deletion failed');
       removed.push(row.id);
     }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ImageViewer, type ViewerImage } from './ImageViewer.js';
+import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 
 interface OpenImageDetail {
   id: string;
@@ -38,13 +39,24 @@ export function ImageViewerHost() {
    * a picture they never clicked. Not opening is the honest answer.
    */
   const index = images.findIndex((image) => image.id === openId);
+
+  /*
+   * 气泡里挂的是缩略图（`?w=`），放大看和「保存」都要原图。原图单独取一份：
+   * 拿到之前先显示缩略图，所以点开是即时的，清晰度随后补上。
+   */
+  const original = useAuthenticatedMedia(openId ? `/api/media/${openId}` : null, 'user', 'image');
+  const shown = useMemo<ViewerImage[]>(
+    () => (original.url && index >= 0 ? images.map((image, at) => (at === index ? { ...image, src: original.url as string } : image)) : images),
+    [images, index, original.url]
+  );
+
   if (!openId || index < 0) return null;
 
   return (
     <ImageViewer
-      images={images}
+      images={shown}
       index={index}
-      onIndexChange={(next) => setOpenId(images[next]?.id ?? openId)}
+      onIndexChange={(next) => setOpenId(shown[next]?.id ?? openId)}
       onClose={() => setOpenId(null)}
     />
   );

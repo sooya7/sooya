@@ -146,6 +146,25 @@ export function mediaCacheStats(): { entries: number; bytes: number; held: numbe
 }
 
 
+/*
+ * 气泡里的图最宽 260 CSS 像素，画廊网格更小，但以前拿的都是原图——一张生成图动辄
+ * 2 MB，首屏要等它整张下完才成像。服务端支持 `?w=` 缩略图档位（240/480/960，按需
+ * 向上取档，原图更窄时照旧回原图），这里按显示宽度和设备像素比换算出请求宽度。
+ * 上限取 2 倍：3 倍屏再多要一档，收益只有肉眼难辨的锐度，代价是几倍字节。
+ */
+export function mediaThumbnailPath(path: string, cssWidth: number): string {
+  if (!path || path.startsWith('blob:') || path.startsWith('data:')) return path;
+  const dpr = typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  const parsed = new URL(path, 'http://sooya.local');
+  if (!/^\/api\/media\/[A-Za-z0-9_-]{1,64}$/.test(parsed.pathname)) return path;
+  parsed.searchParams.set('w', String(Math.max(1, Math.round(cssWidth * dpr))));
+  return parsed.origin === 'http://sooya.local' ? `${parsed.pathname}${parsed.search}` : parsed.toString();
+}
+
+/** 聊天气泡与头像的显示宽度（CSS 像素），换算请求宽度用。 */
+export const BUBBLE_IMAGE_CSS_WIDTH = 260;
+export const AVATAR_IMAGE_CSS_WIDTH = 96;
+
 export function credentialFreeMediaPath(path: string): string {
   const parsed = new URL(path, 'http://sooya.local');
   for (const key of [...parsed.searchParams.keys()]) {
