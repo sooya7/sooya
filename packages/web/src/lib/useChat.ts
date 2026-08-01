@@ -7,6 +7,7 @@ import type { ActivityState, ChatMessage, ConnectionState, LifeState, PersonaInf
 const PAGE_SIZE = 30;
 /** Matches the server's `?since=` cap; catch-up walks pages of this size. */
 const CATCHUP_PAGE_SIZE = 100;
+export type QuotedMessageState = { status: 'loading' | 'ready' | 'missing' | 'error'; message?: ChatMessage };
 function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   if (!incoming.length) return existing;
   const byId = new Map(existing.map((m) => [m.id, m]));
@@ -28,15 +29,18 @@ export function useChat() {
   const [ready, setReady] = useState(false);
   const [life, setLife] = useState<LifeState | null>(null);
   const [stickers, setStickers] = useState<StickerInfo[]>([]);
+  const [quotedStates, setQuotedStates] = useState<Record<string, QuotedMessageState>>({});
   const streamRef = useRef<ChatStream | null>(null);
   const maxSeqRef = useRef(0);
   const draftRef = useRef(new Map<string, string>());
+  const quotedStatesRef = useRef(new Map<string, QuotedMessageState>());
+  const quotedRequestsRef = useRef(new Map<string, Promise<ChatMessage | null>>());
 
   const trackSeq = useCallback((list: ChatMessage[]) => { for (const m of list) if (m.seq > maxSeqRef.current) maxSeqRef.current = m.seq; }, []);
   const applyMessages = useCallback((incoming: ChatMessage[]) => { trackSeq(incoming); setMessages((prev) => mergeMessages(prev, incoming)); }, [trackSeq]);
 
   const reload = useCallback(async () => {
-    try { maxSeqRef.current = 0; draftRef.current.clear(); const boot = await api.bootstrap(); setPersona(boot.conversation.persona); trackSeq(boot.messages.messages); setMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); streamRef.current?.setLastEventId(boot.messages.lastEventSeq); setActivity({ thinking: false, label: null }); setError(null); }
+    try { maxSeqRef.current = 0; draftRef.current.clear(); quotedStatesRef.current.clear(); quotedRequestsRef.current.clear(); setQuotedStates({}); const boot = await api.bootstrap(); setPersona(boot.conversation.persona); trackSeq(boot.messages.messages); setMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); streamRef.current?.setLastEventId(boot.messages.lastEventSeq); setActivity({ thinking: false, label: null }); setError(null); }
     catch (err) { if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else setError((err as Error).message); }
   }, [trackSeq]);
 
@@ -117,6 +121,36 @@ export function useChat() {
     catch (err) { setError((err as Error).message); } finally { setLoadingOlder(false); }
   }, [hasMore, loadingOlder, messages]);
 
+  const ensureQuotedMessage = useCallback((id: string): Promise<ChatMessage | null> => {
+    const known = quotedStatesRef.current.get(id);
+    if (known?.status === 'ready') return Promise.resolve(known.message ?? null);
+    if (known?.status === 'missing') return Promise.resolve(null);
+    const active = quotedRequestsRef.current.get(id);
+    if (active) return active;
+    const request = (async () => {
+      quotedStatesRef.current.set(id, { status: 'loading' });
+      setQuotedStates((previous) => ({ ...previous, [id]: { status: 'loading' } }));
+      try {
+        const context = await api.messageContext(id, { before: 20, after: 20 });
+        applyMessages(context.messages);
+        const ready = { status: 'ready' as const, message: context.target };
+        quotedStatesRef.current.set(id, ready);
+        setQuotedStates((previous) => ({ ...previous, [id]: ready }));
+        return context.target;
+      } catch (err) {
+        const status = err instanceof ApiError && err.status === 404 ? 'missing' as const : 'error' as const;
+        quotedStatesRef.current.set(id, { status });
+        setQuotedStates((previous) => ({ ...previous, [id]: { status } }));
+        if (status === 'error') setError((err as Error).message);
+        return null;
+      } finally {
+        quotedRequestsRef.current.delete(id);
+      }
+    })();
+    quotedRequestsRef.current.set(id, request);
+    return request;
+  }, [applyMessages]);
+
   const send = useCallback(async (content: Array<Record<string, unknown>>, optimisticParts?: ChatMessage['content'], replyTo?: string) => {
     if (content.length === 0) return undefined;
     const clientMsgId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -156,7 +190,7 @@ export function useChat() {
 
   useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') void resync(); }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [resync]);
 
-  return { messages, persona, connection, activity, life, stickers, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, loadOlder, resync, reload, clearError: () => setError(null) };
+  return { messages, persona, connection, activity, life, stickers, quotedStates, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, loadOlder, ensureQuotedMessage, resync, reload, clearError: () => setError(null) };
 }
 
 export function isReplayableUserMessage(message: ChatMessage): boolean {

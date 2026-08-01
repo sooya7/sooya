@@ -94,7 +94,7 @@ describe('MessageItem 引用块', () => {
 
     await render(<MessageItem {...common} message={mine} quoted={null} quotedLabel="" previousId="m1" />);
 
-    expect(preview()?.textContent).toContain('原消息已不在当前记录中');
+    expect(preview()?.textContent).toContain('原消息已删除或不可用');
   });
 
   it('bot 回复指向的消息已滚出窗口时什么都不显示', async () => {

@@ -34,6 +34,32 @@ describe('text chat', () => {
     expect(body.messages[1].content[0].text).toBe('持久化测试');
   });
 
+  it('returns a bounded message context window around an old quote target', async () => {
+    h = await createHarness({ startWorkers: false });
+    const created = ['一', '二', '三', '四', '五'].map((text, index) => h.app.repos.messages.create({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      parts: [{ type: 'text', text }]
+    }).message);
+
+    const res = await h.app.server.inject({
+      method: 'GET',
+      url: `/api/messages/${created[2]!.id}/context?before=1&after=1`
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.target.id).toBe(created[2]!.id);
+    expect(body.messages.map((message: ChatMessage) => message.id)).toEqual([created[1]!.id, created[2]!.id, created[3]!.id]);
+    expect(body.hasOlder).toBe(true);
+    expect(body.hasNewer).toBe(true);
+  });
+
+  it('returns 404 when the quoted context target no longer exists', async () => {
+    h = await createHarness({ startWorkers: false });
+    const res = await h.app.server.inject({ method: 'GET', url: '/api/messages/missing/context' });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toBe('not_found');
+  });
+
   it('rejects malformed payloads', async () => {
     h = await createHarness();
     const res = await h.app.server.inject({ method: 'POST', url: '/api/messages', payload: { content: [] } });
