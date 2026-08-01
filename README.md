@@ -124,7 +124,6 @@ SOOYA_CHAT_API_KEY=sk-...
 # 下面都是可选的，不填就是对应能力不可用
 SOOYA_TTS_MODEL=gpt-4o-mini-tts        # 让 SOOYA 能发语音
 SOOYA_IMAGE_MODEL=gpt-image-1          # 让 SOOYA 能发图片
-SOOYA_STT_MODEL=whisper-1              # 转写你发的语音
 SOOYA_EMBEDDING_MODEL=text-embedding-3-small   # 更好的长期记忆召回
 ```
 
@@ -153,8 +152,7 @@ SOOYA_EMBEDDING_MODEL=text-embedding-3-small   # 更好的长期记忆召回
   "summary": { "...": "可选，可以指向更便宜的小模型" },
   "embedding": { "provider": "openai-embeddings", "model": "text-embedding-3-small", "dimensions": 1536 },
   "image":     { "provider": "openai-images",     "model": "gpt-image-1" },
-  "tts":       { "provider": "openai-tts",        "model": "gpt-4o-mini-tts", "voice": "alloy", "format": "mp3" },
-  "stt":       { "provider": "openai-transcriptions", "model": "whisper-1" }
+  "tts":       { "provider": "openai-tts",        "model": "gpt-4o-mini-tts", "voice": "alloy", "format": "mp3" }
 }
 ```
 
@@ -209,7 +207,7 @@ sooya/
 │   │   │   ├── config/          环境变量、persona/models 配置存储
 │   │   │   ├── db/              迁移、连接句柄、各 repository
 │   │   │   ├── core/            能力注册表、上下文、记忆、摘要、回复编排
-│   │   │   ├── providers/       chat / embedding / image / tts / stt 适配器
+│   │   │   ├── providers/       chat / embedding / image / tts 适配器
 │   │   │   ├── media/           媒体落盘、表情包库
 │   │   │   ├── events/          持久化事件总线（SSE 补偿的基础）
 │   │   │   ├── routes/          chat / media / stream / admin / health

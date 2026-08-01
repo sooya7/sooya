@@ -37,7 +37,7 @@ describe('model preset library', () => {
     const { res, body } = await api('GET', '/api/admin/model-presets');
     expect(res.statusCode).toBe(200);
     expect(body.presets).toEqual([]);
-    expect(body.slots).toEqual(['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'stt']);
+    expect(body.slots).toEqual(['chat', 'vision', 'summary', 'embedding', 'image', 'tts']);
   });
 
   it('saves a preset and reads it back', async () => {
@@ -47,6 +47,15 @@ describe('model preset library', () => {
     const { body } = await api('GET', '/api/admin/model-presets');
     expect(body.presets).toHaveLength(1);
     expect(body.presets[0]).toMatchObject({ id: 'glm-4-6', name: 'GLM-4.6 主聊', slot: 'chat', model: 'glm-4.6' });
+  });
+
+  it('drops legacy STT presets when reading settings', async () => {
+    h = await withAdmin();
+    h.app.repos.settings.set('models.presets', [preset, { ...preset, id: 'legacy-stt', slot: 'stt' }]);
+    const { body } = await api('GET', '/api/admin/model-presets');
+    expect(body.presets).toHaveLength(1);
+    expect(body.presets[0].id).toBe('glm-4-6');
+    expect(h.app.repos.settings.get('models.presets', [])).toEqual([preset]);
   });
 
   it('rejects a malformed preset and a duplicate id', async () => {

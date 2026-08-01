@@ -5,7 +5,6 @@ import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { EventBus } from '../events/bus.js';
 import type { BackupService } from '../backup/service.js';
 import type { MediaStore } from '../media/store.js';
-import type { WorldEngine } from './world.js';
 import type { LifeEngine } from './life.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ChatProvider } from '../providers/types.js';
@@ -95,7 +94,6 @@ export interface JobDeps {
   messages: MessageRepo;
   bus: EventBus;
   backups: BackupService;
-  world: WorldEngine;
   life: LifeEngine;
   capabilities: CapabilityRegistry;
   config: ConfigStore;
@@ -117,20 +115,6 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     if (candidates.length === 0) return;
     const result = await deps.memory.remember(candidates, userMessageId);
     if (result.stored > 0 || result.merged > 0) deps.bus.publish('memory.updated', { stored: result.stored, merged: result.merged });
-  });
-
-  worker.register('world.extract', async (payload) => {
-    const userMessageId = String(payload.userMessageId ?? '');
-    const assistantMessageId = payload.assistantMessageId ? String(payload.assistantMessageId) : null;
-    const user = deps.messages.get(userMessageId);
-    if (!user) return;
-    const result = await deps.world.extract(textOf(user), assistantMessageId ? textOf(deps.messages.get(assistantMessageId)) : '', assistantMessageId ?? userMessageId);
-    if (result.stored || result.merged || result.conflicts) deps.bus.publish('world.updated', result);
-  });
-
-  worker.register('world.rebuild', async (payload) => {
-    const result = await deps.world.rebuild(Number(payload.limit ?? 400));
-    deps.bus.publish('world.updated', { rebuilt: true, ...result });
   });
 
   worker.register('push.reply', async (payload) => {

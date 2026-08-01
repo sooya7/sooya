@@ -64,21 +64,6 @@ export interface LifePanelData {
   settings: LifeSettings;
 }
 
-export interface WorldEntry {
-  id: string;
-  kind: 'entity' | 'relation' | 'fact' | 'scene' | 'timeline';
-  subject: string;
-  predicate: string;
-  object: string;
-  confidence: number;
-  authority: 'model' | 'user' | 'admin';
-  active: number | boolean;
-  conflict_of?: string | null;
-  source_message_id?: string | null;
-  created_at?: string;
-  updated_at?: string;
-}
-
 async function request<T>(path: string, options: { method?: string; body?: unknown; raw?: boolean } = {}): Promise<T> {
   const headers = new Headers();
   const token = getAdminToken();
@@ -138,15 +123,6 @@ export const featureApi = {
     request<{ settings: LifeSettings }>('/api/admin/life/settings', { method: 'PUT', body }),
   tickLife: () => request<{ changed: boolean; activity: string; snapshot: LifeSnapshot }>('/api/admin/life/tick', { method: 'POST' }),
 
-  world: (query: { search?: string; kind?: string; active?: boolean; limit?: number; offset?: number } = {}) =>
-    request<{ entries: WorldEntry[]; total: number }>(`/api/admin/world${params(query)}`),
-  createWorld: (entry: Omit<WorldEntry, 'id' | 'active' | 'confidence' | 'authority'> & Partial<Pick<WorldEntry, 'confidence' | 'authority'>>) =>
-    request<{ entry: WorldEntry }>('/api/admin/world', { method: 'POST', body: entry }),
-  updateWorld: (id: string, patch: Partial<WorldEntry>) => request<{ entry: WorldEntry }>(`/api/admin/world/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
-  deleteWorld: (id: string) => request<{ deleted: true }>(`/api/admin/world/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  rebuildWorld: (limit = 400) => request<Record<string, unknown>>('/api/admin/world/rebuild', { method: 'POST', body: { limit } }),
-  exportWorld: () => request<Record<string, unknown>>('/api/admin/world/export'),
-  importWorld: (data: unknown) => request<Record<string, unknown>>('/api/admin/world/import', { method: 'POST', body: data }),
 
   storage: () => request<Record<string, any>>('/api/admin/storage'),
   updateStorage: (body: Record<string, number>) => request<Record<string, any>>('/api/admin/storage/policy', { method: 'PUT', body }),

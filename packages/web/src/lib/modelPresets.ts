@@ -4,7 +4,7 @@
  * cannot drift apart silently: everything here mirrors `ModelPresetSchema`.
  */
 
-export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'stt'] as const;
+export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts'] as const;
 export type ModelSlot = (typeof MODEL_SLOTS)[number];
 
 export const SLOT_LABELS: Record<ModelSlot, string> = {
@@ -13,8 +13,7 @@ export const SLOT_LABELS: Record<ModelSlot, string> = {
   summary: '摘要',
   embedding: '记忆向量',
   image: '生图',
-  tts: '语音合成',
-  stt: '语音识别'
+  tts: '语音合成'
 };
 
 /** Providers the server accepts, narrowed per slot so the form cannot offer a mismatch. */
@@ -24,8 +23,7 @@ export const SLOT_PROVIDERS: Record<ModelSlot, string[]> = {
   summary: ['openai-chat', 'openai-responses', 'anthropic-messages', 'openai-compatible'],
   embedding: ['openai-embeddings', 'openai-compatible'],
   image: ['openai-images', 'openai-compatible'],
-  tts: ['openai-tts', 'volc-tts', 'openai-compatible'],
-  stt: ['openai-transcriptions', 'openai-compatible']
+  tts: ['openai-tts', 'volc-tts', 'openai-compatible']
 };
 
 /** Human labels for the wire protocols, so a form can name what it offers. */
@@ -37,8 +35,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   'openai-embeddings': 'OpenAI Embeddings',
   'openai-images': 'OpenAI Images',
   'openai-tts': 'OpenAI TTS',
-  'volc-tts': '火山引擎语音合成（官方协议）',
-  'openai-transcriptions': 'OpenAI Transcriptions'
+  'volc-tts': '火山引擎语音合成（官方协议）'
 };
 
 export interface InterfaceOption {

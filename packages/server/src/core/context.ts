@@ -6,7 +6,6 @@ import type { ChatMessage } from './types.js';
 import type { ChatTurn, ChatContentPart } from '../providers/types.js';
 import type { MediaStore } from '../media/store.js';
 import type { MediaRepo } from '../db/repos/media.repo.js';
-import type { WorldEngine } from './world.js';
 import type { LifeEngine } from './life.js';
 
 export interface BuiltContext {
@@ -18,13 +17,11 @@ export interface BuiltContext {
   summaryCount: number;
   recentCount: number;
   visionUsed: boolean;
-  worldEntries: number;
   lifeLines: number;
   inputBudget: number;
   estimatedInputTokens: number;
   droppedSummaries: number;
   droppedMemories: number;
-  droppedWorldEntries: number;
   droppedRecentMessages: number;
 }
 
@@ -48,7 +45,6 @@ export class ContextBuilder {
     private readonly memory: MemoryService,
     private readonly mediaRepo: MediaRepo,
     private readonly mediaStore: MediaStore,
-    private readonly world?: WorldEngine,
     private readonly life?: LifeEngine
   ) {}
 
@@ -58,8 +54,6 @@ export class ContextBuilder {
 
     const recallQuery = latestUserText || recent.map(plainText).join('\n').slice(-500);
     const recall = await this.memory.recall(recallQuery, opts.memoryLimit);
-    const worldContext = this.world?.contextFor(recallQuery, 18) ?? '';
-    const worldLines = worldContext.split('\n').filter((line) => line.startsWith('· '));
     const inputBudget = Math.max(256, opts.contextWindow - opts.maxOutputTokens - 128);
 
     const systemParts: string[] = [];
@@ -94,13 +88,6 @@ export class ContextBuilder {
     const usedSummaries = addBudgetedLines(systemParts, turns, '以前聊过的重点（阶段摘要）：', summaryLines, inputBudget);
     const memoryLines = recall.memories.map((memory) => `· [${memory.kind}] ${memory.content}`);
     const usedMemories = addBudgetedLines(systemParts, turns, '关于用户你已经知道的事：', memoryLines, inputBudget);
-    const usedWorldEntries = addBudgetedLines(
-      systemParts,
-      turns,
-      '当前世界状态（只使用仍启用且未冲突的条目；用户或管理员设定优先）：',
-      worldLines,
-      inputBudget
-    );
 
     /*
      * Her own state goes in before the capability notes: what she is doing is
@@ -132,13 +119,11 @@ export class ContextBuilder {
       summaryCount: usedSummaries,
       recentCount: turns.length,
       visionUsed,
-      worldEntries: usedWorldEntries,
       lifeLines,
       inputBudget,
       estimatedInputTokens,
       droppedSummaries: activeSummaries.length - usedSummaries,
       droppedMemories: recall.memories.length - usedMemories,
-      droppedWorldEntries: worldLines.length - usedWorldEntries,
       droppedRecentMessages: convertedTurns.length - turns.length
     };
   }

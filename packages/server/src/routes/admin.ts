@@ -34,7 +34,15 @@ export function registerAdminRoutes(app: SooyaApp): void {
   /** Saved model library. Settings-backed so it survives config reloads. */
   const PRESETS_KEY = 'models.presets';
   const readPresets = (): ModelPreset[] => {
-    const parsed = ModelPresetsSchema.safeParse(repos.settings.get(PRESETS_KEY, []));
+    const raw = repos.settings.get<unknown>(PRESETS_KEY, []);
+    let legacyFree: unknown = raw;
+    if (Array.isArray(raw)) {
+      legacyFree = raw.filter((item) => !(item && typeof item === 'object' && (item as { slot?: unknown }).slot === 'stt'));
+    }
+    const parsed = ModelPresetsSchema.safeParse(legacyFree);
+    if (Array.isArray(raw) && Array.isArray(legacyFree) && legacyFree.length !== raw.length) {
+      repos.settings.set(PRESETS_KEY, parsed.success ? parsed.data : []);
+    }
     return parsed.success ? parsed.data : [];
   };
 
@@ -213,14 +221,12 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'bad_request', message: '未知的能力槽位' };
     }
-    if (slot === 'image' || slot === 'stt') {
+    if (slot === 'image') {
       reply.code(400);
       return {
         error: 'test_unsupported',
         slot,
-        message: slot === 'image'
-          ? '出图会产生真实生成费用，这里不自动触发；用「拉取模型」确认地址和密钥通不通，出图效果在聊天里验证'
-          : '语音识别要有一段真实音频，面板里没有样本；在聊天里发一条语音来验证'
+        message: '出图会产生真实生成费用，这里不自动触发；用「拉取模型」确认地址和密钥通不通，出图效果在聊天里验证'
       };
     }
     if (slot === 'vision' && !config.chatModelFor('vision').supportsVision) {
@@ -428,7 +434,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
      * the other buckets mean something else would break.
      */
     const references = repos.media.references(sticker.mediaId);
-    if (references.messageParts > 0 || references.worldEntries > 0) {
+    if (references.messageParts > 0) {
       reply.code(409);
       return { error: 'sticker_is_referenced', references };
     }
@@ -500,7 +506,6 @@ export function registerAdminRoutes(app: SooyaApp): void {
       media: repos.media.count(),
       memories: repos.memories.count(),
       summaries: repos.summaries.count(),
-      world: repos.world.count(),
       pushSubscriptions: repos.pushSubscriptions.count(),
       pendingJobs: repos.jobs.pendingCount()
     },

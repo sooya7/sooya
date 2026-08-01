@@ -21,7 +21,7 @@ const jsonModeCalls = (state: Harness['state']) => bodies(state).filter((b) => b
  * `supportsVision` had the same shape of bug (#34): config declares a capability,
  * the real endpoint does not have it, and the turn dies. JSON mode is worse
  * because nothing visible breaks -- the extraction just throws, the caller
- * falls back to regex heuristics, and the memory/world pipeline quietly stops
+ * falls back to regex heuristics, and the memory pipeline quietly stops
  * doing its job. These tests pin the failure that used to be invisible.
  */
 describe('endpoint without JSON mode', () => {
@@ -51,7 +51,7 @@ describe('endpoint without JSON mode', () => {
     // Both extractors ask for JSON mode, and each says it once -- not once per turn.
     expect(logged.length).toBeGreaterThan(0);
     expect(new Set(logged.map((e) => e.scope)).size).toBe(logged.length);
-    expect(logged.every((e) => /^(memory|world)\.extract$/.test(e.scope))).toBe(true);
+    expect(logged.every((e) => /^memory\.extract$/.test(e.scope))).toBe(true);
   });
 
   it('stops sending response_format after the first refusal', async () => {
@@ -78,14 +78,6 @@ describe('endpoint without JSON mode', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('world extraction survives an answer wrapped in prose', async () => {
-    const wrapped = `好的，我分析了这轮对话：\n\`\`\`json\n${JSON.stringify({
-      entries: [{ kind: 'fact', subject: '用户', predicate: '养了', object: '一只叫土豆的猫', confidence: 0.9, authority: 'user' }]
-    })}\n\`\`\`\n以上就是提取结果。`;
-    h = await createHarness({ chat: { rejectJsonMode: true, script: [[wrapped]] } });
-    const candidates = await h.app.services.world.extractCandidates('我养了一只猫叫土豆', '好可爱');
-    expect(candidates.map((c) => c.object).join()).toContain('土豆');
-  });
 });
 
 describe('extractJsonObject', () => {

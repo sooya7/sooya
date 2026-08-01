@@ -481,13 +481,12 @@ describe('admin API surface', () => {
   });
 
   it('exposes capability status honestly when nothing is configured', async () => {
-    h = await createHarness({ image: 'off', tts: 'off', stt: 'off', embedding: 'off' });
+    h = await createHarness({ image: 'off', tts: 'off', embedding: 'off' });
     const res = await h.app.server.inject({ method: 'GET', url: '/api/capabilities' });
     const caps = res.json().capabilities;
     expect(caps.chat.configured).toBe(true);
     expect(caps.image.configured).toBe(false);
     expect(caps.tts.configured).toBe(false);
-    expect(caps.stt.configured).toBe(false);
     expect(caps.embedding.configured).toBe(false);
     expect(res.json().agent.active).toBe(false);
   });

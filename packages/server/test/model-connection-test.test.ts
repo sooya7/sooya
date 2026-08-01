@@ -102,18 +102,14 @@ describe('测试连接', () => {
     expect(h.state.ttsCalls).toBe(1);
   });
 
-  it('不给出图和语音识别做自动探测，而是说清为什么', async () => {
-    h = await boot({ image: 'ok', stt: 'ok' });
+  it('不给出图做自动探测，而是说清为什么', async () => {
+    h = await boot({ image: 'ok' });
     const image = await test('image');
     expect(image.res.statusCode).toBe(400);
     expect(image.body.error).toBe('test_unsupported');
     expect(image.body.message).toContain('费用');
     expect(h.state.imageCalls).toBe(0);
 
-    const stt = await test('stt');
-    expect(stt.res.statusCode).toBe(400);
-    expect(stt.body.error).toBe('test_unsupported');
-    expect(h.state.sttCalls).toBe(0);
   });
 
   it('读图能力没声明支持读图时不给出“通了”的假象', async () => {

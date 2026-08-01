@@ -30,7 +30,6 @@ export interface FakeProviderState {
   chatCalls: Array<{ body: unknown; url: string }>;
   imageCalls: number;
   ttsCalls: number;
-  sttCalls: number;
   embedCalls: number;
 }
 
@@ -40,7 +39,6 @@ export interface HarnessOptions {
   /** Enable a fake image provider that returns a real PNG. */
   image?: 'ok' | 'fail' | 'off';
   tts?: 'ok' | 'fail' | 'off';
-  stt?: 'ok' | 'fail' | 'off';
   embedding?: 'ok' | 'fail' | 'off';
   /** Fixed dimension for the fake embedding provider. */
   embeddingDim?: number;
@@ -124,13 +122,12 @@ function sseResponse(chunks: string[]): Response {
 
 export async function createHarness(opts: HarnessOptions = {}): Promise<Harness> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sooya-test-'));
-  const state: FakeProviderState = { chatCalls: [], imageCalls: 0, ttsCalls: 0, sttCalls: 0, embedCalls: 0 };
+  const state: FakeProviderState = { chatCalls: [], imageCalls: 0, ttsCalls: 0, embedCalls: 0 };
 
   let script = opts.chat?.script ?? [['好的。']];
   let chatError: Error | null = opts.chat?.chatError ?? null;
   let imageMode = opts.image ?? 'off';
   let ttsMode = opts.tts ?? 'off';
-  const sttMode = opts.stt ?? 'off';
   const embeddingMode = opts.embedding ?? 'off';
   const embeddingDim = opts.embeddingDim ?? 8;
   let callIndex = 0;
@@ -192,14 +189,6 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       const mp3 = makeFakeMp3();
       return new Response(new Uint8Array(mp3), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
     }
-    if (url.includes('/audio/transcriptions')) {
-      state.sttCalls++;
-      if (sttMode === 'fail') return new Response('stt backend exploded', { status: 500 });
-      return new Response(JSON.stringify({ text: '这是转写出来的文字', duration: 1.5 }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      });
-    }
     if (url.includes('/embeddings')) {
       state.embedCalls++;
       if (embeddingMode === 'fail') return new Response('embedding backend exploded', { status: 500 });
@@ -258,17 +247,6 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
             maxRetries: 0,
             timeoutMs: 5000
           },
-    stt:
-      sttMode === 'off'
-        ? { provider: 'none' }
-        : {
-            provider: 'openai-transcriptions',
-            baseUrl: 'https://fake.example.com/v1',
-            apiKey: 'sk-test-key-000000',
-            model: 'fake-stt',
-            maxRetries: 0,
-            timeoutMs: 5000
-          }
   };
   fs.mkdirSync(path.join(dir, 'config'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'config', 'models.json'), JSON.stringify(models, null, 2));

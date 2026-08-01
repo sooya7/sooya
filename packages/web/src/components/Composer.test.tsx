@@ -5,34 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from './Composer.js';
 import type { MediaRef, StickerInfo } from '../lib/types.js';
 
-vi.mock('./VoiceRecorder.js', () => ({
-  VoiceRecorder: ({
-    onReady,
-    onCancel
-  }: {
-    onReady: (media: MediaRef) => void;
-    onCancel: () => void;
-  }) => (
-    <div data-testid="mock-recorder">
-      <button type="button" data-testid="mock-voice-cancel" onClick={onCancel}>
-        cancel
-      </button>
-      <button
-        type="button"
-        data-testid="mock-voice-ready"
-        onClick={() => onReady(media('audio', 'md_voice', { duration: 4.6, transcript: 'voice text' }))}
-      >
-        ready
-      </button>
-    </div>
-  )
-}));
-
 /**
  * `Composer` 是聊天主路径上唯一没有测试的交互组件，而它握着几条最容易悄悄坏掉的规则：
  * 什么时候算「可以发送」、发送失败时那段草稿还在不在，以及上传回来的媒体怎么变成内容块。
  *
- * 已覆盖：文本发送、表情面板、附件上传与附件条、拖放与粘贴（语音留给后续分片）。
+ * 已覆盖：文本发送、表情面板、附件上传与附件条、拖放与粘贴。
  *
  * 几个必要的搭法：
  * - textarea 是受控的，直接改 `el.value` React 看不见，必须走原型上的 value setter
@@ -77,11 +54,6 @@ async function render(over: Overrides = {}): Promise<void> {
 
 const input = () => container.querySelector<HTMLTextAreaElement>('[data-testid="composer-input"]')!;
 const sendBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="btn-send"]')!;
-const voiceBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="btn-voice"]')!;
-const composerRow = () => container.querySelector('.composer-row');
-const recorder = () => container.querySelector('[data-testid="mock-recorder"]');
-const voiceCancelBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="mock-voice-cancel"]')!;
-const voiceReadyBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="mock-voice-ready"]')!;
 const stickerBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="btn-sticker"]')!;
 const stickerPanel = () => container.querySelector('[data-testid="sticker-panel"]');
 const stickerChoices = () => [...container.querySelectorAll<HTMLButtonElement>('.sticker-choice')];
@@ -543,7 +515,7 @@ describe('Composer 附件发送', () => {
     expect(input().value).toBe('');
   });
 
-  it('三种 kind 各自映射到对应内容块，语音带上时长与转写', async () => {
+  it('服务端返回的未知媒体类型不会进入可发送附件', async () => {
     uploadHandler = async () =>
       jsonResponse({
         media: [
@@ -557,7 +529,7 @@ describe('Composer 附件发送', () => {
 
     await selectFiles(fileInput(), [file('mixed.bin', 'application/octet-stream')]);
     await flush();
-    expect(attachmentItems()).toHaveLength(3);
+    expect(attachmentItems()).toHaveLength(2);
 
     await click(sendBtn());
     await flush();
@@ -565,7 +537,6 @@ describe('Composer 附件发送', () => {
     expect(sentContents()).toEqual([
       [
         { type: 'image', mediaId: 'md_i' },
-        { type: 'audio', mediaId: 'md_v', duration: 3.2, transcript: '你在吗' },
         { type: 'file', mediaId: 'md_f' }
       ]
     ]);
@@ -756,37 +727,10 @@ describe('Composer 粘贴', () => {
   });
 });
 
-describe('Composer 语音分支', () => {
-  it('点击语音后切换到录音态，取消后恢复编辑区', async () => {
+describe('Composer 用户语音入口', () => {
+  it('不显示麦克风按钮，也不提供录音态', async () => {
     await render();
-    expect(composerRow()).not.toBeNull();
-    expect(recorder()).toBeNull();
-
-    await click(voiceBtn());
-    expect(composerRow()).toBeNull();
-    expect(recorder()).not.toBeNull();
-
-    await click(voiceCancelBtn());
-    expect(recorder()).toBeNull();
-    expect(composerRow()).not.toBeNull();
-  });
-
-  it('录音完成后追加 audio 附件，并按时长与转写发送', async () => {
-    await render();
-    await click(voiceBtn());
-    await click(voiceReadyBtn());
-
-    expect(recorder()).toBeNull();
-    expect(composerRow()).not.toBeNull();
-    expect(attachmentItems()).toHaveLength(1);
-    expect(attachmentItems()[0]!.textContent).toContain('5s');
-
-    await click(sendBtn());
-    await flush();
-
-    expect(sentContents()).toEqual([
-      [{ type: 'audio', mediaId: 'md_voice', duration: 4.6, transcript: 'voice text' }]
-    ]);
-    expect(strip()).toBeNull();
+    expect(container.querySelector('[data-testid="btn-voice"]')).toBeNull();
+    expect(container.querySelector('[data-testid="mock-recorder"]')).toBeNull();
   });
 });

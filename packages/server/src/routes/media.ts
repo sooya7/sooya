@@ -7,7 +7,7 @@ import { PathTraversalError } from '../util/fsx.js';
 import { toMediaRef } from '../db/repos/media.repo.js';
 import { resolveVariantWidth } from '../media/variants.js';
 
-const KIND_BY_FIELD: Record<string, 'image' | 'audio' | 'file'> = { image: 'image', images: 'image', audio: 'audio', voice: 'audio', file: 'file', files: 'file' };
+const KIND_BY_FIELD: Record<string, 'image' | 'file'> = { image: 'image', images: 'image', file: 'file', files: 'file' };
 
 export function registerMediaRoutes(app: SooyaApp): void {
   const { server, services, repos, env } = app;
@@ -26,11 +26,14 @@ export function registerMediaRoutes(app: SooyaApp): void {
         let buffer: Buffer;
         try { buffer = await part.toBuffer(); }
         catch (err) { const error = err as Error & { code?: string }; failed.push({ filename: part.filename ?? 'unknown', error: error.code === 'FST_REQ_FILE_TOO_LARGE' ? 'file too large' : error.message, code: error.code === 'FST_REQ_FILE_TOO_LARGE' ? 'TOO_LARGE' : 'READ_FAILED' }); continue; }
-        const kind = KIND_BY_FIELD[part.fieldname] ?? guessKind(part.mimetype);
-        const durationField = (part.fields?.duration as { value?: string } | undefined)?.value;
+        const kind = KIND_BY_FIELD[part.fieldname];
+        if (!kind) {
+          failed.push({ filename: part.filename ?? 'unknown', error: 'unsupported upload field', code: 'UNSUPPORTED_FIELD' });
+          continue;
+        }
         try {
           await services.storage.assertWritable(buffer.length);
-          const row = await services.mediaStore.save({ kind, origin: 'upload', data: buffer, declaredMime: part.mimetype, filename: sanitizeFilename(part.filename), durationHint: durationField ? Number(durationField) : null });
+          const row = await services.mediaStore.save({ kind, origin: 'upload', data: buffer, declaredMime: part.mimetype, filename: sanitizeFilename(part.filename) });
           saved.push(toMediaRef(row));
         } catch (err) {
           const error = err as MediaValidationError & { code?: string };
@@ -104,13 +107,6 @@ export function registerMediaRoutes(app: SooyaApp): void {
   });
 
   server.get('/api/media/:id/meta', { preHandler: auth }, async (req, reply) => { const row = repos.media.get((req.params as { id: string }).id); if (!row) { reply.code(404); return { error: 'not_found' }; } return { media: toMediaRef(row), exists: services.mediaStore.exists(row) }; });
-  server.post('/api/media/:id/transcribe', { preHandler: auth }, async (req, reply) => {
-    const id = (req.params as { id: string }).id; const stt = services.capabilities.sttProvider();
-    if (!stt.configured) { reply.code(503); return { error: 'stt_not_configured' }; }
-    const found = await services.mediaStore.read(id); if (!found) { reply.code(404); return { error: 'not_found' }; }
-    try { const result = await stt.transcribe(found.data, { mime: found.row.mime, filename: found.row.rel_path }); repos.media.setTranscript(id, result.text); return { transcript: result.text, duration: result.durationSec ?? found.row.duration }; }
-    catch (err) { repos.errors.add('stt', (err as Error).message); reply.code(502); return { error: 'transcription_failed', message: (err as Error).message.slice(0, 200) }; }
-  });
 }
 
 function streamFile(path: string, app: SooyaApp, range?: { start: number; end: number }) {
@@ -121,5 +117,4 @@ function streamFile(path: string, app: SooyaApp, range?: { start: number; end: n
   return stream;
 }
 
-function guessKind(mime?: string): 'image' | 'audio' | 'file' { if (!mime) return 'file'; if (mime.startsWith('image/')) return 'image'; if (mime.startsWith('audio/') || mime === 'video/webm') return 'audio'; return 'file'; }
 function sanitizeFilename(name?: string): string | undefined { return name ? name.replace(/[\\/\0]/g, '_').slice(0, 120) : undefined; }

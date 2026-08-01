@@ -1,5 +1,10 @@
 import type BetterSqlite3 from 'better-sqlite3';
-import { worldIdentityKey } from './world-key.js';
+
+// Kept local because migration 5 must remain able to upgrade an old database
+// after the live world feature has been removed.
+function legacyWorldIdentityKey(value: string): string {
+  return value.normalize('NFKC').trim().toLowerCase().replace(/\s+/gu, ' ');
+}
 
 export interface Migration {
   version: number;
@@ -313,12 +318,12 @@ export const MIGRATIONS: Migration[] = [
         updated_at: string;
       }>;
       const updateKeys = db.prepare('UPDATE world_entries SET subject_key = ?, predicate_key = ? WHERE id = ?');
-      for (const row of rows) updateKeys.run(worldIdentityKey(row.subject), worldIdentityKey(row.predicate), row.id);
+      for (const row of rows) updateKeys.run(legacyWorldIdentityKey(row.subject), legacyWorldIdentityKey(row.predicate), row.id);
 
       const authorityRank = { model: 1, user: 2, admin: 3 } as const;
       const groups = new Map<string, typeof rows>();
       for (const row of rows.filter((item) => item.active === 1 && item.conflict_of === null)) {
-        const key = `${worldIdentityKey(row.subject)}\u0000${worldIdentityKey(row.predicate)}`;
+        const key = `${legacyWorldIdentityKey(row.subject)}\u0000${legacyWorldIdentityKey(row.predicate)}`;
         const group = groups.get(key) ?? [];
         group.push(row);
         groups.set(key, group);
@@ -381,6 +386,18 @@ export const MIGRATIONS: Migration[] = [
         );
         CREATE INDEX idx_life_log_started ON life_log(started_at DESC);
         CREATE INDEX idx_life_log_shared ON life_log(shared, started_at DESC);
+      `);
+    }
+  },
+  {
+    version: 7,
+    name: 'remove_world_engine',
+    up: (db) => {
+      db.exec(`
+        DELETE FROM jobs WHERE type IN ('world.extract', 'world.rebuild');
+        DELETE FROM events WHERE type = 'world.updated';
+        DROP TABLE IF EXISTS world_sources;
+        DROP TABLE IF EXISTS world_entries;
       `);
     }
   }

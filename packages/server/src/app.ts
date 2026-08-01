@@ -15,7 +15,7 @@ import { MessageRepo } from './db/repos/message.repo.js';
 import { MemoryRepo } from './db/repos/memory.repo.js';
 import { StickerRepo } from './db/repos/sticker.repo.js';
 import { ErrorLogRepo, EventRepo, JobRepo, SettingsRepo, SummaryRepo } from './db/repos/misc.repo.js';
-import { AuditRepo, PushSubscriptionRepo, StorageSampleRepo, WorldRepo } from './db/repos/feature.repo.js';
+import { AuditRepo, PushSubscriptionRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
 import { MediaStore } from './media/store.js';
 import { StickerLibrary } from './media/stickers.js';
 import { ImageVariantService } from './media/variants.js';
@@ -25,7 +25,6 @@ import { ContextBuilder } from './core/context.js';
 import { Summarizer } from './core/summarizer.js';
 import { Replier } from './core/replier.js';
 import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
-import { WorldEngine } from './core/world.js';
 import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig } from './core/life.js';
 import { LifeRepo } from './db/repos/life.repo.js';
 import { PushService } from './core/push.js';
@@ -75,7 +74,6 @@ export interface SooyaApp {
     events: EventRepo;
     errors: ErrorLogRepo;
     pushSubscriptions: PushSubscriptionRepo;
-    world: WorldRepo;
     life: LifeRepo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
@@ -86,7 +84,6 @@ export interface SooyaApp {
     stickerLibrary: StickerLibrary;
     capabilities: CapabilityRegistry;
     memory: MemoryService;
-    world: WorldEngine;
     life: LifeEngine;
     push: PushService;
     storage: StorageService;
@@ -158,7 +155,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     events: new EventRepo(dbHandle),
     errors: new ErrorLogRepo(dbHandle),
     pushSubscriptions: new PushSubscriptionRepo(dbHandle),
-    world: new WorldRepo(dbHandle),
     life: new LifeRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle)
@@ -170,7 +166,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl: opts.fetchImpl });
   const bus = new EventBus(repos.events);
   const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE });
-  const world = new WorldEngine(repos.world, capabilities, repos.errors, repos.messages);
   const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, opts.fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
   /*
@@ -193,7 +188,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     };
   };
   const life = new LifeEngine(repos.life, lifeSettings, opts.clock);
-  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, world, env.ENABLE_LIFE_ENGINE ? life : undefined);
+  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, env.ENABLE_LIFE_ENGINE ? life : undefined);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
@@ -228,7 +223,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     messages: repos.messages,
     bus,
     backups,
-    world,
     life,
     capabilities,
     config,
@@ -241,7 +235,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const tools = new ToolRegistry();
   const agents = new AgentRegistry();
   const agentCapabilities = new CapabilityRegistryStub();
-  for (const cap of ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'stt'] as const) {
+  for (const cap of ['chat', 'vision', 'summary', 'embedding', 'image', 'tts'] as const) {
     agentCapabilities.register({ name: cap, description: `model capability: ${cap}`, available: () => capabilities.has(cap) });
   }
 
@@ -332,7 +326,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, world, life, push, storage, context, summarizer, replier, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, push, storage, context, summarizer, replier, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     reopenDatabase: () => {

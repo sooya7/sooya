@@ -105,7 +105,6 @@ describe('interface options per capability', () => {
     const foreign: Record<string, string[]> = {
       chat: ['openai-tts', 'openai-transcriptions', 'openai-images', 'openai-embeddings'],
       tts: ['anthropic-messages', 'openai-chat', 'openai-transcriptions'],
-      stt: ['openai-tts', 'openai-chat'],
       embedding: ['openai-chat', 'openai-images'],
       image: ['openai-chat', 'openai-tts']
     };

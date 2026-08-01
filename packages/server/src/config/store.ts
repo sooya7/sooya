@@ -16,8 +16,8 @@ export interface ConfigStoreOptions {
   onLog?: (level: 'warn' | 'info' | 'error', msg: string, extra?: Record<string, unknown>) => void;
 }
 
-type ModelSection = 'chat' | 'vision' | 'summary' | 'embedding' | 'image' | 'tts' | 'stt';
-const MODEL_SECTIONS: ModelSection[] = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'stt'];
+type ModelSection = 'chat' | 'vision' | 'summary' | 'embedding' | 'image' | 'tts';
+const MODEL_SECTIONS: ModelSection[] = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts'];
 
 /**
  * Persona + model configuration, persisted as JSON files under CONFIG_DIR.
@@ -71,6 +71,7 @@ export class ConfigStore {
 
   private loadModels(): ModelsConfig {
     let raw: unknown = {};
+    let migratedLegacyStt = false;
     if (fs.existsSync(this.modelsPath)) {
       try {
         raw = JSON.parse(fs.readFileSync(this.modelsPath, 'utf8'));
@@ -81,6 +82,17 @@ export class ConfigStore {
     } else {
       atomicWriteFileSync(this.modelsPath, JSON.stringify(DEFAULT_MODELS, null, 2));
     }
+
+    // `stt` was a user-upload/transcription capability in older releases. It
+    // is intentionally gone now, but an old models.json must not make the
+    // entire configuration look invalid or leave the deprecated section in
+    // backups forever.
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && Object.prototype.hasOwnProperty.call(raw, 'stt')) {
+      const migrated = { ...(raw as Record<string, unknown>) };
+      delete migrated.stt;
+      raw = migrated;
+      migratedLegacyStt = true;
+    }
     const parsed = ModelsConfigSchema.safeParse(raw);
     if (!parsed.success) {
       this.onLog?.('warn', 'models.json invalid, using defaults', { issues: parsed.error.issues.length });
@@ -88,6 +100,10 @@ export class ConfigStore {
       return DEFAULT_MODELS;
     }
     this.fileModels = parsed.data;
+    if (migratedLegacyStt) {
+      atomicWriteFileSync(this.modelsPath, JSON.stringify(parsed.data, null, 2));
+      this.onLog?.('info', 'migrated deprecated stt model configuration');
+    }
     return this.applyEnvOverrides(parsed.data);
   }
 
@@ -165,17 +181,6 @@ export class ConfigStore {
       if (ttsVoice) next.tts.voice = ttsVoice;
     }
 
-    const sttKey = pick(next.stt.apiKeyEnv ?? '', 'SOOYA_STT_API_KEY', 'OPENAI_API_KEY');
-    if (sttKey && !ownKey('stt')) next.stt.apiKey = sttKey;
-    if (!panelManaged('stt')) {
-      const sttBase = pick('SOOYA_STT_BASE_URL');
-      if (sttBase) next.stt.baseUrl = sttBase;
-      const sttModel = pick('SOOYA_STT_MODEL');
-      if (sttModel) {
-        next.stt.model = sttModel;
-        if (next.stt.provider === 'none') next.stt.provider = 'openai-transcriptions';
-      }
-    }
     return next;
   }
 

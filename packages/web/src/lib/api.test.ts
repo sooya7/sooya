@@ -287,8 +287,7 @@ describe('端点 URL 与 method', () => {
     ['life', () => api.life(), '/api/life', undefined],
     ['events', () => api.events(42), '/api/events?since=42', undefined],
     ['send', () => api.send({ clientMsgId: 'c1', content: [] }), '/api/messages', 'POST'],
-    ['withdraw', () => api.withdraw('msg_1'), '/api/messages/msg_1/withdraw', 'POST'],
-    ['transcribe', () => api.transcribe('media_1'), '/api/media/media_1/transcribe', 'POST']
+    ['withdraw', () => api.withdraw('msg_1'), '/api/messages/msg_1/withdraw', 'POST']
   ];
 
   it.each(cases)('%s 打到 %s', async (_name, run, url, method) => {
@@ -314,20 +313,6 @@ describe('端点 URL 与 method', () => {
     await api.withdraw('msg a/b#c');
 
     expect(calls[0]!.url).toBe('/api/messages/msg%20a%2Fb%23c/withdraw');
-  });
-
-  /*
-   * `transcribe` 没有像 `withdraw` 那样转义 id。这不是缺陷：媒体 id 全部由服务端
-   * `sortableId('media')` 生成（`packages/server/src/util/ids.ts`），字符集只有
-   * `[a-z0-9_]`，不含需要转义的字符，前端也只把服务端返回的 id 传进来。
-   * 这条用例把当前行为钉住，将来若 id 生成规则变了会立刻失败。
-   */
-  it('transcribe 不转义 id（当前行为，服务端 id 字符集已保证安全）', async () => {
-    const calls = recording();
-
-    await api.transcribe('media a/b');
-
-    expect(calls[0]!.url).toBe('/api/media/media a/b/transcribe');
   });
 
   it('send 的 body 是调用方自己 stringify 的 JSON', async () => {
@@ -361,37 +346,9 @@ describe('upload 的 FormData 组装', () => {
   it('Blob 且无显式 name 时回退到 upload', async () => {
     const calls = recording();
 
-    await api.upload([{ file: new Blob(['x'], { type: 'audio/webm' }), field: 'voice' }]);
+    await api.upload([{ file: new Blob(['x'], { type: 'application/octet-stream' }), field: 'file' }]);
 
-    expect(formEntries(calls[0]!.body)).toEqual([['voice', 'upload']]);
-  });
-
-  it('duration 只在 !== undefined 时 append，且 0 会保留', async () => {
-    const calls = recording();
-
-    await api.upload([{ file: new Blob(['x']), field: 'voice', duration: 0 }]);
-    await api.upload([{ file: new Blob(['x']), field: 'voice' }]);
-
-    expect(formEntries(calls[0]!.body)).toEqual([['voice', 'upload'], ['duration', '0']]);
-    expect(formEntries(calls[1]!.body)).toEqual([['voice', 'upload']]);
-  });
-
-  it('多文件时 duration 紧跟在它对应的文件之后', async () => {
-    const calls = recording();
-
-    await api.upload([
-      { file: new File(['a'], 'a.webm'), field: 'voice', duration: 3 },
-      { file: new File(['b'], 'b.png'), field: 'image' },
-      { file: new File(['c'], 'c.webm'), field: 'voice', duration: 7 }
-    ]);
-
-    expect(formEntries(calls[0]!.body)).toEqual([
-      ['voice', 'a.webm'],
-      ['duration', '3'],
-      ['image', 'b.png'],
-      ['voice', 'c.webm'],
-      ['duration', '7']
-    ]);
+    expect(formEntries(calls[0]!.body)).toEqual([['file', 'upload']]);
   });
 
   it('打到 /api/media 的 POST，且带鉴权头', async () => {

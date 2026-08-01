@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import type { MediaRef, StickerInfo } from '../lib/types.js';
-import { VoiceRecorder } from './VoiceRecorder.js';
 import { AuthenticatedImage } from './AuthenticatedMedia.js';
 
 export interface PendingAttachment {
   key: string;
   media: MediaRef;
   previewUrl: string;
-  kind: 'image' | 'audio' | 'file';
+  kind: 'image' | 'file';
   name: string;
 }
 
@@ -23,7 +22,6 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [showStickers, setShowStickers] = useState(false);
-  const [recording, setRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [sending, setSending] = useState(false);
@@ -58,9 +56,9 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
             key: m.id,
             media: m,
             previewUrl: '',
-            kind: m.kind === 'sticker' ? ('image' as const) : (m.kind as 'image' | 'audio' | 'file'),
+            kind: m.kind === 'sticker' || m.kind === 'image' ? ('image' as const) : m.kind === 'file' ? ('file' as const) : null,
             name: m.name ?? '文件'
-          }))
+          })).filter((item): item is PendingAttachment => item.kind !== null)
         ]);
       } catch (err) {
         onNotice(`上传失败：${(err as Error).message}`);
@@ -106,13 +104,6 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
     if (text.trim()) content.push({ type: 'text', text: text.trim() });
     for (const a of attachments) {
       if (a.kind === 'image') content.push({ type: 'image', mediaId: a.media.id });
-      else if (a.kind === 'audio')
-        content.push({
-          type: 'audio',
-          mediaId: a.media.id,
-          duration: a.media.duration ?? undefined,
-          transcript: a.media.transcript ?? undefined
-        });
       else content.push({ type: 'file', mediaId: a.media.id });
     }
     if (content.length === 0) return;
@@ -168,8 +159,6 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
             <div key={a.key} className="attachment">
               {a.kind === 'image' ? (
                 <AuthenticatedImage path={a.media.url} scope="user" alt={a.name} />
-              ) : a.kind === 'audio' ? (
-                <span className="attachment-generic">🎤 {Math.round(a.media.duration ?? 0)}s</span>
               ) : (
                 <span className="attachment-generic">{a.name}</span>
               )}
@@ -186,20 +175,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
         </div>
       )}
 
-      {recording ? (
-        <VoiceRecorder
-          onCancel={() => setRecording(false)}
-          onNotice={onNotice}
-          onReady={(media) => {
-            setAttachments((prev) => [
-              ...prev,
-              { key: media.id, media, previewUrl: '', kind: 'audio', name: '语音' }
-            ]);
-            setRecording(false);
-          }}
-        />
-      ) : (
-        <div className="composer-row">
+      <div className="composer-row">
           <button
             type="button"
             className="icon-btn"
@@ -266,19 +242,6 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
 
           <button
             type="button"
-            className="icon-btn"
-            aria-label="录制语音"
-            data-testid="btn-voice"
-            onClick={() => setRecording(true)}
-          >
-            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-              <rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" strokeWidth="1.7" />
-              <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-            </svg>
-          </button>
-
-          <button
-            type="button"
             className={`send-btn ${canSend ? 'active' : ''}`}
             data-testid="btn-send"
             disabled={!canSend}
@@ -290,7 +253,6 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
             </svg>
           </button>
         </div>
-      )}
 
       {uploading && <div className="composer-hint">正在上传…</div>}
 

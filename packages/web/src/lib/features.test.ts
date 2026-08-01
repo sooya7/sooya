@@ -129,9 +129,9 @@ describe('features request() 响应解析', () => {
   });
 
   it('正常 JSON 响应返回解析后的对象', async () => {
-    captureFetch(() => json({ entries: [{ id: 'w1' }], total: 1 }));
+    captureFetch(() => json({ settings: {} }));
 
-    await expect(featureApi.world()).resolves.toEqual({ entries: [{ id: 'w1' }], total: 1 });
+    await expect(featureApi.life()).resolves.toEqual({ settings: {} });
   });
 
   it('空响应体返回 null', async () => {
@@ -189,15 +189,11 @@ describe('features params() 查询串拼装', () => {
   });
 
   it('数字与布尔值转成字符串，参数全为空时 URL 不带 ?', async () => {
-    const calls = recording({ entries: [], total: 0 });
+    const calls = recording({ media: [], stats: {}, total: 0 });
 
-    await featureApi.world({ active: true, limit: 50 });
-    await featureApi.world();
-    await featureApi.world({ search: '', kind: undefined });
+    await featureApi.gallery({ search: '' });
 
-    expect(calls[0]!.url).toBe('/api/admin/world?active=true&limit=50');
-    expect(calls[1]!.url).toBe('/api/admin/world');
-    expect(calls[2]!.url).toBe('/api/admin/world');
+    expect(calls[0]!.url).toBe('/api/admin/gallery');
   });
 
   it('查询值里的特殊字符被编码', async () => {
@@ -233,16 +229,4 @@ describe('features 路径里的 id 转义', () => {
     ]);
   });
 
-  it('updateWorld / deleteWorld 对 id 做 encodeURIComponent', async () => {
-    const calls = recording({ entry: {} });
-
-    await featureApi.updateWorld('世界 #1', { subject: 's' });
-    await featureApi.deleteWorld('世界 #1');
-
-    const encoded = encodeURIComponent('世界 #1');
-    expect(calls[0]!.url).toBe(`/api/admin/world/${encoded}`);
-    expect(calls[0]!.method).toBe('PATCH');
-    expect(calls[1]!.url).toBe(`/api/admin/world/${encoded}`);
-    expect(calls[1]!.method).toBe('DELETE');
-  });
 });

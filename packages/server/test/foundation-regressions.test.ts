@@ -37,6 +37,24 @@ function executableLines(script: string): string {
 }
 
 describe('management panel configuration ownership', () => {
+  it('removes deprecated STT configuration while preserving the other model sections', () => {
+    const configDir = tempDir('sooya-stt-migration-');
+    fs.writeFileSync(
+      path.join(configDir, 'models.json'),
+      JSON.stringify({
+        chat: { provider: 'openai-chat', model: 'chat-model' },
+        stt: { provider: 'openai-transcriptions', model: 'whisper-1', apiKey: 'legacy-secret' }
+      })
+    );
+
+    const store = new ConfigStore({ configDir, env: {} as NodeJS.ProcessEnv });
+    expect(store.getModels().chat.model).toBe('chat-model');
+    expect('stt' in store.getModels()).toBe(false);
+    const migrated = fs.readFileSync(path.join(configDir, 'models.json'), 'utf8');
+    expect(migrated).not.toContain('stt');
+    expect(migrated).not.toContain('legacy-secret');
+  });
+
   it('keeps panel-saved model settings active immediately and after restart', () => {
     const configDir = tempDir('sooya-panel-config-');
     const env = {

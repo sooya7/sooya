@@ -120,19 +120,6 @@ export interface TTSProvider {
   inspectHealth(): Promise<HealthStatus>;
 }
 
-export interface TranscriptionResult {
-  text: string;
-  durationSec?: number;
-  language?: string;
-}
-
-export interface STTProvider {
-  readonly name: string;
-  readonly configured: boolean;
-  transcribe(audio: Buffer, opts?: { mime?: string; filename?: string; signal?: AbortSignal }): Promise<TranscriptionResult>;
-  inspectHealth(): Promise<HealthStatus>;
-}
-
 export class ProviderNotConfiguredError extends Error {
   override name = 'ProviderNotConfiguredError';
   constructor(capability: string) {

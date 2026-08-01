@@ -20,7 +20,7 @@ const state = {
   failImage: false,
   failTts: false,
   delayMs: 0,
-  calls: { chat: 0, image: 0, tts: 0, stt: 0, embedding: 0 }
+  calls: { chat: 0, image: 0, tts: 0, embedding: 0 }
 };
 
 /* ------------------------------ media builders ---------------------------- */
@@ -110,7 +110,7 @@ const server = http.createServer(async (req, res) => {
     if (typeof patch.failImage === 'boolean') state.failImage = patch.failImage;
     if (typeof patch.failTts === 'boolean') state.failTts = patch.failTts;
     if (typeof patch.delayMs === 'number') state.delayMs = patch.delayMs;
-    if (patch.resetCalls) state.calls = { chat: 0, image: 0, tts: 0, stt: 0, embedding: 0 };
+    if (patch.resetCalls) state.calls = { chat: 0, image: 0, tts: 0, embedding: 0 };
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, state: { ...state, queueLength: state.queue.length } }));
     return;
@@ -187,13 +187,6 @@ const server = http.createServer(async (req, res) => {
     const buf = makeMp3();
     res.writeHead(200, { 'content-type': 'audio/mpeg', 'content-length': String(buf.length) });
     res.end(buf);
-    return;
-  }
-
-  if (url.includes('/audio/transcriptions')) {
-    state.calls.stt++;
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ text: '这是语音转写的文字', duration: 2 }));
     return;
   }
 

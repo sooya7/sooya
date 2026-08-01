@@ -60,9 +60,6 @@ describe('拉取模型列表', () => {
   it('refuses an unknown slot and an unconfigured address', async () => {
     h = await boot();
     expect((await discover('nope')).res.statusCode).toBe(400);
-    const stt = await discover('stt');
-    // stt ships with no provider at all, so it is unsupported before it is empty.
-    expect(stt.res.statusCode).toBe(400);
   });
 
   it('reports an upstream failure as 502 rather than pretending the list is empty', async () => {

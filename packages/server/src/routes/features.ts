@@ -7,16 +7,6 @@ import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } fr
 import { LifePolicySchema } from '../config/schema.js';
 
 const IdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,80}$/);
-const WorldCandidateSchema = z.object({
-  kind: z.enum(['entity', 'relation', 'fact', 'scene', 'timeline']),
-  subject: z.string().min(1).max(200),
-  predicate: z.string().min(1).max(120),
-  object: z.string().min(1).max(500),
-  value: z.record(z.unknown()).optional(),
-  confidence: z.number().min(0).max(1).optional(),
-  authority: z.enum(['model', 'user', 'admin']).optional()
-});
-
 export function registerFeatureRoutes(app: SooyaApp): void {
   const { server, repos, services, config } = app;
   const admin = requireAdminToken(app);
@@ -368,57 +358,6 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       reply.code(502);
       return { error: 'preview_failed', message: (err as Error).message.slice(0, 300) };
     }
-  });
-
-  /* -------------------------------- world ---------------------------------- */
-  server.get('/api/admin/world', adminGuard, async (req) => {
-    const q = req.query as Record<string, string | undefined>;
-    const kind = ['entity', 'relation', 'fact', 'scene', 'timeline'].includes(q.kind ?? '') ? q.kind as never : undefined;
-    const active = q.active === undefined ? undefined : q.active !== 'false' && q.active !== '0';
-    return { entries: repos.world.list({ search: q.search, kind, active, limit: Number(q.limit ?? 100), offset: Number(q.offset ?? 0) }), total: repos.world.count() };
-  });
-  server.post('/api/admin/world', adminGuard, async (req, reply) => {
-    const parsed = WorldCandidateSchema.safeParse(req.body);
-    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
-    const entry = repos.world.create({ ...parsed.data, authority: 'admin' });
-    repos.audit.add('world', 'created', entry.id);
-    services.bus.publish('world.updated', { id: entry.id, action: 'created' });
-    return { entry };
-  });
-  server.patch('/api/admin/world/:id', adminGuard, async (req, reply) => {
-    const id = (req.params as { id: string }).id;
-    const parsed = WorldCandidateSchema.partial().extend({ active: z.boolean().optional() }).safeParse(req.body);
-    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
-    const entry = repos.world.update(id, { ...parsed.data, authority: parsed.data.authority ?? 'admin' });
-    if (!entry) { reply.code(404); return { error: 'not_found' }; }
-    repos.audit.add('world', 'updated', id);
-    services.bus.publish('world.updated', { id, action: 'updated' });
-    return { entry };
-  });
-  server.delete('/api/admin/world/:id', adminGuard, async (req, reply) => {
-    const id = (req.params as { id: string }).id;
-    const deleted = repos.world.remove(id);
-    if (!deleted) { reply.code(404); return { error: 'not_found' }; }
-    repos.audit.add('world', 'deleted', id);
-    services.bus.publish('world.updated', { id, action: 'deleted' });
-    return { deleted: true };
-  });
-  server.get('/api/admin/world/export', adminGuard, async () => services.world.export());
-  server.post('/api/admin/world/import', adminGuard, async (req, reply) => {
-    try {
-      const result = services.world.import(req.body);
-      repos.audit.add('world', 'imported', null, result);
-      services.bus.publish('world.updated', { imported: true, ...result });
-      return result;
-    } catch (err) {
-      reply.code(400);
-      return { error: 'invalid_import', message: (err as Error).message };
-    }
-  });
-  server.post('/api/admin/world/rebuild', adminGuard, async (req) => {
-    const limit = Number((req.body as { limit?: number } | undefined)?.limit ?? 400);
-    const job = repos.jobs.enqueue('world.rebuild', { limit }, { maxAttempts: 2 });
-    return { queued: true, job };
   });
 
   /* -------------------------------- storage -------------------------------- */

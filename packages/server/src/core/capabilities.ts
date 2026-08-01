@@ -3,17 +3,15 @@ import { createChatProvider, type ProviderDeps } from '../providers/chat/openai.
 import { createEmbeddingProvider, OpenAIEmbeddingProvider } from '../providers/embedding.js';
 import { createImageProvider } from '../providers/image.js';
 import { createTTSProvider } from '../providers/tts.js';
-import { createSTTProvider } from '../providers/stt.js';
 import type {
   ChatProvider,
   EmbeddingProvider,
   HealthStatus,
   ImageProvider,
-  STTProvider,
   TTSProvider
 } from '../providers/types.js';
 
-export type CapabilityName = 'chat' | 'vision' | 'summary' | 'embedding' | 'image' | 'tts' | 'stt';
+export type CapabilityName = 'chat' | 'vision' | 'summary' | 'embedding' | 'image' | 'tts';
 
 /**
  * Central model gateway / capability registry.
@@ -27,7 +25,6 @@ export class CapabilityRegistry {
   private embedding!: EmbeddingProvider;
   private image!: ImageProvider;
   private tts!: TTSProvider;
-  private stt!: STTProvider;
 
   constructor(
     private readonly config: ConfigStore,
@@ -44,7 +41,6 @@ export class CapabilityRegistry {
     this.embedding = createEmbeddingProvider(models.embedding, this.deps);
     this.image = createImageProvider(models.image, this.deps);
     this.tts = createTTSProvider(models.tts, this.deps);
-    this.stt = createSTTProvider(models.stt, this.deps);
   }
 
   chatProvider(): ChatProvider {
@@ -82,10 +78,6 @@ export class CapabilityRegistry {
     return this.tts;
   }
 
-  sttProvider(): STTProvider {
-    return this.stt;
-  }
-
   has(cap: CapabilityName): boolean {
     switch (cap) {
       case 'chat':
@@ -100,8 +92,6 @@ export class CapabilityRegistry {
         return this.image.configured;
       case 'tts':
         return this.tts.configured;
-      case 'stt':
-        return this.stt.configured;
       default:
         return false;
     }
@@ -109,14 +99,13 @@ export class CapabilityRegistry {
 
   async statuses(): Promise<Record<CapabilityName, HealthStatus>> {
     const visionCfg = this.config.chatModelFor('vision');
-    const [chat, vision, summary, embedding, image, tts, stt] = await Promise.all([
+    const [chat, vision, summary, embedding, image, tts] = await Promise.all([
       this.chat.inspectHealth(),
       this.vision.inspectHealth(),
       this.summary.inspectHealth(),
       this.embedding.inspectHealth(),
       this.image.inspectHealth(),
-      this.tts.inspectHealth(),
-      this.stt.inspectHealth()
+      this.tts.inspectHealth()
     ]);
     return {
       chat,
@@ -130,8 +119,7 @@ export class CapabilityRegistry {
       summary: { ...summary, capability: 'summary' },
       embedding,
       image,
-      tts,
-      stt
+      tts
     };
   }
 }

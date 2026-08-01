@@ -1,21 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdminPersona } from '../lib/admin.js';
-import { adminMediaUrl, featureApi, type LifePanelData, type LifeSettings, type WorldEntry } from '../lib/features.js';
+import { adminMediaUrl, featureApi, type LifePanelData, type LifeSettings } from '../lib/features.js';
 import { formatGap, herClock, reachReasonText, slotProgress, sortedLog } from '../lib/lifeView.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 
 const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'gentle'] as const;
 const EMOTION_LABELS: Record<string, string> = { neutral: '中性', happy: '开心', sad: '难过', angry: '生气', gentle: '温柔' };
-const WORLD_KINDS = [
-  ['entity', '实体'],
-  ['relation', '关系'],
-  ['fact', '事实'],
-  ['scene', '场景'],
-  ['timeline', '时间线']
-] as const;
-
-type WorldDraft = { kind: WorldEntry['kind']; subject: string; predicate: string; object: string };
-
 function bytes(value: unknown): string {
   const n = Number(value ?? 0);
   if (n < 1024) return `${n} B`;
@@ -209,73 +199,6 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
 /** 一条都没有通常不是坏了：只有换时段那一刻才落一条，睡整夜就是空的。 */
 function EmptyLife() {
   return <div className="admin-empty">还没有记录。她每换一件事才记一条，所以刚重启或整夜睡觉时这里是空的。</div>;
-}
-
-export function WorldEditor({ onNotice }: { onNotice: (s: string) => void }) {
-  const [entries, setEntries] = useState<WorldEntry[]>([]);
-  const [search, setSearch] = useState('');
-  const [draft, setDraft] = useState<WorldDraft>({ kind: 'fact', subject: '', predicate: '', object: '' });
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [edit, setEdit] = useState<WorldDraft>({ kind: 'fact', subject: '', predicate: '', object: '' });
-  const importRef = useRef<HTMLInputElement | null>(null);
-  const load = () => featureApi.world({ search, limit: 200 }).then((result) => setEntries(result.entries)).catch((error) => onNotice(errorText(error)));
-  useEffect(() => { void load(); }, []);
-  const create = async () => {
-    try {
-      await featureApi.createWorld(draft);
-      setDraft({ kind: 'fact', subject: '', predicate: '', object: '' });
-      await load();
-      onNotice('世界条目已创建');
-    } catch (error) {
-      onNotice(errorText(error));
-    }
-  };
-  const startEdit = (entry: WorldEntry) => {
-    setEditingId(entry.id);
-    setEdit({ kind: entry.kind, subject: entry.subject, predicate: entry.predicate, object: entry.object });
-  };
-  const saveEdit = async () => {
-    if (!editingId) return;
-    try {
-      await featureApi.updateWorld(editingId, edit);
-      setEditingId(null);
-      await load();
-      onNotice('世界条目已更新');
-    } catch (error) {
-      onNotice(errorText(error));
-    }
-  };
-  const exportData = async () => {
-    try {
-      const data = await featureApi.exportWorld();
-      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `sooya-world-${new Date().toISOString().slice(0, 10)}.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      onNotice(errorText(error));
-    }
-  };
-  const importData = async (file?: File) => {
-    if (!file) return;
-    try {
-      await featureApi.importWorld(JSON.parse(await file.text()));
-      await load();
-      onNotice('世界数据已导入');
-    } catch (error) {
-      onNotice(errorText(error));
-    }
-  };
-  return (
-    <section className="admin-form-card" data-testid="world-settings">
-      <div className="admin-panel-heading"><div><p>查看、搜索、编辑、禁用、删除、导入与重建持久化世界状态。</p></div></div>
-      <div className="admin-actions"><input placeholder="搜索实体、关系或事实" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void load(); }} /><button type="button" onClick={() => void load()}>搜索</button><button type="button" onClick={() => void featureApi.rebuildWorld().then(() => onNotice('世界重建任务已进入队列')).catch((error) => onNotice(errorText(error)))}>从对话重建</button><button type="button" onClick={() => void exportData()}>导出</button><button type="button" onClick={() => importRef.current?.click()}>导入</button><input ref={importRef} hidden type="file" accept="application/json" onChange={(event) => void importData(event.target.files?.[0])} /></div>
-      <div className="admin-list-row"><select value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value as WorldEntry['kind'] })}>{WORLD_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input placeholder="主体" value={draft.subject} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} /><input placeholder="关系/属性" value={draft.predicate} onChange={(event) => setDraft({ ...draft, predicate: event.target.value })} /><input placeholder="内容" value={draft.object} onChange={(event) => setDraft({ ...draft, object: event.target.value })} /><button type="button" disabled={!draft.subject || !draft.predicate || !draft.object} onClick={() => void create()}>新增</button></div>
-      {entries.length === 0 ? <div className="admin-empty">暂无匹配的世界条目</div> : entries.map((entry) => editingId === entry.id ? <div className="admin-list-row world-edit-row" key={entry.id}><select aria-label="编辑世界类型" value={edit.kind} onChange={(event) => setEdit({ ...edit, kind: event.target.value as WorldEntry['kind'] })}>{WORLD_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input aria-label="编辑主体" value={edit.subject} onChange={(event) => setEdit({ ...edit, subject: event.target.value })} /><input aria-label="编辑关系" value={edit.predicate} onChange={(event) => setEdit({ ...edit, predicate: event.target.value })} /><input aria-label="编辑内容" value={edit.object} onChange={(event) => setEdit({ ...edit, object: event.target.value })} /><button type="button" disabled={!edit.subject || !edit.predicate || !edit.object} onClick={() => void saveEdit()}>保存编辑</button><button type="button" onClick={() => setEditingId(null)}>取消</button></div> : <div className="admin-list-row" key={entry.id}><span><strong>{entry.subject}</strong> · {entry.predicate} → {entry.object}<small> {entry.kind} / {entry.authority}{entry.conflict_of ? ' / 冲突候选' : ''}</small></span><button type="button" onClick={() => startEdit(entry)}>编辑</button><button type="button" onClick={() => void featureApi.updateWorld(entry.id, { active: !(entry.active === 1 || entry.active === true) }).then(load).catch((error) => onNotice(errorText(error)))}>{entry.active === 1 || entry.active === true ? '禁用' : '启用'}</button><button type="button" className="admin-danger" onClick={() => { if (window.confirm('确认删除该世界条目？')) void featureApi.deleteWorld(entry.id).then(load).catch((error) => onNotice(errorText(error))); }}>删除</button></div>)}
-    </section>
-  );
 }
 
 const CLEANUP_PAGE_SIZE = 50;

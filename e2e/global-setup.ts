@@ -47,8 +47,7 @@ export default async function globalSetup(): Promise<void> {
         },
         embedding: { provider: 'openai-embeddings', baseUrl: base, apiKey: 'sk-e2e-mock-key', model: 'mock-embed', dimensions: 32 },
         image: { provider: 'openai-images', baseUrl: base, apiKey: 'sk-e2e-mock-key', model: 'mock-image', maxRetries: 0 },
-        tts: { provider: 'openai-tts', baseUrl: base, apiKey: 'sk-e2e-mock-key', model: 'mock-tts', format: 'mp3', maxRetries: 0 },
-        stt: { provider: 'openai-transcriptions', baseUrl: base, apiKey: 'sk-e2e-mock-key', model: 'mock-stt', maxRetries: 0 }
+        tts: { provider: 'openai-tts', baseUrl: base, apiKey: 'sk-e2e-mock-key', model: 'mock-tts', format: 'mp3', maxRetries: 0 }
       },
       null,
       2

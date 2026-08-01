@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createHarness, sendText, TEST_PNG, makeFakeWav, type Harness } from './helpers/harness.js';
+import { createHarness, sendText, TEST_PNG, type Harness } from './helpers/harness.js';
 import type { ChatMessage } from '../src/core/types.js';
 
 let h: Harness;
@@ -37,6 +37,16 @@ describe('text chat', () => {
   it('rejects malformed payloads', async () => {
     h = await createHarness();
     const res = await h.app.server.inject({ method: 'POST', url: '/api/messages', payload: { content: [] } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it.each(['/api/messages', '/api/messages/sync'])('rejects user audio input on %s', async (url) => {
+    h = await createHarness();
+    const res = await h.app.server.inject({
+      method: 'POST',
+      url,
+      payload: { clientMsgId: `audio-${url}`, content: [{ type: 'audio', mediaId: 'media_audio' }] }
+    });
     expect(res.statusCode).toBe(400);
   });
 
@@ -407,36 +417,26 @@ describe('user uploads', () => {
     expect(upload.json().media).toHaveLength(2);
   });
 
-  it('accepts a voice note upload and reports its duration', async () => {
+  it('rejects voice and audio upload fields, while treating an mp3 file as a normal file', async () => {
     h = await createHarness();
-    const wav = makeFakeWav(3);
+    for (const field of ['voice', 'audio']) {
+      const form = new FormData();
+      form.set(field, new Blob(['audio'], { type: 'audio/mpeg' }), 'note.mp3');
+      const upload = await h.app.server.inject({ method: 'POST', url: '/api/media', payload: form });
+      expect(upload.statusCode).toBe(415);
+      expect(upload.json().failed[0].code).toBe('UNSUPPORTED_FIELD');
+    }
     const form = new FormData();
-    form.set('voice', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), 'note.wav');
+    form.set('file', new Blob(['audio'], { type: 'audio/mpeg' }), 'note.mp3');
     const upload = await h.app.server.inject({ method: 'POST', url: '/api/media', payload: form });
     expect(upload.statusCode).toBe(200);
-    const media = upload.json().media[0];
-    expect(media.kind).toBe('audio');
-    expect(media.duration).toBeCloseTo(3, 1);
+    expect(upload.json().media[0].kind).toBe('file');
   });
 
-  it('transcribes an uploaded voice note when STT is configured', async () => {
-    h = await createHarness({ stt: 'ok' });
-    const form = new FormData();
-    form.set('voice', new Blob([new Uint8Array(makeFakeWav(1))], { type: 'audio/wav' }), 'note.wav');
-    const mediaId = (await h.app.server.inject({ method: 'POST', url: '/api/media', payload: form })).json().media[0].id;
-    const res = await h.app.server.inject({ method: 'POST', url: `/api/media/${mediaId}/transcribe` });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().transcript).toContain('转写');
-    expect(h.app.repos.media.get(mediaId)!.transcript).toContain('转写');
-  });
-
-  it('returns 503 for transcription when STT is not configured', async () => {
-    h = await createHarness({ stt: 'off' });
-    const form = new FormData();
-    form.set('voice', new Blob([new Uint8Array(makeFakeWav(1))], { type: 'audio/wav' }), 'note.wav');
-    const mediaId = (await h.app.server.inject({ method: 'POST', url: '/api/media', payload: form })).json().media[0].id;
-    const res = await h.app.server.inject({ method: 'POST', url: `/api/media/${mediaId}/transcribe` });
-    expect(res.statusCode).toBe(503);
+  it('removes the transcription endpoint', async () => {
+    h = await createHarness();
+    const res = await h.app.server.inject({ method: 'POST', url: '/api/media/media_missing/transcribe' });
+    expect(res.statusCode).toBe(404);
   });
 });
 

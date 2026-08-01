@@ -89,7 +89,7 @@ Authorization: Bearer <WEB_CHAT_TOKEN>
 | `text` | 文本 | `text` |
 | `sticker` | 表情包 | `mediaId`, `meta.stickerName` |
 | `image` | 图片（上传或生成） | `mediaId`, `media.width/height` |
-| `audio` | 语音 | `mediaId`, `duration`, `transcript` |
+| `audio` | SOOYA 生成的语音（历史消息兼容） | `mediaId`, `duration`, `transcript` |
 | `file` | 任意文件 | `mediaId`, `media.name`, `media.bytes` |
 | `system` | 系统提示 | `text` |
 
@@ -206,8 +206,10 @@ Authorization: Bearer <WEB_CHAT_TOKEN>
 | 字段名 | 类型 | 限制 |
 | --- | --- | --- |
 | `image` / `images` | 图片 | PNG, JPEG, GIF, WebP, BMP, AVIF |
-| `voice` / `audio` | 音频 | webm, ogg, mp3, mp4/m4a, wav, aac, flac |
 | `file` / `files` | 文件 | pdf, txt, md, csv, json, zip, tar, gz, docx, xlsx, pptx |
+
+用户语音输入与转写已移除；音频字段会返回 `415 UNSUPPORTED_FIELD`。音频文件如需保存，
+请使用 `file` 字段，服务端按普通文件处理，不会把它作为用户语音输入。
 
 限制：单文件 `MAX_UPLOAD_BYTES`（默认 25 MB），单请求 `MAX_UPLOAD_FILES`（默认 9）。
 
@@ -253,11 +255,7 @@ Authorization: Bearer <WEB_CHAT_TOKEN>
 
 ### `POST /api/media/:id/transcribe`
 
-用 STT 转写一段音频，并把结果写回该媒体记录。
-
-- `200` `{ "transcript": "...", "duration": 2.0 }`
-- `503` STT 未配置
-- `502` 转写失败
+已移除。该路径返回 `404`；系统不再提供用户音频转写。
 
 ---
 
@@ -337,8 +335,7 @@ Authorization: Bearer <WEB_CHAT_TOKEN>
     "summary":   { "configured": true,  "ok": true },
     "embedding": { "configured": false, "ok": false, "detail": "not configured" },
     "image":     { "configured": false, "ok": false, "detail": "not configured" },
-    "tts":       { "configured": false, "ok": false, "detail": "not configured" },
-    "stt":       { "configured": false, "ok": false, "detail": "not configured" } },
+    "tts":       { "configured": false, "ok": false, "detail": "not configured" } },
   "stickers": { "available": 11, "total": 11 },
   "memory":   { "total": 12, "withEmbedding": 0, "coverage": 0, "byKind": { "profile": 3 } },
   "agent":    { "active": false, "tools": 0 } }
@@ -435,6 +432,4 @@ v1 **不提供管理面板网页**，只预留后端接口。全部需要 `X-Adm
 | 415 | – | 上传文件类型不被允许 |
 | 416 | – | Range 请求越界 |
 | 500 | `backup_failed` | 备份失败 |
-| 502 | `transcription_failed` | 第三方转写失败 |
 | 503 | `admin_disabled` | 未配置 `ADMIN_API_TOKEN` |
-| 503 | `stt_not_configured` | 能力未配置 |

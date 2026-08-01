@@ -92,7 +92,6 @@ WEB_CHAT_TOKEN=$(openssl rand -hex 32)
 # 可选能力
 SOOYA_TTS_MODEL=gpt-4o-mini-tts
 SOOYA_IMAGE_MODEL=gpt-image-1
-SOOYA_STT_MODEL=whisper-1
 SOOYA_EMBEDDING_MODEL=text-embedding-3-small
 ```
 

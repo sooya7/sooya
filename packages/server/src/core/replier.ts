@@ -137,7 +137,6 @@ export class Replier {
           requestMaxTokens,
           droppedSummaries: built.droppedSummaries,
           droppedMemories: built.droppedMemories,
-          droppedWorldEntries: built.droppedWorldEntries,
           droppedRecentMessages: built.droppedRecentMessages
         }
       });

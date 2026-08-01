@@ -68,7 +68,7 @@ export function registerChatRoutes(app: SooyaApp): void {
     const tx = app.db.transaction(() => {
       const created = repos.messages.createInTransaction({
         role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
+        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: null, transcript: null })),
         meta: { directives }
       });
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
@@ -97,7 +97,7 @@ export function registerChatRoutes(app: SooyaApp): void {
     const tx = app.db.transaction(() => {
       const created = repos.messages.createInTransaction({
         role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: part.type === 'audio' ? part.duration ?? null : null, transcript: part.type === 'audio' ? part.transcript ?? null : null })),
+        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: null, transcript: null })),
         meta: { directives }
       });
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
@@ -181,7 +181,6 @@ function validateInput(app: SooyaApp, content: Array<{ type: string; mediaId?: s
 function enqueuePostReply(app: SooyaApp, userMessageId: string, assistantMessageId: string): void {
   try {
     if (!app.env.DISABLE_MEMORY_PIPELINE) app.repos.jobs.enqueue('memory.extract', { userMessageId, assistantMessageId });
-    app.repos.jobs.enqueue('world.extract', { userMessageId, assistantMessageId }, { maxAttempts: 3 });
     app.repos.jobs.enqueue('push.reply', { messageId: assistantMessageId }, { maxAttempts: 3 });
     if (app.services.summarizer.needsSummary()) app.repos.jobs.enqueue('summary.build', {});
   } catch (error) {
