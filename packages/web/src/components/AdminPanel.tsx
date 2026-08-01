@@ -471,6 +471,11 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           </label>
         )}
         {selected === 'image' && <label>图片尺寸<input value={String(config.size ?? '')} onChange={(e) => update('size', e.target.value)} /></label>}
+        {selected === 'image' && config.provider === 'anuma-input-images' && <>
+          <label>Anuma 上传超时（毫秒）<input type="number" min="1000" max="120000" value={String(config.uploadTimeoutMs ?? 20000)} onChange={(e) => update('uploadTimeoutMs', Number(e.target.value))} /></label>
+          <label>Anuma 上传重试次数<input type="number" min="0" max="3" value={String(config.uploadMaxRetries ?? 2)} onChange={(e) => update('uploadMaxRetries', Number(e.target.value))} /></label>
+          <p className="admin-muted admin-form-wide">Anuma 图生图会先上传参考图，再把 HTTPS 地址传给 generations；不会把图片 Base64 或签名地址写入日志。</p>
+        </>}
         {selected === 'tts' && <>
           <label>音色<input value={String(config.voice ?? '')} onChange={(e) => update('voice', e.target.value)} /></label>
           <label>语速<input type="number" step="0.1" value={String(config.speed ?? '')} onChange={(e) => update('speed', Number(e.target.value))} /></label>
