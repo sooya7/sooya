@@ -7,7 +7,8 @@ import type { BootstrapInfo } from './api.js';
 import type { ChatMessage } from './types.js';
 
 /**
- * `useChat` 的第一、二片：首屏挂载与 `send()`，以及 SSE 事件分派与流式草稿。
+ * `useChat` 的三片覆盖：首屏挂载与 `send()`；SSE 事件分派与流式草稿；
+ * `resync()` 翻页、`loadOlder()`、`resend()`、`withdraw()` 与回前台重同步。
  *
  * 这个 hook 一挂载就会 `api.bootstrap()` 并开一条真实的 `ChatStream`，所以桩 `fetch`
  * 必须按路由分派：`/api/bootstrap`、`/api/stream`（一条永不结束的 SSE，模拟空闲长连接）
@@ -126,7 +127,9 @@ interface Routes {
   bootstrap?: () => Response;
   send?: () => Response | Promise<Response>;
   /** `GET /api/messages`：`resync()` 的增量与 `loadOlder()` 的翻页都走这里。 */
-  messages?: (url: string) => Response;
+  messages?: (url: string) => Response | Promise<Response>;
+  /** `POST /api/messages/<id>/withdraw`：必须比 `send` 先匹配，否则会被 POST 分支吃掉。 */
+  withdraw?: (url: string) => Response;
   life?: () => Response;
   /** 默认空闲 SSE；第二片用 `pushableStream()` 换成可推送的连接。 */
   stream?: () => Response;
@@ -147,6 +150,11 @@ function stubRoutes(routes: Routes = {}): ReturnType<typeof vi.fn> {
     if (url.startsWith('/api/bootstrap')) return routes.bootstrap ? routes.bootstrap() : json(bootstrapInfo());
     if (url.startsWith('/api/stream')) return routes.stream ? routes.stream() : idleStream();
     if (url.startsWith('/api/messages')) {
+      // 撤回也是 POST /api/messages…，先按路径尾判掉，否则会落到 send 的应答上。
+      if (url.endsWith('/withdraw')) {
+        if (!routes.withdraw) throw new Error('用例没有配置 POST /api/messages/<id>/withdraw 的应答');
+        return routes.withdraw(url);
+      }
       if (init.method === 'POST') {
         if (!routes.send) throw new Error('用例没有配置 POST /api/messages 的应答');
         return routes.send();
@@ -164,9 +172,15 @@ function stubRoutes(routes: Routes = {}): ReturnType<typeof vi.fn> {
   return mock;
 }
 
-function sendCall(): { clientMsgId: string; content: Array<Record<string, unknown>>; replyTo?: string } {
-  const post = calls.find((call) => call.url === '/api/messages' && call.method === 'POST');
-  return JSON.parse(post!.body!) as { clientMsgId: string; content: Array<Record<string, unknown>>; replyTo?: string };
+interface SendPayload { clientMsgId: string; content: Array<Record<string, unknown>>; replyTo?: string }
+
+/** 所有 `POST /api/messages` 的载荷，按发出顺序；重试要靠它比对幂等键。 */
+function sendCalls(): SendPayload[] {
+  return calls.filter((call) => call.url === '/api/messages' && call.method === 'POST').map((call) => JSON.parse(call.body!) as SendPayload);
+}
+
+function sendCall(): SendPayload {
+  return sendCalls()[0]!;
 }
 
 function streamUrls(): string[] {
@@ -224,12 +238,25 @@ async function mountStreaming(routes: Routes = {}): Promise<{ chat: () => Chat; 
   return { chat, push: sse.push };
 }
 
-afterEach(async () => {
-  // 先卸载（会 stop() 掉长连接），再拆桩。
+/** 卸载所有挂载出来的 root（会 `stream.stop()` 并摘掉可见性监听）。 */
+async function unmountAll(): Promise<void> {
   for (const { root, container } of roots.splice(0)) {
     await act(async () => { root.unmount(); });
     container.remove();
   }
+}
+
+/** 派发一个事件并把它引发的请求与重渲染都冲干。 */
+async function dispatch(target: EventTarget, type: string): Promise<void> {
+  await act(async () => {
+    target.dispatchEvent(new Event(type));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+afterEach(async () => {
+  // 先卸载（会 stop() 掉长连接），再拆桩。
+  await unmountAll();
   calls.length = 0;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -512,5 +539,263 @@ describe('useChat 其他事件分派', () => {
     expect(countCalls('/api/bootstrap')).toBe(1);
     expect(messageQueries()).toEqual(['/api/messages?limit=100&since=7']);
     expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
+  });
+});
+
+describe('useChat resync() 增量翻页', () => {
+  it('按服务端游标连走多页直到 hasMore 为 false，跨页消息按 id 去重', async () => {
+    let page = 0;
+    stubRoutes({
+      messages: () => {
+        page += 1;
+        if (page === 1) return messagePage([message({ id: 'm_7', seq: 7 }), message({ id: 'm_8', seq: 8 })], { hasMore: true, nextSince: 8 });
+        return messagePage([message({ id: 'm_8', seq: 8 }), message({ id: 'm_9', seq: 9 })]);
+      }
+    });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().resync(); });
+
+    // 服务端每页有上限，claim 了 hasMore 就得带着 nextSince 再要一页，
+    // 只打一次会把落下的消息永久丢掉。
+    expect(messageQueries()).toEqual(['/api/messages?limit=100&since=7', '/api/messages?limit=100&since=8']);
+    // 两页都回了 m_8，合并后只能有一条。
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8', 'm_9']);
+    // 追增量的 hasMore 说的是「还有更新的消息」，不能拿它覆盖「还有更老的历史」。
+    expect(chat().hasMore).toBe(true);
+    expect(chat().error).toBeNull();
+  });
+
+  it('游标不前进时报错收场，不继续打请求', async () => {
+    stubRoutes({ messages: () => messagePage([message({ id: 'm_7', seq: 7 })], { hasMore: true, nextSince: 7 }) });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().resync(); });
+
+    // nextSince 没超过当前游标，再要一次只会拿到同一页：必须停下来而不是空转。
+    expect(messageQueries()).toEqual(['/api/messages?limit=100&since=7']);
+    expect(chat().error).toBe('catch-up cursor stalled at seq 7');
+    expect(chat().connection).toBe('online');
+  });
+
+  it('没有已知 seq 时改拉首页并更新 hasMore', async () => {
+    stubRoutes({
+      bootstrap: () => json(bootstrapInfo({ messages: { messages: [], hasMore: false, lastEventSeq: 42, lastMessageSeq: 0, oldestSeq: null } })),
+      messages: () => messagePage([message({ id: 'm_1', seq: 1 }), message({ id: 'm_2', seq: 2 })], { hasMore: true })
+    });
+    const chat = await mountChat();
+    expect(chat().messages).toEqual([]);
+
+    await act(async () => { await chat().resync(); });
+
+    // 一条都没有时 since=0 对服务端没意义，只能按首页大小重新要一页。
+    expect(messageQueries()).toEqual(['/api/messages?limit=30']);
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_1', 'm_2']);
+    expect(chat().hasMore).toBe(true);
+    expect(chat().error).toBeNull();
+  });
+
+  it('resync 遇到 401 时置为未授权且不报文案', async () => {
+    stubRoutes({ messages: () => json({ error: 'unauthorized' }, 401) });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().resync(); });
+
+    // 令牌失效是要去重新登录，不是往聊天界面上贴一条报错。
+    expect(chat().connection).toBe('unauthorized');
+    expect(chat().error).toBeNull();
+  });
+
+  it('resync 遇到其他错误时暴露服务端文案', async () => {
+    stubRoutes({ messages: () => json({ message: '增量读不到' }, 500) });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().resync(); });
+
+    expect(chat().error).toBe('增量读不到');
+    expect(chat().connection).toBe('online');
+  });
+});
+
+describe('useChat loadOlder()', () => {
+  it('按最老一条的 seq 往前翻一页并合入历史', async () => {
+    stubRoutes({ messages: () => messagePage([message({ id: 'm_5', seq: 5 }), message({ id: 'm_6', seq: 6 })]) });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().loadOlder(); });
+
+    expect(messageQueries()).toEqual(['/api/messages?limit=30&before=7']);
+    // 老消息要排在前面，顺序由 seq 决定而不是到达顺序。
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_5', 'm_6', 'm_7']);
+    expect(chat().hasMore).toBe(false);
+    expect(chat().loadingOlder).toBe(false);
+  });
+
+  it('请求挂起期间重复调用不会再打一次', async () => {
+    const older = deferredResponse();
+    stubRoutes({ messages: () => older.promise });
+    const chat = await mountChat();
+
+    let first!: Promise<void>;
+    await act(async () => { first = chat().loadOlder(); });
+    expect(chat().loadingOlder).toBe(true);
+
+    // 用户连点「加载更早」不能变成并发翻页：同一页会被重复拉、还可能乱序合并。
+    await act(async () => { await chat().loadOlder(); });
+    expect(countCalls('/api/messages?')).toBe(1);
+
+    await act(async () => {
+      older.settle(messagePage([message({ id: 'm_6', seq: 6 })], { hasMore: true }));
+      await first;
+    });
+
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_6', 'm_7']);
+    expect(chat().hasMore).toBe(true);
+    expect(chat().loadingOlder).toBe(false);
+  });
+
+  it('hasMore 为 false 时直接返回，不发请求', async () => {
+    stubRoutes({ bootstrap: () => json(bootstrapInfo({ messages: { messages: [message({ id: 'm_7', seq: 7 })], hasMore: false, lastEventSeq: 42, lastMessageSeq: 7, oldestSeq: 7 } })) });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().loadOlder(); });
+
+    // 已经翻到底了，再往前要只是白打一次请求。
+    expect(messageQueries()).toEqual([]);
+    expect(chat().error).toBeNull();
+    expect(chat().loadingOlder).toBe(false);
+  });
+
+  it('翻页失败时暴露错误并复位 loadingOlder', async () => {
+    stubRoutes({ messages: () => json({ message: '历史读不到' }, 500) });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().loadOlder(); });
+
+    expect(chat().error).toBe('历史读不到');
+    // 卡在 true 会让「加载更早」永久按不动。
+    expect(chat().loadingOlder).toBe(false);
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7']);
+  });
+});
+
+describe('useChat resend()', () => {
+  it('复用原 clientMsgId 重试，成功后失败条目被服务端消息替掉', async () => {
+    let posts = 0;
+    stubRoutes({
+      send: () => {
+        posts += 1;
+        const { clientMsgId } = sendCalls().at(-1)!;
+        if (posts === 1) return json({ message: '上游炸了' }, 500);
+        return json({ message: message({ id: 'm_8', seq: 8, role: 'user', clientMsgId, content: [part({ id: 'p_8', text: '在吗' })] }), duplicate: true, replyPending: true });
+      }
+    });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().send([{ type: 'text', text: '在吗' }]).catch(() => {}); });
+    const failed = chat().messages.find((m) => m.pendingLocal)!;
+    expect(failed.status).toBe('failed');
+
+    await act(async () => { await chat().resend(failed); });
+
+    const payloads = sendCalls();
+    expect(payloads).toHaveLength(2);
+    // 换一个幂等键就等于再发一条：服务端已经收下的那次会变成重复消息。
+    expect(payloads[1]!.clientMsgId).toBe(payloads[0]!.clientMsgId);
+    expect(payloads[1]!.content).toEqual([{ type: 'text', text: '在吗' }]);
+    // 服务端认下之后本地那条失败气泡必须消失，不能和真消息并列。
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
+    expect(chat().messages.some((m) => m.pendingLocal)).toBe(false);
+    expect(chat().error).toBeNull();
+  });
+
+  it('消息没有 clientMsgId 时退回 send() 新造幂等键', async () => {
+    stubRoutes({
+      bootstrap: () => json(bootstrapInfo({ messages: { messages: [message({ id: 'm_7', seq: 7, role: 'user', status: 'failed' })], hasMore: false, lastEventSeq: 42, lastMessageSeq: 7, oldestSeq: 7 } })),
+      send: () => json({ message: message({ id: 'm_8', seq: 8, role: 'user', clientMsgId: sendCalls().at(-1)!.clientMsgId }), duplicate: false, replyPending: true })
+    });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().resend(chat().messages[0]!); });
+
+    const payloads = sendCalls();
+    expect(payloads).toHaveLength(1);
+    // 没有原幂等键就没法让服务端去重，只能当成一条新消息发。
+    expect(payloads[0]!.clientMsgId).toMatch(/^c_/);
+    expect(payloads[0]!.content).toEqual([{ type: 'text', text: '嗨' }]);
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
+    expect(chat().messages.some((m) => m.pendingLocal)).toBe(false);
+  });
+
+  it('重试再失败时重新标记 failed，401 一并置为未授权', async () => {
+    stubRoutes({
+      bootstrap: () => json(bootstrapInfo({ messages: { messages: [message({ id: 'm_7', seq: 7, role: 'user', status: 'failed', clientMsgId: 'c_old' })], hasMore: false, lastEventSeq: 42, lastMessageSeq: 7, oldestSeq: 7 } })),
+      send: () => json({ error: 'unauthorized' }, 401)
+    });
+    const chat = await mountChat();
+
+    let failure: unknown;
+    await act(async () => { failure = await chat().resend(chat().messages[0]!).catch((err: unknown) => err); });
+
+    expect((failure as Error).message).toBe('unauthorized');
+    expect(sendCalls()[0]!.clientMsgId).toBe('c_old');
+    // 中途置成的 pending 必须回到 failed，否则这条消息再也点不动重试。
+    const still = chat().messages.find((m) => m.id === 'm_7')!;
+    expect(still.status).toBe('failed');
+    expect(still.error).toBe('unauthorized');
+    expect(chat().connection).toBe('unauthorized');
+    expect(chat().error).toBe('unauthorized');
+  });
+});
+
+describe('useChat withdraw()', () => {
+  it('打撤回接口并把返回的消息就地合入列表', async () => {
+    stubRoutes({
+      bootstrap: () => json(bootstrapInfo({ messages: { messages: [message({ id: 'm_7#a', seq: 7, role: 'user' })], hasMore: false, lastEventSeq: 42, lastMessageSeq: 7, oldestSeq: 7 } })),
+      withdraw: () => json({ message: message({ id: 'm_7#a', seq: 7, role: 'user', content: [part({ id: 'p_1', type: 'system', text: '已撤回' })] }) })
+    });
+    const chat = await mountChat();
+
+    let result: { message: ChatMessage } | undefined;
+    await act(async () => { result = await chat().withdraw(chat().messages[0]!); });
+
+    // id 要转义，否则带特殊字符的 id 会拼出错误路径甚至打到别的资源上。
+    expect(calls.filter((call) => call.url.endsWith('/withdraw'))).toEqual([{ url: '/api/messages/m_7%23a/withdraw', method: 'POST', body: null }]);
+    expect(result!.message.id).toBe('m_7#a');
+    // 撤回是就地更新那一条，不是再插一条。
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7#a']);
+    expect(chat().messages[0]!.content.map((p) => [p.type, p.text])).toEqual([['system', '已撤回']]);
+  });
+});
+
+describe('useChat 回前台重同步', () => {
+  it('visibilitychange 与 focus 各触发一次 resync，hidden 不触发，卸载后不再请求', async () => {
+    stubRoutes({ messages: () => messagePage([message({ id: 'm_7', seq: 7 })]) });
+    const chat = await mountChat();
+    expect(messageQueries()).toEqual([]);
+
+    // 手机切回前台常常已经错过若干条消息，SSE 又可能被系统冻住，只能主动补一次。
+    await dispatch(document, 'visibilitychange');
+    expect(messageQueries()).toEqual(['/api/messages?limit=100&since=7']);
+    expect(chat().error).toBeNull();
+
+    await dispatch(window, 'focus');
+    expect(messageQueries()).toHaveLength(2);
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    try {
+      // 切到后台还去拉增量只是白耗流量。
+      await dispatch(document, 'visibilitychange');
+      expect(messageQueries()).toHaveLength(2);
+    } finally {
+      delete (document as unknown as { visibilityState?: unknown }).visibilityState;
+    }
+    expect(document.visibilityState).toBe('visible');
+
+    await unmountAll();
+    await dispatch(document, 'visibilitychange');
+    await dispatch(window, 'focus');
+    // 监听器没摘干净的话，卸载后的重同步会打到已经销毁的状态上。
+    expect(messageQueries()).toHaveLength(2);
   });
 });
