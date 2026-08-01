@@ -9,7 +9,7 @@ import type { MediaRef, StickerInfo } from '../lib/types.js';
  * `Composer` 是聊天主路径上唯一没有测试的交互组件，而它握着几条最容易悄悄坏掉的规则：
  * 什么时候算「可以发送」、发送失败时那段草稿还在不在，以及上传回来的媒体怎么变成内容块。
  *
- * 已覆盖：文本发送、表情面板、附件上传与附件条（拖放/粘贴/语音留给后续分片）。
+ * 已覆盖：文本发送、表情面板、附件上传与附件条、拖放与粘贴（语音留给后续分片）。
  *
  * 几个必要的搭法：
  * - textarea 是受控的，直接改 `el.value` React 看不见，必须走原型上的 value setter
@@ -153,6 +153,35 @@ async function selectFiles(el: HTMLInputElement, files: File[]): Promise<void> {
   await act(async () => {
     el.dispatchEvent(new Event('change', { bubbles: true }));
   });
+}
+
+const composer = () => container.querySelector<HTMLElement>('.composer')!;
+
+/**
+ * jsdom 没有可用的 `DragEvent` / `DataTransfer`：派发普通事件，再把 `dataTransfer`
+ * 挂到事件对象上（React 的合成事件就是从 nativeEvent 读这个属性）。
+ */
+async function drag(type: 'dragover' | 'dragleave' | 'drop', files: File[] = []): Promise<void> {
+  const evt = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(evt, 'dataTransfer', { value: { files } });
+  await act(async () => {
+    composer().dispatchEvent(evt);
+  });
+}
+
+/**
+ * 粘贴：`clipboardData.items` 只需要给出 `kind` 与 `getAsFile()`。
+ * 返回事件本身，便于断言 `defaultPrevented`（粘贴文件要拦截默认行为，纯文本不能拦）。
+ */
+async function paste(items: Array<{ kind: 'file' | 'string'; file?: File | null }>): Promise<Event> {
+  const evt = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(evt, 'clipboardData', {
+    value: { items: items.map((i) => ({ kind: i.kind, getAsFile: () => i.file ?? null })) }
+  });
+  await act(async () => {
+    input().dispatchEvent(evt);
+  });
+  return evt;
 }
 
 beforeEach(() => {
@@ -592,5 +621,109 @@ describe('Composer 附件 kind 归一', () => {
     await click(sendBtn());
     await flush();
     expect(sentContents()).toEqual([[{ type: 'image', mediaId: 'md_s' }]]);
+  });
+});
+
+describe('Composer 拖放', () => {
+  it('dragover 给编辑区加上 dragging 高亮，dragleave 取消', async () => {
+    await render();
+    expect(composer().classList.contains('dragging')).toBe(false);
+
+    await drag('dragover');
+    expect(composer().classList.contains('dragging')).toBe(true);
+
+    await drag('dragleave');
+    expect(composer().classList.contains('dragging')).toBe(false);
+  });
+
+  it('drop 结束拖放态，文件按 file 字段上传并进附件条', async () => {
+    uploadHandler = async () => jsonResponse({ media: [media('file', 'md_d', { name: '拖来的.pdf' })], failed: [] });
+    await render();
+
+    await drag('dragover');
+    await drag('drop', [file('spec.pdf', 'application/pdf')]);
+
+    // 松手那一刻高亮就要消失，不能等上传完成。
+    expect(composer().classList.contains('dragging')).toBe(false);
+    expect(uploadForms).toHaveLength(1);
+    expect([...uploadForms[0]!.keys()]).toEqual(['file']);
+
+    await flush();
+    expect(attachmentItems()).toHaveLength(1);
+    expect(strip()!.textContent).toContain('拖来的.pdf');
+  });
+
+  it('拖进来的图片仍按 image 字段上传 —— 否则服务端不生成缩略图', async () => {
+    uploadHandler = async () =>
+      jsonResponse({ media: [media('image', 'md_i'), media('file', 'md_f')], failed: [] });
+    await render();
+
+    await drag('drop', [file('cat.png', 'image/png'), file('spec.pdf', 'application/pdf')]);
+
+    expect(uploadForms).toHaveLength(1);
+    expect([...uploadForms[0]!.keys()]).toEqual(['image', 'file']);
+  });
+
+  it('不带文件的 drop（比如拖拽选中文字）不发上传请求', async () => {
+    await render();
+
+    await drag('dragover');
+    await drag('drop', []);
+    await flush();
+
+    expect(uploadForms).toHaveLength(0);
+    expect(composer().classList.contains('dragging')).toBe(false);
+    expect(hint()).toBeNull();
+    expect(strip()).toBeNull();
+  });
+});
+
+describe('Composer 粘贴', () => {
+  it('粘贴文件按 image 字段上传并拦截默认行为，字符串项被跳过', async () => {
+    uploadHandler = async () => jsonResponse({ media: [media('image', 'md_p')], failed: [] });
+    await render();
+
+    // 真实剪贴板里截图通常同时带一个 text/html 字符串项，只有文件项该被收下。
+    const evt = await paste([
+      { kind: 'string' },
+      { kind: 'file', file: file('shot.png', 'image/png') }
+    ]);
+
+    expect(evt.defaultPrevented).toBe(true);
+    expect(uploadForms).toHaveLength(1);
+    expect([...uploadForms[0]!.keys()]).toEqual(['image']);
+
+    await flush();
+    expect(attachmentItems()).toHaveLength(1);
+  });
+
+  it('粘贴的非图片文件也按 image 字段兜底上传 —— 图片按类型推断，这里锁的是参数本身', async () => {
+    uploadHandler = async () => jsonResponse({ media: [media('file', 'md_pf')], failed: [] });
+    await render();
+
+    const evt = await paste([{ kind: 'file', file: file('doc.pdf', 'application/pdf') }]);
+
+    expect(evt.defaultPrevented).toBe(true);
+    expect(uploadForms).toHaveLength(1);
+    expect([...uploadForms[0]!.keys()]).toEqual(['image']);
+  });
+
+  it('纯文本粘贴不上传也不 preventDefault —— 否则粘贴文字直接失效', async () => {
+    await render();
+
+    const evt = await paste([{ kind: 'string' }]);
+
+    expect(evt.defaultPrevented).toBe(false);
+    expect(uploadForms).toHaveLength(0);
+    expect(onNotice).not.toHaveBeenCalled();
+  });
+
+  it('file 项拿不到文件（getAsFile 为 null）时同样不拦截、不上传', async () => {
+    await render();
+
+    const evt = await paste([{ kind: 'file', file: null }]);
+
+    expect(evt.defaultPrevented).toBe(false);
+    expect(uploadForms).toHaveLength(0);
   });
 });
