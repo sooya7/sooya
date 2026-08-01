@@ -88,7 +88,7 @@ test('sends text and receives a streamed reply', async ({ page }) => {
 });
 
 test('shows incremental streaming before the reply completes', async ({ page }) => {
-  await control({ queue: ['一二三四五六七八九十，这是一段比较长的流式回复内容。'], chunkDelayMs: 35 });
+  await control({ queue: ['一二三四五六七八九十，这是一段比较长的流式回复内容。'], chunkDelayMs: 200 });
   await page.goto('/');
   await send(page, '慢慢说');
 
