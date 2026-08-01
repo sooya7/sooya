@@ -30,6 +30,49 @@ describe('拉取模型列表', () => {
     expect((await discover('chat')).body.models).toEqual(['a', 'b']);
   });
 
+  it('flattens NewAPI channel-grouped model data', async () => {
+    h = await boot({ discover: {
+      payload: { success: true, data: { '1': ['gpt-image-1', 'gpt-4o'], '2': ['gpt-image-1'] } }
+    } });
+    const { res, body } = await discover('chat');
+    expect(res.statusCode).toBe(200);
+    expect(body.models).toEqual(['gpt-4o', 'gpt-image-1']);
+  });
+
+  it('falls back from a missing OpenAI models route to NewAPI /api/models', async () => {
+    h = await boot({ discover: ({ url }) => url.endsWith('/v1/models')
+      ? new Response('not found', { status: 404 })
+      : new Response(JSON.stringify({ success: true, data: { '1': ['gpt-image-1'] } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      }) });
+    const { res, body } = await discover('chat');
+    expect(res.statusCode).toBe(200);
+    expect(body.models).toEqual(['gpt-image-1']);
+    expect(h.state.discoverCalls).toEqual([
+      'https://fake.example.com/v1/models',
+      'https://fake.example.com/api/models'
+    ]);
+    expect(body.source).toBe('https://fake.example.com/api/models');
+  });
+
+  it('forwards the optional NewAPI user id without exposing it in the request body', async () => {
+    h = await boot();
+    await h.app.server.inject({
+      method: 'PUT', url: '/api/admin/models', headers: ADMIN,
+      payload: { image: { provider: 'openai-compatible', baseUrl: 'https://fake.example.com/v1', apiKey: 'newapi-key', newApiUserId: '42', model: '' } }
+    });
+    const { res } = await discover('image');
+    expect(res.statusCode).toBe(200);
+    expect(h.state.discoverHeaders[0]).toEqual({ authorization: 'Bearer newapi-key', 'new-api-user': '42' });
+  });
+
+  it('recovers the API root when an image endpoint was pasted as the address', async () => {
+    h = await boot();
+    const { body } = await discover('chat', { baseUrl: 'https://fake.example.com/v1/images/generations' });
+    expect(body.source).toBe('https://fake.example.com/v1/models');
+  });
+
   it('pulls for the address being typed, before it is saved', async () => {
     h = await boot();
     const { body } = await discover('chat', { baseUrl: 'https://other.example.com/v2/' });

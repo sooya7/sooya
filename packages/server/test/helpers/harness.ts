@@ -28,6 +28,8 @@ export interface FakeChatOptions {
 
 export interface FakeProviderState {
   chatCalls: Array<{ body: unknown; url: string }>;
+  discoverCalls: string[];
+  discoverHeaders: Array<Record<string, string>>;
   imageCalls: number;
   ttsCalls: number;
   embedCalls: number;
@@ -45,7 +47,8 @@ export interface HarnessOptions {
   skipStickerImport?: boolean;
   startWorkers?: boolean;
   /** Reply for GET <baseUrl>/models, used by the model-discovery route. */
-  discover?: { status?: number; payload?: unknown } | 'network-error';
+  discover?: { status?: number; payload?: unknown } | 'network-error' |
+    ((ctx: { url: string; index: number }) => Response | Promise<Response>);
   /** Pins the life engine's clock; see BuildAppOptions.clock. */
   clock?: () => Date;
 }
@@ -122,7 +125,7 @@ function sseResponse(chunks: string[]): Response {
 
 export async function createHarness(opts: HarnessOptions = {}): Promise<Harness> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sooya-test-'));
-  const state: FakeProviderState = { chatCalls: [], imageCalls: 0, ttsCalls: 0, embedCalls: 0 };
+  const state: FakeProviderState = { chatCalls: [], discoverCalls: [], discoverHeaders: [], imageCalls: 0, ttsCalls: 0, embedCalls: 0 };
 
   let script = opts.chat?.script ?? [['好的。']];
   let chatError: Error | null = opts.chat?.chatError ?? null;
@@ -137,6 +140,10 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     const body = init?.body && typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : null;
 
     if (url.endsWith('/models')) {
+      const index = state.discoverCalls.push(url) - 1;
+      const requestHeaders = new Headers(init?.headers);
+      state.discoverHeaders[index] = { authorization: requestHeaders.get('authorization') ?? '', 'new-api-user': requestHeaders.get('new-api-user') ?? '' };
+      if (typeof opts.discover === 'function') return opts.discover({ url, index });
       if (opts.discover === 'network-error') throw new Error('socket hang up');
       const spec = opts.discover === undefined || opts.discover === 'network-error' ? {} : opts.discover;
       return new Response(JSON.stringify(spec.payload ?? { data: [{ id: 'zeta-2' }, { id: 'alpha-1' }] }), {
