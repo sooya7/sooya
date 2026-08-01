@@ -11,6 +11,8 @@ import type { ChatProvider } from '../providers/types.js';
 import type { ConfigStore } from '../config/store.js';
 import type { PushService } from './push.js';
 import type { StorageService } from './storage.js';
+import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
+import { extractText } from '../media/text-extractor.js';
 import { cleanupTempFiles } from '../util/fsx.js';
 
 export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
@@ -89,6 +91,7 @@ export class JobWorker {
 export interface JobDeps {
   jobs: JobRepo;
   media: MediaStore;
+  mediaText: MediaTextRepo;
   memory: MemoryService;
   summarizer: Summarizer;
   messages: MessageRepo;
@@ -104,6 +107,22 @@ export interface JobDeps {
 }
 
 export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
+  worker.register('media.extract_text', async (payload) => {
+    const mediaId = String(payload.mediaId ?? '');
+    if (!mediaId) return;
+    const read = await deps.media.read(mediaId);
+    if (!read || read.row.kind !== 'file') {
+      if (read) {
+        deps.mediaText.upsert({ mediaId, status: 'failed', error: 'not_a_file', metadata: { reason: 'not_a_file' } });
+        deps.bus.publish('media.updated', { mediaId, textStatus: 'failed' });
+      }
+      return;
+    }
+    const result = extractText(read.data, read.row.mime, mediaName(read.row.meta_json));
+    deps.mediaText.upsert({ mediaId, status: result.status, text: result.status === 'ready' ? result.text : null, metadata: result.metadata, error: result.status === 'failed' ? result.error : null });
+    deps.bus.publish('media.updated', { mediaId, textStatus: result.status });
+  });
+
   worker.register('memory.extract', async (payload) => {
     const userMessageIds = Array.isArray(payload.userMessageIds)
       ? payload.userMessageIds.map((id) => String(id)).filter(Boolean)
@@ -186,6 +205,10 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   });
 
   worker.register('backup.create', async (payload) => { await deps.backups.create(String(payload.reason ?? 'scheduled')); });
+}
+
+function mediaName(metaJson: string): string | undefined {
+  try { return (JSON.parse(metaJson) as { name?: string | null }).name ?? undefined; } catch { return undefined; }
 }
 
 /**

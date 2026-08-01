@@ -60,9 +60,9 @@ afterEach(async () => {
   container.remove();
 });
 
-async function mount(): Promise<void> {
+async function mount(message = fileMessage()): Promise<void> {
   await act(async () => {
-    root!.render(<MessageItem message={fileMessage()} personaName="SOOYA" avatar="/avatars/sooya.svg" userAvatar="/avatars/user.svg" showAvatar={false} />);
+    root!.render(<MessageItem message={message} personaName="SOOYA" avatar="/avatars/sooya.svg" userAvatar="/avatars/user.svg" showAvatar={false} />);
   });
 }
 
@@ -85,5 +85,17 @@ describe('FilePart 下载反馈', () => {
     await act(async () => { button.click(); });
 
     expect(container.textContent).not.toContain('失败');
+  });
+
+  it.each([
+    ['pending', '正在解析'],
+    ['ready', '可读取'],
+    ['unsupported', '仅保存'],
+    ['failed', '解析失败']
+  ] as const)('显示文件正文状态 %s', async (status, label) => {
+    const current = fileMessage();
+    current.content[0]!.media!.textStatus = status;
+    await mount(current);
+    expect(container.querySelector('[data-testid="file-text-status"]')?.textContent).toBe(label);
   });
 });

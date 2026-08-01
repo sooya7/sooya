@@ -14,6 +14,8 @@ export interface MediaRef {
   url: string;
   name?: string | null;
   transcript?: string | null;
+  textStatus?: 'pending' | 'ready' | 'failed' | 'unsupported';
+  textError?: string | null;
 }
 
 export interface MessagePart {

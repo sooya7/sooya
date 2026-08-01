@@ -441,6 +441,22 @@ export const MIGRATIONS: Migration[] = [
             AND json_extract(meta_json, '$.batchId') IS NOT NULL;
       `);
     }
+  },
+  {
+    version: 9,
+    name: 'media_text_extraction',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE media_text (
+          media_id       TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
+          status         TEXT NOT NULL CHECK (status IN ('pending','ready','failed','unsupported')),
+          text           TEXT,
+          metadata_json  TEXT NOT NULL DEFAULT '{}',
+          error          TEXT,
+          updated_at     TEXT NOT NULL
+        );
+      `);
+    }
   }
 ];
 

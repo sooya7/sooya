@@ -34,7 +34,11 @@ export function registerMediaRoutes(app: SooyaApp): void {
         try {
           await services.storage.assertWritable(buffer.length);
           const row = await services.mediaStore.save({ kind, origin: 'upload', data: buffer, declaredMime: part.mimetype, filename: sanitizeFilename(part.filename) });
-          saved.push(toMediaRef(row));
+          if (kind === 'file') {
+            repos.mediaText.upsert({ mediaId: row.id, status: 'pending', metadata: { filename: sanitizeFilename(part.filename) ?? null } });
+            repos.jobs.enqueue('media.extract_text', { mediaId: row.id }, { maxAttempts: 2 });
+          }
+          saved.push({ ...toMediaRef(row), ...(kind === 'file' ? { textStatus: 'pending' as const } : {}) });
         } catch (err) {
           const error = err as MediaValidationError & { code?: string };
           failed.push({ filename: part.filename ?? 'unknown', error: error.message, code: error.code ?? 'SAVE_FAILED' });
@@ -106,7 +110,7 @@ export function registerMediaRoutes(app: SooyaApp): void {
     return reply.send(streamFile(located.path, app));
   });
 
-  server.get('/api/media/:id/meta', { preHandler: auth }, async (req, reply) => { const row = repos.media.get((req.params as { id: string }).id); if (!row) { reply.code(404); return { error: 'not_found' }; } return { media: toMediaRef(row), exists: services.mediaStore.exists(row) }; });
+  server.get('/api/media/:id/meta', { preHandler: auth }, async (req, reply) => { const row = repos.media.get((req.params as { id: string }).id); if (!row) { reply.code(404); return { error: 'not_found' }; } const text = repos.mediaText.get(row.id); return { media: { ...toMediaRef(row), textStatus: text?.status, textError: text?.error ?? null }, text: text ? { status: text.status, value: text.text, metadata: text.metadata_json, error: text.error } : null, exists: services.mediaStore.exists(row) }; });
 }
 
 function streamFile(path: string, app: SooyaApp, range?: { start: number; end: number }) {

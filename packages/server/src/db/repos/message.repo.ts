@@ -3,6 +3,7 @@ import { nextSeq } from '../index.js';
 import { CONVERSATION_ID, type ChatMessage, type MessagePart, type MessageStatus, type PartStatus, type PartType, type Role } from '../../core/types.js';
 import { newMessageId, nowIso, randomId } from '../../util/ids.js';
 import { MediaRepo, toMediaRef } from './media.repo.js';
+import type { MediaTextRepo } from './media-text.repo.js';
 
 interface MessageRow {
   id: string;
@@ -70,7 +71,7 @@ export interface MessageContext {
 export class MessageRepo {
   private readonly media: MediaRepo;
 
-  constructor(private readonly db: DbLike) {
+  constructor(private readonly db: DbLike, private readonly mediaText?: MediaTextRepo) {
     this.media = new MediaRepo(db);
   }
 
@@ -398,10 +399,12 @@ export class MessageRepo {
       .all(...ids) as PartRow[];
     const mediaIds = [...new Set(parts.map((p) => p.media_id).filter((x): x is string => !!x))];
     const mediaMap = this.media.getMany(mediaIds);
+    const mediaTextMap = this.mediaText?.getMany(mediaIds) ?? new Map();
     const byMessage = new Map<string, MessagePart[]>();
     for (const p of parts) {
       const list = byMessage.get(p.message_id) ?? [];
       const mediaRow = p.media_id ? mediaMap.get(p.media_id) : undefined;
+      const textRow = p.media_id ? mediaTextMap.get(p.media_id) : undefined;
       let meta: Record<string, unknown> = {};
       try {
         meta = JSON.parse(p.meta_json) as Record<string, unknown>;
@@ -418,7 +421,7 @@ export class MessageRepo {
         duration: p.duration ?? mediaRow?.duration ?? null,
         transcript: p.transcript ?? mediaRow?.transcript ?? null,
         meta,
-        media: mediaRow ? toMediaRef(mediaRow) : null
+        media: mediaRow ? { ...toMediaRef(mediaRow), textStatus: textRow?.status, textError: textRow?.error ?? null } : null
       });
       byMessage.set(p.message_id, list);
     }
