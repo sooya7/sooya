@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
+import { clearComposerDraft, readComposerDraft, writeComposerDraft } from '../lib/composerDraft.js';
 import type { ChatMessage, MediaRef, StickerInfo } from '../lib/types.js';
 import { AuthenticatedImage } from './AuthenticatedMedia.js';
 
@@ -22,12 +23,16 @@ export interface ComposerSendPayload {
 
 interface Props {
   disabled: boolean;
+  disabledLabel?: string;
+  conversationId?: string;
+  replyToId?: string | null;
+  onRestoreReplyTo?: (id: string) => void;
   stickers: StickerInfo[];
   onSend: (payload: ComposerSendPayload) => Promise<unknown>;
   onNotice: (text: string) => void;
 }
 
-export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
+export function Composer({ disabled, disabledLabel, conversationId = 'main', replyToId = null, onRestoreReplyTo, stickers, onSend, onNotice }: Props) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [showStickers, setShowStickers] = useState(false);
@@ -39,6 +44,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const draftHydratedRef = useRef(false);
 
   const autoGrow = useCallback(() => {
     const el = textareaRef.current;
@@ -48,6 +54,35 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
   }, []);
 
   useEffect(autoGrow, [text, autoGrow]);
+  useEffect(() => {
+    const draft = readComposerDraft(typeof window === 'undefined' ? undefined : window.sessionStorage, conversationId);
+    if (!draft) { draftHydratedRef.current = true; return; }
+    setText(draft.text);
+    if (draft.replyTo) onRestoreReplyTo?.(draft.replyTo);
+    if (draft.readyAttachmentIds.length === 0) { draftHydratedRef.current = true; return; }
+    let cancelled = false;
+    void Promise.all(draft.readyAttachmentIds.map(async (id) => {
+      try {
+        const result = await api.mediaMeta(id);
+        return result.exists ? result.media : null;
+      } catch { return null; }
+    })).then((media) => {
+      if (cancelled) return;
+      setAttachments(media.filter((item): item is MediaRef => Boolean(item)).map((item, index) => ({
+        key: `restored_${item.id}_${index}`, media: item, kind: item.kind === 'image' || item.kind === 'sticker' ? 'image' : 'file',
+        name: item.name ?? item.id, status: 'ready', progress: 100
+      })));
+      draftHydratedRef.current = true;
+    });
+    return () => { cancelled = true; };
+  }, [conversationId, onRestoreReplyTo]);
+  useEffect(() => {
+    if (!draftHydratedRef.current) return;
+    const timer = window.setTimeout(() => writeComposerDraft(window.sessionStorage, conversationId, {
+      text, replyTo: replyToId, readyAttachmentIds: attachments.filter((item) => item.status === 'ready' && item.media).map((item) => item.media!.id)
+    }), 300);
+    return () => window.clearTimeout(timer);
+  }, [attachments, conversationId, replyToId, text]);
   useEffect(() => () => {
     for (const controller of controllersRef.current.values()) controller.abort();
     controllersRef.current.clear();
@@ -165,18 +200,19 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
       optimisticParts.push({ id: `localpart_${a.key}`, type, mediaId: a.media.id, media: a.media, status: 'pending' });
     }
     if (content.length === 0) return;
-    setText('');
-    setAttachments([]);
-    setShowStickers(false);
     setSending(true);
     try {
       await onSend({ content, optimisticParts });
+      setText('');
+      setAttachments([]);
+      setShowStickers(false);
+      clearComposerDraft(window.sessionStorage, conversationId);
     } catch {
       /* error surfaced by the parent */
     } finally {
       setSending(false);
     }
-  }, [canSend, onSend, readyAttachments, text]);
+  }, [canSend, conversationId, onSend, readyAttachments, text]);
 
   const sendSticker = useCallback(
     async (sticker: StickerInfo) => {
@@ -299,7 +335,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
             data-testid="composer-input"
             value={text}
             rows={1}
-            placeholder={disabled ? '连接中…' : '说点什么…'}
+            placeholder={disabledLabel ?? (disabled ? '连接中…' : '说点什么…')}
             onChange={(e) => setText(e.target.value)}
             onPaste={handlePaste}
             onKeyDown={(e) => {
@@ -316,7 +352,8 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
             data-testid="btn-send"
             disabled={!canSend}
             onClick={() => void doSend()}
-            aria-label="发送"
+            aria-label={disabledLabel ?? '发送'}
+            title={disabledLabel}
           >
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
               <path d="M3.5 11.5 20 4l-7.5 16.5-2-7-7-2z" fill="currentColor" />
@@ -324,6 +361,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
           </button>
         </div>
 
+      {disabled && disabledLabel && <div className="composer-hint composer-offline-hint" role="status">{disabledLabel}</div>}
       {hasPendingUploads && <div className="composer-hint">正在上传…</div>}
 
       <input

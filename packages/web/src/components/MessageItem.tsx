@@ -196,7 +196,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
         {replayable && !message.pendingLocal && !failedMessage && onResend && <button role="menuitem" type="button" onClick={() => void act(() => onResend(message))}>再次发送</button>}
         {retryable && onRetry && <button role="menuitem" type="button" onClick={() => void act(() => onRetry(message))}>重试</button>}
         {withdrawable && onWithdraw && <button role="menuitem" type="button" className="danger" onClick={() => void act(() => onWithdraw(message))}>撤回（保留占位）</button>}
-        {image?.media && <><button role="menuitem" type="button" onClick={() => void act(() => onOpenImage?.(image.media!.id))}>查看图片</button><button role="menuitem" type="button" onClick={() => void act(() => savePart(image), '图片已保存')}>保存图片</button><button role="menuitem" type="button" onClick={() => void act(() => { window.location.href = `/gallery?media=${encodeURIComponent(image.media!.id)}`; })}>进入图库</button></>}
+        {image?.media && <><button role="menuitem" type="button" onClick={() => void act(() => onOpenImage?.(image.media!.id))}>查看图片</button><button role="menuitem" type="button" onClick={() => void act(() => savePart(image), '图片已保存')}>保存图片</button><button role="menuitem" type="button" onClick={() => void act(() => { window.open(`/gallery?media=${encodeURIComponent(image.media!.id)}`, '_blank', 'noopener,noreferrer'); })}>进入图库</button></>}
         {audio?.media && <><button role="menuitem" type="button" onClick={() => void act(() => savePart(audio), '语音已保存')}>保存语音</button>{audio.transcript && <button role="menuitem" type="button" onClick={() => void act(() => copy(audio.transcript!), '转写文本已复制')}>复制转写</button>}</>}
       </div>}
     </div>

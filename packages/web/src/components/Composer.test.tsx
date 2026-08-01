@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer, type ComposerSendPayload } from './Composer.js';
 import type { MediaRef, StickerInfo } from '../lib/types.js';
+import { composerDraftKey, writeComposerDraft } from '../lib/composerDraft.js';
 
 /**
  * `Composer` 是聊天主路径上唯一没有测试的交互组件，而它握着几条最容易悄悄坏掉的规则：
@@ -32,6 +33,9 @@ let container: HTMLElement;
 
 interface Overrides {
   disabled?: boolean;
+  disabledLabel?: string;
+  replyToId?: string | null;
+  onRestoreReplyTo?: (id: string) => void;
   stickers?: StickerInfo[];
 }
 
@@ -42,8 +46,11 @@ async function render(over: Overrides = {}): Promise<void> {
   roots.push({ root, container });
   await act(async () => {
     root.render(
-      <Composer
-        disabled={over.disabled ?? false}
+        <Composer
+          disabled={over.disabled ?? false}
+          disabledLabel={over.disabledLabel}
+          replyToId={over.replyToId}
+          onRestoreReplyTo={over.onRestoreReplyTo}
         stickers={over.stickers ?? stickers}
         onSend={onSend as unknown as (payload: ComposerSendPayload) => Promise<unknown>}
         onNotice={onNotice as unknown as (text: string) => void}
@@ -188,6 +195,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   onSend = vi.fn(async () => ({}));
   onNotice = vi.fn();
+  sessionStorage.clear();
   uploadForms = [];
   uploadHandler = async () => jsonResponse({ media: [media('image', 'md_up')], failed: [] });
   // 上传和媒体下载共用一个 fetch 桩：按路由分派，都不打真实请求。
@@ -221,6 +229,7 @@ afterEach(async () => {
   delete urlCtor.revokeObjectURL;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  sessionStorage.clear();
 });
 
 describe('Composer 文本发送', () => {
@@ -242,6 +251,37 @@ describe('Composer 文本发送', () => {
 
     expect(sentContents()).toEqual([[{ type: 'text', text: '点按钮发' }]]);
     expect(input().value).toBe('');
+  });
+
+  it('刷新后恢复文字草稿，成功发送后才清除草稿', async () => {
+    writeComposerDraft(sessionStorage, 'main', { text: '稍后继续', replyTo: null, readyAttachmentIds: [] });
+    await render();
+    expect(input().value).toBe('稍后继续');
+    await flush();
+    expect(sessionStorage.getItem(composerDraftKey('main'))).not.toBeNull();
+
+    await click(sendBtn());
+    await flush();
+    expect(input().value).toBe('');
+    expect(sessionStorage.getItem(composerDraftKey('main'))).toBeNull();
+  });
+
+  it('恢复引用和已上传附件，不尝试恢复未上传的 File', async () => {
+    writeComposerDraft(sessionStorage, 'main', { text: '带附件', replyTo: 'm_7', readyAttachmentIds: ['md_saved'] });
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init: RequestInit = {}) => {
+      if (String(input) === '/api/media/md_saved/meta') return jsonResponse({ media: media('file', 'md_saved', { name: '已上传.txt' }), text: null, exists: true });
+      if (String(input).includes('/api/media/md_saved')) return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'text/plain' } });
+      if (String(input) === '/api/media' && (init.method ?? 'GET').toUpperCase() === 'POST') return uploadHandler();
+      return new Response(new Uint8Array([137, 80, 78, 71]), { status: 200, headers: { 'content-type': 'image/png' } });
+    }));
+    const restored: string[] = [];
+    await render({ onRestoreReplyTo: (id) => restored.push(id) });
+    await flush();
+    await flush();
+    expect(input().value).toBe('带附件');
+    expect(restored).toEqual(['m_7']);
+    expect(attachmentItems()).toHaveLength(1);
+    expect(attachmentItems()[0]!.textContent).toContain('已上传.txt');
   });
 
   it('Shift+Enter 是换行，不发送也不清空', async () => {
@@ -319,7 +359,7 @@ describe('Composer 发送中互斥与提交快照', () => {
     expect(input().value).toBe('');
   });
 
-  it('发送失败时已提交快照不回填输入框，失败气泡负责重试', async () => {
+  it('发送失败时保留提交快照，避免输入在网络错误时丢失', async () => {
     const pending = deferredSend();
     onSend.mockImplementation(() => pending.promise);
     await render();
@@ -331,10 +371,10 @@ describe('Composer 发送中互斥与提交快照', () => {
       await Promise.resolve();
     });
 
-    expect(input().value).toBe('');
-    expect(sendBtn().disabled).toBe(true);
+    expect(input().value).toBe('这条会失败');
+    expect(sendBtn().disabled).toBe(false);
     expect(sentContents()).toEqual([[{ type: 'text', text: '这条会失败' }]]);
-    expect(input().value).toBe('');
+    expect(input().value).toBe('这条会失败');
   });
 });
 
@@ -552,7 +592,7 @@ describe('Composer 附件发送', () => {
     ]);
   });
 
-  it('发送失败时附件和草稿已移交给乐观消息，不污染新草稿', async () => {
+  it('发送失败时保留文字和已上传附件，避免用户输入丢失', async () => {
     const pending = deferredSend();
     onSend.mockImplementation(() => pending.promise);
     await render();
@@ -567,11 +607,21 @@ describe('Composer 附件发送', () => {
       await Promise.resolve();
     });
 
-    expect(input().value).toBe('');
-    expect(attachmentItems()).toHaveLength(0);
-    expect(sendBtn().disabled).toBe(true);
+    expect(input().value).toBe('带图的话');
+    expect(attachmentItems()).toHaveLength(1);
+    expect(sendBtn().disabled).toBe(false);
     expect(sentContents()).toEqual([[{ type: 'text', text: '带图的话' }, { type: 'image', mediaId: 'md_up' }]]);
-    expect(strip()).toBeNull();
+    expect(strip()).not.toBeNull();
+  });
+
+  it('网络断开时仍可编辑，但发送按钮明确提示网络已断开', async () => {
+    await render({ disabled: true, disabledLabel: '网络已断开' });
+    await type('离线草稿');
+    expect(input().placeholder).toBe('网络已断开');
+    expect(input().value).toBe('离线草稿');
+    expect(sendBtn().disabled).toBe(true);
+    expect(container.textContent).toContain('网络已断开');
+    expect(onSend).not.toHaveBeenCalled();
   });
 });
 
