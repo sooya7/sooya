@@ -80,6 +80,24 @@ describe('message and durable event atomicity', () => {
     expect(live.filter((event) => event.type === 'message.received')).toHaveLength(0);
   });
 
+  it('rolls back the user message and event when durable batch membership cannot be written', async () => {
+    harness.app.db.exec(`
+      CREATE TRIGGER abort_reply_batch_membership
+      BEFORE INSERT ON reply_batch_messages
+      BEGIN
+        SELECT RAISE(ABORT, 'injected batch failure');
+      END
+    `);
+
+    const response = await harness.app.server.inject({
+      method: 'POST', url: '/api/messages', payload: sendPayload('batch_failure')
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(userMessages(harness)).toHaveLength(0);
+    expect(harness.app.services.bus.replay(0).filter((event) => event.type === 'message.received')).toHaveLength(0);
+  });
+
   it('creates and fans out exactly one message.received event for a duplicate clientMsgId', async () => {
     const live: StreamEvent[] = [];
     const unsubscribe = harness.app.services.bus.subscribe((event) => live.push(event));

@@ -122,6 +122,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
     'openai-compatible',
     'openai-embeddings',
     'openai-images',
+    'anuma-input-images',
     'openai-tts',
     'anthropic-messages'
   ]);

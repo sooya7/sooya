@@ -118,6 +118,7 @@ export function useChat() {
   }, [hasMore, loadingOlder, messages]);
 
   const send = useCallback(async (content: Array<Record<string, unknown>>, optimisticParts?: ChatMessage['content'], replyTo?: string) => {
+    if (content.length === 0) return undefined;
     const clientMsgId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
     const optimistic: ChatMessage = { id: `local_${clientMsgId}`, conversationId: 'main', role: 'user', createdAt: now, updatedAt: now, seq: Number.MAX_SAFE_INTEGER - 1, status: 'pending', clientMsgId, replyTo, content: optimisticParts ?? content.map((c, i) => ({ id: `localpart_${i}`, type: c.type as ChatMessage['content'][number]['type'], text: (c.text as string) ?? null, mediaId: (c.mediaId as string) ?? null, status: 'pending' })), pendingLocal: true };
@@ -127,7 +128,7 @@ export function useChat() {
   }, [applyMessages]);
 
   const retryFailed = useCallback(async (message: ChatMessage) => {
-    if (message.status !== 'failed') return;
+    if (message.status !== 'failed' || !isRetryableFailedMessage(message)) return;
     const content = messageToContent(message);
     if (!message.clientMsgId) return await send(content, undefined, message.replyTo ?? undefined);
     const clientMsgId = message.clientMsgId;
@@ -147,7 +148,7 @@ export function useChat() {
   }, [send, trackSeq]);
 
   const sendAgain = useCallback((message: ChatMessage) => {
-    if (message.status === 'failed' || message.pendingLocal) return Promise.resolve(undefined);
+    if (message.status === 'failed' || message.pendingLocal || !isReplayableUserMessage(message)) return Promise.resolve(undefined);
     return send(messageToContent(message), optimisticPartsFor(message), message.replyTo ?? undefined);
   }, [send]);
 
@@ -156,6 +157,15 @@ export function useChat() {
   useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') void resync(); }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [resync]);
 
   return { messages, persona, connection, activity, life, stickers, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, loadOlder, resync, reload, clearError: () => setError(null) };
+}
+
+export function isReplayableUserMessage(message: ChatMessage): boolean {
+  if (message.role !== 'user' || message.content.some((part) => part.type === 'audio')) return false;
+  return messageToContent(message).length > 0;
+}
+
+export function isRetryableFailedMessage(message: ChatMessage): boolean {
+  return message.status === 'failed' && Boolean(message.clientMsgId) && isReplayableUserMessage(message);
 }
 
 function messageToContent(message: ChatMessage): Array<Record<string, unknown>> {

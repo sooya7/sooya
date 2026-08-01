@@ -113,7 +113,7 @@ export class ContextBuilder {
      * the software can do. Keeping them separate is what stopped the world
      * engine's frozen "语音不可用" rows from being treated as personality.
      */
-    const lifeLinesList = this.life?.contextLines(lastUserMessageAt(recent)) ?? [];
+    const lifeLinesList = this.life?.contextLines(lastUserMessageAt(recent, opts.batchMessageIds)) ?? [];
     let lifeLines = 0;
     if (lifeLinesList.length > 0) {
       const before = systemParts.length;
@@ -257,10 +257,11 @@ function fitLatestTurn(systemParts: string[], turn: ChatTurn, budget: number): C
  * one being replied to -- it is skipped, so the gap describes how long they had
  * been away before writing rather than always reading as "刚刚".
  */
-function lastUserMessageAt(recent: ChatMessage[]): Date | null {
-  const users = recent.filter((msg) => msg.role === 'user');
+export function lastUserMessageAt(recent: ChatMessage[], currentBatchIds?: string[]): Date | null {
+  const excluded = new Set(currentBatchIds ?? []);
+  const users = recent.filter((msg) => msg.role === 'user' && !excluded.has(msg.id));
   const newest = recent[recent.length - 1];
-  const pool = newest?.role === 'user' ? users.slice(0, -1) : users;
+  const pool = currentBatchIds === undefined && newest?.role === 'user' ? users.slice(0, -1) : users;
   const last = pool[pool.length - 1];
   return last ? new Date(last.createdAt) : null;
 }

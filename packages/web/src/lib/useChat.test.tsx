@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useChat } from './useChat.js';
+import { isReplayableUserMessage, isRetryableFailedMessage, useChat } from './useChat.js';
 import type { BootstrapInfo } from './api.js';
 import type { ChatMessage } from './types.js';
 
@@ -22,6 +22,19 @@ import type { ChatMessage } from './types.js';
  * 逐帧喂 `event:` / `id:` / `data:`，帧与帧之间连接依旧挂住，于是能一帧一帧地断言。
  */
 type Chat = ReturnType<typeof useChat>;
+
+describe('消息重放边界', () => {
+  it('只允许有内容且不含历史音频的用户消息', () => {
+    expect(isReplayableUserMessage(message({ id: 'u1', role: 'user' }))).toBe(true);
+    expect(isRetryableFailedMessage(message({ id: 'u1', role: 'user', status: 'failed' }))).toBe(false);
+    expect(isRetryableFailedMessage(message({ id: 'u1', role: 'user', status: 'failed', clientMsgId: 'c1' }))).toBe(true);
+    expect(isReplayableUserMessage(message({ id: 'a1', role: 'assistant', status: 'failed' }))).toBe(false);
+    expect(isReplayableUserMessage(message({
+      id: 'u2', role: 'user', status: 'failed',
+      content: [{ id: 'audio', type: 'audio', mediaId: 'md_audio', status: 'sent' }]
+    }))).toBe(false);
+  });
+});
 
 interface Call {
   url: string;
@@ -709,7 +722,7 @@ describe('useChat retryFailed()', () => {
     expect(chat().error).toBeNull();
   });
 
-  it('消息没有 clientMsgId 时退回 send() 新造幂等键', async () => {
+  it('消息没有 clientMsgId 时不把重试越界成再次发送', async () => {
     stubRoutes({
       bootstrap: () => json(bootstrapInfo({ messages: { messages: [message({ id: 'm_7', seq: 7, role: 'user', status: 'failed' })], hasMore: false, lastEventSeq: 42, lastMessageSeq: 7, oldestSeq: 7 } })),
       send: () => json({ message: message({ id: 'm_8', seq: 8, role: 'user', clientMsgId: sendCalls().at(-1)!.clientMsgId }), duplicate: false, replyPending: true })
@@ -719,11 +732,8 @@ describe('useChat retryFailed()', () => {
     await act(async () => { await chat().retryFailed(chat().messages[0]!); });
 
     const payloads = sendCalls();
-    expect(payloads).toHaveLength(1);
-    // 没有原幂等键就没法让服务端去重，只能当成一条新消息发。
-    expect(payloads[0]!.clientMsgId).toMatch(/^c_/);
-    expect(payloads[0]!.content).toEqual([{ type: 'text', text: '嗨' }]);
-    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
+    expect(payloads).toHaveLength(0);
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7']);
     expect(chat().messages.some((m) => m.pendingLocal)).toBe(false);
   });
 
@@ -750,7 +760,7 @@ describe('useChat retryFailed()', () => {
   it('sendAgain 使用新的 clientMsgId 创建独立消息', async () => {
     stubRoutes({
       bootstrap: () => json(bootstrapInfo({ messages: { messages: [message({ id: 'm_7', seq: 7, role: 'user', status: 'sent', clientMsgId: 'c_original' })], hasMore: false, lastEventSeq: 42, lastMessageSeq: 7, oldestSeq: 7 } })),
-      send: () => json({ message: message({ id: 'm_8', seq: 8, role: 'user', clientMsgId: sendCalls().at(-1)!.clientMsgId }), duplicate: false, replyPending: true })
+      send: () => json({ message: message({ id: 'm_8', seq: 8, role: 'user' }), duplicate: false, replyPending: true })
     });
     const chat = await mountChat();
 

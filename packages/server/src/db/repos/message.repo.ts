@@ -266,6 +266,22 @@ export class MessageRepo {
     return this.hydrate([row])[0];
   }
 
+  findAssistantByBatchId(batchId: string): ChatMessage | undefined {
+    const row = this.db.prepare(
+      `SELECT * FROM messages
+       WHERE conversation_id = ? AND role = 'assistant' AND json_extract(meta_json, '$.batchId') = ?
+       ORDER BY seq DESC LIMIT 1`
+    ).get(CONVERSATION_ID, batchId) as MessageRow | undefined;
+    return row ? this.hydrate([row])[0] : undefined;
+  }
+
+  failInterruptedBatchShell(batchId: string): number {
+    return this.db.prepare(
+      `UPDATE messages SET status = 'failed', error = 'interrupted by restart', updated_at = ?
+       WHERE role = 'assistant' AND status = 'sending' AND json_extract(meta_json, '$.batchId') = ?`
+    ).run(nowIso(), batchId).changes;
+  }
+
   /** Newest-first page. `beforeSeq` is exclusive. */
   page(limit: number, beforeSeq?: number | null): { messages: ChatMessage[]; hasMore: boolean } {
     const capped = Math.max(1, Math.min(limit, 200));

@@ -34,6 +34,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
   const [dragging, setDragging] = useState(false);
   const [sending, setSending] = useState(false);
   const controllersRef = useRef(new Map<string, AbortController>());
+  const cancelledKeysRef = useRef(new Set<string>());
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -47,13 +48,17 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
   }, []);
 
   useEffect(autoGrow, [text, autoGrow]);
+  useEffect(() => () => {
+    for (const controller of controllersRef.current.values()) controller.abort();
+    controllersRef.current.clear();
+  }, []);
 
   const updateAttachment = useCallback((key: string, patch: Partial<PendingAttachment>) => {
     setAttachments((previous) => previous.map((item) => item.key === key ? { ...item, ...patch } : item));
   }, []);
 
   const uploadTask = useCallback(async (task: PendingAttachment) => {
-    if (!task.localFile) return;
+    if (!task.localFile || cancelledKeysRef.current.has(task.key)) return;
     const controller = new AbortController();
     controllersRef.current.set(task.key, controller);
     updateAttachment(task.key, { status: 'uploading', progress: 0, error: undefined });
@@ -61,6 +66,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
       const result = await api.upload([{ file: task.localFile, field: task.kind, name: task.name }], { signal: controller.signal });
       const media = result.media.find((item) => item.kind === 'image' || item.kind === 'sticker' || item.kind === 'file');
       if (!media) throw new Error(result.failed[0]?.error ?? '文件上传失败');
+      if (cancelledKeysRef.current.has(task.key)) return;
       updateAttachment(task.key, {
         media,
         kind: media.kind === 'image' || media.kind === 'sticker' ? 'image' : 'file',
@@ -101,6 +107,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
   }, [uploadTask]);
 
   const cancelUpload = useCallback((task: PendingAttachment) => {
+    cancelledKeysRef.current.add(task.key);
     controllersRef.current.get(task.key)?.abort();
     controllersRef.current.delete(task.key);
     setAttachments((previous) => previous.filter((item) => item.key !== task.key));
@@ -108,6 +115,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
 
   const retryUpload = useCallback((task: PendingAttachment) => {
     if (!task.localFile) return;
+    cancelledKeysRef.current.delete(task.key);
     updateAttachment(task.key, { status: 'queued', progress: 0, error: undefined });
     void uploadTask({ ...task, status: 'queued', progress: 0, error: undefined });
   }, [updateAttachment, uploadTask]);
@@ -141,6 +149,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
 
   const readyAttachments = attachments.filter((item) => item.status === 'ready' && item.media);
   const hasPendingUploads = attachments.some((item) => item.status === 'queued' || item.status === 'uploading');
+  const settledAttachmentCount = attachments.filter((item) => item.status === 'ready' || item.status === 'failed').length;
   const canSend = !disabled && !sending && !hasPendingUploads && (text.trim().length > 0 || readyAttachments.length > 0);
 
   const doSend = useCallback(async () => {
@@ -210,6 +219,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
 
       {attachments.length > 0 && (
         <div className="attachment-strip" data-testid="attachment-strip">
+          {hasPendingUploads && <small role="status">附件处理进度 {settledAttachmentCount}/{attachments.length}</small>}
           {attachments.map((a) => (
             <div key={a.key} className="attachment">
               {a.kind === 'image' && a.media ? (
@@ -217,7 +227,8 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
               ) : (
                 <span className="attachment-generic">{a.name}</span>
               )}
-              {a.status === 'uploading' && <small role="status">正在上传 {a.progress}%</small>}
+              {a.status === 'queued' && <small role="status">等待上传</small>}
+              {a.status === 'uploading' && <small role="status">正在上传</small>}
               {a.status === 'failed' && <small role="status">上传失败：{a.error}</small>}
               <button
                 type="button"

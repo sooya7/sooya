@@ -30,4 +30,9 @@ describe('message temporal grouping', () => {
     expect(dateLabel('2026-08-01T00:20:00.000Z', now, 'Asia/Shanghai')).toBe('昨天');
     expect(dateLabel('2026-07-31T00:20:00.000Z', now, 'Asia/Shanghai')).toBe('2026年7月31日');
   });
+
+  it('starts a new group for proactive messages and withdrawn placeholders', () => {
+    expect(shouldStartMessageGroup(message(), message({ id: 'm2', meta: { proactive: true } }), 'UTC')).toBe(true);
+    expect(shouldStartMessageGroup(message(), message({ id: 'm3', meta: { withdrawnAt: '2026-08-01T00:01:00.000Z' } }), 'UTC')).toBe(true);
+  });
 });

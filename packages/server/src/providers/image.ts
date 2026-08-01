@@ -113,7 +113,7 @@ export class OpenAIImageProvider implements ImageProvider {
       if (!res.ok) {
         const body = await safeText(res);
         const message = `image edit failed with status ${res.status}: ${body}`;
-        if (res.status === 404 || res.status === 405 || res.status === 501 || (res.status === 400 && /unsupported|not supported|unknown edit/i.test(body))) {
+        if (isExplicitEditUnsupported(res.status, body)) {
           throw new ImageEditUnsupportedError(message);
         }
         throw new ProviderRequestError(message, res.status);
@@ -227,7 +227,7 @@ export class AnumaImageProvider implements ImageProvider {
             signal
           });
           if (!res.ok) {
-            throw new ImageReferenceError('reference_upload_failed', '参考图上传失败，请稍后重试', `reference upload failed with status ${res.status}: ${await safeText(res)}`);
+            throw new ImageReferenceError('reference_upload_failed', '参考图上传失败，请稍后重试', `reference upload failed with status ${res.status}`);
           }
           let json: unknown;
           try {
@@ -268,11 +268,19 @@ export class AnumaImageProvider implements ImageProvider {
         body: JSON.stringify(body),
         signal
       });
-      if (!res.ok) throw new ImageReferenceError('reference_generation_failed', '参考图生成失败，请稍后重试', `reference generation failed with status ${res.status}: ${await safeText(res)}`);
+      if (!res.ok) {
+        if (inputImages) {
+          throw new ImageReferenceError('reference_generation_failed', '参考图生成失败，请稍后重试', `reference generation failed with status ${res.status}`);
+        }
+        throw new ProviderRequestError(`image generation failed with status ${res.status}`, res.status);
+      }
       try {
         return (await res.json()) as ImageApiResponse;
       } catch {
-        throw new ImageReferenceError('reference_generation_failed', '参考图生成结果无效，请稍后重试', 'reference generation returned invalid JSON');
+        if (inputImages) {
+          throw new ImageReferenceError('reference_generation_failed', '参考图生成结果无效，请稍后重试', 'reference generation returned invalid JSON');
+        }
+        throw new ProviderRequestError('image generation returned invalid JSON');
       }
     } catch (err) {
       throw normalizeAbort(err, this.cfg.timeoutMs);
@@ -303,8 +311,16 @@ export class AnumaImageProvider implements ImageProvider {
 
 function isAnumaUploadRetryable(err: Error): boolean {
   if (err instanceof HttpTimeoutError) return true;
-  if (err instanceof ImageReferenceError) return /status (408|429|502|503|504):/.test(err.message);
+  if (err instanceof ImageReferenceError) return /status (408|429|502|503|504)(?:\b|:)/.test(err.message);
   return defaultRetryable(err) && /econnreset|etimedout|socket hang up|fetch failed/i.test(err.message);
+}
+
+function isExplicitEditUnsupported(status: number, body: string): boolean {
+  if (status === 405 || status === 501) return true;
+  const normalized = body.toLowerCase();
+  const namesEditCapability = /(?:image\s+edits?|images\/edits|edit(?:ing)?\s+(?:endpoint|capability|operation))/.test(normalized);
+  const saysUnavailable = /(?:not\s+supported|unsupported|not\s+implemented|unknown\s+endpoint|route\s+not\s+found)/.test(normalized);
+  return (status === 400 || status === 404) && namesEditCapability && saysUnavailable;
 }
 
 export class UnconfiguredImageProvider implements ImageProvider {

@@ -23,7 +23,7 @@ describe('public error helpers', () => {
   it('redacts credentials, secret assignments, secret URL parameters, and absolute paths', () => {
     const error = new Error(
       'Bearer sk-secret-upstream apiKey=sk-assignment token: tok-value secret="hidden" client_secret=hunter2 ' +
-        'https://user:p@ss@example.test/path?token=abc&client_secret=hunter2'
+      'https://user:p@ss@example.test/path?token=abc&client_secret=hunter2'
     );
     error.stack =
       `${error.name}: ${error.message}\n` +
@@ -49,6 +49,16 @@ describe('public error helpers', () => {
     ]) {
       expect(diagnostic).not.toContain(secret);
     }
+  });
+
+  it('redacts every signed URL query value, including vendor-specific names', () => {
+    const diagnostic = redactDiagnostic(new Error(
+      'upstream echoed https://cdn.example/ref.png?sig=secret&X-Amz-Signature=aws-secret&harmless=still-private'
+    ));
+    expect(diagnostic).not.toContain('secret');
+    expect(diagnostic).not.toContain('aws-secret');
+    expect(diagnostic).not.toContain('still-private');
+    expect(diagnostic).toContain('[REDACTED]');
   });
 
   it('preserves useful diagnostic context after a redacted path delimiter', () => {

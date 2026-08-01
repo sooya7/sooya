@@ -123,5 +123,22 @@ describe('Anuma input_images image provider', () => {
 
     const generic = new OpenAIImageProvider(openAiConfig, deps(async () => new Response('bad prompt', { status: 400 })));
     await expect(generic.edit('x', PNG, { mime: 'image/png' })).rejects.toBeInstanceOf(ProviderRequestError);
+
+    const badFormat = new OpenAIImageProvider(openAiConfig, deps(async () => new Response('unsupported image format', { status: 400 })));
+    await expect(badFormat.edit('x', PNG, { mime: 'image/png' })).rejects.toBeInstanceOf(ProviderRequestError);
+
+    const missingModel = new OpenAIImageProvider(openAiConfig, deps(async () => new Response('model not found', { status: 404 })));
+    await expect(missingModel.edit('x', PNG, { mime: 'image/png' })).rejects.toBeInstanceOf(ProviderRequestError);
+  });
+
+  it('classifies plain generation failures separately and omits upstream bodies from errors', async () => {
+    const provider = new AnumaImageProvider(config(), deps(async () =>
+      new Response(JSON.stringify({ input_images: ['https://cdn.example/ref.png?sig=secret'] }), { status: 502 })
+    ));
+
+    const error = await provider.generate('x').catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ProviderRequestError);
+    expect(error).not.toBeInstanceOf(ImageReferenceError);
+    expect(String(error)).not.toContain('sig=secret');
   });
 });

@@ -59,12 +59,13 @@ export function registerChatRoutes(app: SooyaApp): void {
         meta: { directives }
       });
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
-      return { ...created, event };
+      const batch = created.created ? repos.replyBatches.addMessage(created.message.id, services.replyCoordinator.dueAt()) : null;
+      return { ...created, event, batch };
     });
-    const { message, created, event } = tx();
+    const { message, created, event, batch } = tx();
     if (!created) return { message, duplicate: true, replyPending: false };
     services.bus.fanout(event!);
-    void services.replyCoordinator.enqueue(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }).catch((error) => {
+    void services.replyCoordinator.enqueue(batch!.id, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }).catch((error) => {
       repos.errors.add('reply-coordinator', (error as Error).message);
     });
     return { message, duplicate: false, replyPending: true };
@@ -87,12 +88,13 @@ export function registerChatRoutes(app: SooyaApp): void {
         meta: { directives }
       });
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
-      return { ...created, event };
+      const batch = created.created ? repos.replyBatches.addMessage(created.message.id, services.replyCoordinator.dueAt()) : null;
+      return { ...created, event, batch };
     });
-    const { message, created, event } = tx();
+    const { message, created, event, batch } = tx();
     if (!created) return { message, duplicate: true, reply: findReply(app, message.id) };
     services.bus.fanout(event!);
-    const outcome = await services.replyCoordinator.enqueue(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
+    const outcome = await services.replyCoordinator.enqueue(batch!.id, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
     return { message, duplicate: false, reply: repos.messages.get(outcome.messageId), outcome };
   });
 
@@ -164,6 +166,8 @@ function validateInput(app: SooyaApp, content: Array<{ type: string; mediaId?: s
 }
 
 function findReply(app: SooyaApp, userMessageId: string): ChatMessage | null {
+  const batch = app.repos.replyBatches.findByMessage(userMessageId);
+  if (batch?.assistant_message_id) return app.repos.messages.get(batch.assistant_message_id) ?? null;
   for (const message of app.repos.messages.recent(20).reverse()) {
     const batchMessageIds = message.meta?.batchMessageIds;
     if (message.role === 'assistant' && (message.replyTo === userMessageId || (Array.isArray(batchMessageIds) && batchMessageIds.includes(userMessageId)))) return message;

@@ -14,6 +14,7 @@ export function localDateKey(iso: string, timeZone = userTimeZone()): string {
 export function shouldStartMessageGroup(previous: ChatMessage | null, current: ChatMessage, timeZone = userTimeZone()): boolean {
   if (!previous) return true;
   if (previous.role === 'system' || current.role === 'system') return true;
+  if (previous.meta?.proactive || current.meta?.proactive || previous.meta?.withdrawnAt || current.meta?.withdrawnAt) return true;
   if (previous.role !== current.role) return true;
   const previousTime = Date.parse(previous.createdAt);
   const currentTime = Date.parse(current.createdAt);

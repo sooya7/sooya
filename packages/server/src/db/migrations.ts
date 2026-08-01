@@ -400,6 +400,47 @@ export const MIGRATIONS: Migration[] = [
         DROP TABLE IF EXISTS world_entries;
       `);
     }
+  },
+  {
+    version: 8,
+    name: 'durable_reply_batches',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE reply_batches (
+          id                   TEXT PRIMARY KEY,
+          conversation_id      TEXT NOT NULL DEFAULT 'main',
+          status               TEXT NOT NULL CHECK (status IN ('collecting','queued','running','completed','failed','cancelled')),
+          trigger_message_id   TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          assistant_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+          opened_at            TEXT NOT NULL,
+          due_at               TEXT NOT NULL,
+          started_at           TEXT,
+          completed_at         TEXT,
+          last_error           TEXT,
+          attempts             INTEGER NOT NULL DEFAULT 0,
+          lease_owner          TEXT,
+          lease_expires_at     TEXT,
+          meta_json            TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX idx_reply_batches_status_due ON reply_batches(status, due_at);
+
+        CREATE TABLE reply_batch_messages (
+          batch_id   TEXT NOT NULL REFERENCES reply_batches(id) ON DELETE CASCADE,
+          message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          position   INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (batch_id, message_id),
+          UNIQUE (message_id),
+          UNIQUE (batch_id, position)
+        );
+        CREATE INDEX idx_reply_batch_messages_order ON reply_batch_messages(batch_id, position);
+        CREATE UNIQUE INDEX idx_messages_one_active_reply_per_batch
+          ON messages(json_extract(meta_json, '$.batchId'))
+          WHERE role = 'assistant'
+            AND status IN ('sending','sent')
+            AND json_extract(meta_json, '$.batchId') IS NOT NULL;
+      `);
+    }
   }
 ];
 

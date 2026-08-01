@@ -27,6 +27,7 @@ import { Replier } from './core/replier.js';
 import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
 import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig } from './core/life.js';
 import { LifeRepo } from './db/repos/life.repo.js';
+import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
 import { ReplyCoordinator } from './core/reply-coordinator.js';
 import { PushService } from './core/push.js';
 import { StorageService } from './core/storage.js';
@@ -80,6 +81,7 @@ export interface SooyaApp {
     life: LifeRepo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
+    replyBatches: ReplyBatchRepo;
   };
   services: {
     mediaStore: MediaStore;
@@ -161,7 +163,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     pushSubscriptions: new PushSubscriptionRepo(dbHandle),
     life: new LifeRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
-    storageSamples: new StorageSampleRepo(dbHandle)
+    storageSamples: new StorageSampleRepo(dbHandle),
+    replyBatches: new ReplyBatchRepo(dbHandle)
   };
 
   const mediaStore = new MediaStore(env.mediaDirs, repos.media, { maxUploadBytes: env.MAX_UPLOAD_BYTES });
@@ -201,17 +204,20 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings });
   const replyCoordinator = new ReplyCoordinator({
     messages: repos.messages,
+    batches: repos.replyBatches,
     replier,
     bus,
     debounceMs: opts.replyDebounceMs,
-    onCompleted: (userMessages, outcome) => {
-      try {
-        if (!env.DISABLE_MEMORY_PIPELINE) repos.jobs.enqueue('memory.extract', { userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId });
-        repos.jobs.enqueue('push.reply', { messageId: outcome.messageId }, { maxAttempts: 3 });
-        if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', {});
-      } catch (error) {
-        repos.errors.add('post-reply-jobs', (error as Error).message);
-      }
+    onCompleted: (batchId, userMessages, outcome, owner) => {
+      const tx = dbHandle.transaction(() => {
+        if (!repos.replyBatches.completeInTransaction(batchId, outcome.messageId, owner)) {
+          throw new Error(`lost reply batch lease: ${batchId}`);
+        }
+        if (!env.DISABLE_MEMORY_PIPELINE) repos.jobs.enqueue('memory.extract', { batchId, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId });
+        repos.jobs.enqueue('push.reply', { batchId, messageId: outcome.messageId }, { maxAttempts: 3 });
+        if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
+      });
+      tx();
     }
   });
   const backups = new BackupService({
@@ -277,7 +283,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   logger.debug(startupCounters, 'sequence counters reconciled at startup');
   const requeued = repos.jobs.recoverStuck();
   if (requeued > 0) logger.warn({ requeued }, 'requeued interrupted jobs');
-  const orphaned = dbHandle.prepare("UPDATE messages SET status = 'failed', error = 'interrupted by restart' WHERE status = 'sending'").run().changes;
+  const orphaned = dbHandle.prepare(
+    "UPDATE messages SET status = 'failed', error = 'interrupted by restart' WHERE status = 'sending' AND json_extract(meta_json, '$.batchId') IS NULL"
+  ).run().changes;
   if (orphaned > 0) logger.warn({ orphaned }, 'marked interrupted assistant messages as failed');
   await cleanupTempFiles([env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files]);
 

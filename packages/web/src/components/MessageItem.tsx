@@ -3,6 +3,7 @@ import { getToken } from '../lib/api.js';
 import { BUBBLE_IMAGE_CSS_WIDTH, fetchAuthenticatedMedia, mediaThumbnailPath, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 import type { ChatMessage, MessagePart } from '../lib/types.js';
+import { isReplayableUserMessage, isRetryableFailedMessage } from '../lib/useChat.js';
 import { AudioBubble } from './AudioBubble.js';
 import { AuthenticatedImage } from './AuthenticatedMedia.js';
 
@@ -109,6 +110,8 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   const showReplyPreview = Boolean(message.replyTo) && message.replyTo !== previousId && (Boolean(quoted) || mine);
   const visible = message.content.filter((part) => part.type !== 'system');
   const failedMessage = message.status === 'failed';
+  const replayable = isReplayableUserMessage(message);
+  const retryable = isRetryableFailedMessage(message);
   const [menu, setMenu] = useState<{ x: number; y: number; selectedText: string } | null>(null);
   const messageRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -179,14 +182,14 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
           </div>
         )}
         <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': return part.text ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{part.text}</div> : null; case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>
-        <div className="msg-meta"><span className="clock" title={formatFullDateTime(message.createdAt, timeZone)}>{formatClock(message.createdAt, timeZone)}</span>{message.pendingLocal && message.status !== 'failed' && <span className="sending-dot" aria-label="发送中" />}{failedMessage && <span className="failed-flag">发送失败{onRetry && <button type="button" className="retry-btn" onClick={() => onRetry(message)}>重试</button>}</span>}<button type="button" className="message-menu-button" aria-label="消息操作" onClick={(event) => openMenu(event.clientX, event.clientY)}>···</button></div>
+        <div className="msg-meta"><span className="clock" title={formatFullDateTime(message.createdAt, timeZone)}>{formatClock(message.createdAt, timeZone)}</span>{message.pendingLocal && message.status !== 'failed' && <span className="sending-dot" aria-label="发送中" />}{failedMessage && <span className="failed-flag">发送失败{retryable && onRetry && <button type="button" className="retry-btn" onClick={() => onRetry(message)}>重试</button>}</span>}<button type="button" className="message-menu-button" aria-label="消息操作" onClick={(event) => openMenu(event.clientX, event.clientY)}>···</button></div>
       </div>
       {menu && <div ref={menuRef} className="message-action-menu" role="menu" aria-label="消息操作" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 10000 }}>
         {text && <button role="menuitem" type="button" onClick={() => void act(() => copy(text), '已复制全文')}>复制全文</button>}
         {text && <button role="menuitem" type="button" disabled={!menu.selectedText} onClick={() => void act(() => copy(menu.selectedText), '已复制文本')}>复制选中文本</button>}
         {onQuote && <button role="menuitem" type="button" onClick={() => void act(() => onQuote(message))}>引用回复</button>}
-        {mine && !message.pendingLocal && !failedMessage && onResend && <button role="menuitem" type="button" onClick={() => void act(() => onResend(message))}>再次发送</button>}
-        {failedMessage && onRetry && <button role="menuitem" type="button" onClick={() => void act(() => onRetry(message))}>重试</button>}
+        {replayable && !message.pendingLocal && !failedMessage && onResend && <button role="menuitem" type="button" onClick={() => void act(() => onResend(message))}>再次发送</button>}
+        {retryable && onRetry && <button role="menuitem" type="button" onClick={() => void act(() => onRetry(message))}>重试</button>}
         {withdrawable && onWithdraw && <button role="menuitem" type="button" className="danger" onClick={() => void act(() => onWithdraw(message))}>撤回（保留占位）</button>}
         {image?.media && <><button role="menuitem" type="button" onClick={() => void act(() => onOpenImage?.(image.media!.id))}>查看图片</button><button role="menuitem" type="button" onClick={() => void act(() => savePart(image), '图片已保存')}>保存图片</button><button role="menuitem" type="button" onClick={() => void act(() => { window.location.href = `/gallery?media=${encodeURIComponent(image.media!.id)}`; })}>进入图库</button></>}
         {audio?.media && <><button role="menuitem" type="button" onClick={() => void act(() => savePart(audio), '语音已保存')}>保存语音</button>{audio.transcript && <button role="menuitem" type="button" onClick={() => void act(() => copy(audio.transcript!), '转写文本已复制')}>复制转写</button>}</>}

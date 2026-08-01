@@ -472,6 +472,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         )}
         {selected === 'image' && <label>图片尺寸<input value={String(config.size ?? '')} onChange={(e) => update('size', e.target.value)} /></label>}
         {selected === 'image' && config.provider === 'anuma-input-images' && <>
+          <p className="field-help">生成阶段不会自动重试，以免一次请求产生多张图片。</p>
           <label>Anuma 上传超时（毫秒）<input type="number" min="1000" max="120000" value={String(config.uploadTimeoutMs ?? 20000)} onChange={(e) => update('uploadTimeoutMs', Number(e.target.value))} /></label>
           <label>Anuma 上传重试次数<input type="number" min="0" max="3" value={String(config.uploadMaxRetries ?? 2)} onChange={(e) => update('uploadMaxRetries', Number(e.target.value))} /></label>
           <p className="admin-muted admin-form-wide">Anuma 图生图会先上传参考图，再把 HTTPS 地址传给 generations；不会把图片 Base64 或签名地址写入日志。</p>

@@ -22,7 +22,6 @@ const PUBLIC_MESSAGES: Record<PublicFailureCode, string> = {
 
 const SECRET_NAME =
   '(?:api[-_]?key|apikey|authorization|access_token|refresh_token|token|client_secret|secret|password)';
-const SECRET_QUERY_NAME = /^(?:api[-_]?key|apikey|access_token|refresh_token|token|client_secret|secret|password)$/i;
 
 export function publicFailure(code: PublicFailureCode): PublicFailure {
   return {
@@ -80,10 +79,8 @@ function redactUrls(input: string): string {
       const url = new URL(raw);
       url.username = '';
       url.password = '';
-      for (const key of [...url.searchParams.keys()]) {
-        if (SECRET_QUERY_NAME.test(key)) url.searchParams.set(key, '[REDACTED]');
-      }
-      return url.toString();
+      for (const key of [...url.searchParams.keys()]) url.searchParams.set(key, '[REDACTED]');
+      return url.toString().replace(/%5Bredacted%5D/gi, '[REDACTED]');
     } catch {
       return '[URL]';
     }

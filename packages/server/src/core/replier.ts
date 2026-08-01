@@ -76,7 +76,7 @@ export class Replier {
     return this.replyBatch([userMessage], opts);
   }
 
-  async replyBatch(userMessages: ChatMessage[], opts: ReplyOptions): Promise<ReplyOutcome> {
+  async replyBatch(userMessages: ChatMessage[], opts: ReplyOptions, batchId?: string): Promise<ReplyOutcome> {
     if (userMessages.length === 0) throw new Error('cannot reply to an empty message batch');
     const latestUserMessage = userMessages[userMessages.length - 1]!;
     this.active = true;
@@ -105,7 +105,7 @@ export class Replier {
           status: 'sending',
           replyTo: latestUserMessage.id,
           parts: [],
-          meta: { replyTo: latestUserMessage.id, batchMessageIds: userMessages.map((message) => message.id) }
+          meta: { replyTo: latestUserMessage.id, batchId, batchMessageIds: userMessages.map((message) => message.id) }
         }).message,
         'reply.thinking',
         (message) => ({ messageId: message.id, replyTo: latestUserMessage.id })
@@ -357,7 +357,9 @@ export class Replier {
             ? e.publicMessage
             : e instanceof ProviderNotConfiguredError
               ? '图片生成服务没有配置。'
-              : failure.message;
+              : e instanceof HttpTimeoutError
+                ? '图片生成超时，本次没有自动重试，以免重复生成。'
+                : failure.message;
           this.deps.messages.updatePart(partId, {
             status: 'failed',
             error: reason,

@@ -118,3 +118,19 @@ describe('MessageItem 引用块', () => {
     expect(preview()).toBeNull();
   });
 });
+
+describe('MessageItem 重放操作', () => {
+  it('不为失败的助手消息或历史音频显示重试入口', async () => {
+    await render(<MessageItem {...common} message={message({ id: 'a1', status: 'failed' })} onRetry={() => {}} />);
+    expect(container.querySelector('.retry-btn')).toBeNull();
+
+    await act(async () => { root!.unmount(); });
+    root = null;
+    container.remove();
+    await render(<MessageItem {...common} message={message({
+      id: 'u1', role: 'user', status: 'failed',
+      content: [{ id: 'audio', type: 'audio', mediaId: 'md_audio', status: 'sent' }]
+    })} onRetry={() => {}} />);
+    expect(container.querySelector('.retry-btn')).toBeNull();
+  });
+});

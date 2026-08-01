@@ -371,6 +371,22 @@ describe('Composer 表情面板', () => {
 });
 
 describe('Composer 附件上传', () => {
+  it('取消仍在队列中的附件后不会启动它的上传请求', async () => {
+    const gate = deferredUpload({ media: [media('file', 'md_done')], failed: [] });
+    await render();
+
+    await selectFiles(fileInput(), [file('一.pdf', 'application/pdf'), file('二.pdf', 'application/pdf'), file('三.pdf', 'application/pdf')]);
+    expect(uploadForms).toHaveLength(2);
+    expect(attachmentItems()).toHaveLength(3);
+
+    await click(removeBtns()[2]!);
+    gate.open();
+    await flush();
+
+    expect(uploadForms).toHaveLength(2);
+    expect(attachmentItems()).toHaveLength(2);
+  });
+
   it('选图片后打一次上传请求，挂起期间显示正在上传，完成后出现附件条', async () => {
     const gate = deferredUpload({ media: [media('image', 'md_a')], failed: [] });
     await render();
