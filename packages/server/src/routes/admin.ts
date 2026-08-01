@@ -262,7 +262,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'bad_request', message: '未知的能力槽位' };
     }
-    if (slot === 'image') {
+    if (slot === 'image' && (req.body as { force?: unknown } | null)?.force !== true) {
       reply.code(400);
       return {
         error: 'test_unsupported',
@@ -282,6 +282,15 @@ export function registerAdminRoutes(app: SooyaApp): void {
     const timer = setTimeout(() => controller.abort(new HttpTimeoutError('连接测试超过 30 秒还没有结果')), 30_000);
     const signal = controller.signal;
     const probe = async (): Promise<ProbeOutcome> => {
+      if (slot === 'image') {
+        const provider = caps.imageProvider();
+        const image = await provider.generate('生成一张简单的抽象色块测试图', { size: '1024x1024', signal });
+        return {
+          provider: provider.name,
+          model: config.getModels().image.model || undefined,
+          detail: `已收到 ${Math.max(1, Math.round(image.data.length / 1024))} KB ${image.mime} 图片`
+        };
+      }
       if (slot === 'embedding') {
         const provider = caps.embeddingProvider();
         const result = await provider.embed([PROBE_TEXT], signal);

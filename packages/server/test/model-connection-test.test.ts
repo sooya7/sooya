@@ -110,6 +110,14 @@ describe('测试连接', () => {
     expect(image.body.message).toContain('费用');
     expect(h.state.imageCalls).toBe(0);
 
+    const forced = await h.app.server.inject({
+      method: 'POST', url: '/api/admin/models/image/test', headers: ADMIN, payload: { force: true }
+    });
+    expect(forced.statusCode).toBe(200);
+    expect(forced.json().provider).toBe('openai-images');
+    expect(forced.json().detail).toContain('KB');
+    expect(h.state.imageCalls).toBe(1);
+
   });
 
   it('读图能力没声明支持读图时不给出“通了”的假象', async () => {
