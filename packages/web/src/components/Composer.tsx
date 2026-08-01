@@ -1,20 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
-import type { MediaRef, StickerInfo } from '../lib/types.js';
+import type { ChatMessage, MediaRef, StickerInfo } from '../lib/types.js';
 import { AuthenticatedImage } from './AuthenticatedMedia.js';
 
 export interface PendingAttachment {
   key: string;
-  media: MediaRef;
-  previewUrl: string;
+  media?: MediaRef;
+  localFile?: File;
+  previewUrl?: string;
   kind: 'image' | 'file';
   name: string;
+  status: 'queued' | 'uploading' | 'ready' | 'failed' | 'cancelled';
+  progress: number;
+  error?: string;
+}
+
+export interface ComposerSendPayload {
+  content: Array<Record<string, unknown>>;
+  optimisticParts: ChatMessage['content'];
 }
 
 interface Props {
   disabled: boolean;
   stickers: StickerInfo[];
-  onSend: (content: Array<Record<string, unknown>>) => Promise<unknown>;
+  onSend: (payload: ComposerSendPayload) => Promise<unknown>;
   onNotice: (text: string) => void;
 }
 
@@ -22,9 +31,9 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [showStickers, setShowStickers] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [sending, setSending] = useState(false);
+  const controllersRef = useRef(new Map<string, AbortController>());
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -39,35 +48,69 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
 
   useEffect(autoGrow, [text, autoGrow]);
 
-  const uploadFiles = useCallback(
-    async (files: File[], field: 'image' | 'file') => {
-      if (files.length === 0) return;
-      setUploading(true);
-      try {
-        const res = await api.upload(
-          files.map((f) => ({ file: f, field: f.type.startsWith('image/') ? 'image' : field, name: f.name }))
-        );
-        if (res.failed.length > 0) {
-          onNotice(`${res.failed.length} 个文件未能上传：${res.failed[0]!.error}`);
-        }
-        setAttachments((prev) => [
-          ...prev,
-          ...res.media.map((m) => ({
-            key: m.id,
-            media: m,
-            previewUrl: '',
-            kind: m.kind === 'sticker' || m.kind === 'image' ? ('image' as const) : m.kind === 'file' ? ('file' as const) : null,
-            name: m.name ?? '文件'
-          })).filter((item): item is PendingAttachment => item.kind !== null)
-        ]);
-      } catch (err) {
-        onNotice(`上传失败：${(err as Error).message}`);
-      } finally {
-        setUploading(false);
+  const updateAttachment = useCallback((key: string, patch: Partial<PendingAttachment>) => {
+    setAttachments((previous) => previous.map((item) => item.key === key ? { ...item, ...patch } : item));
+  }, []);
+
+  const uploadTask = useCallback(async (task: PendingAttachment) => {
+    if (!task.localFile) return;
+    const controller = new AbortController();
+    controllersRef.current.set(task.key, controller);
+    updateAttachment(task.key, { status: 'uploading', progress: 0, error: undefined });
+    try {
+      const result = await api.upload([{ file: task.localFile, field: task.kind, name: task.name }], { signal: controller.signal });
+      const media = result.media.find((item) => item.kind === 'image' || item.kind === 'sticker' || item.kind === 'file');
+      if (!media) throw new Error(result.failed[0]?.error ?? '文件上传失败');
+      updateAttachment(task.key, {
+        media,
+        kind: media.kind === 'image' || media.kind === 'sticker' ? 'image' : 'file',
+        name: media.name ?? task.name,
+        status: 'ready',
+        progress: 100
+      });
+      if (result.failed.length > 0) onNotice(`${result.failed.length} 个文件未能上传：${result.failed[0]!.error}`);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const message = error instanceof Error ? error.message : '文件上传失败';
+      updateAttachment(task.key, { status: 'failed', progress: 0, error: message });
+      onNotice(`上传失败：${message}`);
+    } finally {
+      controllersRef.current.delete(task.key);
+    }
+  }, [onNotice, updateAttachment]);
+
+  const uploadFiles = useCallback(async (files: File[], field: 'image' | 'file') => {
+    const queued = files.map((file, index): PendingAttachment => ({
+      key: `upload_${Date.now().toString(36)}_${index}_${Math.random().toString(36).slice(2, 7)}`,
+      localFile: file,
+      kind: file.type.startsWith('image/') ? 'image' : field,
+      name: file.name,
+      status: 'queued',
+      progress: 0
+    }));
+    if (queued.length === 0) return;
+    setAttachments((previous) => [...previous, ...queued]);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < queued.length) {
+        const task = queued[cursor++];
+        if (task) await uploadTask(task);
       }
-    },
-    [onNotice]
-  );
+    };
+    await Promise.all(Array.from({ length: Math.min(2, queued.length) }, () => worker()));
+  }, [uploadTask]);
+
+  const cancelUpload = useCallback((task: PendingAttachment) => {
+    controllersRef.current.get(task.key)?.abort();
+    controllersRef.current.delete(task.key);
+    setAttachments((previous) => previous.filter((item) => item.key !== task.key));
+  }, []);
+
+  const retryUpload = useCallback((task: PendingAttachment) => {
+    if (!task.localFile) return;
+    updateAttachment(task.key, { status: 'queued', progress: 0, error: undefined });
+    void uploadTask({ ...task, status: 'queued', progress: 0, error: undefined });
+  }, [updateAttachment, uploadTask]);
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
@@ -96,37 +139,49 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
     [uploadFiles]
   );
 
-  const canSend = !disabled && !sending && (text.trim().length > 0 || attachments.length > 0);
+  const readyAttachments = attachments.filter((item) => item.status === 'ready' && item.media);
+  const hasPendingUploads = attachments.some((item) => item.status === 'queued' || item.status === 'uploading');
+  const canSend = !disabled && !sending && !hasPendingUploads && (text.trim().length > 0 || readyAttachments.length > 0);
 
   const doSend = useCallback(async () => {
     if (!canSend) return;
     const content: Array<Record<string, unknown>> = [];
     if (text.trim()) content.push({ type: 'text', text: text.trim() });
-    for (const a of attachments) {
-      if (a.kind === 'image') content.push({ type: 'image', mediaId: a.media.id });
-      else content.push({ type: 'file', mediaId: a.media.id });
+    const optimisticParts: ChatMessage['content'] = [];
+    if (text.trim()) optimisticParts.push({ id: 'localpart_text', type: 'text', text: text.trim(), status: 'pending' });
+    for (const a of readyAttachments) {
+      if (!a.media) continue;
+      const type = a.kind === 'image' ? 'image' : 'file';
+      content.push({ type, mediaId: a.media.id });
+      optimisticParts.push({ id: `localpart_${a.key}`, type, mediaId: a.media.id, media: a.media, status: 'pending' });
     }
     if (content.length === 0) return;
+    setText('');
+    setAttachments([]);
+    setShowStickers(false);
     setSending(true);
     try {
-      await onSend(content);
-      setText('');
-      setAttachments([]);
-      setShowStickers(false);
+      await onSend({ content, optimisticParts });
     } catch {
       /* error surfaced by the parent */
     } finally {
       setSending(false);
     }
-  }, [attachments, canSend, onSend, text]);
+  }, [canSend, onSend, readyAttachments, text]);
 
   const sendSticker = useCallback(
     async (sticker: StickerInfo) => {
       setShowStickers(false);
+      setSending(true);
       try {
-        await onSend([{ type: 'sticker', mediaId: sticker.mediaId }]);
+        await onSend({
+          content: [{ type: 'sticker', mediaId: sticker.mediaId }],
+          optimisticParts: [{ id: `localpart_${sticker.id}`, type: 'sticker', mediaId: sticker.mediaId, status: 'pending', media: { id: sticker.mediaId, kind: 'sticker', mime: 'image/*', bytes: 0, url: sticker.url, name: sticker.name } }]
+        });
       } catch {
         /* handled upstream */
+      } finally {
+        setSending(false);
       }
     },
     [onSend]
@@ -157,19 +212,22 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
         <div className="attachment-strip" data-testid="attachment-strip">
           {attachments.map((a) => (
             <div key={a.key} className="attachment">
-              {a.kind === 'image' ? (
+              {a.kind === 'image' && a.media ? (
                 <AuthenticatedImage path={a.media.url} scope="user" alt={a.name} />
               ) : (
                 <span className="attachment-generic">{a.name}</span>
               )}
+              {a.status === 'uploading' && <small role="status">正在上传 {a.progress}%</small>}
+              {a.status === 'failed' && <small role="status">上传失败：{a.error}</small>}
               <button
                 type="button"
                 className="attachment-remove"
-                aria-label="移除附件"
-                onClick={() => setAttachments((prev) => prev.filter((x) => x.key !== a.key))}
+                aria-label={a.status === 'failed' ? '移除失败附件' : '取消上传'}
+                onClick={() => cancelUpload(a)}
               >
                 ×
               </button>
+              {a.status === 'failed' && <button type="button" onClick={() => retryUpload(a)}>重试上传</button>}
             </div>
           ))}
         </div>
@@ -254,7 +312,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
           </button>
         </div>
 
-      {uploading && <div className="composer-hint">正在上传…</div>}
+      {hasPendingUploads && <div className="composer-hint">正在上传…</div>}
 
       <input
         ref={imageInputRef}

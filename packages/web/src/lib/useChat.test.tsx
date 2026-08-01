@@ -679,7 +679,7 @@ describe('useChat loadOlder()', () => {
   });
 });
 
-describe('useChat resend()', () => {
+describe('useChat retryFailed()', () => {
   it('复用原 clientMsgId 重试，成功后失败条目被服务端消息替掉', async () => {
     let posts = 0;
     stubRoutes({
@@ -696,7 +696,7 @@ describe('useChat resend()', () => {
     const failed = chat().messages.find((m) => m.pendingLocal)!;
     expect(failed.status).toBe('failed');
 
-    await act(async () => { await chat().resend(failed); });
+    await act(async () => { await chat().retryFailed(failed); });
 
     const payloads = sendCalls();
     expect(payloads).toHaveLength(2);
@@ -716,7 +716,7 @@ describe('useChat resend()', () => {
     });
     const chat = await mountChat();
 
-    await act(async () => { await chat().resend(chat().messages[0]!); });
+    await act(async () => { await chat().retryFailed(chat().messages[0]!); });
 
     const payloads = sendCalls();
     expect(payloads).toHaveLength(1);
@@ -735,7 +735,7 @@ describe('useChat resend()', () => {
     const chat = await mountChat();
 
     let failure: unknown;
-    await act(async () => { failure = await chat().resend(chat().messages[0]!).catch((err: unknown) => err); });
+    await act(async () => { failure = await chat().retryFailed(chat().messages[0]!).catch((err: unknown) => err); });
 
     expect((failure as Error).message).toBe('unauthorized');
     expect(sendCalls()[0]!.clientMsgId).toBe('c_old');
@@ -745,6 +745,20 @@ describe('useChat resend()', () => {
     expect(still.error).toBe('unauthorized');
     expect(chat().connection).toBe('unauthorized');
     expect(chat().error).toBe('unauthorized');
+  });
+
+  it('sendAgain 使用新的 clientMsgId 创建独立消息', async () => {
+    stubRoutes({
+      bootstrap: () => json(bootstrapInfo({ messages: { messages: [message({ id: 'm_7', seq: 7, role: 'user', status: 'sent', clientMsgId: 'c_original' })], hasMore: false, lastEventSeq: 42, lastMessageSeq: 7, oldestSeq: 7 } })),
+      send: () => json({ message: message({ id: 'm_8', seq: 8, role: 'user', clientMsgId: sendCalls().at(-1)!.clientMsgId }), duplicate: false, replyPending: true })
+    });
+    const chat = await mountChat();
+
+    await act(async () => { await chat().sendAgain(chat().messages[0]!); });
+
+    expect(sendCalls()).toHaveLength(1);
+    expect(sendCalls()[0]!.clientMsgId).not.toBe('c_original');
+    expect(chat().messages.map((item) => item.id)).toEqual(['m_7', 'm_8']);
   });
 });
 

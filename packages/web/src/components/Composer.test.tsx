@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Composer } from './Composer.js';
+import { Composer, type ComposerSendPayload } from './Composer.js';
 import type { MediaRef, StickerInfo } from '../lib/types.js';
 
 /**
@@ -45,7 +45,7 @@ async function render(over: Overrides = {}): Promise<void> {
       <Composer
         disabled={over.disabled ?? false}
         stickers={over.stickers ?? stickers}
-        onSend={onSend as unknown as (content: Array<Record<string, unknown>>) => Promise<unknown>}
+        onSend={onSend as unknown as (payload: ComposerSendPayload) => Promise<unknown>}
         onNotice={onNotice as unknown as (text: string) => void}
       />
     );
@@ -61,7 +61,7 @@ const imageInput = () => container.querySelector<HTMLInputElement>('[data-testid
 const fileInput = () => container.querySelector<HTMLInputElement>('[data-testid="input-file"]')!;
 const strip = () => container.querySelector('[data-testid="attachment-strip"]');
 const attachmentItems = () => [...container.querySelectorAll<HTMLElement>('.attachment')];
-const removeBtns = () => [...container.querySelectorAll<HTMLButtonElement>('[aria-label="移除附件"]')];
+const removeBtns = () => [...container.querySelectorAll<HTMLButtonElement>('[aria-label="取消上传"], [aria-label="移除失败附件"]')];
 const hint = () => container.querySelector('.composer-hint');
 
 /** 受控 textarea 只认原型 setter + `input` 事件，这才是「用户打字」。 */
@@ -104,7 +104,7 @@ function deferredSend() {
 
 /** 每次 `onSend` 收到的内容块，按调用顺序。 */
 function sentContents(): Array<Array<Record<string, unknown>>> {
-  return onSend.mock.calls.map((call) => call[0] as Array<Record<string, unknown>>);
+  return onSend.mock.calls.map((call) => (call[0] as ComposerSendPayload).content);
 }
 
 /** 让所有挂起的 promise（含 `api.upload` 里 fetch → text → JSON 那串）跑完并让 React 重渲染。 */
@@ -297,7 +297,7 @@ describe('Composer 不可发送态', () => {
   });
 });
 
-describe('Composer 发送中互斥与失败保草稿', () => {
+describe('Composer 发送中互斥与提交快照', () => {
   it('发送挂起期间按钮禁用，再按回车不会发出第二条', async () => {
     const pending = deferredSend();
     onSend.mockImplementation(() => pending.promise);
@@ -319,7 +319,7 @@ describe('Composer 发送中互斥与失败保草稿', () => {
     expect(input().value).toBe('');
   });
 
-  it('发送失败时草稿留在输入框，按钮恢复可用', async () => {
+  it('发送失败时已提交快照不回填输入框，失败气泡负责重试', async () => {
     const pending = deferredSend();
     onSend.mockImplementation(() => pending.promise);
     await render();
@@ -331,17 +331,9 @@ describe('Composer 发送中互斥与失败保草稿', () => {
       await Promise.resolve();
     });
 
-    // 用户不该为一次网络失败重打一遍。
-    expect(input().value).toBe('这条会失败');
-    expect(sendBtn().disabled).toBe(false);
-
-    // 恢复后重发走的还是同一段草稿。
-    onSend.mockImplementation(async () => ({}));
-    await pressEnter();
-    expect(sentContents()).toEqual([
-      [{ type: 'text', text: '这条会失败' }],
-      [{ type: 'text', text: '这条会失败' }]
-    ]);
+    expect(input().value).toBe('');
+    expect(sendBtn().disabled).toBe(true);
+    expect(sentContents()).toEqual([[{ type: 'text', text: '这条会失败' }]]);
     expect(input().value).toBe('');
   });
 });
@@ -386,7 +378,8 @@ describe('Composer 附件上传', () => {
     await selectFiles(imageInput(), [file('cat.png', 'image/png')]);
     expect(uploadForms).toHaveLength(1);
     expect(hint()?.textContent).toBe('正在上传…');
-    expect(strip()).toBeNull();
+    expect(strip()).not.toBeNull();
+    expect(strip()!.textContent).toContain('正在上传');
 
     await act(async () => { gate.open(); });
     await flush();
@@ -457,11 +450,11 @@ describe('Composer 附件上传', () => {
     await flush();
 
     expect(onNotice).toHaveBeenCalledWith('2 个文件未能上传：文件太大');
-    expect(attachmentItems()).toHaveLength(1);
+    expect(attachmentItems()).toHaveLength(2);
     expect(hint()).toBeNull();
   });
 
-  it('上传整体失败时提示原因，不产生附件条且上传态复位', async () => {
+  it('上传整体失败时提示原因并保留可重试附件', async () => {
     uploadHandler = async () => jsonResponse({ message: '存储不可用' }, 503);
     await render();
 
@@ -469,7 +462,9 @@ describe('Composer 附件上传', () => {
     await flush();
 
     expect(onNotice).toHaveBeenCalledWith('上传失败：存储不可用');
-    expect(strip()).toBeNull();
+    expect(strip()).not.toBeNull();
+    expect(strip()!.textContent).toContain('上传失败');
+    expect(strip()!.textContent).toContain('重试上传');
     expect(hint()).toBeNull();
   });
 });
@@ -529,20 +524,19 @@ describe('Composer 附件发送', () => {
 
     await selectFiles(fileInput(), [file('mixed.bin', 'application/octet-stream')]);
     await flush();
-    expect(attachmentItems()).toHaveLength(2);
+    expect(attachmentItems()).toHaveLength(1);
 
     await click(sendBtn());
     await flush();
 
     expect(sentContents()).toEqual([
       [
-        { type: 'image', mediaId: 'md_i' },
-        { type: 'file', mediaId: 'md_f' }
+        { type: 'image', mediaId: 'md_i' }
       ]
     ]);
   });
 
-  it('发送失败时附件和草稿都保留，可以原样重发', async () => {
+  it('发送失败时附件和草稿已移交给乐观消息，不污染新草稿', async () => {
     const pending = deferredSend();
     onSend.mockImplementation(() => pending.promise);
     await render();
@@ -557,36 +551,27 @@ describe('Composer 附件发送', () => {
       await Promise.resolve();
     });
 
-    expect(input().value).toBe('带图的话');
-    expect(attachmentItems()).toHaveLength(1);
-    expect(sendBtn().disabled).toBe(false);
-
-    onSend.mockImplementation(async () => ({}));
-    await click(sendBtn());
-    await flush();
-
-    expect(sentContents()).toEqual([
-      [{ type: 'text', text: '带图的话' }, { type: 'image', mediaId: 'md_up' }],
-      [{ type: 'text', text: '带图的话' }, { type: 'image', mediaId: 'md_up' }]
-    ]);
+    expect(input().value).toBe('');
+    expect(attachmentItems()).toHaveLength(0);
+    expect(sendBtn().disabled).toBe(true);
+    expect(sentContents()).toEqual([[{ type: 'text', text: '带图的话' }, { type: 'image', mediaId: 'md_up' }]]);
     expect(strip()).toBeNull();
   });
 });
 
 describe('Composer 移除附件', () => {
-  it('移除按钮只删掉自己那一条', async () => {
+  it('移除按钮删掉对应附件', async () => {
     uploadHandler = async () =>
       jsonResponse({ media: [media('file', 'md_1', { name: '一.pdf' }), media('file', 'md_2', { name: '二.pdf' })], failed: [] });
     await render();
 
     await selectFiles(fileInput(), [file('spec.pdf', 'application/pdf')]);
     await flush();
-    expect(attachmentItems()).toHaveLength(2);
+    expect(attachmentItems()).toHaveLength(1);
 
     await click(removeBtns()[0]!);
-    expect(attachmentItems()).toHaveLength(1);
-    expect(strip()!.textContent).toContain('二.pdf');
-    expect(strip()!.textContent).not.toContain('一.pdf');
+    expect(attachmentItems()).toHaveLength(0);
+    expect(strip()).toBeNull();
   });
 
   it('删到没有附件时整块附件条消失，没有文本就回到禁用', async () => {
@@ -659,8 +644,9 @@ describe('Composer 拖放', () => {
 
     await drag('drop', [file('cat.png', 'image/png'), file('spec.pdf', 'application/pdf')]);
 
-    expect(uploadForms).toHaveLength(1);
-    expect([...uploadForms[0]!.keys()]).toEqual(['image', 'file']);
+    expect(uploadForms).toHaveLength(2);
+    expect([...uploadForms[0]!.keys()]).toEqual(['image']);
+    expect([...uploadForms[1]!.keys()]).toEqual(['file']);
   });
 
   it('不带文件的 drop（比如拖拽选中文字）不发上传请求', async () => {

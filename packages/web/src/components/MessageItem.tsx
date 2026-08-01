@@ -47,24 +47,24 @@ async function savePart(part: MessagePart): Promise<void> {
   }
 }
 
-function ImagePart({ part, onOpen }: { part: MessagePart; onOpen?: (mediaId: string) => void }) {
+function ImagePart({ part, mine, onOpen }: { part: MessagePart; mine: boolean; onOpen?: (mediaId: string) => void }) {
   const [failed, setFailed] = useState(false);
   // 气泡显示缩略图；点开大图时由 ImageViewerHost 换成原图。
   const media = useAuthenticatedMedia(part.media?.url ? mediaThumbnailPath(part.media.url, BUBBLE_IMAGE_CSS_WIDTH) : part.media?.url, 'user', 'image');
   if (part.status === 'failed') return <div className="bubble bubble-note">图片没有发出去{part.error ? `：${part.error}` : ''}</div>;
-  if (part.status === 'pending' || !part.media) return <div className="bubble bubble-note pulsing">图片生成中…</div>;
+  if (!part.media) return <div className="bubble bubble-note pulsing">{mine ? '图片发送中…' : '图片生成中…'}</div>;
   if (failed) return <div className="bubble bubble-note">图片加载失败</div>;
   const ratio = part.media.width && part.media.height ? part.media.width / part.media.height : undefined;
   const { url, error } = media;
   const alt = part.media.name ?? '图片';
   if (error) return <div className="bubble bubble-note">{error}</div>;
-  return <button className="image-part" type="button" onClick={() => onOpen ? onOpen(part.media!.id) : window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id: part.media!.id } }))} aria-label="查看大图" data-media-id={part.media.id} data-src={url ?? ''} data-alt={alt}>{url && <img src={url} alt={alt} loading="lazy" style={ratio ? { aspectRatio: String(ratio) } : undefined} onError={() => setFailed(true)} />}</button>;
+  return <button className={`image-part ${part.status === 'pending' ? 'pending-media' : ''}`} type="button" onClick={() => onOpen ? onOpen(part.media!.id) : window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id: part.media!.id } }))} aria-label="查看大图" data-media-id={part.media.id} data-src={url ?? ''} data-alt={alt}>{url && <img src={url} alt={alt} loading="lazy" style={ratio ? { aspectRatio: String(ratio) } : undefined} onError={() => setFailed(true)} />}{part.status === 'pending' && <span className="media-sending" role="status">发送中</span>}</button>;
 }
 function StickerPart({ part }: { part: MessagePart }) { const [failed, setFailed] = useState(false); if (!part.media || failed) return null; return <AuthenticatedImage className="sticker-part" path={part.media.url} scope="user" alt={String(part.meta?.stickerName ?? '表情')} loading="lazy" onError={() => setFailed(true)} />; }
-function FilePart({ part }: { part: MessagePart }) {
+function FilePart({ part, mine }: { part: MessagePart; mine: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  if (!part.media) return <div className="bubble bubble-note">文件不可用</div>;
+  if (!part.media) return <div className="bubble bubble-note">{mine ? '文件发送中…' : '文件不可用'}</div>;
   /* `void savePart(part)` used to drop the rejection on the floor: a cleaned-up
    * or unreachable file failed with no visible trace, so the user just kept
    * clicking. Surface it the same way a broken image does. */
@@ -80,7 +80,7 @@ function FilePart({ part }: { part: MessagePart }) {
     }
   };
   return <>
-    <button className="bubble bubble-file" type="button" disabled={busy} onClick={() => void save()}><span className="file-icon">▣</span><span className="file-meta"><span className="file-name">{part.media.name ?? '文件'}</span><span className="file-size">{busy ? '下载中…' : formatBytes(part.media.bytes)}</span></span></button>
+    <button className={`bubble bubble-file ${part.status === 'pending' ? 'pending-media' : ''}`} type="button" disabled={busy} onClick={() => void save()}><span className="file-icon">▣</span><span className="file-meta"><span className="file-name">{part.media.name ?? '文件'}</span><span className="file-size">{busy ? '下载中…' : formatBytes(part.media.bytes)}</span></span>{part.status === 'pending' && <span className="media-sending" role="status">发送中</span>}</button>
     {error && <div className="bubble bubble-note file-error" role="status">{error}</div>}
   </>;
 }
@@ -178,14 +178,14 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
             <span className="reply-text">{quoted ? quotedPreview(quoted) : '原消息已不在当前记录中'}</span>
           </div>
         )}
-        <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': return part.text ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{part.text}</div> : null; case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} />; default: return null; } })}</div>
+        <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': return part.text ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{part.text}</div> : null; case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>
         <div className="msg-meta"><span className="clock" title={formatFullDateTime(message.createdAt, timeZone)}>{formatClock(message.createdAt, timeZone)}</span>{message.pendingLocal && message.status !== 'failed' && <span className="sending-dot" aria-label="发送中" />}{failedMessage && <span className="failed-flag">发送失败{onRetry && <button type="button" className="retry-btn" onClick={() => onRetry(message)}>重试</button>}</span>}<button type="button" className="message-menu-button" aria-label="消息操作" onClick={(event) => openMenu(event.clientX, event.clientY)}>···</button></div>
       </div>
       {menu && <div ref={menuRef} className="message-action-menu" role="menu" aria-label="消息操作" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 10000 }}>
         {text && <button role="menuitem" type="button" onClick={() => void act(() => copy(text), '已复制全文')}>复制全文</button>}
         {text && <button role="menuitem" type="button" disabled={!menu.selectedText} onClick={() => void act(() => copy(menu.selectedText), '已复制文本')}>复制选中文本</button>}
         {onQuote && <button role="menuitem" type="button" onClick={() => void act(() => onQuote(message))}>引用回复</button>}
-        {mine && !message.pendingLocal && onResend && <button role="menuitem" type="button" onClick={() => void act(() => onResend(message))}>重新发送</button>}
+        {mine && !message.pendingLocal && !failedMessage && onResend && <button role="menuitem" type="button" onClick={() => void act(() => onResend(message))}>再次发送</button>}
         {failedMessage && onRetry && <button role="menuitem" type="button" onClick={() => void act(() => onRetry(message))}>重试</button>}
         {withdrawable && onWithdraw && <button role="menuitem" type="button" className="danger" onClick={() => void act(() => onWithdraw(message))}>撤回（保留占位）</button>}
         {image?.media && <><button role="menuitem" type="button" onClick={() => void act(() => onOpenImage?.(image.media!.id))}>查看图片</button><button role="menuitem" type="button" onClick={() => void act(() => savePart(image), '图片已保存')}>保存图片</button><button role="menuitem" type="button" onClick={() => void act(() => { window.location.href = `/gallery?media=${encodeURIComponent(image.media!.id)}`; })}>进入图库</button></>}

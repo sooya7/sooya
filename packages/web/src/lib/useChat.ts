@@ -126,32 +126,49 @@ export function useChat() {
     catch (err) { setMessages((prev) => prev.map((m) => m.id === optimistic.id ? { ...m, status: 'failed', error: (err as Error).message } : m)); if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); setError((err as Error).message); throw err; }
   }, [applyMessages]);
 
-  const resend = useCallback(async (message: ChatMessage) => {
-    const content = message.content.filter((part) => part.type !== 'system').map((part) => part.type === 'text' ? { type: 'text', text: part.text ?? '' } : part.type === 'audio' ? { type: 'audio', mediaId: part.mediaId, duration: part.duration ?? undefined, transcript: part.transcript ?? undefined } : { type: part.type, mediaId: part.mediaId }).filter((part) => part.type === 'text' ? Boolean(part.text) : Boolean(part.mediaId));
-    // Reuse the original clientMsgId so a retry the server already accepted
-    // dedupes to the same message instead of posting a second copy (H10).
+  const retryFailed = useCallback(async (message: ChatMessage) => {
+    if (message.status !== 'failed') return;
+    const content = messageToContent(message);
     if (!message.clientMsgId) return await send(content, undefined, message.replyTo ?? undefined);
     const clientMsgId = message.clientMsgId;
-    setMessages((prev) => prev.map((m) => m.id === message.id ? { ...m, status: 'pending', error: null } : m));
+    setMessages((prev) => prev.map((m) => m.id === message.id ? { ...m, status: 'pending', error: null, pendingLocal: true } : m));
     setError(null);
     try {
       const result = await api.send({ clientMsgId, content, replyTo: message.replyTo ?? undefined });
       trackSeq([result.message]);
-      setMessages((prev) => replaceFailedMessage(prev, clientMsgId, result.message));
+      setMessages((prev) => replaceFailedMessage(prev, clientMsgId, { ...result.message, pendingLocal: false }));
       return result;
     } catch (err) {
-      setMessages((prev) => prev.map((m) => m.id === message.id ? { ...m, status: 'failed', error: (err as Error).message } : m));
+      setMessages((prev) => prev.map((m) => m.id === message.id ? { ...m, status: 'failed', error: (err as Error).message, pendingLocal: true } : m));
       if (err instanceof ApiError && err.status === 401) setConnection('unauthorized');
       setError((err as Error).message);
       throw err;
     }
   }, [send, trackSeq]);
 
+  const sendAgain = useCallback((message: ChatMessage) => {
+    if (message.status === 'failed' || message.pendingLocal) return Promise.resolve(undefined);
+    return send(messageToContent(message), optimisticPartsFor(message), message.replyTo ?? undefined);
+  }, [send]);
+
   const withdraw = useCallback(async (message: ChatMessage) => { const result = await api.withdraw(message.id); applyMessages([result.message]); return result; }, [applyMessages]);
 
   useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') void resync(); }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [resync]);
 
-  return { messages, persona, connection, activity, life, stickers, hasMore, loadingOlder, error, ready, send, resend, withdraw, loadOlder, resync, reload, clearError: () => setError(null) };
+  return { messages, persona, connection, activity, life, stickers, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, loadOlder, resync, reload, clearError: () => setError(null) };
+}
+
+function messageToContent(message: ChatMessage): Array<Record<string, unknown>> {
+  return message.content
+    .filter((part) => part.type !== 'system' && part.type !== 'audio')
+    .map((part) => part.type === 'text' ? { type: 'text', text: part.text ?? '' } : { type: part.type, mediaId: part.mediaId })
+    .filter((part) => part.type === 'text' ? Boolean(part.text) : Boolean(part.mediaId));
+}
+
+function optimisticPartsFor(message: ChatMessage): ChatMessage['content'] {
+  return message.content
+    .filter((part) => part.type !== 'system' && part.type !== 'audio')
+    .map((part, index) => ({ ...part, id: `localpart_${index}`, status: 'pending' as const }));
 }
 
 function applyDraft(messages: ChatMessage[], messageId: string, text: string): ChatMessage[] {

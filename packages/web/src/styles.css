@@ -377,6 +377,7 @@ button {
 }
 
 .image-part {
+  position: relative;
   display: block;
   max-width: 260px;
   border-radius: 14px;
@@ -393,6 +394,7 @@ button {
 }
 
 .bubble-file {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -766,6 +768,16 @@ button {
   overflow: hidden;
   border: 1px solid var(--line);
   background: var(--panel);
+}
+.media-sending {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 70%, transparent);
+  color: var(--panel);
+  font-size: 11px;
 }
 .attachment img {
   width: 60px;
