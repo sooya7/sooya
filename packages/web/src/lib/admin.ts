@@ -151,6 +151,16 @@ export interface AdminError {
   detail: unknown;
 }
 
+/** Reply of a one-shot connectivity probe against the slot's saved config. */
+export interface ModelTestResult {
+  ok: true;
+  slot: ModelSlot;
+  provider: string;
+  model?: string;
+  latencyMs: number;
+  detail: string;
+}
+
 export interface AdminJob {
   id: string;
   type: string;
@@ -190,6 +200,8 @@ export const adminApi = {
       `/api/admin/models/${encodeURIComponent(slot)}/discover`,
       { method: 'POST', body: { ...(baseUrl ? { baseUrl } : {}) } }
     ),
+  testModel: (slot: ModelSlot) =>
+    adminRequest<ModelTestResult>(`/api/admin/models/${encodeURIComponent(slot)}/test`, { method: 'POST', body: {} }),
   saveModelPresets: (presets: ModelPreset[]) =>
     adminRequest<{ presets: ModelPreset[] }>('/api/admin/model-presets', { method: 'PUT', body: { presets } }),
   applyModelPreset: (id: string) =>

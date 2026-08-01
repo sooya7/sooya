@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { SooyaApp } from '../app.js';
 import { requireAdminToken } from './auth.js';
 import { MODEL_SLOTS, ModelPresetsSchema, PersonaSchema, type ModelPreset, type ModelSlot } from '../config/schema.js';
-import { assertSafeUrl } from '../util/http.js';
+import { assertSafeUrl, HttpTimeoutError, SsrfError } from '../util/http.js';
+import { ProviderNotConfiguredError, ProviderRequestError } from '../providers/types.js';
 import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
 
 /** Admin API used by the built-in management panel. */
@@ -180,6 +181,132 @@ export function registerAdminRoutes(app: SooyaApp): void {
       repos.errors.add('admin.discover', (err as Error).message);
       reply.code(502);
       return { error: 'discovery_failed', message: (err as Error).message.slice(0, 200) };
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  /**
+   * Probe one slot's saved config with a single real request.
+   *
+   * `inspectHealth()` -- and therefore `/api/admin/capabilities` -- deliberately
+   * never calls the endpoint: it only reports whether a slot *looks* configured
+   * ("configured (endpoint not called)"). That leaves the panel unable to tell
+   * "saved" from "actually works", which is the question this route answers.
+   *
+   * Deliberate limits: one call against the currently saved config (the key
+   * never leaves the server, so the panel sends no body), the cheapest request
+   * that still exercises credentials + model name + response shape, and no
+   * polling. Slots whose cheapest call is not cheap (image generation) or needs
+   * a sample the panel does not have (transcription) say so instead of billing
+   * the user for a health check.
+   */
+  const PROBE_TEXT = '你好';
+  interface ProbeOutcome {
+    provider: string;
+    model?: string;
+    detail: string;
+  }
+  server.post('/api/admin/models/:slot/test', guard, async (req, reply) => {
+    const slot = (req.params as { slot?: string }).slot as ModelSlot | undefined;
+    if (!slot || !MODEL_SLOTS.includes(slot)) {
+      reply.code(400);
+      return { error: 'bad_request', message: '未知的能力槽位' };
+    }
+    if (slot === 'image' || slot === 'stt') {
+      reply.code(400);
+      return {
+        error: 'test_unsupported',
+        slot,
+        message: slot === 'image'
+          ? '出图会产生真实生成费用，这里不自动触发；用「拉取模型」确认地址和密钥通不通，出图效果在聊天里验证'
+          : '语音识别要有一段真实音频，面板里没有样本；在聊天里发一条语音来验证'
+      };
+    }
+    if (slot === 'vision' && !config.chatModelFor('vision').supportsVision) {
+      // Probing would pass while real image messages still fail, because the
+      // vision provider is gated on this flag, not on the endpoint.
+      reply.code(400);
+      return { error: 'vision_not_declared', slot, message: '这个模型没有声明支持读图，先把「声明支持读图」改成「是」再测' };
+    }
+
+    const caps = services.capabilities;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new HttpTimeoutError('连接测试超过 30 秒还没有结果')), 30_000);
+    const signal = controller.signal;
+    const probe = async (): Promise<ProbeOutcome> => {
+      if (slot === 'embedding') {
+        const provider = caps.embeddingProvider();
+        const result = await provider.embed([PROBE_TEXT], signal);
+        return { provider: provider.name, model: result.model || undefined, detail: `返回了 ${result.dimensions} 维向量` };
+      }
+      if (slot === 'tts') {
+        const provider = caps.ttsProvider();
+        const audio = await provider.synthesize(PROBE_TEXT, { signal });
+        return {
+          provider: provider.name,
+          model: String(config.getModels().tts.model ?? '') || undefined,
+          detail: `合成了 ${Math.max(1, Math.round(audio.data.length / 1024))} KB ${audio.format} 音频`
+        };
+      }
+      const provider = slot === 'summary'
+        ? caps.summaryProvider()
+        : slot === 'vision'
+          ? caps.visionProvider()
+          : caps.chatProvider();
+      // supportsVision is already true here, so a null vision provider only
+      // means the slot itself is not configured.
+      if (!provider) throw new ProviderNotConfiguredError(slot);
+      const result = await provider.complete({ messages: [{ role: 'user', content: [{ type: 'text', text: PROBE_TEXT }] }], maxTokens: 16, signal });
+      const chars = [...result.text.trim()].length;
+      return {
+        provider: provider.name,
+        model: result.model || undefined,
+        // An empty body with a 200 still proves the round trip; truncation at
+        // maxTokens must not be reported as a broken connection.
+        detail: chars ? `模型回了 ${chars} 个字` : '接口通了，但这次没有返回文本（可能被最大输出 token 截断）'
+      };
+    };
+
+    const startedAt = Date.now();
+    try {
+      const outcome = await probe();
+      return { ok: true, slot, latencyMs: Date.now() - startedAt, ...outcome };
+    } catch (err) {
+      const error = err as Error;
+      const latencyMs = Date.now() - startedAt;
+      const detail = error.message.slice(0, 300);
+      if (error instanceof ProviderNotConfiguredError) {
+        reply.code(400);
+        return { error: 'not_configured', slot, message: '这个能力还没配全（接口协议、地址、模型名、密钥缺一不可）', detail };
+      }
+      if (error instanceof SsrfError) {
+        reply.code(400);
+        return { error: 'unsafe_url', slot, message: `接口地址不允许访问：${detail}`, detail };
+      }
+      repos.errors.add('admin.model-test', `${slot}: ${detail}`);
+      const status = error instanceof ProviderRequestError ? error.status : undefined;
+      reply.code(502);
+      if (status && status >= 400 && status < 500) {
+        const isAuth = status === 401 || status === 403;
+        return {
+          error: isAuth ? 'auth_failed' : 'request_rejected',
+          slot,
+          status,
+          latencyMs,
+          message: isAuth
+            ? `鉴权失败（HTTP ${status}）：密钥不对，或者这把密钥没有这个模型的权限`
+            : `接口拒绝了这次请求（HTTP ${status}）：模型名或参数可能不对`,
+          detail
+        };
+      }
+      if (status && status >= 500) {
+        return { error: 'upstream_error', slot, status, latencyMs, message: `上游服务出错（HTTP ${status}），过一会儿再试`, detail };
+      }
+      if (error instanceof HttpTimeoutError) {
+        return { error: 'timeout', slot, latencyMs, message: `请求超时：${detail}`, detail };
+      }
+      return { error: 'unreachable', slot, latencyMs, message: `连不上接口地址：${detail}`, detail };
     } finally {
       clearTimeout(timer);
     }

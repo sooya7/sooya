@@ -564,6 +564,24 @@ test('shows dashboard status for an authenticated admin', async ({ page }) => {
   await expect(page.getByTestId('admin-return-chat')).toBeVisible();
 });
 
+test('模型设置里的「测试连接」真打一次接口并回报结果', async ({ page }) => {
+  // The probe consumes the mock's fallback reply, not a queued one, but an empty
+  // queue keeps this test from eating a reply a later test queued for itself.
+  await control({ queue: [] });
+  await page.goto('/');
+  await page.evaluate(() => localStorage.setItem('sooya.admin-token', 'e2e-admin-token'));
+  await page.goto('/admin');
+
+  await page.getByTestId('admin-tab-models').click();
+  await expect(page.getByTestId('admin-models-form')).toBeVisible();
+  const before = (await calls()).chat;
+  await page.getByTestId('admin-model-test').click();
+
+  await expect(page.getByTestId('admin-model-test-result')).toContainText('连接正常');
+  await expect(page.getByTestId('admin-model-test-result')).toContainText('耗时');
+  expect((await calls()).chat).toBe(before + 1);
+});
+
 test('admin panel exposes only server-backed management sections', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => localStorage.setItem('sooya.admin-token', 'e2e-admin-token'));

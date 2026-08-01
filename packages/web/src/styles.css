@@ -1317,6 +1317,30 @@ button {
   gap: 8px;
 }
 
+/* Verdict of a connection test: read at a glance, but still plain text so the
+   detail (status code, latency, upstream message) stays legible. */
+.admin-test-result {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.admin-test-result.ok {
+  color: var(--accent-deep);
+  background: var(--panel-alt);
+  border-color: var(--accent);
+}
+
+.admin-test-result.fail {
+  color: var(--danger-ink);
+  background: #fff7f7;
+  border-color: #f0bbbb;
+}
+
 .admin-danger {
   color: #b3262b !important;
   background: #fff7f7 !important;
