@@ -35,14 +35,10 @@ export function useChat() {
   const draftRef = useRef(new Map<string, string>());
   const quotedStatesRef = useRef(new Map<string, QuotedMessageState>());
   const quotedRequestsRef = useRef(new Map<string, Promise<ChatMessage | null>>());
+  const reloadRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   const trackSeq = useCallback((list: ChatMessage[]) => { for (const m of list) if (m.seq > maxSeqRef.current) maxSeqRef.current = m.seq; }, []);
   const applyMessages = useCallback((incoming: ChatMessage[]) => { trackSeq(incoming); setMessages((prev) => mergeMessages(prev, incoming)); }, [trackSeq]);
-
-  const reload = useCallback(async () => {
-    try { maxSeqRef.current = 0; draftRef.current.clear(); quotedStatesRef.current.clear(); quotedRequestsRef.current.clear(); setQuotedStates({}); const boot = await api.bootstrap(); setPersona(boot.conversation.persona); trackSeq(boot.messages.messages); setMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); streamRef.current?.setLastEventId(boot.messages.lastEventSeq); setActivity({ thinking: false, label: null }); setError(null); }
-    catch (err) { if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else setError((err as Error).message); }
-  }, [trackSeq]);
 
   const resync = useCallback(async () => {
     try {
@@ -70,6 +66,59 @@ export function useChat() {
     try { setLife(await api.life()); } catch { /* ignore */ }
   }, []);
 
+  const startStream = useCallback((lastEventSeq = maxSeqRef.current) => {
+    if (streamRef.current) return;
+    const stream = new ChatStream({
+      onStateChange: setConnection,
+      onGap: () => void resync(),
+      onEvent: (type, data) => {
+        switch (type) {
+          case 'message.received':
+          case 'message.updated': if (data.message) applyMessages([data.message as ChatMessage]); break;
+          case 'media.updated': {
+            const mediaId = String(data.mediaId ?? '');
+            const textStatus = data.textStatus;
+            if (mediaId && (textStatus === 'pending' || textStatus === 'ready' || textStatus === 'failed' || textStatus === 'unsupported')) {
+              setMessages((previous) => previous.map((message) => ({ ...message, content: message.content.map((part) => part.media?.id === mediaId ? { ...part, media: { ...part.media, textStatus } } : part) })));
+            }
+            break;
+          }
+          case 'persona.updated': if (data.persona) setPersona((old) => ({ ...(old ?? { name: 'SOOYA', avatar: '/avatars/sooya.svg', userAvatar: '/avatars/user.svg', tagline: '' }), ...(data.persona as PersonaInfo) })); break;
+          case 'reply.queued': setActivity({ thinking: true, label: `正在看你刚发的 ${Number(data.count ?? 1)} 条消息` }); break;
+          case 'reply.thinking': setActivity({ thinking: true, label: '正在思考' }); break;
+          case 'reply.text.delta': { const id = String(data.messageId ?? ''); const text = String(data.text ?? ''); setActivity({ thinking: true, label: '正在输入' }); if (id) { draftRef.current.set(id, text); setMessages((prev) => applyDraft(prev, id, text)); } break; }
+          case 'reply.sticker.selecting': setActivity({ thinking: true, label: '正在挑表情' }); break;
+          case 'reply.image.generating': setActivity({ thinking: true, label: '正在生成图片' }); break;
+          case 'reply.audio.generating': setActivity({ thinking: true, label: '正在生成语音' }); break;
+          case 'reply.text.done':
+          case 'reply.content.done': setActivity({ thinking: true, label: '正在整理' }); break;
+          case 'reply.completed': { setActivity({ thinking: false, label: null }); const msg = data.message as ChatMessage | undefined; if (msg) { draftRef.current.delete(msg.id); applyMessages([msg]); } else void resync(); break; }
+          case 'reply.failed': { setActivity({ thinking: false, label: null }); const msg = data.message as ChatMessage | undefined; if (msg) applyMessages([msg]); setError(typeof data.error === 'string' ? data.error : '回复失败'); break; }
+          case 'life.updated': void refreshLife(); break;
+          case 'system.notice': if (data.action === 'reload') void reloadRef.current(); else void resync(); break;
+          default: break;
+        }
+      }
+    });
+    stream.setLastEventId(lastEventSeq);
+    stream.start();
+    streamRef.current = stream;
+  }, [applyMessages, refreshLife, resync]);
+
+  const reload = useCallback(async () => {
+    setReady(false); setConnection('connecting'); setError(null);
+    try {
+      maxSeqRef.current = 0; draftRef.current.clear(); quotedStatesRef.current.clear(); quotedRequestsRef.current.clear(); setQuotedStates({});
+      const boot = await api.bootstrap();
+      setPersona(boot.conversation.persona); trackSeq(boot.messages.messages); setMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); streamRef.current?.setLastEventId(boot.messages.lastEventSeq); setActivity({ thinking: false, label: null }); setError(null); setReady(true);
+      startStream(boot.messages.lastEventSeq);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else { setConnection('offline'); setError((err as Error).message); }
+      setReady(true);
+    }
+  }, [startStream, trackSeq]);
+  reloadRef.current = reload;
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -77,44 +126,7 @@ export function useChat() {
         const boot = await api.bootstrap();
         if (cancelled) return;
         setPersona(boot.conversation.persona); applyMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); setReady(true);
-        const stream = new ChatStream({
-          onStateChange: setConnection,
-          onGap: () => void resync(),
-          onEvent: (type, data) => {
-            switch (type) {
-              case 'message.received':
-              case 'message.updated': if (data.message) applyMessages([data.message as ChatMessage]); break;
-              case 'media.updated': {
-                const mediaId = String(data.mediaId ?? '');
-                const textStatus = data.textStatus;
-                if (mediaId && (textStatus === 'pending' || textStatus === 'ready' || textStatus === 'failed' || textStatus === 'unsupported')) {
-                  setMessages((previous) => previous.map((message) => ({
-                    ...message,
-                    content: message.content.map((part) => part.media?.id === mediaId ? { ...part, media: { ...part.media, textStatus } } : part)
-                  })));
-                }
-                break;
-              }
-              case 'persona.updated': if (data.persona) setPersona((old) => ({ ...(old ?? { name: 'SOOYA', avatar: '/avatars/sooya.svg', userAvatar: '/avatars/user.svg', tagline: '' }), ...(data.persona as PersonaInfo) })); break;
-              case 'reply.queued': setActivity({ thinking: true, label: `正在看你刚发的 ${Number(data.count ?? 1)} 条消息` }); break;
-              case 'reply.thinking': setActivity({ thinking: true, label: '正在思考' }); break;
-              case 'reply.text.delta': { const id = String(data.messageId ?? ''); const text = String(data.text ?? ''); setActivity({ thinking: true, label: '正在输入' }); if (id) { draftRef.current.set(id, text); setMessages((prev) => applyDraft(prev, id, text)); } break; }
-              case 'reply.sticker.selecting': setActivity({ thinking: true, label: '正在挑表情' }); break;
-              case 'reply.image.generating': setActivity({ thinking: true, label: '正在生成图片' }); break;
-              case 'reply.audio.generating': setActivity({ thinking: true, label: '正在生成语音' }); break;
-              case 'reply.text.done':
-              case 'reply.content.done': setActivity({ thinking: true, label: '正在整理' }); break;
-              case 'reply.completed': { setActivity({ thinking: false, label: null }); const msg = data.message as ChatMessage | undefined; if (msg) { draftRef.current.delete(msg.id); applyMessages([msg]); } else void resync(); break; }
-              case 'reply.failed': { setActivity({ thinking: false, label: null }); const msg = data.message as ChatMessage | undefined; if (msg) applyMessages([msg]); setError(typeof data.error === 'string' ? data.error : '回复失败'); break; }
-              // She moved on to something else; re-read rather than trust the
-              // event payload, which carries no timings.
-              case 'life.updated': void refreshLife(); break;
-              case 'system.notice': if (data.action === 'reload') void reload(); else void resync(); break;
-              default: break;
-            }
-          }
-        });
-        stream.setLastEventId(boot.messages.lastEventSeq); stream.start(); streamRef.current = stream;
+        startStream(boot.messages.lastEventSeq);
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else { setConnection('offline'); setError((err as Error).message); }
@@ -122,7 +134,7 @@ export function useChat() {
       }
     })();
     return () => { cancelled = true; streamRef.current?.stop(); streamRef.current = null; };
-  }, [applyMessages, refreshLife, reload, resync]);
+  }, [applyMessages, refreshLife, reload, resync, startStream]);
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMore) return;
