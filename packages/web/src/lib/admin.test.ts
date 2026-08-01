@@ -213,6 +213,28 @@ describe('adminRequest 请求体与默认 method', () => {
     expect(calls[0]!.body).toBe(JSON.stringify({ baseUrl: 'https://api.example.com/v1' }));
   });
 
+  it('testModel 只带槽位打 /test，正文是空对象（密钥不出服务器）', async () => {
+    const calls = recording({ ok: true, slot: 'chat', provider: 'openai-chat', model: 'gpt-4o', latencyMs: 312, detail: '模型回了 3 个字' });
+
+    const result = await adminApi.testModel('chat');
+
+    expect(calls[0]!.url).toBe('/api/admin/models/chat/test');
+    expect(calls[0]!.method).toBe('POST');
+    expect(calls[0]!.body).toBe('{}');
+    expect(result.latencyMs).toBe(312);
+    expect(result.detail).toBe('模型回了 3 个字');
+  });
+
+  it('testModel 失败时把服务端写好的失败原因原样抛出来', async () => {
+    recording({ error: 'auth_failed', status: 401, message: '鉴权失败（HTTP 401）：密钥不对' }, 502);
+
+    const error = await adminApi.testModel('chat').catch((e) => e);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).message).toBe('鉴权失败（HTTP 401）：密钥不对');
+    expect((error as ApiError).status).toBe(502);
+  });
+
   it('saveModelPresets 把数组包进 { presets }', async () => {
     const preset: ModelPreset = {
       id: 'p1',

@@ -326,6 +326,8 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [available, setAvailable] = useState<string[] | null>(null);
   const [keyDraft, setKeyDraft] = useState('');
   const [pulling, setPulling] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [libraryKey, setLibraryKey] = useState(0);
 
   useEffect(() => {
@@ -345,6 +347,8 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
       const r = await adminApi.updateModels({ [selected]: { ...config, ...(typed ? { apiKey: typed } : {}) } });
       setModels(r.models);
       setKeyDraft('');
+      // The old verdict was about the config that was just replaced.
+      setTestResult(null);
       onNotice(typed ? '模型配置与密钥已保存' : '模型配置已保存');
     } catch (e) {
       onNotice(errorText(e));
@@ -363,6 +367,27 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
       onNotice(errorText(e));
     } finally {
       setPulling(false);
+    }
+  };
+
+  /**
+   * Probes the endpoint once with the *saved* config, so "saved" can be told
+   * apart from "actually works". Unsaved form edits are not part of the probe.
+   */
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await adminApi.testModel(selected);
+      const text = `连接正常：${r.provider}${r.model ? ` / ${r.model}` : ''}，${r.detail}，耗时 ${r.latencyMs} ms`;
+      setTestResult({ ok: true, text });
+      onNotice(text);
+    } catch (e) {
+      const text = errorText(e);
+      setTestResult({ ok: false, text });
+      onNotice(text);
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -390,7 +415,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
       <aside>
         <h2>模型能力</h2>
         {CAPABILITIES.map(([key, label]) => (
-          <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); setKeyDraft(''); }}>
+          <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); setKeyDraft(''); setTestResult(null); }}>
             <span>{label}</span>
             <small>{String((models[key] as Record<string, unknown> | undefined)?.model ?? '未独立配置')}</small>
           </button>
@@ -474,8 +499,14 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         {selected === 'embedding' && <label>向量维度<input type="number" value={String(config.dimensions ?? '')} onChange={(e) => update('dimensions', Number(e.target.value))} /></label>}
         <div className="admin-actions">
           <button type="button" onClick={() => void save()}>保存模型配置</button>
+          <button type="button" data-testid="admin-model-test" disabled={testing} onClick={() => void runTest()}>{testing ? '测试中…' : '测试连接'}</button>
           <button type="button" data-testid="admin-model-add-preset" onClick={() => void addToLibrary()}>添加配置</button>
         </div>
+        {testResult ? (
+          <p className={testResult.ok ? 'admin-test-result ok' : 'admin-test-result fail'} data-testid="admin-model-test-result">{testResult.text}</p>
+        ) : (
+          <small className="admin-muted">「测试连接」会用已保存的配置真发一次最小请求。改了表单要先保存再测。</small>
+        )}
       </div>
     </section>
   );
