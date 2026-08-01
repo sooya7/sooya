@@ -20,6 +20,7 @@ const state = {
   failImage: false,
   failTts: false,
   delayMs: 0,
+  chunkDelayMs: 6,
   calls: { chat: 0, image: 0, tts: 0, embedding: 0 }
 };
 
@@ -110,6 +111,7 @@ const server = http.createServer(async (req, res) => {
     if (typeof patch.failImage === 'boolean') state.failImage = patch.failImage;
     if (typeof patch.failTts === 'boolean') state.failTts = patch.failTts;
     if (typeof patch.delayMs === 'number') state.delayMs = patch.delayMs;
+    if (typeof patch.chunkDelayMs === 'number') state.chunkDelayMs = patch.chunkDelayMs;
     if (patch.resetCalls) state.calls = { chat: 0, image: 0, tts: 0, embedding: 0 };
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, state: { ...state, queueLength: state.queue.length } }));
@@ -158,7 +160,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
     for (const ch of [...text]) {
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: ch } }] })}\n\n`);
-      await new Promise((r) => setTimeout(r, 6));
+      await new Promise((r) => setTimeout(r, state.chunkDelayMs));
     }
     res.write('data: [DONE]\n\n');
     res.end();

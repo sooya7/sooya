@@ -107,7 +107,10 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   // right above, and not a target that scrolled out of the loaded window — for those
   // the placeholder is pure noise. A user message is different: the quote was chosen
   // deliberately, so say the original is gone rather than dropping it silently.
-  const showReplyPreview = Boolean(message.replyTo) && message.replyTo !== previousId && (Boolean(quoted) || mine);
+  // A user-selected quote is intentional, even when the quoted message is
+  // immediately above it. The assistant's structural replyTo link is the
+  // case where suppressing the adjacent preview avoids repetition.
+  const showReplyPreview = Boolean(message.replyTo) && (mine || message.replyTo !== previousId) && (Boolean(quoted) || mine);
   const visible = message.content.filter((part) => part.type !== 'system');
   const failedMessage = message.status === 'failed';
   const replayable = isReplayableUserMessage(message);

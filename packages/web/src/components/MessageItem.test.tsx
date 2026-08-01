@@ -109,13 +109,13 @@ describe('MessageItem 引用块', () => {
     expect(container.textContent).not.toContain('原消息已不在当前记录中');
   });
 
-  it('用户自己引用上一条 bot 消息时同样不重复显示', async () => {
+  it('用户自己引用上一条 bot 消息时仍显示主动引用', async () => {
     const bot = message({ id: 'm1' });
     const mine = message({ id: 'm2', role: 'user', replyTo: 'm1' });
 
     await render(<MessageItem {...common} message={mine} quoted={bot} quotedLabel="SOOYA" previousId="m1" />);
 
-    expect(preview()).toBeNull();
+    expect(preview()).not.toBeNull();
   });
 });
 
