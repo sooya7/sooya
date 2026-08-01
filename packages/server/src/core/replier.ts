@@ -1,6 +1,5 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { MediaStore } from '../media/store.js';
-import type { MediaRow } from '../db/repos/media.repo.js';
 import type { StickerLibrary } from '../media/stickers.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ContextBuilder } from './context.js';
@@ -16,7 +15,13 @@ import {
   type UserDirectives
 } from './directives.js';
 import { stripSpeakerPrefix } from './speakerPrefix.js';
-import { ProviderNotConfiguredError, type ChatTurn, type GeneratedImage } from '../providers/types.js';
+import {
+  ImageEditUnsupportedError,
+  ImageReferenceError,
+  ProviderNotConfiguredError,
+  type ChatTurn,
+  type GeneratedImage
+} from '../providers/types.js';
 import { HttpTimeoutError } from '../util/http.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, voiceMoodCatalogue, type VoiceEmotionMap } from './voice.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
@@ -295,17 +300,45 @@ export class Replier {
       // 3b. Image
       if (plan.imagePrompt) {
         this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: plan.imagePrompt.slice(0, 200) });
-        const reference = await this.referenceImage(latestUserMessage);
+        const referenceMediaIds = userMessages.flatMap((message) =>
+          message.content.filter((part) => part.type === 'image' && part.mediaId).map((part) => part.mediaId!)
+        );
         const partId = this.deps.messages.appendPart(shell.id, {
           type: 'image',
           status: 'pending',
           meta: {
             prompt: plan.imagePrompt.slice(0, 500),
-            ...(reference ? { referenceMediaId: reference.row.id } : {})
+            ...(referenceMediaIds.length === 1 ? { referenceMediaId: referenceMediaIds[0] } : {})
           }
         });
         try {
-          const img = await this.generateImage(plan.imagePrompt, reference);
+          if (referenceMediaIds.length > 1) {
+            throw new ImageReferenceError(
+              'too_many_reference_images',
+              '一次图生图只能使用一张参考图',
+              `received ${referenceMediaIds.length} reference images`
+            );
+          }
+          const provider = this.deps.capabilities.imageProvider();
+          let img: GeneratedImage;
+          if (referenceMediaIds.length === 1) {
+            const reference = await this.deps.media.read(referenceMediaIds[0]!);
+            if (!reference) {
+              throw new ImageReferenceError(
+                'reference_generation_failed',
+                '参考图不可用，请重新上传后再试',
+                `reference media not found: ${referenceMediaIds[0]}`
+              );
+            }
+            try {
+              img = await provider.edit(plan.imagePrompt, reference.data, { mime: reference.row.mime });
+            } catch (err) {
+              if (!(err instanceof ImageEditUnsupportedError)) throw err;
+              img = await provider.generate(plan.imagePrompt);
+            }
+          } else {
+            img = await provider.generate(plan.imagePrompt);
+          }
           const media = await this.deps.media.save({
             kind: 'image',
             origin: 'generated',
@@ -320,13 +353,21 @@ export class Replier {
         } catch (err) {
           const e = err as Error;
           const failure = publicFailure('provider_unavailable');
-          const reason = e instanceof ProviderNotConfiguredError ? '图片生成服务没有配置。' : failure.message;
-          this.deps.messages.updatePart(partId, { status: 'failed', error: reason, meta: { failure: { ...failure, message: reason } } });
+          const reason = e instanceof ImageReferenceError
+            ? e.publicMessage
+            : e instanceof ProviderNotConfiguredError
+              ? '图片生成服务没有配置。'
+              : failure.message;
+          this.deps.messages.updatePart(partId, {
+            status: 'failed',
+            error: reason,
+            meta: { failure: { ...failure, message: reason } }
+          });
           this.deps.errorLog.add('reply.image', failure.code, {
             incidentId: failure.incidentId,
             diagnostic: redactDiagnostic(e)
           });
-          degraded.push('image:provider_unavailable');
+          degraded.push(e instanceof ImageReferenceError ? `image:${e.code}` : 'image:provider_unavailable');
           // Never lose the text: add an explanatory note instead.
           if (!finalText) {
             this.deps.messages.appendPart(shell.id, {
@@ -486,49 +527,6 @@ export class Replier {
     });
     for (const event of events) this.deps.bus.fanout(event);
     return value;
-  }
-
-  /**
-   * An image the user attached to the message being answered. Only the current
-   * message counts: reaching further back would silently edit an unrelated
-   * picture when the prompt has nothing to do with it.
-   */
-  private async referenceImage(userMessage: ChatMessage): Promise<{ row: MediaRow; data: Buffer } | null> {
-    for (let i = userMessage.content.length - 1; i >= 0; i -= 1) {
-      const part = userMessage.content[i];
-      if (part?.type !== 'image') continue;
-      const id = part.media?.id ?? part.mediaId ?? null;
-      if (!id) continue;
-      try {
-        const found = await this.deps.media.read(id);
-        if (found) return found;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Editing the reference keeps the user's picture recognisable. A provider
-   * that rejects the edits endpoint still gets to produce something, so fall
-   * back to generating from the prompt alone.
-   */
-  private async generateImage(
-    prompt: string,
-    reference: { row: MediaRow; data: Buffer } | null
-  ): Promise<GeneratedImage> {
-    const provider = this.deps.capabilities.imageProvider();
-    if (!reference) return await provider.generate(prompt);
-    try {
-      return await provider.edit(prompt, reference.data, { mime: reference.row.mime });
-    } catch (err) {
-      if (err instanceof ProviderNotConfiguredError) throw err;
-      this.deps.errorLog.add('reply.image.edit', 'image_edit_unavailable', {
-        diagnostic: redactDiagnostic(err as Error)
-      });
-      return await provider.generate(prompt);
-    }
   }
 
   private recentStickerIds(window: number): string[] {
