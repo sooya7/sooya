@@ -80,8 +80,10 @@ function FilePart({ part, mine }: { part: MessagePart; mine: boolean }) {
       setBusy(false);
     }
   };
+  const textStatus = part.media.textStatus;
+  const textLabel = textStatus === 'ready' ? '可读取' : textStatus === 'pending' ? '正在解析' : textStatus === 'failed' ? '解析失败' : textStatus === 'unsupported' ? '仅保存' : '仅保存';
   return <>
-    <button className={`bubble bubble-file ${part.status === 'pending' ? 'pending-media' : ''}`} type="button" disabled={busy} onClick={() => void save()}><span className="file-icon">▣</span><span className="file-meta"><span className="file-name">{part.media.name ?? '文件'}</span><span className="file-size">{busy ? '下载中…' : formatBytes(part.media.bytes)}</span></span>{part.status === 'pending' && <span className="media-sending" role="status">发送中</span>}</button>
+    <button className={`bubble bubble-file ${part.status === 'pending' ? 'pending-media' : ''}`} type="button" disabled={busy} onClick={() => void save()}><span className="file-icon">▣</span><span className="file-meta"><span className="file-name">{part.media.name ?? '文件'}</span><span className="file-size">{busy ? '下载中…' : formatBytes(part.media.bytes)}</span></span><span className="file-text-status" data-testid="file-text-status">{textLabel}</span>{part.status === 'pending' && <span className="media-sending" role="status">发送中</span>}</button>
     {error && <div className="bubble bubble-note file-error" role="status">{error}</div>}
   </>;
 }

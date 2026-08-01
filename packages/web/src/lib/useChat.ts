@@ -84,6 +84,17 @@ export function useChat() {
             switch (type) {
               case 'message.received':
               case 'message.updated': if (data.message) applyMessages([data.message as ChatMessage]); break;
+              case 'media.updated': {
+                const mediaId = String(data.mediaId ?? '');
+                const textStatus = data.textStatus;
+                if (mediaId && (textStatus === 'pending' || textStatus === 'ready' || textStatus === 'failed' || textStatus === 'unsupported')) {
+                  setMessages((previous) => previous.map((message) => ({
+                    ...message,
+                    content: message.content.map((part) => part.media?.id === mediaId ? { ...part, media: { ...part.media, textStatus } } : part)
+                  })));
+                }
+                break;
+              }
               case 'persona.updated': if (data.persona) setPersona((old) => ({ ...(old ?? { name: 'SOOYA', avatar: '/avatars/sooya.svg', userAvatar: '/avatars/user.svg', tagline: '' }), ...(data.persona as PersonaInfo) })); break;
               case 'reply.queued': setActivity({ thinking: true, label: `正在看你刚发的 ${Number(data.count ?? 1)} 条消息` }); break;
               case 'reply.thinking': setActivity({ thinking: true, label: '正在思考' }); break;

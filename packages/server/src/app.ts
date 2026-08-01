@@ -15,6 +15,7 @@ import { MessageRepo } from './db/repos/message.repo.js';
 import { MemoryRepo } from './db/repos/memory.repo.js';
 import { StickerRepo } from './db/repos/sticker.repo.js';
 import { ErrorLogRepo, EventRepo, JobRepo, SettingsRepo, SummaryRepo } from './db/repos/misc.repo.js';
+import { MediaTextRepo } from './db/repos/media-text.repo.js';
 import { AuditRepo, PushSubscriptionRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
 import { MediaStore } from './media/store.js';
 import { StickerLibrary } from './media/stickers.js';
@@ -70,6 +71,7 @@ export interface SooyaApp {
   repos: {
     messages: MessageRepo;
     media: MediaRepo;
+    mediaText: MediaTextRepo;
     memories: MemoryRepo;
     stickers: StickerRepo;
     summaries: SummaryRepo;
@@ -150,9 +152,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const dbHandle = new DbHandle(opened.db);
   const config = new ConfigStore({ configDir: env.configDir, env: { ...process.env, ...opts.env } as NodeJS.ProcessEnv, onLog: (level, msg, extra) => logger[level]({ ...extra }, msg) });
 
+  const mediaText = new MediaTextRepo(dbHandle);
   const repos = {
-    messages: new MessageRepo(dbHandle),
+    messages: new MessageRepo(dbHandle, mediaText),
     media: new MediaRepo(dbHandle),
+    mediaText,
     memories: new MemoryRepo(dbHandle),
     stickers: new StickerRepo(dbHandle),
     summaries: new SummaryRepo(dbHandle),
@@ -196,7 +200,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     };
   };
   const life = new LifeEngine(repos.life, lifeSettings, opts.clock);
-  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, env.ENABLE_LIFE_ENGINE ? life : undefined, env.LIFE_TIME_ZONE);
+  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, repos.mediaText, env.ENABLE_LIFE_ENGINE ? life : undefined, env.LIFE_TIME_ZONE);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
@@ -255,6 +259,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     reachOutEnabled: env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT,
     push,
     storage,
+    mediaText: repos.mediaText,
     tmpDirs: [env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files, env.dbDir]
   });
 

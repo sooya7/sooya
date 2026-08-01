@@ -243,6 +243,7 @@ export function Composer({ disabled, stickers, onSend, onNotice }: Props) {
           ))}
         </div>
       )}
+      {attachments.some((attachment) => attachment.kind === 'file') && <div className="composer-file-hint" role="note">文件会被保存并发送；当前仅部分文本格式可读取，其他格式机器人只能看到文件名。</div>}
 
       <div className="composer-row">
           <button

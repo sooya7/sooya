@@ -698,6 +698,13 @@ describe('Composer 粘贴', () => {
     expect(attachmentItems()).toHaveLength(1);
   });
 
+  it('选择普通文件时明确提示正文读取边界', async () => {
+    uploadHandler = async () => jsonResponse({ media: [media('file', 'md_hint', { name: 'note.txt' })], failed: [] });
+    await render();
+    await selectFiles(fileInput(), [file('note.txt', 'text/plain')]);
+    expect(container.querySelector('.composer-file-hint')?.textContent).toContain('仅部分文本格式可读取');
+  });
+
   it('粘贴的非图片文件也按 image 字段兜底上传 —— 图片按类型推断，这里锁的是参数本身', async () => {
     uploadHandler = async () => jsonResponse({ media: [media('file', 'md_pf')], failed: [] });
     await render();

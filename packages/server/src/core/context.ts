@@ -7,7 +7,9 @@ import type { ChatTurn, ChatContentPart } from '../providers/types.js';
 import type { MediaStore } from '../media/store.js';
 import type { MediaRepo } from '../db/repos/media.repo.js';
 import type { LifeEngine } from './life.js';
+import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
 import { formatZonedDateTime } from '../util/time-zone.js';
+import { prepareVisionInput } from '../media/vision-input.js';
 
 export interface BuiltContext {
   system: string;
@@ -48,6 +50,7 @@ export class ContextBuilder {
     private readonly memory: MemoryService,
     private readonly mediaRepo: MediaRepo,
     private readonly mediaStore: MediaStore,
+    private readonly mediaText: MediaTextRepo,
     private readonly life?: LifeEngine,
     private readonly timeZone = 'Asia/Shanghai'
   ) {}
@@ -167,20 +170,29 @@ export class ContextBuilder {
           textBits.push(p.transcript ? `[语音] ${p.transcript}` : '[语音消息]');
           break;
         case 'file':
-          textBits.push(`[文件:${p.media?.name ?? p.mediaId ?? ''}]`);
+          {
+            const name = p.media?.name ?? p.mediaId ?? '';
+            const extracted = p.mediaId ? this.mediaText.get(p.mediaId) : undefined;
+            if (extracted?.status === 'ready') textBits.push(`[文件:${name}]\n${extracted.text ?? ''}`);
+            else if (extracted?.status === 'pending') textBits.push(`[文件:${name}；正文正在解析]`);
+            else textBits.push(`[文件:${name}；当前无法读取正文]`);
+          }
           break;
         case 'image': {
           if (allowVision && p.mediaId) {
             const row = this.mediaRepo.get(p.mediaId);
-            if (row && this.mediaStore.exists(row) && row.bytes <= 4 * 1024 * 1024) {
+            if (row && this.mediaStore.exists(row)) {
               const read = await this.mediaStore.read(p.mediaId);
               if (read) {
-                parts.push({ type: 'image', data: read.data.toString('base64'), mime: row.mime });
-                break;
+                const vision = await prepareVisionInput(read.data, row.mime);
+                if (vision) {
+                  parts.push({ type: 'image', data: vision.data.toString('base64'), mime: vision.mime });
+                  break;
+                }
               }
             }
           }
-          textBits.push('[图片]');
+          textBits.push('[图片未能读取：文件过大或格式不支持]');
           break;
         }
         default:
@@ -293,6 +305,7 @@ function mergeContextMessages(primary: ChatMessage[], additional: ChatMessage[])
 function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): string {
   const lines: string[] = [];
   lines.push('你可以在回复里混合使用文字、表情包、图片和语音。非文字内容由你根据气氛主动决定，不要一直等用户明确要求。使用下面的标记触发，标记本身不会显示给用户：');
+  lines.push('文件只有在上下文明确提供正文时才可以阅读；没有正文时不要声称看过文件内容。');
   if (persona.stickerPolicy.enabled) {
     lines.push(`· [[sticker:情绪]] 发一个表情包。可用表情：${opts.stickerCatalogue}`);
     lines.push('· [[sticker-only:情绪]] 这一条只发表情包，不发文字。');

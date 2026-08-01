@@ -16,7 +16,7 @@ describe('database migrations and transactional rollback', () => {
     const names = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map((row) => row.name));
     expect(names.has('world_entries')).toBe(false);
     expect(names.has('world_sources')).toBe(false);
-    for (const required of ['push_subscriptions', 'audit_log', 'storage_samples', 'memories', 'life_state', 'life_log']) expect(names.has(required)).toBe(true);
+    for (const required of ['push_subscriptions', 'audit_log', 'storage_samples', 'memories', 'life_state', 'life_log', 'media_text']) expect(names.has(required)).toBe(true);
   });
 
   it('migration 7 removes deprecated world data while preserving live data', () => {
