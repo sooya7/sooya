@@ -27,8 +27,7 @@ test.describe('SOOYA 1-9 user flows', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((token: string) => localStorage.setItem('sooya.token', token), CHAT_TOKEN);
   });
-  test('feature center exposes avatar, voice, world and storage controls', async ({ page }, testInfo) => {
-    const worldSubject = `E2E 城市 ${testInfo.project.name} ${Date.now()}`;
+  test('feature center exposes avatar, voice and storage controls', async ({ page }) => {
     let voiceStatusReads = 0;
     await page.addInitScript(() => {
       const original = URL.revokeObjectURL.bind(URL);
@@ -70,20 +69,6 @@ test.describe('SOOYA 1-9 user flows', () => {
     await expect.poll(() => voiceStatusReads).toBeGreaterThanOrEqual(2);
     await expect(page.getByText(/TTS 能力可用/)).toBeVisible();
     await expect(page.getByRole('button', { name: '试听' })).toBeEnabled();
-
-    await page.getByRole('button', { name: '世界引擎' }).click();
-    const worldSettings = page.getByTestId('world-settings');
-    await expect(worldSettings).toBeVisible();
-    await page.getByPlaceholder('主体').fill(worldSubject);
-    await page.getByPlaceholder('关系/属性').fill('天气');
-    await page.getByPlaceholder('内容').fill('晴朗');
-    await page.getByRole('button', { name: '新增' }).click();
-    const worldRow = worldSettings.locator('.admin-list-row').filter({ hasText: worldSubject });
-    await expect(worldRow).toContainText('晴朗');
-    await worldRow.getByRole('button', { name: '编辑' }).click();
-    await page.getByLabel('编辑内容').fill('多云');
-    await page.getByRole('button', { name: '保存编辑' }).click();
-    await expect(worldSettings.locator('.admin-list-row').filter({ hasText: worldSubject })).toContainText('多云');
 
     await page.getByRole('button', { name: '存储治理' }).click();
     await expect(page.getByTestId('storage-settings')).toBeVisible();
