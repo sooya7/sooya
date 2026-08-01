@@ -184,6 +184,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     const policy = config.getPersona().lifePolicy ?? {};
     return {
       ...DEFAULT_LIFE_CONFIG,
+      timeZone: env.LIFE_TIME_ZONE,
       tzOffsetMinutes: env.LIFE_TZ_OFFSET_MINUTES,
       quietGapMinutes: policy.quietGapMinutes ?? env.LIFE_QUIET_GAP_MINUTES,
       maxReachOutsPerDay: policy.maxReachOutsPerDay ?? env.LIFE_MAX_REACH_OUTS_PER_DAY,
@@ -195,7 +196,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     };
   };
   const life = new LifeEngine(repos.life, lifeSettings, opts.clock);
-  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, env.ENABLE_LIFE_ENGINE ? life : undefined);
+  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, env.ENABLE_LIFE_ENGINE ? life : undefined, env.LIFE_TIME_ZONE);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,

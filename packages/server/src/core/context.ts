@@ -7,6 +7,7 @@ import type { ChatTurn, ChatContentPart } from '../providers/types.js';
 import type { MediaStore } from '../media/store.js';
 import type { MediaRepo } from '../db/repos/media.repo.js';
 import type { LifeEngine } from './life.js';
+import { formatZonedDateTime } from '../util/time-zone.js';
 
 export interface BuiltContext {
   system: string;
@@ -47,7 +48,8 @@ export class ContextBuilder {
     private readonly memory: MemoryService,
     private readonly mediaRepo: MediaRepo,
     private readonly mediaStore: MediaStore,
-    private readonly life?: LifeEngine
+    private readonly life?: LifeEngine,
+    private readonly timeZone = 'Asia/Shanghai'
   ) {}
 
   async build(persona: Persona, latestUserText: string, opts: ContextOptions): Promise<BuiltContext> {
@@ -125,7 +127,10 @@ export class ContextBuilder {
     if (opts.capabilityNotes.length > 0) {
       tryAddSystemPart(systemParts, turns, `当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`, inputBudget);
     }
-    tryAddSystemPart(systemParts, turns, `现在的时间是 ${new Date().toISOString()}。`, inputBudget);
+    const now = new Date();
+    let clock = `${now.toISOString()}（UTC）`;
+    try { clock = `${formatZonedDateTime(now, this.timeZone)}（${this.timeZone}）；服务器 UTC 时间：${now.toISOString()}`; } catch { /* use the explicit UTC fallback */ }
+    tryAddSystemPart(systemParts, turns, `用户当地时间：${clock}。`, inputBudget);
 
     const estimatedInputTokens = estimateContextTokens(systemParts, turns);
     return {

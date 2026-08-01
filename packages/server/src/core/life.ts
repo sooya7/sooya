@@ -1,4 +1,5 @@
 import type { LifeRepo, LifeLogRow } from '../db/repos/life.repo.js';
+import { timeZoneOffsetMinutes, zonedParts } from '../util/time-zone.js';
 
 /**
  * Between messages the assistant did not exist. Nothing advanced, so 你在干嘛
@@ -40,7 +41,8 @@ export const DEFAULT_ROUTINE: LifeSlot[] = [
 ];
 
 export interface LifeConfig {
-  /** Her local timezone offset in minutes. The user is UTC+8. */
+  /** IANA timezone; the legacy offset remains the fallback for old configs. */
+  timeZone?: string;
   tzOffsetMinutes: number;
   routine: LifeSlot[];
   /** She stays quiet at least this long after the user's last message. */
@@ -72,7 +74,17 @@ export interface ResolvedActivity {
 }
 
 /** Local calendar parts for an instant, without dragging in a tz library. */
-function localParts(at: Date, tzOffsetMinutes: number): { dayIndex: number; hour: number; minute: number; dayStartUtcMs: number } {
+function localParts(at: Date, tzOffsetMinutes: number, timeZone?: string): { dayIndex: number; hour: number; minute: number; dayStartUtcMs: number } {
+  if (timeZone) {
+    try {
+      const parts = zonedParts(at, timeZone);
+      const offset = timeZoneOffsetMinutes(at, timeZone);
+      const dayIndex = Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86_400_000);
+      return { dayIndex, hour: parts.hour, minute: parts.minute, dayStartUtcMs: Date.UTC(parts.year, parts.month - 1, parts.day) - offset * 60_000 };
+    } catch {
+      // Keep old deployments working when an invalid or unavailable zone is saved.
+    }
+  }
   const shifted = new Date(at.getTime() + tzOffsetMinutes * 60_000);
   const dayIndex = Math.floor(shifted.getTime() / 86_400_000);
   const hour = shifted.getUTCHours();
@@ -99,7 +111,7 @@ function pick<T>(options: T[], dayIndex: number, slotIndex: number): T {
 export function resolveActivity(at: Date, config: LifeConfig = DEFAULT_LIFE_CONFIG): ResolvedActivity {
   const routine = [...config.routine].sort((a, b) => a.from - b.from);
   if (routine.length === 0) throw new Error('life routine is empty');
-  const { dayIndex, hour, dayStartUtcMs } = localParts(at, config.tzOffsetMinutes);
+  const { dayIndex, hour, dayStartUtcMs } = localParts(at, config.tzOffsetMinutes, config.timeZone);
 
   let index = 0;
   for (let i = 0; i < routine.length; i++) if (hour >= routine[i]!.from) index = i;
@@ -120,7 +132,7 @@ export function resolveActivity(at: Date, config: LifeConfig = DEFAULT_LIFE_CONF
 }
 
 export function isSilentHour(at: Date, config: LifeConfig = DEFAULT_LIFE_CONFIG): boolean {
-  const { hour } = localParts(at, config.tzOffsetMinutes);
+  const { hour } = localParts(at, config.tzOffsetMinutes, config.timeZone);
   const { from, to } = config.silentHours;
   return from <= to ? hour >= from && hour < to : hour >= from || hour < to;
 }
@@ -201,8 +213,13 @@ export class LifeEngine {
   contextLines(lastUserMessageAt?: Date | null): string[] {
     const at = this.clock();
     const resolved = resolveActivity(at, this.settings);
-    const local = new Date(at.getTime() + this.settings.tzOffsetMinutes * 60_000);
-    const clock = `${local.getUTCMonth() + 1}月${local.getUTCDate()}日 ${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')}`;
+    let local: ReturnType<typeof zonedParts> | null = null;
+    if (this.settings.timeZone) {
+      try { local = zonedParts(at, this.settings.timeZone); } catch { /* use legacy offset below */ }
+    }
+    const clock = local
+      ? `${local.month}月${local.day}日 ${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`
+      : (() => { const fallback = new Date(at.getTime() + this.settings.tzOffsetMinutes * 60_000); return `${fallback.getUTCMonth() + 1}月${fallback.getUTCDate()}日 ${String(fallback.getUTCHours()).padStart(2, '0')}:${String(fallback.getUTCMinutes()).padStart(2, '0')}`; })();
     const intoIt = humanGap(at.getTime() - resolved.startedAt.getTime());
 
     const lines = [`现在是 ${clock}，你正在${resolved.activity}（已经 ${intoIt}），心情${resolved.mood}。`];
