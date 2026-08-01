@@ -12,12 +12,12 @@ import './components/FeatureEnhancements.css';
 const container = document.getElementById('root');
 if (!container) throw new Error('root container missing');
 const galleryRoute = window.location.pathname === '/gallery' || window.location.pathname === '/gallery/';
-const featureAdminRoute = window.location.pathname === '/admin/features' || window.location.pathname === '/admin/features/';
+const adminRoute = window.location.pathname === '/admin' || window.location.pathname === '/admin/' || window.location.pathname.startsWith('/admin/');
 
 createRoot(container).render(
   <StrictMode>
-    {galleryRoute ? <GalleryPage /> : featureAdminRoute ? <AdminPanel initialTab="avatar" /> : <App />}
-    {!galleryRoute && !featureAdminRoute && <ImageViewerHost />}
+    {galleryRoute ? <GalleryPage /> : adminRoute ? <AdminPanel /> : <App />}
+    {!galleryRoute && !adminRoute && <ImageViewerHost />}
   </StrictMode>
 );
 

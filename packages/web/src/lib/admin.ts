@@ -200,8 +200,8 @@ export const adminApi = {
       `/api/admin/models/${encodeURIComponent(slot)}/discover`,
       { method: 'POST', body: { ...(baseUrl ? { baseUrl } : {}) } }
     ),
-  testModel: (slot: ModelSlot) =>
-    adminRequest<ModelTestResult>(`/api/admin/models/${encodeURIComponent(slot)}/test`, { method: 'POST', body: {} }),
+  testModel: (slot: ModelSlot, forceImage = false) =>
+    adminRequest<ModelTestResult>(`/api/admin/models/${encodeURIComponent(slot)}/test`, { method: 'POST', body: forceImage ? { force: true } : {} }),
   saveModelPresets: (presets: ModelPreset[]) =>
     adminRequest<{ presets: ModelPreset[] }>('/api/admin/model-presets', { method: 'PUT', body: { presets } }),
   applyModelPreset: (id: string) =>

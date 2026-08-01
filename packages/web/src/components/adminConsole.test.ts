@@ -9,20 +9,22 @@ const MAIN = read('../main.tsx');
 
 /**
  * The two admin pages are now one console. `e2e/features-1-9.e2e.ts` drives
- * `/admin/features` and expects to land on the avatar tab and to reach the other
+ * the legacy `/admin/features` address and expects to land on the avatar tab and to reach the other
  * feature sections by their visible button names, so these are contracts, not
  * cosmetics.
  */
 describe('merged admin console', () => {
-  it('enters the console on the avatar tab at /admin/features', () => {
-    expect(MAIN).toContain('/admin/features');
-    expect(MAIN).toContain('<AdminPanel initialTab="avatar" />');
+  it('routes the console through canonical admin paths and keeps the legacy address recognizable', () => {
+    expect(PANEL).toContain("if (normalized === '/admin/features') return 'avatar'");
+    expect(MAIN).toContain("window.location.pathname.startsWith('/admin/')");
     expect(MAIN).not.toContain('FeatureAdminPage');
   });
 
   it('lets the console be entered at a chosen tab', () => {
     expect(PANEL).toContain("initialTab = 'overview'");
-    expect(PANEL).toContain('useState<Tab>(initialTab)');
+    expect(PANEL).toContain('useState<Tab>(() => tabFromAdminPath(window.location.pathname, initialTab))');
+    expect(PANEL).toContain('adminPathForTab');
+    expect(PANEL).toContain('beforeunload');
   });
 
   it('offers every section in one navigation', () => {

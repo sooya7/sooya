@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../lib/api.js';
 import { useAutoNotice } from '../lib/autoNotice.js';
 import { AvatarEditor, LifePanel, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
@@ -33,7 +33,7 @@ import {
   type AdminSystemStatus
 } from '../lib/admin.js';
 
-type Tab =
+export type Tab =
   | 'overview'
   | 'persona'
   | 'avatar'
@@ -70,6 +70,17 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: I
   { group: '内容与系统', id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
   { group: '内容与系统', id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' }
 ];
+
+export function adminPathForTab(tab: Tab): string {
+  return `/admin/${tab}`;
+}
+
+export function tabFromAdminPath(pathname: string, fallback: Tab = 'overview'): Tab {
+  const normalized = pathname.replace(/\/+$/, '') || '/admin';
+  if (normalized === '/admin/features') return 'avatar';
+  const segment = normalized.split('/')[2] as Tab | undefined;
+  return segment && TABS.some((item) => item.id === segment) ? segment : fallback;
+}
 
 const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
   overview: { title: '系统概览', description: '查看 SOOYA 当前运行状态和资源使用情况。' },
@@ -380,10 +391,11 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
    * apart from "actually works". Unsaved form edits are not part of the probe.
    */
   const runTest = async () => {
+    if (selected === 'image' && !confirmAction('测试出图会真实调用图片服务并消耗一次额度，确定继续吗？')) return;
     setTesting(true);
     setTestResult(null);
     try {
-      const r = await adminApi.testModel(selected);
+      const r = await adminApi.testModel(selected, selected === 'image');
       const text = `连接正常：${r.provider}${r.model ? ` / ${r.model}` : ''}，${r.detail}，耗时 ${r.latencyMs} ms`;
       setTestResult({ ok: true, text });
       onNotice(text);
@@ -527,6 +539,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         </>}
         {selected === 'embedding' && <label>向量维度<input type="number" value={String(config.dimensions ?? '')} onChange={(e) => update('dimensions', Number(e.target.value))} /></label>}
         <div className="admin-actions">
+          {selected === 'image' && <small className="admin-muted">测试出图会真实调用图片服务并消耗一次额度。</small>}
           <button type="button" onClick={() => void save()}>保存模型配置</button>
           <button type="button" data-testid="admin-model-test" disabled={testing} onClick={() => void runTest()}>{testing ? '测试中…' : '测试连接'}</button>
           <button type="button" data-testid="admin-model-add-preset" onClick={() => void addToLibrary()}>添加配置</button>
@@ -672,7 +685,7 @@ function TabButtons({ tab, setTab, mobile }: { tab: Tab; setTab: (tab: Tab) => v
     <nav className={mobile ? 'admin-mobile-tabs' : 'admin-side-nav'} aria-label="管理面板导航">
       {mobile
         ? TABS.map((item) => (
-          <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+          <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
             {item.label}
           </button>
         ))
@@ -680,7 +693,7 @@ function TabButtons({ tab, setTab, mobile }: { tab: Tab; setTab: (tab: Tab) => v
           <Fragment key={group}>
             <p className="admin-nav-group">{group}</p>
             {TABS.filter((item) => item.group === group).map((item) => (
-              <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+              <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
                 <span className="admin-nav-icon"><Icon name={item.icon} /></span>
                 <span className="admin-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
               </button>
@@ -717,11 +730,55 @@ function Overview({ data, counts, onRefresh }: { data: Dashboard; counts: { avai
 export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: Tab } = {}) {
   const [token, setToken] = useState(() => getAdminToken());
   const [tokenInput, setTokenInput] = useState('');
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const [tab, setTab] = useState<Tab>(() => tabFromAdminPath(window.location.pathname, initialTab));
+  const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
   const [data, setData] = useState<Dashboard | null>(null);
   const [notice, setNotice] = useAutoNotice();
   const [loading, setLoading] = useState(false);
   const isMobile = useIsMobile();
+
+  const setDirtyState = useCallback((value: boolean) => {
+    dirtyRef.current = value;
+    setDirty(value);
+  }, []);
+
+  useEffect(() => {
+    const routeTab = tabFromAdminPath(window.location.pathname, initialTab);
+    const canonicalPath = adminPathForTab(routeTab);
+    if (window.location.pathname !== canonicalPath) {
+      window.history.replaceState(null, '', canonicalPath);
+    }
+
+    const onPopState = () => {
+      const next = tabFromAdminPath(window.location.pathname, initialTab);
+      if (dirtyRef.current && !window.confirm('当前修改尚未保存，确定离开吗？')) {
+        window.history.pushState(null, '', adminPathForTab(tab));
+        return;
+      }
+      setDirtyState(false);
+      setTab(next);
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [initialTab, setDirtyState, tab]);
+
+  const navigateTab = useCallback((next: Tab) => {
+    if (next === tab) return;
+    if (dirtyRef.current && !window.confirm('当前修改尚未保存，确定离开吗？')) return;
+    setDirtyState(false);
+    window.history.pushState(null, '', adminPathForTab(next));
+    setTab(next);
+  }, [setDirtyState, tab]);
 
   const loadOverview = useCallback(async () => {
     if (!token) return;
@@ -801,11 +858,15 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
                     : <OperationsPanel onNotice={setNotice} />;
 
   return (
-    <main className="admin-page admin-v2" data-testid="admin-dashboard">
+    <main className="admin-page admin-v2" data-testid="admin-dashboard" data-dirty={dirty || undefined} onInputCapture={(event) => {
+      const target = event.target as HTMLInputElement;
+      if (target instanceof HTMLInputElement && target.type === 'file') return;
+      setDirtyState(true);
+    }} onSubmitCapture={() => setDirtyState(false)}>
       <div className="admin-shell">
         {!isMobile && <aside className="admin-sidebar">
           <div className="admin-brand"><span className="admin-brand-mark">S</span><span className="admin-brand-copy"><strong>SOOYA</strong><small>管理中心</small></span></div>
-          <TabButtons tab={tab} setTab={setTab} mobile={false} />
+          <TabButtons tab={tab} setTab={navigateTab} mobile={false} />
           <div className="admin-sidebar-footer">
             <a className="admin-side-action" href="/" data-testid="admin-return-chat">返回对话</a>
             <button type="button" className="admin-side-action subtle" onClick={logout}>退出管理</button>
@@ -816,7 +877,7 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
 
         <section className="admin-main">
           <div className="admin-main-inner">
-            {isMobile && <TabButtons tab={tab} setTab={setTab} mobile />}
+            {isMobile && <TabButtons tab={tab} setTab={navigateTab} mobile />}
             {!isMobile && <header className="admin-content-header"><div className="admin-title-wrap"><span className="admin-eyebrow">SOOYA ADMIN</span><h1>{page.title}</h1><p>{page.description}</p></div><div className="admin-header-actions"><button type="button" className="admin-header-button" onClick={() => void loadOverview()}>刷新</button></div></header>}
             <div className="admin-mobile-content">
               {isMobile && <div className="admin-mobile-title"><h1>{page.title}</h1><p>{page.description}</p></div>}

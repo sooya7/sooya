@@ -486,7 +486,7 @@ test('opens the admin panel in the same tab', async ({ page }) => {
   await page.goto('/');
 
   await page.getByTestId('admin-entry').click();
-  await expect(page).toHaveURL(/\/admin\/features$/);
+  await expect(page).toHaveURL(/\/admin\/avatar$/);
   await expect(page.getByTestId('admin-lock')).toBeVisible();
 });
 
