@@ -111,6 +111,8 @@ export const ImageModelSchema = z.object({
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
   apiKeyEnv: z.string().optional(),
+  /** Optional NewAPI user id required by its frontend model-list endpoints. */
+  newApiUserId: z.string().max(120).default(''),
   model: z.string().default(''),
   size: z.string().default('1024x1024'),
   timeoutMs: z.number().int().min(1000).max(600_000).default(120_000),

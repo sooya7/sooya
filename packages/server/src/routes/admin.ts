@@ -8,6 +8,39 @@ import { assertSafeUrl, HttpTimeoutError, SsrfError } from '../util/http.js';
 import { ProviderNotConfiguredError, ProviderRequestError } from '../providers/types.js';
 import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
 
+function modelRows(payload: unknown): unknown[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  const body = payload as { data?: unknown; models?: unknown };
+  if (Array.isArray(body.data)) return body.data;
+  if (Array.isArray(body.models)) return body.models;
+
+  // NewAPI's documented /api/models response groups model names by channel:
+  // { data: { "1": ["gpt-4o"], "2": ["gpt-image-1"] } }.
+  if (body.data && typeof body.data === 'object' && !Array.isArray(body.data)) {
+    return Object.values(body.data as Record<string, unknown>).flatMap((group) => Array.isArray(group) ? group : []);
+  }
+  return [];
+}
+
+function discoveryUrls(rawBase: string): string[] {
+  let base = rawBase.replace(/\/+$/, '');
+  // Operators often paste the image-generation endpoint from the provider docs.
+  // Discovery needs the API root, otherwise it would request
+  // /images/generations/models.
+  base = base.replace(/\/(?:images\/(?:generations|edits))$/i, '');
+  const primary = base.endsWith('/models') ? base : `${base}/models`;
+  const urls = [primary];
+  try {
+    const parsed = new URL(base);
+    if (!base.endsWith('/models') && /\/v1$/i.test(parsed.pathname)) {
+      urls.push(`${parsed.origin}/api/models`);
+    }
+  } catch {
+    // assertSafeUrl below returns the user-facing invalid URL error.
+  }
+  return urls;
+}
+
 /** Admin API used by the built-in management panel. */
 export function registerAdminRoutes(app: SooyaApp): void {
   const { server, repos, services, config } = app;
@@ -137,7 +170,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'bad_request', issues: parsed.error.issues };
     }
-    const saved = (config.getModels() as Record<string, { provider?: string; baseUrl?: string; apiKey?: string } | undefined>)[slot];
+    const saved = (config.getModels() as Record<string, { provider?: string; baseUrl?: string; apiKey?: string; newApiUserId?: string } | undefined>)[slot];
     const provider = saved?.provider ?? 'none';
     if (!DISCOVERABLE.has(provider)) {
       // A vendor-specific protocol has no /models route. Saying so beats a
@@ -150,9 +183,9 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'missing_base_url', message: '先填接口地址再拉取' };
     }
-    const url = base.endsWith('/models') ? base : `${base}/models`;
+    const urls = discoveryUrls(base);
     try {
-      await assertSafeUrl(url, app.env.ALLOW_PRIVATE_NETWORK_FETCH);
+      for (const url of urls) await assertSafeUrl(url, app.env.ALLOW_PRIVATE_NETWORK_FETCH);
     } catch (err) {
       reply.code(400);
       return { error: 'unsafe_url', message: (err as Error).message.slice(0, 200) };
@@ -167,13 +200,22 @@ export function registerAdminRoutes(app: SooyaApp): void {
           ? { 'x-api-key': saved.apiKey, 'anthropic-version': '2023-06-01' }
           : { authorization: `Bearer ${saved.apiKey}` }
         : {};
-      const res = await (app.fetchImpl ?? fetch)(url, { headers, signal: controller.signal });
+      if (saved?.newApiUserId?.trim()) headers['New-Api-User'] = saved.newApiUserId.trim();
+      let url = urls[0]!;
+      let res = await (app.fetchImpl ?? fetch)(url, { headers, signal: controller.signal });
+      // NewAPI exposes its frontend model list at /api/models. Newer versions
+      // may serve /v1/models too, so only try the fallback when the standard
+      // route is genuinely absent.
+      if (!res.ok && (res.status === 404 || res.status === 405) && urls[1]) {
+        url = urls[1];
+        res = await (app.fetchImpl ?? fetch)(url, { headers, signal: controller.signal });
+      }
       if (!res.ok) {
         reply.code(502);
         return { error: 'discovery_failed', message: `拉取失败：HTTP ${res.status}` };
       }
-      const payload = (await res.json()) as { data?: unknown; models?: unknown };
-      const rows = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : [];
+      const payload = await res.json();
+      const rows = modelRows(payload);
       const ids = [...new Set(
         rows
           .map((row) => (typeof row === 'string' ? row : (row as { id?: unknown; name?: unknown })?.id ?? (row as { name?: unknown })?.name))

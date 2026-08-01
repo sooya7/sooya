@@ -353,6 +353,10 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
 
   /** Asks the endpoint what it serves. The key stays server-side. */
   const pull = async () => {
+    if (keyDraft.trim()) {
+      onNotice('请先点击“保存模型配置”，再拉取模型列表');
+      return;
+    }
     setPulling(true);
     try {
       const r = await adminApi.discoverModels(selected, String(config.baseUrl ?? '').trim() || undefined);
@@ -440,7 +444,24 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
               : '从接口地址拉取该服务提供的模型名。密钥不会离开服务器。'}
           </small>
         </label>
-        <label className="admin-form-wide">接口地址<input value={String(config.baseUrl ?? '')} onChange={(e) => update('baseUrl', e.target.value)} /></label>
+        <label className="admin-form-wide">
+          接口地址
+          <input
+            value={String(config.baseUrl ?? '')}
+            placeholder={selected === 'image' ? 'https://你的 NewAPI 地址/v1' : undefined}
+            onChange={(e) => update('baseUrl', e.target.value)}
+          />
+          {selected === 'image' && (config.provider === 'openai-compatible' || config.provider === 'openai-images') && (
+            <small>NewAPI 请填到 /v1 根路径，不要填 /images/generations；修改 API Key 后先保存，再拉取模型。</small>
+          )}
+        </label>
+        {selected === 'image' && (config.provider === 'openai-compatible' || config.provider === 'openai-images') && (
+          <label>
+            New-Api-User（可选）
+            <input value={String(config.newApiUserId ?? '')} onChange={(e) => update('newApiUserId', e.target.value)} placeholder="NewAPI 用户 ID" />
+            <small>只有 NewAPI 的 /api/models 要求用户鉴权时填写；不知道就先留空。</small>
+          </label>
+        )}
         <label>
           API Key
           <input
