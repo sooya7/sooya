@@ -73,8 +73,7 @@ export class OpenAIImageProvider implements ImageProvider {
               model: this.cfg.model,
               prompt,
               size: opts.size ?? this.cfg.size,
-              n: 1,
-              response_format: 'b64_json'
+              n: 1
             }),
             signal
           });

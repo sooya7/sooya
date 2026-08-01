@@ -80,15 +80,15 @@ describe('拉取模型列表', () => {
     expect(body.source).toBe('https://other.example.com/v2/models');
   });
 
-  it('discovers Anuma image models through its OpenAI-style models route', async () => {
+  it('does not pretend Anuma exposes a model-list endpoint', async () => {
     h = await boot({ discover: { payload: { data: [{ id: 'anuma-image' }] } } });
     await h.app.server.inject({
       method: 'PUT', url: '/api/admin/models', headers: ADMIN,
       payload: { image: { provider: 'anuma-input-images', baseUrl: 'https://fake.example.com/v1', apiKey: 'anuma-key', model: 'anuma-image' } }
     });
     const { res, body } = await discover('image');
-    expect(res.statusCode).toBe(200);
-    expect(body.models).toEqual(['anuma-image']);
+    expect(res.statusCode).toBe(400);
+    expect(body.error).toBe('discovery_unsupported');
   });
 
   it('does not append /models twice when the address already ends in it', async () => {

@@ -23,6 +23,25 @@ function deps(fetchImpl: typeof fetch) {
 }
 
 describe('Anuma input_images image provider', () => {
+  it('does not send the legacy response_format field to GPT Image 2 compatible endpoints', async () => {
+    let request: Record<string, unknown> | undefined;
+    const provider = new OpenAIImageProvider(ImageModelSchema.parse({
+      provider: 'openai-compatible',
+      baseUrl: 'https://newapi.example/v1',
+      apiKey: 'test-key',
+      model: 'gpt-image-2',
+      maxRetries: 0
+    }), deps(async (_input, init) => {
+      request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }] }), { status: 200 });
+    }));
+
+    await provider.generate('a red umbrella');
+
+    expect(request).toMatchObject({ model: 'gpt-image-2', prompt: 'a red umbrella', n: 1 });
+    expect(request).not.toHaveProperty('response_format');
+  });
+
   it('generates without a reference image using only confirmed request fields', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const provider = new AnumaImageProvider(config(), deps(async (input, init) => {

@@ -331,6 +331,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   }, [onNotice]);
 
   const config = (models?.[selected] ?? {}) as Record<string, unknown>;
+  const discoveryUnsupported = config.provider === 'anuma-input-images';
   const update = (key: string, value: unknown) => setModels((prev) => ({
     ...(prev ?? {}),
     [selected]: { ...config, [key]: value }
@@ -353,6 +354,10 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
 
   /** Asks the endpoint what it serves. The key stays server-side. */
   const pull = async () => {
+    if (discoveryUnsupported) {
+      onNotice('Anuma 不提供模型列表，请手动填写模型名');
+      return;
+    }
     if (keyDraft.trim()) {
       onNotice('请先点击“保存模型配置”，再拉取模型列表');
       return;
@@ -433,7 +438,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           模型名
           <span className="admin-inline-field">
             <input list="admin-model-options" value={String(config.model ?? '')} onChange={(e) => update('model', e.target.value)} />
-            <button type="button" data-testid="admin-model-pull" disabled={pulling} onClick={() => void pull()}>{pulling ? '拉取中…' : '拉取模型'}</button>
+            <button type="button" data-testid="admin-model-pull" disabled={pulling || discoveryUnsupported} onClick={() => void pull()}>{pulling ? '拉取中…' : '拉取模型'}</button>
           </span>
           <datalist id="admin-model-options">
             {(available ?? []).map((name) => <option key={name} value={name} />)}
@@ -441,7 +446,9 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           <small>
             {available
               ? `拉取到 ${available.length} 个模型，点输入框可选；列表可能不全，仍可手填。`
-              : '从接口地址拉取该服务提供的模型名。密钥不会离开服务器。'}
+              : discoveryUnsupported
+                ? 'Anuma 不提供模型列表接口，请直接填写供应商提供的模型名。'
+                : '从接口地址拉取该服务提供的模型名。密钥不会离开服务器。'}
           </small>
         </label>
         <label className="admin-form-wide">
