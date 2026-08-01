@@ -134,3 +134,12 @@ describe('MessageItem 重放操作', () => {
     expect(container.querySelector('.retry-btn')).toBeNull();
   });
 });
+
+describe('MessageItem 搜索高亮', () => {
+  it('只高亮搜索词，不把用户文本当 HTML 注入', async () => {
+    await render(<MessageItem {...common} message={message({ id: 'm_search', role: 'user', content: [{ id: 'p', type: 'text', text: '北京 <script>alert(1)</script>' }] } as never)} highlightQuery="北京" />);
+    expect(container.querySelector('mark')?.textContent).toBe('北京');
+    expect(container.querySelector('script')).toBeNull();
+    expect(container.textContent).toContain('<script>alert(1)</script>');
+  });
+});

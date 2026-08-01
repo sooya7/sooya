@@ -457,6 +457,114 @@ export const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 10,
+    name: 'message_history_search',
+    up: (db) => {
+      db.exec(`
+        CREATE VIRTUAL TABLE messages_fts USING fts5(
+          message_id UNINDEXED,
+          conversation_id UNINDEXED,
+          content,
+          tokenize='trigram'
+        );
+
+        INSERT INTO messages_fts(message_id, conversation_id, content)
+        SELECT m.id, m.conversation_id,
+          COALESCE((SELECT group_concat(
+            CASE WHEN p.type IN ('text','audio') THEN COALESCE(p.text, p.transcript, '')
+                 ELSE COALESCE(media.rel_path, '') || ' ' || COALESCE(media_text.text, '') END, ' ')
+            FROM message_parts p
+            LEFT JOIN media ON media.id = p.media_id
+            LEFT JOIN media_text ON media_text.media_id = p.media_id
+            WHERE p.message_id = m.id), '')
+        FROM messages m;
+
+        CREATE TRIGGER message_parts_fts_ai AFTER INSERT ON message_parts BEGIN
+          DELETE FROM messages_fts WHERE message_id = new.message_id;
+          INSERT INTO messages_fts(message_id, conversation_id, content)
+          SELECT m.id, m.conversation_id,
+            COALESCE((SELECT group_concat(
+              CASE WHEN p.type IN ('text','audio') THEN COALESCE(p.text, p.transcript, '')
+                   ELSE COALESCE(media.rel_path, '') || ' ' || COALESCE(media_text.text, '') END, ' ')
+              FROM message_parts p
+              LEFT JOIN media ON media.id = p.media_id
+              LEFT JOIN media_text ON media_text.media_id = p.media_id
+              WHERE p.message_id = m.id), '')
+          FROM messages m WHERE m.id = new.message_id;
+        END;
+        CREATE TRIGGER message_parts_fts_au AFTER UPDATE OF text, transcript, media_id, type ON message_parts BEGIN
+          DELETE FROM messages_fts WHERE message_id = new.message_id;
+          INSERT INTO messages_fts(message_id, conversation_id, content)
+          SELECT m.id, m.conversation_id,
+            COALESCE((SELECT group_concat(
+              CASE WHEN p.type IN ('text','audio') THEN COALESCE(p.text, p.transcript, '')
+                   ELSE COALESCE(media.rel_path, '') || ' ' || COALESCE(media_text.text, '') END, ' ')
+              FROM message_parts p
+              LEFT JOIN media ON media.id = p.media_id
+              LEFT JOIN media_text ON media_text.media_id = p.media_id
+              WHERE p.message_id = m.id), '')
+          FROM messages m WHERE m.id = new.message_id;
+        END;
+        CREATE TRIGGER message_parts_fts_ad AFTER DELETE ON message_parts BEGIN
+          DELETE FROM messages_fts WHERE message_id = old.message_id;
+          INSERT INTO messages_fts(message_id, conversation_id, content)
+          SELECT m.id, m.conversation_id,
+            COALESCE((SELECT group_concat(
+              CASE WHEN p.type IN ('text','audio') THEN COALESCE(p.text, p.transcript, '')
+                   ELSE COALESCE(media.rel_path, '') || ' ' || COALESCE(media_text.text, '') END, ' ')
+              FROM message_parts p
+              LEFT JOIN media ON media.id = p.media_id
+              LEFT JOIN media_text ON media_text.media_id = p.media_id
+              WHERE p.message_id = m.id), '')
+          FROM messages m WHERE m.id = old.message_id;
+        END;
+        CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+          DELETE FROM messages_fts WHERE message_id = old.id;
+        END;
+
+        CREATE TRIGGER media_text_fts_ai AFTER INSERT ON media_text BEGIN
+          DELETE FROM messages_fts WHERE message_id IN (SELECT message_id FROM message_parts WHERE media_id = new.media_id);
+          INSERT INTO messages_fts(message_id, conversation_id, content)
+          SELECT m.id, m.conversation_id,
+            COALESCE((SELECT group_concat(
+              CASE WHEN p.type IN ('text','audio') THEN COALESCE(p.text, p.transcript, '')
+                   ELSE COALESCE(media.rel_path, '') || ' ' || COALESCE(media_text.text, '') END, ' ')
+              FROM message_parts p
+              LEFT JOIN media ON media.id = p.media_id
+              LEFT JOIN media_text ON media_text.media_id = p.media_id
+              WHERE p.message_id = m.id), '')
+          FROM messages m WHERE m.id IN (SELECT message_id FROM message_parts WHERE media_id = new.media_id);
+        END;
+        CREATE TRIGGER media_text_fts_au AFTER UPDATE OF text, status ON media_text BEGIN
+          DELETE FROM messages_fts WHERE message_id IN (SELECT message_id FROM message_parts WHERE media_id = new.media_id);
+          INSERT INTO messages_fts(message_id, conversation_id, content)
+          SELECT m.id, m.conversation_id,
+            COALESCE((SELECT group_concat(
+              CASE WHEN p.type IN ('text','audio') THEN COALESCE(p.text, p.transcript, '')
+                   ELSE COALESCE(media.rel_path, '') || ' ' || COALESCE(media_text.text, '') END, ' ')
+              FROM message_parts p
+              LEFT JOIN media ON media.id = p.media_id
+              LEFT JOIN media_text ON media_text.media_id = p.media_id
+              WHERE p.message_id = m.id), '')
+          FROM messages m WHERE m.id IN (SELECT message_id FROM message_parts WHERE media_id = new.media_id);
+        END;
+        CREATE TRIGGER media_text_fts_ad AFTER DELETE ON media_text BEGIN
+          DELETE FROM messages_fts WHERE message_id IN (SELECT message_id FROM message_parts WHERE media_id = old.media_id);
+          INSERT INTO messages_fts(message_id, conversation_id, content)
+          SELECT m.id, m.conversation_id,
+            COALESCE((SELECT group_concat(
+              CASE WHEN p.type IN ('text','audio') THEN COALESCE(p.text, p.transcript, '')
+                   ELSE COALESCE(media.rel_path, '') || ' ' || COALESCE(media_text.text, '') END, ' ')
+              FROM message_parts p
+              LEFT JOIN media ON media.id = p.media_id
+              LEFT JOIN media_text ON media_text.media_id = p.media_id
+              WHERE p.message_id = m.id), '')
+          FROM messages m WHERE m.id IN (SELECT message_id FROM message_parts WHERE media_id = old.media_id);
+        END;
+      `);
+    }
   }
 ];
 
