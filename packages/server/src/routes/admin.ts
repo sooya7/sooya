@@ -123,7 +123,6 @@ export function registerAdminRoutes(app: SooyaApp): void {
     'openai-embeddings',
     'openai-images',
     'openai-tts',
-    'openai-transcriptions',
     'anthropic-messages'
   ]);
   server.post('/api/admin/models/:slot/discover', guard, async (req, reply) => {

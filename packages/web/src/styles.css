@@ -228,6 +228,23 @@ button {
   color: var(--ink-meta);
 }
 
+.date-separator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+  margin: 16px 0 4px;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+.date-separator::before,
+.date-separator::after {
+  content: '';
+  height: 1px;
+  width: min(64px, 12vw);
+  background: var(--line);
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;

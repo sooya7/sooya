@@ -36,6 +36,8 @@ export interface ContextOptions {
   capabilityNotes: string[];
   contextWindow: number;
   maxOutputTokens: number;
+  /** Combine a rapid-message batch into one user turn for the model. */
+  batchMessageIds?: string[];
 }
 
 export class ContextBuilder {
@@ -49,7 +51,7 @@ export class ContextBuilder {
   ) {}
 
   async build(persona: Persona, latestUserText: string, opts: ContextOptions): Promise<BuiltContext> {
-    const recent = this.messages.recent(opts.recentMessages);
+    const recent = mergeContextMessages(this.messages.recent(opts.recentMessages), opts.batchMessageIds?.map((id) => this.messages.get(id)).filter((message): message is ChatMessage => Boolean(message)) ?? []);
     const activeSummaries = this.summaries.active(4);
 
     const recallQuery = latestUserText || recent.map(plainText).join('\n').slice(-500);
@@ -64,12 +66,28 @@ export class ContextBuilder {
     tryAddSystemPart(systemParts, [], `说话风格：${persona.speakingStyle}`, inputBudget);
     tryAddSystemPart(systemParts, [], `你们的关系：${persona.relationshipContext}`, inputBudget);
 
-    const convertedTurns: ChatTurn[] = [];
+    const batchIds = new Set(opts.batchMessageIds ?? []);
+    const convertedEntries: Array<{ message: ChatMessage; content: ChatContentPart[] }> = [];
     for (const msg of recent) {
       if (msg.role === 'system') continue;
       const content = await this.messageToParts(msg, opts.allowVision);
       if (content.length === 0) continue;
-      convertedTurns.push({ role: msg.role === 'assistant' ? 'assistant' : 'user', content });
+      convertedEntries.push({ message: msg, content });
+    }
+
+    const convertedTurns: ChatTurn[] = [];
+    let batchInserted = false;
+    for (const entry of convertedEntries) {
+      if (batchIds.has(entry.message.id)) {
+        if (batchInserted) continue;
+        const batchContent = convertedEntries
+          .filter((candidate) => batchIds.has(candidate.message.id))
+          .flatMap((candidate) => candidate.content);
+        if (batchContent.length > 0) convertedTurns.push({ role: 'user', content: mergeBatchContent(batchContent) });
+        batchInserted = true;
+        continue;
+      }
+      convertedTurns.push({ role: entry.message.role === 'assistant' ? 'assistant' : 'user', content: entry.content });
     }
 
     const turns: ChatTurn[] = [];
@@ -252,6 +270,18 @@ function plainText(msg: ChatMessage): string {
     .map((p) => (p.type === 'text' ? p.text ?? '' : p.type === 'audio' ? p.transcript ?? '' : ''))
     .filter(Boolean)
     .join(' ');
+}
+
+function mergeBatchContent(parts: ChatContentPart[]): ChatContentPart[] {
+  const text = parts.filter((part): part is { type: 'text'; text: string } => part.type === 'text').map((part) => part.text).filter(Boolean).join('\n');
+  const media = parts.filter((part) => part.type !== 'text');
+  return text ? [{ type: 'text', text }, ...media] : media;
+}
+
+function mergeContextMessages(primary: ChatMessage[], additional: ChatMessage[]): ChatMessage[] {
+  const byId = new Map(primary.map((message) => [message.id, message]));
+  for (const message of additional) byId.set(message.id, message);
+  return [...byId.values()].sort((a, b) => a.seq - b.seq);
 }
 
 function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): string {

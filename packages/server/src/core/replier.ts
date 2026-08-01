@@ -68,16 +68,28 @@ export class Replier {
   }
 
   async reply(userMessage: ChatMessage, opts: ReplyOptions): Promise<ReplyOutcome> {
+    return this.replyBatch([userMessage], opts);
+  }
+
+  async replyBatch(userMessages: ChatMessage[], opts: ReplyOptions): Promise<ReplyOutcome> {
+    if (userMessages.length === 0) throw new Error('cannot reply to an empty message batch');
+    const latestUserMessage = userMessages[userMessages.length - 1]!;
     this.active = true;
     const persona = this.deps.config.getPersona();
     const degraded: string[] = [];
     const producedParts: string[] = [];
 
-    const userText = userMessage.content
-      .map((p) => (p.type === 'text' ? p.text ?? '' : p.type === 'audio' ? p.transcript ?? '' : ''))
+    const userText = userMessages
+      .map((message) => message.content
+        .map((p) => (p.type === 'text' ? p.text ?? '' : p.type === 'audio' ? p.transcript ?? '' : ''))
+        .filter(Boolean)
+        .join('\n'))
       .filter(Boolean)
       .join('\n');
-    const userDirectives = mergeDirectives(parseUserDirectives(userText), userMessage.meta?.directives as UserDirectives);
+    const userDirectives = userMessages.reduce(
+      (merged, message) => mergeDirectives(merged, message.meta?.directives as UserDirectives),
+      parseUserDirectives(userText)
+    );
 
     // 1. Create the assistant shell message up front.
     let shell: ChatMessage;
@@ -86,12 +98,12 @@ export class Replier {
         () => this.deps.messages.createInTransaction({
           role: 'assistant',
           status: 'sending',
-          replyTo: userMessage.id,
+          replyTo: latestUserMessage.id,
           parts: [],
-          meta: { replyTo: userMessage.id }
+          meta: { replyTo: latestUserMessage.id, batchMessageIds: userMessages.map((message) => message.id) }
         }).message,
         'reply.thinking',
-        (message) => ({ messageId: message.id, replyTo: userMessage.id })
+        (message) => ({ messageId: message.id, replyTo: latestUserMessage.id })
       );
     } catch (error) {
       this.active = false;
@@ -116,6 +128,7 @@ export class Replier {
       const built = await this.deps.context.build(persona, userText, {
         recentMessages: opts.recentMessages,
         memoryLimit: opts.memoryLimit,
+        batchMessageIds: userMessages.map((message) => message.id),
         allowVision,
         stickerCatalogue: this.deps.stickers.catalogueForPrompt(),
         voiceMoods: voiceMoodCatalogue(
@@ -282,7 +295,7 @@ export class Replier {
       // 3b. Image
       if (plan.imagePrompt) {
         this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: plan.imagePrompt.slice(0, 200) });
-        const reference = await this.referenceImage(userMessage);
+        const reference = await this.referenceImage(latestUserMessage);
         const partId = this.deps.messages.appendPart(shell.id, {
           type: 'image',
           status: 'pending',

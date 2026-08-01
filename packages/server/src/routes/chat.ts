@@ -8,22 +8,9 @@ import { maintenanceCoordinator } from '../core/maintenance.js';
 
 const HistoryQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30), before: z.coerce.number().int().min(0).optional(), since: z.coerce.number().int().min(0).optional() });
 
-class SendLock {
-  private chain: Promise<unknown> = Promise.resolve();
-  private depth = 0;
-  get busy(): boolean { return this.depth > 0; }
-  run<T>(fn: () => Promise<T>): Promise<T> {
-    this.depth++;
-    const next = this.chain.then(fn, fn);
-    this.chain = next.catch(() => undefined).finally(() => { this.depth--; });
-    return next;
-  }
-}
-
 export function registerChatRoutes(app: SooyaApp): void {
   const { server, repos, services, env } = app;
   const auth = requireChatToken(app);
-  const lock = new SendLock();
 
   server.get('/api/conversation', { preHandler: auth }, async () => {
     const persona = app.config.getPersona();
@@ -77,9 +64,8 @@ export function registerChatRoutes(app: SooyaApp): void {
     const { message, created, event } = tx();
     if (!created) return { message, duplicate: true, replyPending: false };
     services.bus.fanout(event!);
-    void lock.run(async () => {
-      const outcome = await services.replier.reply(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
-      enqueuePostReply(app, message.id, outcome.messageId);
+    void services.replyCoordinator.enqueue(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }).catch((error) => {
+      repos.errors.add('reply-coordinator', (error as Error).message);
     });
     return { message, duplicate: false, replyPending: true };
   });
@@ -106,8 +92,7 @@ export function registerChatRoutes(app: SooyaApp): void {
     const { message, created, event } = tx();
     if (!created) return { message, duplicate: true, reply: findReply(app, message.id) };
     services.bus.fanout(event!);
-    const outcome = await lock.run(() => services.replier.reply(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }));
-    enqueuePostReply(app, message.id, outcome.messageId);
+    const outcome = await services.replyCoordinator.enqueue(message, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
     return { message, duplicate: false, reply: repos.messages.get(outcome.messageId), outcome };
   });
 
@@ -178,17 +163,10 @@ function validateInput(app: SooyaApp, content: Array<{ type: string; mediaId?: s
   return null;
 }
 
-function enqueuePostReply(app: SooyaApp, userMessageId: string, assistantMessageId: string): void {
-  try {
-    if (!app.env.DISABLE_MEMORY_PIPELINE) app.repos.jobs.enqueue('memory.extract', { userMessageId, assistantMessageId });
-    app.repos.jobs.enqueue('push.reply', { messageId: assistantMessageId }, { maxAttempts: 3 });
-    if (app.services.summarizer.needsSummary()) app.repos.jobs.enqueue('summary.build', {});
-  } catch (error) {
-    app.repos.errors.add('post-reply-jobs', (error as Error).message);
-  }
-}
-
 function findReply(app: SooyaApp, userMessageId: string): ChatMessage | null {
-  for (const message of app.repos.messages.recent(10).reverse()) if (message.role === 'assistant' && message.replyTo === userMessageId) return message;
+  for (const message of app.repos.messages.recent(20).reverse()) {
+    const batchMessageIds = message.meta?.batchMessageIds;
+    if (message.role === 'assistant' && (message.replyTo === userMessageId || (Array.isArray(batchMessageIds) && batchMessageIds.includes(userMessageId)))) return message;
+  }
   return null;
 }

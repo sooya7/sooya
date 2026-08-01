@@ -27,6 +27,7 @@ import { Replier } from './core/replier.js';
 import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
 import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig } from './core/life.js';
 import { LifeRepo } from './db/repos/life.repo.js';
+import { ReplyCoordinator } from './core/reply-coordinator.js';
 import { PushService } from './core/push.js';
 import { StorageService } from './core/storage.js';
 import { maintenanceCoordinator } from './core/maintenance.js';
@@ -90,6 +91,7 @@ export interface SooyaApp {
     context: ContextBuilder;
     summarizer: Summarizer;
     replier: Replier;
+    replyCoordinator: ReplyCoordinator;
     bus: EventBus;
     worker: JobWorker;
     backups: BackupService;
@@ -195,6 +197,20 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     keepRecent: env.CONTEXT_RECENT_MESSAGES
   });
   const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings });
+  const replyCoordinator = new ReplyCoordinator({
+    messages: repos.messages,
+    replier,
+    bus,
+    onCompleted: (userMessages, outcome) => {
+      try {
+        if (!env.DISABLE_MEMORY_PIPELINE) repos.jobs.enqueue('memory.extract', { userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId });
+        repos.jobs.enqueue('push.reply', { messageId: outcome.messageId }, { maxAttempts: 3 });
+        if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', {});
+      } catch (error) {
+        repos.errors.add('post-reply-jobs', (error as Error).message);
+      }
+    }
+  });
   const backups = new BackupService({
     db: () => dbHandle,
     dbFile,
@@ -326,7 +342,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, push, storage, context, summarizer, replier, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     reopenDatabase: () => {
@@ -336,11 +352,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       dbHandle.swap(reopened.db);
     },
     close: async () => {
+      await replyCoordinator.stop();
       await worker.stop();
       try { await server.close(); } catch { /* ignore */ }
       closeDatabase(dbHandle.raw);
     }
   };
+
+  replyCoordinator.recover({ recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
 
   registerHealthRoutes(app);
   registerChatRoutes(app);

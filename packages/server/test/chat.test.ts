@@ -75,8 +75,8 @@ describe('idempotency and concurrency', () => {
     expect(h.state.chatCalls).toHaveLength(1);
   });
 
-  it('serializes concurrent sends instead of interleaving replies', async () => {
-    h = await createHarness({ chat: { script: [['A'], ['B'], ['C']], delayMs: 20 } });
+  it('batches concurrent sends into one reply to the latest user message', async () => {
+    h = await createHarness({ chat: { script: [['A']], delayMs: 20 } });
     await Promise.all([
       sendText(h.app, '第一条', 'c1'),
       sendText(h.app, '第二条', 'c2'),
@@ -84,13 +84,29 @@ describe('idempotency and concurrency', () => {
     ]);
     const all = h.app.repos.messages.page(50).messages;
     expect(all.filter((m) => m.role === 'user')).toHaveLength(3);
-    expect(all.filter((m) => m.role === 'assistant')).toHaveLength(3);
-    // Every assistant message must reference a distinct user message.
-    const replyTargets = all.filter((m) => m.role === 'assistant').map((m) => m.replyTo);
-    expect(new Set(replyTargets).size).toBe(3);
+    const replies = all.filter((m) => m.role === 'assistant');
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.replyTo).toBe(all.find((m) => m.clientMsgId === 'c3')!.id);
+    expect(h.state.chatCalls).toHaveLength(1);
+    expect(JSON.stringify((h.state.chatCalls[0]!.body as any).messages)).toContain('第一条');
+    const duplicate = await sendText(h.app, '第一条', 'c1');
+    expect(duplicate.body.duplicate).toBe(true);
+    expect(duplicate.body.reply.id).toBe(replies[0]!.id);
     // Sequence numbers are unique and dense.
     const seqs = all.map((m) => m.seq).sort((a, b) => a - b);
     expect(new Set(seqs).size).toBe(seqs.length);
+  });
+
+  it('puts a message arriving after reply start into the next batch', async () => {
+    h = await createHarness({ chat: { script: [['first'], ['second']], delayMs: 1200 } });
+    const first = sendText(h.app, 'first user', 'batch-first');
+    await new Promise((resolve) => setTimeout(resolve, 950));
+    const second = sendText(h.app, 'second user', 'batch-second');
+    await Promise.all([first, second]);
+    const replies = h.app.repos.messages.page(50).messages.filter((m) => m.role === 'assistant');
+    expect(replies).toHaveLength(2);
+    expect(replies[0]!.replyTo).toBe(h.app.repos.messages.getByClientId('batch-first')!.id);
+    expect(replies[1]!.replyTo).toBe(h.app.repos.messages.getByClientId('batch-second')!.id);
   });
 });
 

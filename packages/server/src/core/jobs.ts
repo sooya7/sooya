@@ -105,11 +105,14 @@ export interface JobDeps {
 
 export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   worker.register('memory.extract', async (payload) => {
-    const userMessageId = String(payload.userMessageId ?? '');
+    const userMessageIds = Array.isArray(payload.userMessageIds)
+      ? payload.userMessageIds.map((id) => String(id)).filter(Boolean)
+      : [String(payload.userMessageId ?? '')].filter(Boolean);
+    const userMessageId = userMessageIds.at(-1) ?? '';
     const assistantMessageId = payload.assistantMessageId ? String(payload.assistantMessageId) : null;
-    const userMsg = deps.messages.get(userMessageId);
-    if (!userMsg) return;
-    const userText = textOf(userMsg);
+    const userMessages = userMessageIds.map((id) => deps.messages.get(id)).filter((message): message is NonNullable<typeof message> => Boolean(message));
+    if (userMessages.length === 0) return;
+    const userText = userMessages.map(textOf).filter(Boolean).join('\n');
     const assistantText = assistantMessageId ? textOf(deps.messages.get(assistantMessageId)) : '';
     const candidates = await deps.memory.extractCandidates(userText, assistantText);
     if (candidates.length === 0) return;
