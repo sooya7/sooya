@@ -160,6 +160,8 @@ export class ConfigStore {
     if (!panelManaged('image')) {
       const imgBase = pick('SOOYA_IMAGE_BASE_URL');
       if (imgBase) next.image.baseUrl = imgBase;
+      const imgProvider = pick('SOOYA_IMAGE_PROVIDER');
+      if (imgProvider) next.image.provider = imgProvider as ModelsConfig['image']['provider'];
       const imgModel = pick('SOOYA_IMAGE_MODEL');
       if (imgModel) {
         next.image.model = imgModel;

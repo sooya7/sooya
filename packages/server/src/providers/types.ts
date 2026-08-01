@@ -136,3 +136,27 @@ export class ProviderRequestError extends Error {
     super(message);
   }
 }
+
+export class ImageEditUnsupportedError extends Error {
+  override name = 'ImageEditUnsupportedError';
+}
+
+export type ImageReferenceErrorCode =
+  | 'too_many_reference_images'
+  | 'reference_image_too_large'
+  | 'reference_image_type_unsupported'
+  | 'reference_upload_failed'
+  | 'reference_upload_invalid_response'
+  | 'reference_generation_failed';
+
+export class ImageReferenceError extends Error {
+  override name = 'ImageReferenceError';
+
+  constructor(
+    readonly code: ImageReferenceErrorCode,
+    readonly publicMessage: string,
+    message: string
+  ) {
+    super(message);
+  }
+}

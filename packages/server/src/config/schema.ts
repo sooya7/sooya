@@ -107,14 +107,16 @@ export type EmbeddingModelConfig = z.infer<typeof EmbeddingModelSchema>;
 
 export const ImageModelSchema = z.object({
   configSource: ModelConfigSourceSchema,
-  provider: z.enum(['openai-images', 'openai-compatible', 'none']).default('none'),
+  provider: z.enum(['openai-images', 'openai-compatible', 'anuma-input-images', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
   apiKeyEnv: z.string().optional(),
   model: z.string().default(''),
   size: z.string().default('1024x1024'),
   timeoutMs: z.number().int().min(1000).max(600_000).default(120_000),
-  maxRetries: z.number().int().min(0).max(5).default(1)
+  maxRetries: z.number().int().min(0).max(5).default(1),
+  uploadTimeoutMs: z.number().int().min(1000).max(120_000).default(20_000),
+  uploadMaxRetries: z.number().int().min(0).max(3).default(2)
 });
 export type ImageModelConfig = z.infer<typeof ImageModelSchema>;
 
