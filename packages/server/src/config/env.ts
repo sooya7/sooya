@@ -76,7 +76,8 @@ const EnvSchema = z.object({
 
   /* She keeps her own hours whether or not anyone is talking to her. */
   ENABLE_LIFE_ENGINE: boolish(true),
-  /* Her local timezone; the user is UTC+8, and the server may not be. */
+  /* IANA timezone; the old fixed offset remains available for compatibility. */
+  LIFE_TIME_ZONE: z.string().default('Asia/Shanghai'),
   LIFE_TZ_OFFSET_MINUTES: intish(8 * 60),
   LIFE_TICK_INTERVAL_MS: intish(5 * 60 * 1000),
   /* Silence required before she will speak first. */

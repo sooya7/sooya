@@ -33,6 +33,12 @@ describe('life routine resolves from the clock alone', () => {
     expect(resolveActivity(at, { ...DEFAULT_LIFE_CONFIG, tzOffsetMinutes: 0 }).kind).toBe('sleep');
   });
 
+  it('uses an IANA timezone when configured, with the old offset as fallback', () => {
+    const at = new Date('2026-07-31T01:00:00Z');
+    expect(resolveActivity(at, { ...DEFAULT_LIFE_CONFIG, tzOffsetMinutes: 0, timeZone: 'Asia/Shanghai' }).kind).toBe('meal');
+    expect(resolveActivity(at, { ...DEFAULT_LIFE_CONFIG, tzOffsetMinutes: 0, timeZone: 'not/a-zone' }).kind).toBe('sleep');
+  });
+
   it('reports slot boundaries as absolute instants', () => {
     const resolved = resolveActivity(localTime('2026-07-31T15:20'));
     expect(resolved.startedAt.toISOString()).toBe(localTime('2026-07-31T14:00').toISOString());
