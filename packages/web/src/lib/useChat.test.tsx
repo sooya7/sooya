@@ -7,7 +7,7 @@ import type { BootstrapInfo } from './api.js';
 import type { ChatMessage } from './types.js';
 
 /**
- * `useChat` 的第一片：首屏挂载与 `send()`。
+ * `useChat` 的第一、二片：首屏挂载与 `send()`，以及 SSE 事件分派与流式草稿。
  *
  * 这个 hook 一挂载就会 `api.bootstrap()` 并开一条真实的 `ChatStream`，所以桩 `fetch`
  * 必须按路由分派：`/api/bootstrap`、`/api/stream`（一条永不结束的 SSE，模拟空闲长连接）
@@ -16,6 +16,9 @@ import type { ChatMessage } from './types.js';
  *
  * 挂载出来的 root 一律登记到 `roots`，在 `afterEach` 里统一卸载：卸载会 `stream.stop()`，
  * 断言失败时若漏了这一步，后台的重连会污染下一个用例的 fetch 计数。
+ *
+ * 第二片把空闲 SSE 换成 `pushableStream()`：同样只给 `.body`，但 `push()` 能在挂载之后
+ * 逐帧喂 `event:` / `id:` / `data:`，帧与帧之间连接依旧挂住，于是能一帧一帧地断言。
  */
 type Chat = ReturnType<typeof useChat>;
 
@@ -40,6 +43,46 @@ function idleStream(): Response {
       })
     }
   } as unknown as Response;
+}
+
+type Chunk = { done: boolean; value?: Uint8Array };
+
+/**
+ * 可逐帧推送的 SSE：`push()` 写一帧并把 React 的更新冲干，之后连接继续挂住。
+ * 队列空时 `read()` 必须挂起而不是返回 `done`——返回 `done` 会被 `ChatStream`
+ * 判成断线并进重连退避，后面的帧就没人读了。
+ */
+function pushableStream(): { response: Response; push: (type: string, data: Record<string, unknown>, id?: number) => Promise<void> } {
+  const encoder = new TextEncoder();
+  const queued: Uint8Array[] = [];
+  let waiting: ((chunk: Chunk) => void) | null = null;
+  const response = {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: (): Promise<Chunk> => {
+          const next = queued.shift();
+          if (next) return Promise.resolve({ done: false, value: next });
+          return new Promise<Chunk>((resolve) => { waiting = resolve; });
+        },
+        releaseLock: () => {}
+      })
+    }
+  } as unknown as Response;
+
+  const push = async (type: string, data: Record<string, unknown>, id?: number) => {
+    const frame = `event: ${type}\n${id === undefined ? '' : `id: ${id}\n`}data: ${JSON.stringify(data)}\n\n`;
+    const value = encoder.encode(frame);
+    await act(async () => {
+      if (waiting) { const resolve = waiting; waiting = null; resolve({ done: false, value }); }
+      else queued.push(value);
+      // 事件处理里可能再发请求（resync / reload / life），一起等它们跑完。
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  };
+
+  return { response, push };
 }
 
 function part(over: Partial<ChatMessage['content'][number]> = {}): ChatMessage['content'][number] {
@@ -82,6 +125,11 @@ const roots: Array<{ root: Root; container: HTMLElement }> = [];
 interface Routes {
   bootstrap?: () => Response;
   send?: () => Response | Promise<Response>;
+  /** `GET /api/messages`：`resync()` 的增量与 `loadOlder()` 的翻页都走这里。 */
+  messages?: (url: string) => Response;
+  life?: () => Response;
+  /** 默认空闲 SSE；第二片用 `pushableStream()` 换成可推送的连接。 */
+  stream?: () => Response;
 }
 
 /** 手动决定何时应答，用来观察请求挂起期间的中间状态。 */
@@ -97,10 +145,18 @@ function stubRoutes(routes: Routes = {}): ReturnType<typeof vi.fn> {
     const url = String(input);
     calls.push({ url, method: init.method, body: typeof init.body === 'string' ? init.body : null });
     if (url.startsWith('/api/bootstrap')) return routes.bootstrap ? routes.bootstrap() : json(bootstrapInfo());
-    if (url.startsWith('/api/stream')) return idleStream();
+    if (url.startsWith('/api/stream')) return routes.stream ? routes.stream() : idleStream();
     if (url.startsWith('/api/messages')) {
-      if (!routes.send) throw new Error('用例没有配置 /api/messages 的应答');
-      return routes.send();
+      if (init.method === 'POST') {
+        if (!routes.send) throw new Error('用例没有配置 POST /api/messages 的应答');
+        return routes.send();
+      }
+      if (!routes.messages) throw new Error('用例没有配置 GET /api/messages 的应答');
+      return routes.messages(url);
+    }
+    if (url.startsWith('/api/life')) {
+      if (!routes.life) throw new Error('用例没有配置 /api/life 的应答');
+      return routes.life();
     }
     throw new Error(`未预期的请求：${url}`);
   });
@@ -115,6 +171,27 @@ function sendCall(): { clientMsgId: string; content: Array<Record<string, unknow
 
 function streamUrls(): string[] {
   return calls.filter((call) => call.url.startsWith('/api/stream')).map((call) => call.url);
+}
+
+/** `GET /api/messages` 的请求串，用来断言 `resync()` 到底按什么游标拉的。 */
+function messageQueries(): string[] {
+  return calls.filter((call) => call.url.startsWith('/api/messages?')).map((call) => call.url);
+}
+
+function countCalls(prefix: string): number {
+  return calls.filter((call) => call.url.startsWith(prefix)).length;
+}
+
+/** `GET /api/messages` 的一页应答，字段按 `api.messages` 的契约来。 */
+function messagePage(messages: ChatMessage[], over: { hasMore?: boolean; nextSince?: number } = {}): Response {
+  return json({
+    messages,
+    hasMore: over.hasMore ?? false,
+    nextSince: over.nextSince,
+    lastEventSeq: 50,
+    lastMessageSeq: messages.at(-1)?.seq ?? 7,
+    oldestSeq: messages[0]?.seq ?? null
+  });
 }
 
 /** 挂载 hook，返回读取最新一次渲染结果的取值器。 */
@@ -135,6 +212,16 @@ async function mountChat(): Promise<() => Chat> {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   return () => latest!;
+}
+
+/** 挂载 hook，并把 SSE 换成可逐帧推送的连接。 */
+async function mountStreaming(routes: Routes = {}): Promise<{ chat: () => Chat; push: (type: string, data: Record<string, unknown>, id?: number) => Promise<void> }> {
+  const sse = pushableStream();
+  stubRoutes({ ...routes, stream: () => sse.response });
+  const chat = await mountChat();
+  // 帧只有在连接真的握上之后才有人读，先把这个前提钉住。
+  expect(chat().connection).toBe('online');
+  return { chat, push: sse.push };
 }
 
 afterEach(async () => {
@@ -260,5 +347,170 @@ describe('useChat send()', () => {
     expect(chat().connection).toBe('unauthorized');
     expect(chat().error).toBe('unauthorized');
     expect(chat().messages.find((m) => m.pendingLocal)!.status).toBe('failed');
+  });
+});
+
+describe('useChat SSE 活动状态', () => {
+  it('各类回复进度事件映射到对应的活动文案', async () => {
+    const { chat, push } = await mountStreaming();
+    expect(chat().activity).toEqual({ thinking: false, label: null });
+
+    const stages: Array<[string, Record<string, unknown>, string]> = [
+      ['reply.thinking', {}, '正在思考'],
+      ['reply.text.delta', { messageId: 'm_9', text: '在' }, '正在输入'],
+      ['reply.sticker.selecting', {}, '正在挑表情'],
+      ['reply.image.generating', {}, '正在生成图片'],
+      ['reply.audio.generating', {}, '正在生成语音'],
+      ['reply.text.done', {}, '正在整理'],
+      ['reply.content.done', {}, '正在整理']
+    ];
+    for (const [type, data, label] of stages) {
+      await push(type, data);
+      // 整个生成过程里 thinking 必须一直是 true：头部的「正在…」提示靠它显示。
+      expect(chat().activity, type).toEqual({ thinking: true, label });
+    }
+  });
+});
+
+describe('useChat 流式草稿', () => {
+  it('首个 delta 造出草稿气泡，后续 delta 就地覆盖同一条', async () => {
+    const { chat, push } = await mountStreaming();
+
+    await push('reply.text.delta', { messageId: 'm_9', text: '你' });
+    const draft = chat().messages.find((m) => m.id === 'm_9');
+    expect(draft).toBeDefined();
+    expect(draft!.role).toBe('assistant');
+    expect(draft!.status).toBe('sending');
+    // 草稿的 seq 要压过所有真实消息，否则会插到历史中间而不是贴在最新一条后面。
+    expect(draft!.seq).toBe(Number.MAX_SAFE_INTEGER);
+    expect(chat().messages.at(-1)!.id).toBe('m_9');
+    expect(draft!.content.map((p) => [p.type, p.text])).toEqual([['text', '你']]);
+
+    await push('reply.text.delta', { messageId: 'm_9', text: '你好呀' });
+    // delta 给的是累积后的全量文本：就地覆盖，既不能追加拼接，也不能再冒出第二个气泡。
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_9']);
+    expect(chat().messages.at(-1)!.content.map((p) => p.text)).toEqual(['你好呀']);
+  });
+
+  it('reply.completed 带 message 时用真消息替掉草稿', async () => {
+    const { chat, push } = await mountStreaming();
+    await push('reply.text.delta', { messageId: 'm_9', text: '你' });
+    await push('reply.completed', { message: message({ id: 'm_9', seq: 9, content: [part({ id: 'p_9', text: '你好呀' })] }) });
+
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_9']);
+    const final = chat().messages.at(-1)!;
+    expect(final.seq).toBe(9);
+    expect(final.status).toBe('sent');
+    expect(final.content.map((p) => [p.id, p.text])).toEqual([['p_9', '你好呀']]);
+    // 草稿那条 MAX_SAFE_INTEGER 的占位不能残留在列表里。
+    expect(chat().messages.some((m) => m.seq === Number.MAX_SAFE_INTEGER)).toBe(false);
+    expect(chat().activity).toEqual({ thinking: false, label: null });
+  });
+
+  it('reply.completed 不带 message 时按已知 seq 拉增量补齐', async () => {
+    const { chat, push } = await mountStreaming({
+      messages: () => messagePage([message({ id: 'm_7', seq: 7 }), message({ id: 'm_8', seq: 8 })])
+    });
+    await push('reply.thinking', {});
+    await push('reply.completed', {});
+
+    // bootstrap 里最高 seq 是 7，续传就得从 7 往后要，不能从头重拉。
+    expect(messageQueries()).toEqual(['/api/messages?limit=100&since=7']);
+    // 增量里重复回来的 m_7 要按 id 去重，不能变成两条一样的气泡。
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
+    expect(chat().activity).toEqual({ thinking: false, label: null });
+  });
+});
+
+describe('useChat 错误事件', () => {
+  it('reply.failed 归零活动、合入服务端消息并暴露错误文案', async () => {
+    const { chat, push } = await mountStreaming();
+    await push('reply.thinking', {});
+    await push('reply.failed', { error: '上游超时', message: message({ id: 'm_9', seq: 9, status: 'failed' }) });
+
+    // 失败后必须停掉「正在思考」，否则界面会一直假装她还在写。
+    expect(chat().activity).toEqual({ thinking: false, label: null });
+    expect(chat().error).toBe('上游超时');
+    expect(chat().messages.find((m) => m.id === 'm_9')!.status).toBe('failed');
+  });
+
+  it('reply.failed 的 error 不是字符串时回落到默认文案', async () => {
+    const { chat, push } = await mountStreaming();
+    await push('reply.failed', { error: { code: 'upstream_timeout' } });
+
+    expect(chat().error).toBe('回复失败');
+    // 没带 message 就不该凭空多出气泡。
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7']);
+  });
+});
+
+describe('useChat 其他事件分派', () => {
+  it('message.received 与 message.updated 都并入消息列表', async () => {
+    const { chat, push } = await mountStreaming();
+
+    await push('message.received', { message: message({ id: 'm_8', seq: 8, role: 'user' }) });
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
+
+    await push('message.updated', { message: message({ id: 'm_8', seq: 8, role: 'user', content: [part({ id: 'p_8', type: 'system', text: '已撤回' })] }) });
+    // 同一 id 是就地更新，不是再插一条。
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
+    expect(chat().messages.at(-1)!.content.map((p) => [p.type, p.text])).toEqual([['system', '已撤回']]);
+  });
+
+  it('persona.updated 只覆盖事件里给出的字段', async () => {
+    const { chat, push } = await mountStreaming();
+    await push('persona.updated', { persona: { tagline: '忙着呢' } });
+
+    // 后台只改了一句签名，头像和名字不能被抹成空。
+    expect(chat().persona).toEqual({ name: 'SOOYA', avatar: '/avatars/sooya.svg', userAvatar: '/avatars/user.svg', tagline: '忙着呢' });
+  });
+
+  it('life.updated 重新读 /api/life 而不是信事件载荷', async () => {
+    const { chat, push } = await mountStreaming({
+      life: () => json({ activity: '在写字', kind: 'work', mood: '专注', startedAt: '2026-08-01T01:00:00.000Z', endsAt: '2026-08-01T02:00:00.000Z', recent: [] })
+    });
+    await push('life.updated', { activity: '别信这个字段' });
+
+    expect(countCalls('/api/life')).toBe(1);
+    expect(chat().life?.activity).toBe('在写字');
+    expect(chat().error).toBeNull();
+  });
+
+  it('/api/life 失败时保留旧状态且不报错', async () => {
+    const { chat, push } = await mountStreaming({ life: () => json({ message: '生活服务炸了' }, 500) });
+    await push('life.updated', {});
+
+    // 她在做什么只是聊天旁边的装饰，读不到也不能在界面上报错。
+    expect(chat().error).toBeNull();
+    expect(chat().life?.activity).toBe('在看书');
+  });
+
+  it('system.notice 的 reload 重跑 bootstrap', async () => {
+    let boots = 0;
+    const { chat, push } = await mountStreaming({
+      bootstrap: () => {
+        boots += 1;
+        if (boots === 1) return json(bootstrapInfo());
+        return json(bootstrapInfo({ messages: { messages: [message({ id: 'm_9', seq: 9 })], hasMore: false, lastEventSeq: 60, lastMessageSeq: 9, oldestSeq: 9 } }));
+      }
+    });
+    await push('reply.thinking', {});
+    await push('system.notice', { action: 'reload' });
+
+    expect(boots).toBe(2);
+    // reload 是整屏重置：列表换成新载荷，翻页标记和活动状态一起归零。
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_9']);
+    expect(chat().hasMore).toBe(false);
+    expect(chat().activity).toEqual({ thinking: false, label: null });
+  });
+
+  it('system.notice 的其他 action 只拉增量', async () => {
+    const { chat, push } = await mountStreaming({ messages: () => messagePage([message({ id: 'm_8', seq: 8 })]) });
+    await push('system.notice', { action: 'refresh' });
+
+    // 普通通知不该把首屏整个重打一遍。
+    expect(countCalls('/api/bootstrap')).toBe(1);
+    expect(messageQueries()).toEqual(['/api/messages?limit=100&since=7']);
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
   });
 });
