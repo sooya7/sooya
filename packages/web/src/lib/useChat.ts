@@ -213,7 +213,7 @@ export function useChat() {
 
   useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') void resync(); }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [resync]);
 
-  return { messages, persona, connection, activity, life, stickers, quotedStates, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, loadOlder, ensureQuotedMessage, resync, reload, clearError: () => setError(null) };
+  return { messages, persona, connection, activity, life, stickers, quotedStates, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, loadOlder, ensureQuotedMessage, addMessages: applyMessages, resync, reload, clearError: () => setError(null) };
 }
 
 export function isReplayableUserMessage(message: ChatMessage): boolean {

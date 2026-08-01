@@ -315,6 +315,16 @@ describe('端点 URL 与 method', () => {
     expect(calls[0]!.url).toBe('/api/messages/msg%20a%2Fb%23c/withdraw');
   });
 
+  it('历史搜索和日期跳转正确编码查询参数', async () => {
+    const calls = recording();
+    await api.messageSearch('北京 museum', { limit: 10, cursor: '30' });
+    await api.messagesByDate('2026-08-01', 'Asia/Shanghai', 200);
+    expect(calls.map((call) => call.url)).toEqual([
+      '/api/messages/search?q=%E5%8C%97%E4%BA%AC+museum&limit=10&cursor=30',
+      '/api/messages/by-date?date=2026-08-01&timeZone=Asia%2FShanghai&limit=200'
+    ]);
+  });
+
   it('send 的 body 是调用方自己 stringify 的 JSON', async () => {
     const calls = recording();
     const payload = { clientMsgId: 'c1', content: [{ type: 'text', text: 'hi' }], directives: { push: true }, replyTo: 'msg_0' };

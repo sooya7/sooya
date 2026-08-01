@@ -4,6 +4,7 @@ import { CONVERSATION_ID, type ChatMessage, type MessagePart, type MessageStatus
 import { newMessageId, nowIso, randomId } from '../../util/ids.js';
 import { MediaRepo, toMediaRef } from './media.repo.js';
 import type { MediaTextRepo } from './media-text.repo.js';
+import { timeZoneOffsetMinutes } from '../../util/time-zone.js';
 
 interface MessageRow {
   id: string;
@@ -66,6 +67,12 @@ export interface MessageContext {
   messages: ChatMessage[];
   hasOlder: boolean;
   hasNewer: boolean;
+}
+
+export interface MessageSearchHit {
+  message: ChatMessage;
+  snippet: string;
+  matchedPartId: string | null;
 }
 
 export class MessageRepo {
@@ -332,6 +339,54 @@ export class MessageRepo {
     return { messages: this.hydrate(page), hasMore };
   }
 
+  search(query: string, limit = 30, cursor?: string | null): { hits: MessageSearchHit[]; nextCursor: string | null } {
+    const normalized = query.trim();
+    if (!normalized) return { hits: [], nextCursor: null };
+    const capped = Math.max(1, Math.min(limit, 50));
+    const offset = Math.max(0, Number.parseInt(cursor ?? '0', 10) || 0);
+    const terms = searchTerms(normalized);
+    let rows: Array<{ message_id: string; snippet: string }>;
+    if (terms.length > 0) {
+      const match = terms.map((term) => `"${term.replace(/"/g, '')}"`).join(' OR ');
+      rows = this.db.prepare(
+        `SELECT message_id, snippet(messages_fts, 2, '', '', '…', 24) AS snippet
+         FROM messages_fts
+         WHERE messages_fts MATCH ? AND conversation_id = ?
+         ORDER BY rowid DESC LIMIT ? OFFSET ?`
+      ).all(match, CONVERSATION_ID, capped + 1, offset) as Array<{ message_id: string; snippet: string }>;
+    } else {
+      rows = this.db.prepare(
+        `SELECT m.id AS message_id, substr(COALESCE(p.text, p.transcript, media.rel_path, media_text.text), 1, 160) AS snippet
+         FROM messages m
+         JOIN message_parts p ON p.message_id = m.id
+         LEFT JOIN media ON media.id = p.media_id
+         LEFT JOIN media_text ON media_text.media_id = p.media_id
+         WHERE m.conversation_id = ? AND lower(COALESCE(p.text, p.transcript, media.rel_path, media_text.text, '')) LIKE lower('%' || ? || '%')
+         GROUP BY m.id ORDER BY m.seq DESC LIMIT ? OFFSET ?`
+      ).all(CONVERSATION_ID, normalized, capped + 1, offset) as Array<{ message_id: string; snippet: string }>;
+    }
+    const hasMore = rows.length > capped;
+    const page = rows.slice(0, capped);
+    const messages = this.hydrate(page.map((row) => this.db.prepare('SELECT * FROM messages WHERE id = ?').get(row.message_id) as MessageRow));
+    const byId = new Map(messages.map((message) => [message.id, message]));
+    const hits = page.flatMap((row) => {
+      const message = byId.get(row.message_id);
+      if (!message) return [];
+      return [{ message, snippet: row.snippet ?? '', matchedPartId: matchedPartId(message, normalized) }];
+    });
+    return { hits, nextCursor: hasMore ? String(offset + capped) : null };
+  }
+
+  byDate(date: string, timeZone: string, limit = 200): { messages: ChatMessage[]; hasMore: boolean } {
+    const { start, end } = localDateRange(date, timeZone);
+    const capped = Math.max(1, Math.min(limit, 500));
+    const rows = this.db.prepare(
+      'SELECT * FROM messages WHERE conversation_id = ? AND created_at >= ? AND created_at < ? ORDER BY seq ASC LIMIT ?'
+    ).all(CONVERSATION_ID, start.toISOString(), end.toISOString(), capped + 1) as MessageRow[];
+    const hasMore = rows.length > capped;
+    return { messages: this.hydrate(rows.slice(0, capped)), hasMore };
+  }
+
   /** Messages strictly after a given seq (used for reconnect catch-up). */
   since(seq: number, limit = 200): ChatMessage[] {
     const rows = this.db
@@ -448,4 +503,33 @@ export class MessageRepo {
       };
     });
   }
+}
+
+function searchTerms(query: string): string[] {
+  return query.replace(/["'*^()]/g, ' ').split(/[\s\u3000,.;:!?，。！？；：、\n]+/u).map((term) => term.trim()).filter((term) => [...term].length >= 3).slice(0, 24);
+}
+
+function matchedPartId(message: ChatMessage, query: string): string | null {
+  const needle = query.toLocaleLowerCase();
+  return message.content.find((part) => {
+    const value = [part.text, part.transcript, part.media?.name].filter(Boolean).join(' ').toLocaleLowerCase();
+    return value.includes(needle);
+  })?.id ?? null;
+}
+
+function localDateRange(date: string, timeZone: string): { start: Date; end: Date } {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) throw new Error('invalid date');
+  const [year, month, day] = date.split('-').map(Number);
+  const check = new Date(Date.UTC(year!, month! - 1, day!));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month! - 1 || check.getUTCDate() !== day) throw new Error('invalid date');
+  const next = new Date(Date.UTC(year!, month! - 1, day! + 1));
+  const start = utcForLocal(Date.UTC(year!, month! - 1, day!), timeZone);
+  const end = utcForLocal(next.getTime(), timeZone);
+  return { start, end };
+}
+
+function utcForLocal(localClockMs: number, timeZone: string): Date {
+  let instant = localClockMs;
+  for (let attempt = 0; attempt < 3; attempt++) instant = localClockMs - timeZoneOffsetMinutes(new Date(instant), timeZone) * 60_000;
+  return new Date(instant);
 }

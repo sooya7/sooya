@@ -8,6 +8,8 @@ import { maintenanceCoordinator } from '../core/maintenance.js';
 
 const HistoryQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30), before: z.coerce.number().int().min(0).optional(), since: z.coerce.number().int().min(0).optional() });
 const MessageContextQuerySchema = z.object({ before: z.coerce.number().int().min(0).max(100).default(20), after: z.coerce.number().int().min(0).max(100).default(20) });
+const MessageSearchQuerySchema = z.object({ q: z.string().trim().min(1).max(200), limit: z.coerce.number().int().min(1).max(50).default(30), cursor: z.string().regex(/^\d+$/u).optional() });
+const MessageDateQuerySchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), timeZone: z.string().trim().min(1).max(100).default('Asia/Shanghai'), limit: z.coerce.number().int().min(1).max(500).default(200) });
 
 export function registerChatRoutes(app: SooyaApp): void {
   const { server, repos, services, env } = app;
@@ -35,6 +37,23 @@ export function registerChatRoutes(app: SooyaApp): void {
     }
     const page = repos.messages.page(limit, before ?? null);
     return { messages: page.messages, hasMore: page.hasMore, lastEventSeq: cursorBefore, lastMessageSeq: repos.messages.maxSeq(), oldestSeq: page.messages[0]?.seq ?? null };
+  });
+
+  server.get('/api/messages/search', { preHandler: auth }, async (req, reply) => {
+    const parsed = MessageSearchQuerySchema.safeParse(req.query);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    return repos.messages.search(parsed.data.q, parsed.data.limit, parsed.data.cursor);
+  });
+
+  server.get('/api/messages/by-date', { preHandler: auth }, async (req, reply) => {
+    const parsed = MessageDateQuerySchema.safeParse(req.query);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    try {
+      return { date: parsed.data.date, timeZone: parsed.data.timeZone, ...repos.messages.byDate(parsed.data.date, parsed.data.timeZone, parsed.data.limit) };
+    } catch {
+      reply.code(400);
+      return { error: 'bad_request', message: '日期或时区无效' };
+    }
   });
 
   server.get('/api/messages/:id', { preHandler: auth }, async (req, reply) => {
