@@ -141,6 +141,8 @@ interface Routes {
   send?: () => Response | Promise<Response>;
   /** `GET /api/messages`：`resync()` 的增量与 `loadOlder()` 的翻页都走这里。 */
   messages?: (url: string) => Response | Promise<Response>;
+  /** `GET /api/messages/<id>/context`：引用目标懒加载的窗口。 */
+  messageContext?: (url: string) => Response | Promise<Response>;
   /** `POST /api/messages/<id>/withdraw`：必须比 `send` 先匹配，否则会被 POST 分支吃掉。 */
   withdraw?: (url: string) => Response;
   life?: () => Response;
@@ -167,6 +169,10 @@ function stubRoutes(routes: Routes = {}): ReturnType<typeof vi.fn> {
       if (url.endsWith('/withdraw')) {
         if (!routes.withdraw) throw new Error('用例没有配置 POST /api/messages/<id>/withdraw 的应答');
         return routes.withdraw(url);
+      }
+      if (url.includes('/context?')) {
+        if (!routes.messageContext) throw new Error('用例没有配置引用消息上下文应答');
+        return routes.messageContext(url);
       }
       if (init.method === 'POST') {
         if (!routes.send) throw new Error('用例没有配置 POST /api/messages 的应答');
@@ -689,6 +695,27 @@ describe('useChat loadOlder()', () => {
     // 卡在 true 会让「加载更早」永久按不动。
     expect(chat().loadingOlder).toBe(false);
     expect(chat().messages.map((m) => m.id)).toEqual(['m_7']);
+  });
+});
+
+describe('useChat 引用消息上下文', () => {
+  it('按引用目标补取窗口并合入消息列表，避免重复请求', async () => {
+    const target = message({ id: 'm_2', seq: 2, role: 'user' });
+    const older = message({ id: 'm_1', seq: 1 });
+    const newer = message({ id: 'm_3', seq: 3 });
+    stubRoutes({
+      messageContext: () => json({ target, messages: [older, target, newer], hasOlder: false, hasNewer: true })
+    });
+    const chat = await mountChat();
+
+    let result!: ChatMessage | null;
+    await act(async () => { result = await chat().ensureQuotedMessage(target.id); });
+
+    expect(result?.id).toBe(target.id);
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_1', 'm_2', 'm_3', 'm_7']);
+    expect(calls.filter((call) => call.url.startsWith('/api/messages/m_2/context?'))).toHaveLength(1);
+    await act(async () => { await chat().ensureQuotedMessage(target.id); });
+    expect(calls.filter((call) => call.url.startsWith('/api/messages/m_2/context?'))).toHaveLength(1);
   });
 });
 

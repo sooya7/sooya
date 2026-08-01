@@ -89,7 +89,7 @@ function FilePart({ part, mine }: { part: MessagePart; mine: boolean }) {
 interface Props {
   message: ChatMessage; personaName: string; avatar: string; userAvatar: string; showAvatar: boolean; timeZone?: string;
   /** The message being replied to, when it is still loaded. */
-  quoted?: ChatMessage | null; quotedLabel?: string;
+  quoted?: ChatMessage | null; quotedLabel?: string; quotedStatus?: 'loading' | 'ready' | 'missing' | 'error'; onQuotedClick?: (messageId: string) => void;
   /**
    * Id of the message directly above this one. Every assistant reply carries
    * `replyTo` pointing at the message that triggered it, which in a 1v1 chat is
@@ -100,7 +100,7 @@ interface Props {
   onRetry?: (message: ChatMessage) => void; onResend?: (message: ChatMessage) => void; onQuote?: (message: ChatMessage) => void; onWithdraw?: (message: ChatMessage) => void; onOpenImage?: (mediaId: string) => void; onNotice?: (text: string) => void;
 }
 
-export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, timeZone, quoted, quotedLabel, previousId, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
+export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, timeZone, quoted, quotedLabel, quotedStatus, onQuotedClick, previousId, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
   const mine = message.role === 'user';
   // Every assistant turn carries `replyTo` for stream recovery, so a preview is only
   // worth showing when it says something the bubble order does not: not the message
@@ -110,7 +110,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   // A user-selected quote is intentional, even when the quoted message is
   // immediately above it. The assistant's structural replyTo link is the
   // case where suppressing the adjacent preview avoids repetition.
-  const showReplyPreview = Boolean(message.replyTo) && (mine || message.replyTo !== previousId) && (Boolean(quoted) || mine);
+  const showReplyPreview = Boolean(message.replyTo) && (mine || message.replyTo !== previousId) && (Boolean(quoted) || Boolean(quotedStatus) || mine);
   const visible = message.content.filter((part) => part.type !== 'system');
   const failedMessage = message.status === 'failed';
   const replayable = isReplayableUserMessage(message);
@@ -161,7 +161,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   const act = async (work: () => void | Promise<void>, success?: string) => { setMenu(null); try { await work(); if (success) onNotice?.(success); } catch (error) { onNotice?.((error as Error).message); } };
 
   return (
-    <div ref={messageRef} className={`msg-row ${mine ? 'mine' : 'theirs'}`} data-role={message.role} data-status={message.status} data-testid="message"
+    <div ref={messageRef} className={`msg-row ${mine ? 'mine' : 'theirs'}`} data-role={message.role} data-status={message.status} data-message-id={message.id} data-testid="message"
       onContextMenu={(event) => { event.preventDefault(); openMenu(event.clientX, event.clientY); }}
       onPointerDown={(event) => {
         if (event.pointerType === 'mouse') return;
@@ -179,9 +179,9 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
       <div className="avatar-slot">{showAvatar && <AuthenticatedImage className="avatar" path={mine ? userAvatar : avatar} scope="user" alt={mine ? '我' : personaName} draggable={false} />}</div>
       <div className="msg-body">
         {showReplyPreview && (
-          <div className="message-reply-preview" data-testid="reply-preview">
+          <div className={`message-reply-preview ${quoted && onQuotedClick ? 'clickable' : ''}`} data-testid="reply-preview" role={quoted && onQuotedClick ? 'button' : undefined} tabIndex={quoted && onQuotedClick ? 0 : undefined} onClick={() => { if (quoted && message.replyTo) onQuotedClick?.(quoted.id); }} onKeyDown={(event) => { if (quoted && message.replyTo && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onQuotedClick?.(quoted.id); } }}>
             <span className="reply-author">{quotedLabel || '原消息'}</span>
-            <span className="reply-text">{quoted ? quotedPreview(quoted) : '原消息已不在当前记录中'}</span>
+            <span className="reply-text">{quoted ? quotedPreview(quoted) : quotedStatus === 'loading' ? '正在读取原消息…' : quotedStatus === 'error' ? '原消息暂时无法读取' : '原消息已删除或不可用'}</span>
           </div>
         )}
         <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': return part.text ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{part.text}</div> : null; case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>

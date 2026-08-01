@@ -60,6 +60,13 @@ export type WithdrawResult =
   | { kind: 'expired' }
   | { kind: 'already_withdrawn'; message: ChatMessage };
 
+export interface MessageContext {
+  target: ChatMessage;
+  messages: ChatMessage[];
+  hasOlder: boolean;
+  hasNewer: boolean;
+}
+
 export class MessageRepo {
   private readonly media: MediaRepo;
 
@@ -256,6 +263,31 @@ export class MessageRepo {
     const row = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as MessageRow | undefined;
     if (!row) return undefined;
     return this.hydrate([row])[0];
+  }
+
+  /** Return a bounded, ordered window around a message used by a quote. */
+  context(id: string, before = 20, after = 20): MessageContext | undefined {
+    const targetRow = this.db
+      .prepare('SELECT * FROM messages WHERE conversation_id = ? AND id = ?')
+      .get(CONVERSATION_ID, id) as (MessageRow & { seq: number }) | undefined;
+    if (!targetRow) return undefined;
+
+    const beforeLimit = Math.max(0, Math.min(before, 100));
+    const afterLimit = Math.max(0, Math.min(after, 100));
+    const older = this.db.prepare(
+      'SELECT * FROM messages WHERE conversation_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?'
+    ).all(CONVERSATION_ID, targetRow.seq, beforeLimit + 1) as MessageRow[];
+    const newer = this.db.prepare(
+      'SELECT * FROM messages WHERE conversation_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?'
+    ).all(CONVERSATION_ID, targetRow.seq, afterLimit + 1) as MessageRow[];
+    const olderPage = older.slice(0, beforeLimit).reverse();
+    const newerPage = newer.slice(0, afterLimit);
+    return {
+      target: this.hydrate([targetRow])[0]!,
+      messages: this.hydrate([...olderPage, targetRow, ...newerPage]),
+      hasOlder: older.length > beforeLimit,
+      hasNewer: newer.length > afterLimit
+    };
   }
 
   getByClientId(clientMsgId: string): ChatMessage | undefined {

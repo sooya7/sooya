@@ -7,6 +7,7 @@ import { parseUserDirectives } from '../core/directives.js';
 import { maintenanceCoordinator } from '../core/maintenance.js';
 
 const HistoryQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30), before: z.coerce.number().int().min(0).optional(), since: z.coerce.number().int().min(0).optional() });
+const MessageContextQuerySchema = z.object({ before: z.coerce.number().int().min(0).max(100).default(20), after: z.coerce.number().int().min(0).max(100).default(20) });
 
 export function registerChatRoutes(app: SooyaApp): void {
   const { server, repos, services, env } = app;
@@ -40,6 +41,15 @@ export function registerChatRoutes(app: SooyaApp): void {
     const msg = repos.messages.get((req.params as { id: string }).id);
     if (!msg) { reply.code(404); return { error: 'not_found' }; }
     return { message: msg };
+  });
+
+  server.get('/api/messages/:id/context', { preHandler: auth }, async (req, reply) => {
+    const parsed = MessageContextQuerySchema.safeParse(req.query);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const { id } = req.params as { id: string };
+    const context = repos.messages.context(id, parsed.data.before, parsed.data.after);
+    if (!context) { reply.code(404); return { error: 'not_found' }; }
+    return context;
   });
 
   server.post('/api/messages', { preHandler: auth }, async (req, reply) => {

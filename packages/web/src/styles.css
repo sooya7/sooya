@@ -1460,6 +1460,11 @@ button {
   line-height: 1.35;
 }
 
+.message-reply-preview.clickable { cursor: pointer; }
+.message-reply-preview.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.message-highlight { animation: message-highlight 1.8s ease-out; }
+@keyframes message-highlight { 0%, 65% { background: rgba(109, 94, 252, 0.18); } 100% { background: transparent; } }
+
 .message-reply-preview .reply-author {
   color: #4a5872;
   font-weight: 600;

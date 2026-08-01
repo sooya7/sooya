@@ -56,6 +56,12 @@ function ChatApp() {
   }, []);
   useEffect(() => { if (!chat.error) return; setNotice(chat.error); const timer = window.setTimeout(() => { setNotice(null); chat.clearError(); }, 5000); return () => clearTimeout(timer); }, [chat.error]);
   useEffect(() => {
+    const ids = new Set(chat.messages.map((message) => message.replyTo).filter((id): id is string => Boolean(id)));
+    for (const id of ids) {
+      if (!chat.messages.some((message) => message.id === id) && !chat.quotedStates[id]) void chat.ensureQuotedMessage(id);
+    }
+  }, [chat.ensureQuotedMessage, chat.messages, chat.quotedStates]);
+  useEffect(() => {
     const mediaError = personaAvatar.error ?? userAvatar.error;
     if (!mediaError) return;
     setNotice(mediaError);
@@ -64,6 +70,17 @@ function ChatApp() {
   }, [personaAvatar.error, userAvatar.error]);
 
   const jumpToBottom = () => { stickToBottomRef.current = true; setStickToBottom(true); setUnread(0); bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); };
+  const jumpToMessage = async (id: string) => {
+    const target = chat.messages.find((message) => message.id === id) ?? await chat.ensureQuotedMessage(id);
+    if (!target) { setNotice('原消息已删除或不可用'); return; }
+    window.setTimeout(() => {
+      const node = Array.from(document.querySelectorAll<HTMLElement>('[data-message-id]')).find((item) => item.dataset.messageId === id);
+      if (!node) return;
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      node.classList.add('message-highlight');
+      window.setTimeout(() => node.classList.remove('message-highlight'), 1800);
+    }, 0);
+  };
   const action = async (work: () => Promise<unknown>, success?: string) => { try { await work(); if (success) setNotice(success); } catch (error) { setNotice((error as Error).message); } };
   const statusLabel = chat.connection === 'online' ? chat.activity.thinking ? chat.activity.label ?? '正在输入' : '在线' : chat.connection === 'connecting' ? '连接中…' : chat.connection === 'unauthorized' ? '需要访问令牌' : '连接已断开，正在重试';
 
@@ -73,7 +90,7 @@ function ChatApp() {
   return <div className="app">
     <header className="topbar"><div className="topbar-identity"><img className="topbar-avatar" src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /><div className="topbar-text"><span className="topbar-name">{persona?.name ?? 'SOOYA'}</span><span className={`topbar-status ${chat.connection}`} data-testid="connection-status"><span className="status-dot" />{statusLabel}</span>{chat.connection === 'online' && chat.life && <span className="topbar-life" data-testid="life-activity" title={`心情${chat.life.mood}`}>{chat.life.activity}</span>}</div></div><NotificationBridge /><a className="topbar-admin-entry" href="/admin/features" aria-label="进入功能管理中心" data-testid="admin-entry"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-testid="admin-entry-icon" data-icon-style="six-tooth"><circle cx="12" cy="12" r="3.35" /><path d="M12 2.8v2.1" /><path d="m19.97 7.4-1.82 1.05" /><path d="m19.97 16.6-1.82-1.05" /><path d="M12 21.2v-2.1" /><path d="m4.03 16.6 1.82-1.05" /><path d="m4.03 7.4 1.82 1.05" /></svg></a></header>
     <div className="scroller" ref={scrollerRef} onScroll={handleScroll} data-testid="scroller"><div ref={sentinelRef} className="load-sentinel" />{chat.loadingOlder && <div className="history-hint">正在加载更早的消息…</div>}{!chat.hasMore && chat.ready && chat.messages.length > 0 && <div className="history-hint muted">这是你们聊天的开始</div>}{chat.ready && chat.messages.length === 0 && <div className="empty-state"><img src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /><p>和 {persona?.name ?? 'SOOYA'} 说点什么吧</p></div>}
-      <div className="messages" ref={messagesRef}>{chat.messages.map((message, index) => { const showAvatar = shouldStartMessageGroup(previousMessage, message, timeZone); const showDate = shouldStartDateSeparator(previousMessage, message, timeZone); previousMessage = message; const quoted = message.replyTo ? chat.messages.find((m) => m.id === message.replyTo) ?? null : null; return <Fragment key={message.id}>{showDate && <DateSeparator iso={message.createdAt} timeZone={timeZone} />}<MessageItem message={message} previousId={chat.messages[index - 1]?.id ?? null} quoted={quoted} quotedLabel={message.replyTo ? quotedLabel(quoted, persona?.name ?? 'SOOYA') : ''} personaName={persona?.name ?? 'SOOYA'} avatar={persona?.avatar ?? '/avatars/sooya.svg'} userAvatar={persona?.userAvatar ?? '/avatars/user.svg'} showAvatar={showAvatar} timeZone={timeZone} onRetry={(m) => void action(() => { setNotice('正在重试'); return chat.retryFailed(m); })} onResend={(m) => void action(() => chat.sendAgain(m), '已再次发送')} onQuote={setQuote} onWithdraw={(m) => void action(() => chat.withdraw(m), '消息已撤回并保留上下文占位')} onNotice={setNotice} onOpenImage={(id) => window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id } }))} /></Fragment>; })}{chat.activity.thinking && !hasStreamingBubble(chat.messages) && <div className="msg-row theirs" data-testid="typing-indicator"><div className="avatar-slot"><img className="avatar" src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /></div><div className="msg-body"><div className="bubble bubble-text theirs typing"><span className="typing-dots"><i /><i /><i /></span></div></div></div>}</div><div ref={bottomRef} className="bottom-anchor" /></div>
+      <div className="messages" ref={messagesRef}>{chat.messages.map((message, index) => { const showAvatar = shouldStartMessageGroup(previousMessage, message, timeZone); const showDate = shouldStartDateSeparator(previousMessage, message, timeZone); previousMessage = message; const quoted = message.replyTo ? chat.messages.find((m) => m.id === message.replyTo) ?? chat.quotedStates[message.replyTo]?.message ?? null : null; const quotedStatus = message.replyTo ? chat.quotedStates[message.replyTo]?.status : undefined; return <Fragment key={message.id}>{showDate && <DateSeparator iso={message.createdAt} timeZone={timeZone} />}<MessageItem message={message} previousId={chat.messages[index - 1]?.id ?? null} quoted={quoted} quotedStatus={quotedStatus} onQuotedClick={jumpToMessage} quotedLabel={message.replyTo ? quotedLabel(quoted, persona?.name ?? 'SOOYA') : ''} personaName={persona?.name ?? 'SOOYA'} avatar={persona?.avatar ?? '/avatars/sooya.svg'} userAvatar={persona?.userAvatar ?? '/avatars/user.svg'} showAvatar={showAvatar} timeZone={timeZone} onRetry={(m) => void action(() => { setNotice('正在重试'); return chat.retryFailed(m); })} onResend={(m) => void action(() => chat.sendAgain(m), '已再次发送')} onQuote={setQuote} onWithdraw={(m) => void action(() => chat.withdraw(m), '消息已撤回并保留上下文占位')} onNotice={setNotice} onOpenImage={(id) => window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id } }))} /></Fragment>; })}{chat.activity.thinking && !hasStreamingBubble(chat.messages) && <div className="msg-row theirs" data-testid="typing-indicator"><div className="avatar-slot"><img className="avatar" src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /></div><div className="msg-body"><div className="bubble bubble-text theirs typing"><span className="typing-dots"><i /><i /><i /></span></div></div></div>}</div><div ref={bottomRef} className="bottom-anchor" /></div>
     {unread > 0 && !stickToBottom && <button type="button" className="unread-pill" data-testid="unread-pill" onClick={jumpToBottom}>{unread} 条新消息 ↓</button>}
     {swUpdate && <div className="sw-update" role="status" data-testid="sw-update"><span>有新版本可用</span><button type="button" className="sw-update-accept" onClick={() => { swUpdate.accept(); setSwUpdate(null); }}>立即更新</button><button type="button" className="sw-update-later" onClick={() => { swUpdate.dismiss(); setSwUpdate(null); }}>稍后</button></div>}
     {notice && <div className="toast" role="status"><span>{notice}</span><button type="button" className="toast-close" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button></div>}

@@ -20,11 +20,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export interface ConversationInfo { conversationId: string; persona: PersonaInfo; messageCount: number; lastSeq: number; lastEventSeq: number; }
+export interface MessageContext { target: ChatMessage; messages: ChatMessage[]; hasOlder: boolean; hasNewer: boolean; }
 /** 首屏一次性载荷：会话 + 最新一页消息 + 贴纸 + 她正在做什么。 */
 export interface BootstrapInfo { conversation: ConversationInfo; messages: { messages: ChatMessage[]; hasMore: boolean; lastEventSeq: number; lastMessageSeq: number; oldestSeq: number | null }; stickers: StickerInfo[]; life: LifeState; }
 export const api = {
   bootstrap: () => request<BootstrapInfo>('/api/bootstrap'),
   messages: (opts: { limit?: number; before?: number; since?: number } = {}) => { const params = new URLSearchParams(); if (opts.limit) params.set('limit', String(opts.limit)); if (opts.before !== undefined) params.set('before', String(opts.before)); if (opts.since !== undefined) params.set('since', String(opts.since)); return request<{ messages: ChatMessage[]; hasMore: boolean; nextSince?: number; lastEventSeq: number; lastMessageSeq: number; oldestSeq: number | null }>(`/api/messages?${params.toString()}`); },
+  messageContext: (id: string, opts: { before?: number; after?: number } = {}) => { const params = new URLSearchParams(); if (opts.before !== undefined) params.set('before', String(opts.before)); if (opts.after !== undefined) params.set('after', String(opts.after)); return request<MessageContext>(`/api/messages/${encodeURIComponent(id)}/context?${params.toString()}`); },
   send: (payload: { clientMsgId: string; content: unknown[]; directives?: Record<string, boolean>; replyTo?: string }) => request<{ message: ChatMessage; duplicate: boolean; replyPending: boolean }>('/api/messages', { method: 'POST', body: JSON.stringify(payload) }),
   withdraw: (id: string) => request<{ message: ChatMessage }>(`/api/messages/${encodeURIComponent(id)}/withdraw`, { method: 'POST' }),
   upload: async (files: Array<{ file: File | Blob; field: 'image' | 'file'; name?: string }>, options: { signal?: AbortSignal } = {}) => { const form = new FormData(); for (const f of files) form.append(f.field, f.file, f.name ?? (f.file instanceof File ? f.file.name : 'upload')); return request<{ media: MediaRef[]; failed: Array<{ filename: string; error: string; code?: string }> }>('/api/media', { method: 'POST', body: form, signal: options.signal }); },
