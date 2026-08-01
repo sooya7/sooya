@@ -261,7 +261,19 @@ export class LifeEngine {
     if (this.repo.countSharedSince(dayAgo) >= this.settings.maxReachOutsPerDay) {
       return { reach: false, reason: 'daily_cap', candidate: null };
     }
-    const candidate = this.repo.unshared(['out', 'play', 'meal', 'chore'], 1)[0] ?? null;
+    const event = this.repo.unsharedEvents(1)[0];
+    const candidate: LifeLogRow | null = event
+      ? {
+          id: event.id,
+          activity: event.activity,
+          kind: event.kind,
+          mood: event.mood_after ?? event.mood_before ?? '',
+          started_at: event.happened_at,
+          ended_at: event.happened_at,
+          shared: 0,
+          created_at: event.created_at
+        }
+      : this.repo.unshared(['out', 'play', 'meal', 'chore'], 1)[0] ?? null;
     if (!candidate) return { reach: false, reason: 'nothing_worth_saying', candidate: null };
     return { reach: true, reason: 'ok', candidate };
   }

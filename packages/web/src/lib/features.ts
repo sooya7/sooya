@@ -49,9 +49,42 @@ export interface LifeLogRow {
   shared: number;
 }
 
+export type LifePlanStatus = 'planned' | 'active' | 'paused' | 'completed' | 'cancelled' | 'skipped';
+
+export interface LifePlanRow {
+  id: string;
+  title: string;
+  kind: string;
+  planned_start: string | null;
+  planned_end: string | null;
+  status: LifePlanStatus;
+  source: string;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LifeEventRow {
+  id: string;
+  plan_id: string | null;
+  log_id: string | null;
+  event_type: string;
+  activity: string;
+  kind: string;
+  description: string;
+  mood_before: string | null;
+  mood_after: string | null;
+  happened_at: string;
+  shareable: number;
+  shared_at: string | null;
+  created_at: string;
+}
+
 export interface LifePanelData {
   snapshot: LifeSnapshot;
   log: LifeLogRow[];
+  plans: LifePlanRow[];
+  events: LifeEventRow[];
   reachOut: {
     reach: boolean;
     reason: string;
@@ -119,6 +152,10 @@ export const featureApi = {
   previewVoice: (text: string, emotion: string) => request<Blob>('/api/admin/voice/preview', { method: 'POST', body: { text, emotion }, raw: true }),
 
   life: () => request<LifePanelData>('/api/admin/life'),
+  createLifePlan: (body: { title: string; kind: string; plannedStart?: string | null; plannedEnd?: string | null; priority?: number }) =>
+    request<{ plan: LifePlanRow }>('/api/admin/life/plans', { method: 'POST', body }),
+  updateLifePlan: (id: string, body: { status?: LifePlanStatus; title?: string; kind?: string; plannedStart?: string | null; plannedEnd?: string | null; priority?: number }) =>
+    request<{ plan: LifePlanRow }>(`/api/admin/life/plans/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
   updateLifeSettings: (body: Partial<LifeSettings>) =>
     request<{ settings: LifeSettings }>('/api/admin/life/settings', { method: 'PUT', body }),
   tickLife: () => request<{ changed: boolean; activity: string; snapshot: LifeSnapshot }>('/api/admin/life/tick', { method: 'POST' }),

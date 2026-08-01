@@ -113,6 +113,8 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
 export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
   const [data, setData] = useState<LifePanelData | null>(null);
   const [form, setForm] = useState<LifeSettings | null>(null);
+  const [planTitle, setPlanTitle] = useState('');
+  const [planKind, setPlanKind] = useState('chore');
   const [busy, setBusy] = useState(false);
   const load = () => featureApi.life().then((result) => { setData(result); setForm(result.settings); }).catch((error) => onNotice(errorText(error)));
   useEffect(() => {
@@ -140,6 +142,20 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
       setBusy(false);
     }
   };
+  const addPlan = async () => {
+    if (!planTitle.trim()) return;
+    setBusy(true);
+    try {
+      await featureApi.createLifePlan({ title: planTitle.trim(), kind: planKind });
+      setPlanTitle('');
+      await load();
+      onNotice('生活计划已加入');
+    } catch (error) {
+      onNotice(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
   if (!data || !form) return <section className="admin-form-card" data-testid="life-settings"><div className="admin-empty">读取中…</div></section>;
   const tz = data.settings.tzOffsetMinutes;
   const progress = slotProgress(data.snapshot);
@@ -161,6 +177,28 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
         <p>{reachReasonText(data)}</p>
         <small>今天已主动 {data.reachOut.sharedLastDay} / {data.settings.maxReachOutsPerDay} 条 · 你上次说话 {data.reachOut.lastUserAt ? `${formatGap(Date.now() - Date.parse(data.reachOut.lastUserAt))}前` : '无记录'}</small>
         {data.reachOut.candidate ? <small>准备说的是：{data.reachOut.candidate.activity}</small> : null}
+      </div>
+
+      <div className="admin-card" data-testid="life-plans">
+        <div className="admin-card-subtitle"><h2>接下来要做的事</h2><span className="admin-count-badge">{data.plans.length}</span></div>
+        <div className="admin-list-row">
+          <input aria-label="生活计划" placeholder="例如：整理书桌" value={planTitle} onChange={(event) => setPlanTitle(event.target.value)} />
+          <select aria-label="生活计划类型" value={planKind} onChange={(event) => setPlanKind(event.target.value)}>
+            <option value="chore">家务</option><option value="out">出门</option><option value="play">玩耍</option><option value="meal">吃饭</option><option value="rest">休息</option>
+          </select>
+          <button type="button" disabled={busy || !planTitle.trim()} onClick={() => void addPlan()}>加入计划</button>
+        </div>
+        {data.plans.length === 0 ? <div className="admin-empty">还没有排好的计划。</div> : data.plans.slice(0, 12).map((plan) => (
+          <div className="admin-list-row" key={plan.id}>
+            <span><strong>{plan.title}</strong><small> · {plan.kind} · {lifePlanStatusText(plan.status)}</small></span>
+            <span className="admin-actions">
+              {plan.status === 'planned' && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'active' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>开始</button>}
+              {plan.status === 'active' && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'paused' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>暂停</button>}
+              {plan.status === 'paused' && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'active' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>继续</button>}
+              {(plan.status === 'active' || plan.status === 'paused') && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'completed' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>完成</button>}
+            </span>
+          </div>
+        ))}
       </div>
 
       <div className="admin-form-wide">
@@ -192,8 +230,19 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
             </div>
           ))}
       </div>
+
+      <div className="admin-card" data-testid="life-events">
+        <div className="admin-card-subtitle"><h2>生活事件</h2><span className="admin-count-badge">{data.events.length}</span></div>
+        {data.events.length === 0 ? <div className="admin-empty">推进生活状态后，完成的事情会留在这里。</div> : data.events.slice(0, 12).map((event) => (
+          <div className="admin-list-row" key={event.id}><span>{event.description}<small> · {event.kind} · {herClock(event.happened_at, tz)}</small></span><small>{event.shareable ? (event.shared_at ? '已分享' : '可分享') : '仅记录'}</small></div>
+        ))}
+      </div>
     </section>
   );
+}
+
+function lifePlanStatusText(status: string): string {
+  return ({ planned: '待办', active: '进行中', paused: '已暂停', completed: '已完成', cancelled: '已取消', skipped: '已跳过' } as Record<string, string>)[status] ?? status;
 }
 
 /** 一条都没有通常不是坏了：只有换时段那一刻才落一条，睡整夜就是空的。 */
