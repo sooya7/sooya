@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, sendText, type Harness } from './helpers/harness.js';
+import { ImageEditUnsupportedError } from '../src/providers/types.js';
 
 /** Smallest valid PNG, so the media store's sniffing accepts it. */
 const PNG = Buffer.from(
@@ -93,7 +94,7 @@ describe('reference image', () => {
     };
     provider.edit = async () => {
       stub.calls.push('edit');
-      throw new Error('edits not supported');
+      throw new ImageEditUnsupportedError('edits not supported');
     };
     const saved = await h.app.services.mediaStore.save({
       kind: 'image',
@@ -108,5 +109,24 @@ describe('reference image', () => {
     expect(stub.calls).toEqual(['edit', 'generate']);
     const image = (body.reply.content as Array<Record<string, any>>).find((part) => part.type === 'image');
     expect(image?.status).toBe('sent');
+  });
+
+  it('does not hide a real edit failure by generating an unrelated image', async () => {
+    h = await createHarness({ image: 'ok', chat: { script: [['我没能改好[image:换个颜色]']] } });
+    const stub = stubProvider(h);
+    const provider = h.app.services.capabilities.imageProvider() as unknown as { edit: () => Promise<never> };
+    provider.edit = async () => {
+      stub.calls.push('edit');
+      throw new Error('upstream unavailable');
+    };
+    const saved = await h.app.services.mediaStore.save({
+      kind: 'image', origin: 'upload', data: PNG, declaredMime: 'image/png', filename: 'cat.png'
+    });
+
+    const { body } = await sendImage(h, saved.id, '换个颜色');
+
+    expect(stub.calls).toEqual(['edit']);
+    const image = (body.reply.content as Array<Record<string, any>>).find((part) => part.type === 'image');
+    expect(image?.status).toBe('failed');
   });
 });
