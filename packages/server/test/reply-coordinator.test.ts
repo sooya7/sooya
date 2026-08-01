@@ -22,10 +22,10 @@ describe('ReplyCoordinator', () => {
     const messages = { recent: vi.fn(() => [message('assistant-0', 'assistant'), user1, user2]) };
     const replyBatch = vi.fn(async () => ({ messageId: 'assistant-1', ok: true, parts: ['text'], degraded: [] }));
     const bus = { publish: vi.fn() };
-    coordinator = new ReplyCoordinator({ messages: messages as never, replier: { replyBatch } as never, bus: bus as never, debounceMs: 500 });
+    coordinator = new ReplyCoordinator({ messages: messages as never, replier: { replyBatch } as never, bus: bus as never, debounceMs: 0 });
 
     coordinator.recover(options);
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(replyBatch).toHaveBeenCalledTimes(1);
     expect(replyBatch.mock.calls[0]![0]).toEqual([user1, user2]);

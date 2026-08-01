@@ -28,7 +28,10 @@ export class ReplyCoordinator {
   private readonly recovered = new Set<string>();
 
   constructor(private readonly deps: ReplyCoordinatorOptions) {
-    this.debounceMs = Math.max(500, Math.min(deps.debounceMs ?? 900, 1500));
+    const requested = deps.debounceMs ?? 900;
+    // Zero is reserved for deterministic tests. Production values retain the
+    // guarded 500-1500ms window so a config mistake cannot disable batching.
+    this.debounceMs = requested === 0 ? 0 : Math.max(500, Math.min(requested, 1500));
   }
 
   enqueue(message: ChatMessage, options: ReplyOptions): Promise<ReplyOutcome> {

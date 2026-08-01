@@ -267,7 +267,8 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     fetchImpl,
     assetsDir: ASSETS_DIR,
     skipStickerImport: opts.skipStickerImport,
-    startWorkers: opts.startWorkers ?? false
+    startWorkers: opts.startWorkers ?? false,
+    replyDebounceMs: 0
   });
 
   return {

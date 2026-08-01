@@ -57,6 +57,8 @@ export interface BuildAppOptions {
   assetsDir?: string;
   fetchImpl?: typeof fetch;
   startWorkers?: boolean;
+  /** Test seam; production uses the coordinator's 900ms default. */
+  replyDebounceMs?: number;
 }
 
 export interface SooyaApp {
@@ -201,6 +203,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     messages: repos.messages,
     replier,
     bus,
+    debounceMs: opts.replyDebounceMs,
     onCompleted: (userMessages, outcome) => {
       try {
         if (!env.DISABLE_MEMORY_PIPELINE) repos.jobs.enqueue('memory.extract', { userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId });
