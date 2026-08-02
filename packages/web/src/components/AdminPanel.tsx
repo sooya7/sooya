@@ -307,8 +307,315 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
             const name = e.target.value;
             update(editingId ? { name } : { name, id: draft.id || suggestId(name) });
           }} /></label>
-          <label>é¢„è®¾ ID<input value={drë~ü¶‰žËkºwµç@€¤ì4)ô4(4)™Õ¹Ñ¥½¸MÑ¥­•ÉUÁ±½…¡ì½¹½¹”°½¹9½Ñ¥”ôèì½¹½¹”è€ ¤€ôøAÉ½µ¥Í”ñÙ½¥øì½¹9½Ñ¥”è€¡ÌèÍÑÉ¥¹œ¤€ôøÙ½¥ô¤ì4(€½¹ÍÐm™¥±”°Í•Ñ¥±•t€ôÕÍ•MÑ…Ñ”ñ¥±”ð¹Õ±°ø¡¹Õ±°¤ì4(€½¹ÍÐÕÁ±½…€ô…Íå¹Œ€ ¤€ôøì4(€€€¥˜€ …™¥±”¤É•ÑÕÉ¸ì4(€€€½¹ÍÐ™½É´€ô¹•Ü½Éµ…Ñ„ ¤ì4(€€€™½É´¹…ÁÁ•¹ ¹…µ”œ°™¥±”¹¹…µ”¹É•Á±…” ½p¹mx¹t¬¼°€œœ¤¤ì4(€€€™½É´¹…ÁÁ•¹ •µ½Ñ¥½¸œ°€¹•ÕÑÉ…°œ¤ì4(€€€™½É´¹…ÁÁ•¹ Ñ…Ìœ°€¹•ÕÑÉ…°œ¤ì4(€€€™½É´¹…ÁÁ•¹ ™¥±”œ°™¥±”¤ì4(€€€ÑÉäì4(€€€€€…Ý…¥Ð…‘µ¥¹Á¤¹ÕÁ±½…‘MÑ¥­•È¡™½É´¤ì4(€€€€€Í•Ñ¥±”¡¹Õ±°¤ì4(€€€€€…Ý…¥Ð½¹½¹” ¤ì4(€€€€€½¹9½Ñ¥” Ÿ¢†£š–2–ÞË’â+’ò€œ¤ì4(€€€ô…Ñ €¡”¤ì4(€€€€€½¹9½Ñ¥”¡•ÉÉ½ÉQ•áÐ¡”¤¤ì4(€€€ô4(€ôì4(€É•ÑÕÉ¸€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÕÁ±½…ˆøñ¥¹ÁÕÐÑåÁ”ô‰™¥±”ˆ…•ÁÐô‰¥µ…”¼¨ˆ½¹¡…¹”õì¡”¤€ôøÍ•Ñ¥±”¡”¹Ñ…É•Ð¹™¥±•Ìü¹lÁt€üü¹Õ±°¥ô€¼øñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ‘¥Í…‰±•õì…™¥±•ô½¹±¥¬õì ¤€ôøÙ½¥ÕÁ±½… ¥ôû’â+’òƒ¢†£š–2ð½‰ÕÑÑ½¸øð½‘¥Øøì4)ô4(4)™Õ¹Ñ¥½¸=Á•É…Ñ¥½¹ÍA…¹•°¡ì½¹9½Ñ¥”ôèì½¹9½Ñ¥”è€¡ØèÍÑÉ¥¹œ¤€ôøÙ½¥ô¤ì4(€½¹ÍÐm•ÉÉ½ÉÌ°Í•ÑÉÉ½ÉÍt€ôÕÍ•MÑ…Ñ”ñ‘µ¥¹ÉÉ½Émtø¡mt¤ì4(€½¹ÍÐm©½‰Ì°Í•Ñ)½‰Ít€ôÕÍ•MÑ…Ñ”ñ‘µ¥¹)½‰mtø¡mt¤ì4(€½¹ÍÐm‰…­ÕÁÌ°Í•Ñ	…­ÕÁÍt€ôÕÍ•MÑ…Ñ”ñ‘µ¥¹	…­ÕÁmtø¡mt¤ì4(4(€½¹ÍÐ±½…€ôÕÍ•…±±‰…¬¡…Íå¹Œ€ ¤€ôøì4(€€€ÑÉäì4(€€€€€½¹ÍÐm”°¨°‰t€ô…Ý…¥ÐAÉ½µ¥Í”¹…±°¡m…‘µ¥¹Á¤¹•ÉÉ½ÉÌ ¤°…‘µ¥¹Á¤¹©½‰Ì ¤°…‘µ¥¹Á¤¹‰…­ÕÁÌ ¥t¤ì4(€€€€€Í•ÑÉÉ½ÉÌ¡”¹•ÉÉ½ÉÌ¤ì4(€€€€€Í•Ñ)½‰Ì¡¨¹©½‰Ì¤ì4(€€€€€Í•Ñ	…­ÕÁÌ¡ˆ¹‰…­ÕÁÌ¤ì4(€€€ô…Ñ €¡•ÉÈ¤ì4(€€€€€½¹9½Ñ¥”¡•ÉÉ½ÉQ•áÐ¡•ÉÈ¤¤ì4(€€€ô4(€ô°m½¹9½Ñ¥•t¤ì4(4(€ÕÍ•™™•Ð  ¤€ôøìÙ½¥±½… ¤ìô°m±½…‘t¤ì4(4(€½¹ÍÐÉÕ¸€ô…Íå¹Œ€¡Ý½É¬è€ ¤€ôøAÉ½µ¥Í”ñÕ¹­¹½Ý¸ø°µ•ÍÍ…”èÍÑÉ¥¹œ¤€ôøì4(€€€ÑÉäì4(€€€€€…Ý…¥ÐÝ½É¬ ¤ì4(€€€€€…Ý…¥Ð±½… ¤ì4(€€€€€½¹9½Ñ¥”¡µ•ÍÍ…”¤ì4(€€€ô…Ñ €¡”¤ì4(€€€€€½¹9½Ñ¥”¡•ÉÉ½ÉQ•áÐ¡”¤¤ì4(€€€ô4(€ôì4(4(€É•ÑÕÉ¸€ 4(€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ½Á•É…Ñ¥½¹Ìˆø4(€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Éˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ•ÉÉ½Èµ±¥ÍÐˆø4(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ…ÉµÍÕ‰Ñ¥Ñ±”ˆøñ Èûšr¢þG¦Rg¢¾¼ð½ ÈøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ½Õ¹Ðµ‰…‘”ˆùí•ÉÉ½ÉÌ¹±•¹Ñ¡ôð½ÍÁ…¸øð½‘¥Øø4(€€€€€€€í•ÉÉ½ÉÌ¹±•¹Ñ €ü•ÉÉ½ÉÌ¹µ…À ¡”¤€ôø€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ±¥ÍÐµÉ½Üˆ­•äõí”¹¥‘ôøñÍÁ…¸ùí”¹Í½Á•ôƒ
-Üí”¹µ•ÍÍ…•ôð½ÍÁ…¸øñÍµ…±°ùí¹•Ü…Ñ”¡”¹É•…Ñ•‘Ð¤¹Ñ½1½…±•MÑÉ¥¹œ ¥ôð½Íµ…±°øð½‘¥Øø¤€è€ñµÁÑåMÑ…Ñ”ûšjš^ƒ¦Rg¢¾¿¢ºÃ–öTð½µÁÑåMÑ…Ñ”ùô4(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰…‘µ¥¸µ‘…¹•Èˆ½¹±¥¬õì ¤€ôøì¥˜€¡½¹™¥ÉµÑ¥½¸ Ÿž†»¢º“šâž¦ë¦Rg¢¾¿¢ºÃ–öW¾ò|œ¤¤Ù½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹±•…ÉÉÉ½ÉÌ ¤°€Ÿ¦Rg¢¾¿¢ºÃ–öW–ÞËšâž¦èœ¤ìõôûšâž¦ë¦Rg¢¾¿¢ºÃ–öTð½‰ÕÑÑ½¸øð½‘¥Øø4(€€€€€€ð½…ÉÑ¥±”ø4(4(€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Éˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ©½ˆµ±¥ÍÐˆø4(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ…ÉµÍÕ‰Ñ¥Ñ±”ˆøñ Èû–B;–>Ã’îï–*„ð½ ÈøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ½Õ¹Ðµ‰…‘”ˆùí©½‰Ì¹±•¹Ñ¡ôð½ÍÁ…¸øð½‘¥Øø4(€€€€€€€í©½‰Ì¹±•¹Ñ €ü©½‰Ì¹µ…À ¡¨¤€ôø€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ±¥ÍÐµÉ½Üˆ­•äõí¨¹¥‘ôøñÍÁ…¸ùí¨¹ÑåÁ•ôƒ
-Üí¨¹ÍÑ…ÑÕÍôð½ÍÁ…¸øñÍµ…±°ùí¨¹…ÑÑ•µÁÑÍô½í¨¹µ…á}…ÑÑ•µÁÑÍôð½Íµ…±°øð½‘¥Øø¤€è€ñµÁÑåMÑ…Ñ”ûšjš^ƒ–B;–>Ã’îï–*„ð½µÁÑåMÑ…Ñ”ùô4(€€€€€€ð½…ÉÑ¥±”ø4(4(€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Éˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ‰…­ÕÀµ±¥ÍÐˆø4(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Éµ¡•…‘¥¹œˆøñ‘¥Øøñ Èû–’’îôð½ ÈøñÀùí‰…­ÕÁÌ¹±•¹Ñ¡ôƒ’î÷–>¿žR£–’’îôð½Àøð½‘¥Øøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÙ½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹É•…Ñ•	…­ÕÀ ¤°€Ÿ–’’î÷–ÞË–"o–îèœ¥ôû–"o–îë–’’îôð½‰ÕÑÑ½¸øð½‘¥Øø4(€€€€€€€í‰…­ÕÁÌ¹±•¹Ñ €ü‰…­ÕÁÌ¹µ…À ¡ˆ¤€ôø€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ±¥ÍÐµÉ½Üˆ­•äõíˆ¹¹…µ•ôøñÍÁ…¸ùíˆ¹¹…µ•ôƒ
-Üí™½Éµ…Ñ	åÑ•Ì¡ˆ¹‰åÑ•Ì¥ôð½ÍÁ…¸øñ‘¥Øøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÙ½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹Ù•É¥™å	…­ÕÀ¡ˆ¹¹…µ”¤°€Ÿ–’’î÷š‚‡¦ª3–º3š"@œ¥ôûš‚‡¦ª0ð½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøì¥˜€¡½¹™¥ÉµÑ¥½¸¡ƒž†»¢º“š‹–’7–’’î÷Šp‘íˆ¹¹…µ•÷Šw¾ò}€¤¤Ù½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹É•ÍÑ½É•	…­ÕÀ¡ˆ¹¹…µ”¤°€Ÿ–’’î÷–ÞËš‹–’7¾ò3¢¾ß–"ßšZÃ¢+–’§¦†×¦vˆœ¤ìõôûš‹–’4ð½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰…‘µ¥¸µ‘…¹•Èˆ½¹±¥¬õì ¤€ôøì¥˜€¡½¹™¥ÉµÑ¥½¸¡ƒž†»¢º“–"ƒ¦f“–’’î÷Šp‘íˆ¹¹…µ•÷Šw¾ò}€¤¤Ù½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹‘•±•Ñ•	…­ÕÀ¡ˆ¹¹…µ”¤°€Ÿ–’’î÷–ÞË–"ƒ¦fœ¤ìõôû–"ƒ¦fð½‰ÕÑÑ½¸øð½‘¥Øøð½‘¥Øø¤€è€ñµÁÑåMÑ…Ñ”ûšjš^ƒ–’’î÷¾ò3–>¿–#–"o–îë’â’îôð½µÁÑåMÑ…Ñ”ùô4(€€€€€€ð½…ÉÑ¥±”ø4(€€€€ð½Í•Ñ¥½¸ø4(€€¤ì4)ô4(4(¼¨¨1½…‘ÌÑ¡”Á•ÉÍ½¹„Ñ¡”…Ù…Ñ…È•‘¥Ñ½È•‘¥ÑÌ°Ý¡¥ Ñ¡”½±Á…”Í¡•±°½Ý¹•¸€¨¼4)™Õ¹Ñ¥½¸Ù…Ñ…ÉA…¹•°¡ì½¹9½Ñ¥”ôèì½¹9½Ñ¥”è€¡ØèÍÑÉ¥¹œ¤€ôøÙ½¥ô¤ì4(€½¹ÍÐmÁ•ÉÍ½¹„°Í•ÑA•ÉÍ½¹…t€ôÕÍ•MÑ…Ñ”ñ‘µ¥¹A•ÉÍ½¹„ð¹Õ±°ø¡¹Õ±°¤ì4(€ÕÍ•™™•Ð  ¤€ôøì4(€€€Ù½¥…‘µ¥¹Á¤¹Á•ÉÍ½¹„ ¤¹Ñ¡•¸ ¡È¤€ôøÍ•ÑA•ÉÍ½¹„¡È¹Á•ÉÍ½¹„¤¤¹…Ñ  ¡”¤€ôø½¹9½Ñ¥”¡•ÉÉ½ÉQ•áÐ¡”¤¤¤ì4(€ô°m½¹9½Ñ¥•t¤ì4(€¥˜€ …Á•ÉÍ½¹„¤É•ÑÕÉ¸€ñÀ±…ÍÍ9…µ”ô‰…‘µ¥¸µµÕÑ•ˆûš¶–r£¢¾ï–>[–’Ó–?¢ºûžö»Š˜ð½Àøì4(€É•ÑÕÉ¸€ñÙ…Ñ…É‘¥Ñ½ÈÁ•ÉÍ½¹„õíÁ•ÉÍ½¹…ô½¹A•ÉÍ½¹„õíÍ•ÑA•ÉÍ½¹…ô½¹9½Ñ¥”õí½¹9½Ñ¥•ô€¼øì4)ô4(4)™Õ¹Ñ¥½¸Q…‰	ÕÑÑ½¹Ì¡ìÑ…ˆ°Í•ÑQ…ˆ°µ½‰¥±”ôèìÑ…ˆèQ…ˆìÍ•ÑQ…ˆè€¡Ñ…ˆèQ…ˆ¤€ôøÙ½¥ìµ½‰¥±”è‰½½±•…¸ô¤ì4(€É•ÑÕÉ¸€ 4(€€€€ñ¹…Ø±…ÍÍ9…µ”õíµ½‰¥±”€ü€…‘µ¥¸µµ½‰¥±”µÑ…‰Ìœ€è€…‘µ¥¸µÍ¥‘”µ¹…Øô…É¥„µ±…‰•°ô‹žº‡žB¦v‹švÿ–¾ó¢"¨ˆø4(€€€€€íµ½‰¥±”4(€€€€€€€€üQ	L¹µ…À ¡¥Ñ•´¤€ôø€ 4(€€€€€€€€€€ñ‰ÕÑÑ½¸­•äõí¥Ñ•´¹¥‘ôÑåÁ”ô‰‰ÕÑÑ½¸ˆ‘…Ñ„µÑ•ÍÑ¥õí…‘µ¥¸µÑ…ˆ´‘í¥Ñ•´¹¥‘õô…É¥„µÕÉÉ•¹ÐõíÑ…ˆ€ôôô¥Ñ•´¹¥€ü€Á…”œ€èÕ¹‘•™¥¹•‘ô±…ÍÍ9…µ”õíÑ…ˆ€ôôô¥Ñ•´¹¥€ü€…Ñ¥Ù”œ€è€œô½¹±¥¬õì ¤€ôøÍ•ÑQ…ˆ¡¥Ñ•´¹¥¥ôø4(€€€€€€€€€€€í¥Ñ•´¹±…‰•±ô4(€€€€€€€€€€ð½‰ÕÑÑ½¸ø4(€€€€€€€€¤¤4(€€€€€€€€è9Y}I=UAL¹µ…À ¡É½ÕÀ¤€ôø€ 4(€€€€€€€€€€ñÉ…µ•¹Ð­•äõíÉ½ÕÁôø4(€€€€€€€€€€€€ñÀ±…ÍÍ9…µ”ô‰…‘µ¥¸µ¹…ØµÉ½ÕÀˆùíÉ½ÕÁôð½Àø4(€€€€€€€€€€€íQ	L¹™¥±Ñ•È ¡¥Ñ•´¤€ôø¥Ñ•´¹É½ÕÀ€ôôôÉ½ÕÀ¤¹µ…À ¡¥Ñ•´¤€ôø€ 4(€€€€€€€€€€€€€€ñ‰ÕÑÑ½¸­•äõí¥Ñ•´¹¥‘ôÑåÁ”ô‰‰ÕÑÑ½¸ˆ‘…Ñ„µÑ•ÍÑ¥õí…‘µ¥¸µÑ…ˆ´‘í¥Ñ•´¹¥‘õô…É¥„µÕÉÉ•¹ÐõíÑ…ˆ€ôôô¥Ñ•´¹¥€ü€Á…”œ€èÕ¹‘•™¥¹•‘ô±…ÍÍ9…µ”õíÑ…ˆ€ôôô¥Ñ•´¹¥€ü€…Ñ¥Ù”œ€è€œô½¹±¥¬õì ¤€ôøÍ•ÑQ…ˆ¡¥Ñ•´¹¥¥ôø4(€€€€€€€€€€€€€€€€ñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ¹…Øµ¥½¸ˆøñ%½¸¹…µ”õí¥Ñ•´¹¥½¹ô€¼øð½ÍÁ…¸ø4(€€€€€€€€€€€€€€€€ñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ¹…Øµ½ÁäˆøñÍÑÉ½¹œùí¥Ñ•´¹±…‰•±ôð½ÍÑÉ½¹œøñÍµ…±°ùí¥Ñ•´¹‘•ÍÉ¥ÁÑ¥½¹ôð½Íµ…±°øð½ÍÁ…¸ø4(€€€€€€€€€€€€€€ð½‰ÕÑÑ½¸ø4(€€€€€€€€€€€€¤¥ô4(€€€€€€€€€€ð½É…µ•¹Ðø4(€€€€€€€€¤¥ô4(€€€€ð½¹…Øø4(€€¤ì4)ô4(4)™Õ¹Ñ¥½¸=Ù•ÉÙ¥•Ü¡ì‘…Ñ„°½Õ¹ÑÌ°½¹I•™É•Í ôèì‘…Ñ„è…Í¡‰½…Éì½Õ¹ÑÌèì…Ù…¥±…‰±”è¹Õµ‰•ÈìÑ½Ñ…°è¹Õµ‰•Èôì½¹I•™É•Í è€ ¤€ôøÙ½¥ô¤ì4(€½¹ÍÐ‘ˆ€ô‘…Ñ„¹ÍåÍÑ•´¹‘…Ñ…‰…Í”ì4(€½¹ÍÐÍÑ½É…”€ô‘…Ñ„¹ÍåÍÑ•´¹ÍÑ½É…”ì4(€½¹ÍÐÑ¥±•Ì€ôl4(€€€ì±…‰•°è€ŸšÚ#š¿’â;¢ºÃ–þœ°Ù…±Õ”è€‘í9Õµ‰•È¡‘ˆ¹µ•ÍÍ…•Ì€üü€À¤¹Ñ½1½…±•MÑÉ¥¹œ ¥ôƒšv‡šÚ#š½€°‘•Ñ…¥°è€‘í9Õµ‰•È¡‘ˆ¹µ•µ½É¥•Ì€üü€À¤¹Ñ½1½…±•MÑÉ¥¹œ ¥ôƒšv‡¢ºÃ–þ€°¥½¸è€µ•ÍÍ…”œ…Ì½¹ÍÐô°4(€€€ì±…‰•°è€Ÿš¢‡–z/¢÷–*lœ°Ù…±Õ”è€‘í½Õ¹ÑÌ¹…Ù…¥±…‰±•ô€¼€‘í½Õ¹ÑÌ¹Ñ½Ñ…±ôƒ–>¿žR¡€°‘•Ñ…¥°è€Ÿš2'šr7–*‡ž®¿–º{¦f¢÷–*ožî¢º„œ°¥½¸è€ÁÔœ…Ì½¹ÍÐô°4(€€€ì±…‰•°è€Ÿ–¶c–
-£–6ƒžR œ°Ù…±Õ”è™½Éµ…Ñ	åÑ•Ì¡ÍÑ½É…”¹µ•‘¥…	åÑ•Ì¤°‘•Ñ…¥°è€‘í9Õµ‰•È¡‘ˆ¹µ•‘¥„€üü€À¤¹Ñ½1½…±•MÑÉ¥¹œ ¥ôƒ’â«–ªK’öOšZ’îÙ€°¥½¸è€ÍÑ½É…”œ…Ì½¹ÍÐô°4(€€€ì±…‰•°è€Ÿ–’’îôœ°Ù…±Õ”è€‘í‘…Ñ„¹‰…­ÕÁÌ¹±•¹Ñ¡ôƒ’îõ€°‘•Ñ…¥°èƒ–ú–’žB’îï–*„€‘í9Õµ‰•È¡‘ˆ¹Á•¹‘¥¹)½‰Ì€üü€À¥õ€°¥½¸è€‰…­ÕÀœ…Ì½¹ÍÐô4(€tì4(4(€É•ÑÕÉ¸€ðø4(€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÑ…ÑÕÌµ…Éˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µÍåÍÑ•´µÍÑ…ÑÕÌˆø4(€€€€€€ñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ¡•…±Ñ µ‘½Ðˆ€¼øñÍÑÉ½¹œû¢þC¢†3š¶–âàð½ÍÑÉ½¹œøð½‘¥Øø4(€€€€€€ñÍÁ…¸ûž&#šr°í‘…Ñ„¹ÍåÍÑ•´¹Ù•ÉÍ¥½¹ôð½ÍÁ…¸ø4(€€€€€€ñÍÁ…¸û–ÞË¢þC¢†0í™½Éµ…ÑUÁÑ¥µ”¡‘…Ñ„¹ÍåÍÑ•´¹ÕÁÑ¥µ•M•Œ¥ôð½ÍÁ…¸ø4(€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õí½¹I•™É•Í¡ôû–"ßšZÃž*Ûšð½‰ÕÑÑ½¸ø4(€€€€ð½Í•Ñ¥½¸ø4(€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÕµµ…Éäˆø4(€€€€€íÑ¥±•Ì¹µ…À ¡Ñ¥±”¤€ôø€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÕµµ…ÉäµÑ¥±”ˆ­•äõíÑ¥±”¹±…‰•±ôøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÕµµ…ÉäµÑ½ÀˆøñÍÁ…¸ùíÑ¥±”¹±…‰•±ôð½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÕµµ…Éäµ¥½¸ˆøñ%½¸¹…µ”õíÑ¥±”¹¥½¹ô€¼øð½ÍÁ…¸øð½‘¥ØøñÍÑÉ½¹œùíÑ¥±”¹Ù…±Õ•ôð½ÍÑÉ½¹œøñÍµ…±°ùíÑ¥±”¹‘•Ñ…¥±ôð½Íµ…±°øð½‘¥Øø¥ô4(€€€€ð½Í•Ñ¥½¸ø4(€€ð¼øì4)ô4(4)•áÁ½ÉÐ‘•™…Õ±Ð™Õ¹Ñ¥½¸‘µ¥¹A…¹•°¡ì¥¹¥Ñ¥…±Q…ˆ€ô€½Ù•ÉÙ¥•Üœôèì¥¹¥Ñ¥…±Q…ˆüèQ…ˆô€ôíô¤ì4(€½¹ÍÐmÑ½­•¸°Í•ÑQ½­•¹t€ôÕÍ•MÑ…Ñ”  ¤€ôø•Ñ‘µ¥¹Q½­•¸ ¤¤ì4(€½¹ÍÐmÑ½­•¹%¹ÁÕÐ°Í•ÑQ½­•¹%¹ÁÕÑt€ôÕÍ•MÑ…Ñ” œœ¤ì4(€½¹ÍÐmÑ…ˆ°Í•ÑQ…‰t€ôÕÍ•MÑ…Ñ”ñQ…ˆø  ¤€ôøÑ…‰É½µ‘µ¥¹A…Ñ ¡Ý¥¹‘½Ü¹±½…Ñ¥½¸¹Á…Ñ¡¹…µ”°¥¹¥Ñ¥…±Q…ˆ¤¤ì4(€½¹ÍÐm‘¥ÉÑä°Í•Ñ¥ÉÑåt€ôÕÍ•MÑ…Ñ”¡™…±Í”¤ì4(€½¹ÍÐ‘¥ÉÑåI•˜€ôÕÍ•I•˜¡™…±Í”¤ì4(€½¹ÍÐm‘…Ñ„°Í•Ñ…Ñ…t€ôÕÍ•MÑ…Ñ”ñ…Í¡‰½…Éð¹Õ±°ø¡¹Õ±°¤ì4(€½¹ÍÐm¹½Ñ¥”°Í•Ñ9½Ñ¥•t€ôÕÍ•ÕÑ½9½Ñ¥” ¤ì4(€½¹ÍÐm±½…‘¥¹œ°Í•Ñ1½…‘¥¹t€ôÕÍ•MÑ…Ñ”¡™…±Í”¤ì4(€½¹ÍÐ¥Í5½‰¥±”€ôÕÍ•%Í5½‰¥±” ¤ì4(4(€½¹ÍÐÍ•Ñ¥ÉÑåMÑ…Ñ”€ôÕÍ•…±±‰…¬ ¡Ù…±Õ”è‰½½±•…¸¤€ôøì4(€€€‘¥ÉÑåI•˜¹ÕÉÉ•¹Ð€ôÙ…±Õ”ì4(€€€Í•Ñ¥ÉÑä¡Ù…±Õ”¤ì4(€ô°mt¤ì4(4(€ÕÍ•™™•Ð  ¤€ôøì4(€€€½¹ÍÐÉ½ÕÑ•Q…ˆ€ôÑ…‰É½µ‘µ¥¹A…Ñ ¡Ý¥¹‘½Ü¹±½…Ñ¥½¸¹Á…Ñ¡¹…µ”°¥¹¥Ñ¥…±Q…ˆ¤ì4(€€€½¹ÍÐ…¹½¹¥…±A…Ñ €ô…‘µ¥¹A…Ñ¡½ÉQ…ˆ¡É½ÕÑ•Q…ˆ¤ì4(€€€¥˜€¡Ý¥¹‘½Ü¹±½…Ñ¥½¸¹Á…Ñ¡¹…µ”€„ôô…¹½¹¥…±A…Ñ ¤ì4(€€€€€Ý¥¹‘½Ü¹¡¥ÍÑ½Éä¹É•Á±…•MÑ…Ñ”¡¹Õ±°°€œœ°…¹½¹¥…±A…Ñ ¤ì4(€€€ô4(4(€€€½¹ÍÐ½¹A½ÁMÑ…Ñ”€ô€ ¤€ôøì4(€€€€€½¹ÍÐ¹•áÐ€ôÑ…‰É½µ‘µ¥¹A…Ñ ¡Ý¥¹‘½Ü¹±½…Ñ¥½¸¹Á…Ñ¡¹…µ”°¥¹¥Ñ¥…±Q…ˆ¤ì4(€€€€€¥˜€¡‘¥ÉÑåI•˜¹ÕÉÉ•¹Ð€˜˜€…Ý¥¹‘½Ü¹½¹™¥É´ Ÿ–öO–&7’þ»šRç–Âkšr«’þw–¶c¾ò3ž†»–ºkžšï–ò–B_¾ò|œ¤¤ì4(€€€€€€€Ý¥¹‘½Ü¹¡¥ÍÑ½Éä¹ÁÕÍ¡MÑ…Ñ”¡¹Õ±°°€œœ°…‘µ¥¹A…Ñ¡½ÉQ…ˆ¡Ñ…ˆ¤¤ì4(€€€€€€€É•ÑÕÉ¸ì4(€€€€€ô4(€€€€€Í•Ñ¥ÉÑåMÑ…Ñ”¡™…±Í”¤ì4(€€€€€Í•ÑQ…ˆ¡¹•áÐ¤ì4(€€€ôì4(€€€½¹ÍÐ½¹	•™½É•U¹±½…€ô€¡•Ù•¹Ðè	•™½É•U¹±½…‘Ù•¹Ð¤€ôøì4(€€€€€¥˜€ …‘¥ÉÑåI•˜¹ÕÉÉ•¹Ð¤É•ÑÕÉ¸ì4(€€€€€•Ù•¹Ð¹ÁÉ•Ù•¹Ñ•™…Õ±Ð ¤ì4(€€€€€•Ù•¹Ð¹É•ÑÕÉ¹Y…±Õ”€ô€œœì4(€€€ôì4(€€€Ý¥¹‘½Ü¹…‘‘Ù•¹Ñ1¥ÍÑ•¹•È Á½ÁÍÑ…Ñ”œ°½¹A½ÁMÑ…Ñ”¤ì4(€€€Ý¥¹‘½Ü¹…‘‘Ù•¹Ñ1¥ÍÑ•¹•È ‰•™½É•Õ¹±½…œ°½¹	•™½É•U¹±½…¤ì4(€€€É•ÑÕÉ¸€ ¤€ôøì4(€€€€€Ý¥¹‘½Ü¹É•µ½Ù•Ù•¹Ñ1¥ÍÑ•¹•È Á½ÁÍÑ…Ñ”œ°½¹A½ÁMÑ…Ñ”¤ì4(€€€€€Ý¥¹‘½Ü¹É•µ½Ù•Ù•¹Ñ1¥ÍÑ•¹•È ‰•™½É•Õ¹±½…œ°½¹	•™½É•U¹±½…¤ì4(€€€ôì4(€ô°m¥¹¥Ñ¥…±Q…ˆ°Í•Ñ¥ÉÑåMÑ…Ñ”°Ñ…‰t¤ì4(4(€½¹ÍÐ¹…Ù¥…Ñ•Q…ˆ€ôÕÍ•…±±‰…¬ ¡¹•áÐèQ…ˆ¤€ôøì4(€€€¥˜€¡¹•áÐ€ôôôÑ…ˆ¤É•ÑÕÉ¸ì4(€€€¥˜€¡‘¥ÉÑåI•˜¹ÕÉÉ•¹Ð€˜˜€…Ý¥¹‘½Ü¹½¹™¥É´ Ÿ–öO–&7’þ»šRç–Âkšr«’þw–¶c¾ò3ž†»–ºkžšï–ò–B_¾ò|œ¤¤É•ÑÕÉ¸ì4(€€€Í•Ñ¥ÉÑåMÑ…Ñ”¡™…±Í”¤ì4(€€€Ý¥¹‘½Ü¹¡¥ÍÑ½Éä¹ÁÕÍ¡MÑ…Ñ”¡¹Õ±°°€œœ°…‘µ¥¹A…Ñ¡½ÉQ…ˆ¡¹•áÐ¤¤ì4(€€€Í•ÑQ…ˆ¡¹•áÐ¤ì4(€ô°mÍ•Ñ¥ÉÑåMÑ…Ñ”°Ñ…‰t¤ì4(4(€½¹ÍÐ±½…‘=Ù•ÉÙ¥•Ü€ôÕÍ•…±±‰…¬¡…Íå¹Œ€ ¤€ôøì4(€€€¥˜€ …Ñ½­•¸¤É•ÑÕÉ¸ì4(€€€Í•Ñ1½…‘¥¹œ¡ÑÉÕ”¤ì4(€€€ÑÉäì4(€€€€€½¹ÍÐmÍåÍÑ•´°…Á…‰¥±¥Ñ¥•Ì°‰…­ÕÁÍt€ô…Ý…¥ÐAÉ½µ¥Í”¹…±°¡l4(€€€€€€€…‘µ¥¹Á¤¹ÍåÍÑ•´ ¤°4(€€€€€€€…‘µ¥¹Á¤¹…Á…‰¥±¥Ñ¥•Ì ¤°4(€€€€€€€…‘µ¥¹Á¤¹‰…­ÕÁÌ ¤4(€€€€€t¤ì4(€€€€€Í•Ñ…Ñ„¡ìÍåÍÑ•´°…Á…‰¥±¥Ñ¥•Ì°‰…­ÕÁÌè‰…­ÕÁÌ¹‰…­ÕÁÌô¤ì4(€€€ô…Ñ €¡”¤ì4(€€€€€¥˜€¡”¥¹ÍÑ…¹•½˜Á¥ÉÉ½È€˜˜”¹ÍÑ…ÑÕÌ€ôôô€ÐÀÄ¤ì4(€€€€€€€±•…É‘µ¥¹Q½­•¸ ¤ì4(€€€€€€€Í•ÑQ½­•¸¡¹Õ±°¤ì4(€€€€€€€Í•Ñ…Ñ„¡¹Õ±°¤ì4(€€€€€ô•±Í”ì4(€€€€€€€Í•Ñ9½Ñ¥”¡•ÉÉ½ÉQ•áÐ¡”¤¤ì4(€€€€€ô4(€€€ô™¥¹…±±äì4(€€€€€Í•Ñ1½…‘¥¹œ¡™…±Í”¤ì4(€€€ô4(€ô°mÑ½­•¹t¤ì4(4(€ÕÍ•™™•Ð  ¤€ôøìÙ½¥±½…‘=Ù•ÉÙ¥•Ü ¤ìô°m±½…‘=Ù•ÉÙ¥•Ýt¤ì4(4(€½¹ÍÐÍÕ‰µ¥ÑQ½­•¸€ô€¡”è½ÉµÙ•¹Ð¤€ôøì4(€€€”¹ÁÉ•Ù•¹Ñ•™…Õ±Ð ¤ì4(€€€½¹ÍÐ¹•áÐ€ôÑ½­•¹%¹ÁÕÐ¹ÑÉ¥´ ¤ì4(€€€¥˜€ …¹•áÐ¤É•ÑÕÉ¸ì4(€€€Í•Ñ‘µ¥¹Q½­•¸¡¹•áÐ¤ì4(€€€Í•ÑQ½­•¸¡¹•áÐ¤ì4(€€€Í•ÑQ½­•¹%¹ÁÕÐ œœ¤ì4(€ôì4(4(€½¹ÍÐ±½½ÕÐ€ô€ ¤€ôøì4(€€€±•…É‘µ¥¹Q½­•¸ ¤ì4(€€€Í•ÑQ½­•¸¡¹Õ±°¤ì4(€€€Í•Ñ…Ñ„¡¹Õ±°¤ì4(€€€Í•Ñ9½Ñ¥”¡¹Õ±°¤ì4(€ôì4(4(€½¹ÍÐ½Õ¹ÑÌ€ôÕÍ•5•µ¼ 4(€€€€ ¤€ôø‘…Ñ„€ü…Á…‰¥±¥Ñå½Õ¹ÑÌ¡‘…Ñ„¹…Á…‰¥±¥Ñ¥•Ì¹…Á…‰¥±¥Ñ¥•Ì¤€èì…Ù…¥±…‰±”è€À°Ñ½Ñ…°è€Àô°4(€€€m‘…Ñ…t4(€€¤ì4(4(€¥˜€ …Ñ½­•¸¤ì4(€€€É•ÑÕÉ¸€ñµ…¥¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÁ…”…‘µ¥¸µØÈ…‘µ¥¸µ±½¬µÁ…”ˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ±½¬ˆøñ™½É´±…ÍÍ9…µ”ô‰…‘µ¥¸µ±½¬µ…Éˆ½¹MÕ‰µ¥ÐõíÍÕ‰µ¥ÑQ½­•¹ôøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ±½¬µ¥½¸ˆøñ%½¸¹…µ”ô‰±½¬ˆ€¼øð½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ•å•‰É½ÜˆùM==eƒžº‡žB’â·–þð½ÍÁ…¸øñ Äû¢úO–—žº‡žB’î“ž&0ð½ ÄøñÀû’î“ž&3–>«’þw–¶c–r£–öO–&7¢ºû–’¾ò3žR£’ê;¢ºÿ¦^»žº‡žBš:—–>Žð½Àøñ±…‰•°¡Ñµ±½Èô‰…‘µ¥¸µÑ½­•¸ˆûžº‡žB’î“ž&0ð½±…‰•°øñ¥¹ÁÕÐ¥ô‰…‘µ¥¸µÑ½­•¸ˆÑåÁ”ô‰Á…ÍÍÝ½Éˆ…ÕÑ½½µÁ±•Ñ”ô‰ÕÉÉ•¹ÐµÁ…ÍÍÝ½ÉˆÙ…±Õ”õíÑ½­•¹%¹ÁÕÑô½¹¡…¹”õì¡”¤€ôøÍ•ÑQ½­•¹%¹ÁÕÐ¡”¹Ñ…É•Ð¹Ù…±Õ”¥ô€¼øñ‰ÕÑÑ½¸ÑåÁ”ô‰ÍÕ‰µ¥Ðˆ‘¥Í…‰±•õì…Ñ½­•¹%¹ÁÕÐ¹ÑÉ¥´ ¥ôû¢þo–—žº‡žB’â·–þð½‰ÕÑÑ½¸øð½™½É´øð½µ…¥¸øì4(€ô4(4(€¥˜€¡±½…‘¥¹œ€˜˜€…‘…Ñ„¤ì4(€€€É•ÑÕÉ¸€ñµ…¥¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÁ…”…‘µ¥¸µØÈ…‘µ¥¸µ±½…‘¥¹œˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ±½…‘¥¹œµ…Éˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÁ¥¹¹•Èˆ€¼ûš¶–r£¢¾ï–>[žÎïžîž*ÛšŠ˜ð½‘¥Øøð½µ…¥¸øì4(€ô4(4(€¥˜€ …‘…Ñ„¤ì4(€€€É•ÑÕÉ¸€ñµ…¥¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÁ…”…‘µ¥¸µØÈ…‘µ¥¸µ•ÉÉ½Èˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ•ÉÉ½Èµ…ÉˆøñÀùí¹½Ñ¥”€üü€Ÿš^ƒšÎW–*ƒ¢ö÷žº‡žB’þ‡š¼ôð½Àøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÙ½¥±½…‘=Ù•ÉÙ¥•Ü ¥ôû¦7¢¾Tð½‰ÕÑÑ½¸øð½‘¥Øøð½µ…¥¸øì4(€ô4(4(€½¹ÍÐÁ…”€ôA}=AemÑ…‰tì4(€½¹ÍÐ½¹Ñ•¹Ð€ôÑ…ˆ€ôôô€½Ù•ÉÙ¥•Üœ4(€€€€ü€ñ=Ù•ÉÙ¥•Ü‘…Ñ„õí‘…Ñ…ô½Õ¹ÑÌõí½Õ¹ÑÍô½¹I•™É•Í õì ¤€ôøÙ½¥±½…‘=Ù•ÉÙ¥•Ü ¥ô€¼ø4(€€€€èÑ…ˆ€ôôô€Á•ÉÍ½¹„œ4(€€€€€€ü€ñA•ÉÍ½¹…A…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€èÑ…ˆ€ôôô€…Ù…Ñ…Èœ4(€€€€€€€€ü€ñÙ…Ñ…ÉA…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€èÑ…ˆ€ôôô€Ù½¥”œ4(€€€€€€€€€€ü€ñY½¥•‘¥Ñ½È½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€èÑ…ˆ€ôôô€±¥™”œ4(€€€€€€€€€€€€ü€ñ1¥™•A…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€€€èÑ…ˆ€ôôô€µ½‘•±Ìœ4(€€€€€€€€€€€€€€€€ü€ñ5½‘•±ÍA…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€€€€€€€èÑ…ˆ€ôôô€½¹Ñ•¹Ðœ4(€€€€€€€€€€€€€€€€€€ü€ñ½¹Ñ•¹ÑA…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€€€€€€€€€èÑ…ˆ€ôôô€ÍÑ½É…”œ4(€€€€€€€€€€€€€€€€€€€€ü€ñMÑ½É…•‘¥Ñ½È½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€€€€€€€€€€€è€ñ=Á•É…Ñ¥½¹ÍA…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼øì4(4(€É•ÑÕÉ¸€ 4(€€€€ñµ…¥¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÁ…”…‘µ¥¸µØÈˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ‘…Í¡‰½…Éˆ‘…Ñ„µ‘¥ÉÑäõí‘¥ÉÑäñðÕ¹‘•™¥¹•‘ô½¹%¹ÁÕÑ…ÁÑÕÉ”õì¡•Ù•¹Ð¤€ôøì(€€€€€½¹ÍÐÑ…É•Ð€ô•Ù•¹Ð¹Ñ…É•Ð…Ì!Q51%¹ÁÕÑ±•µ•¹Ðì(€€€€€¥˜€¡Ñ…É•Ð¥¹ÍÑ…¹•½˜!Q51%¹ÁÕÑ±•µ•¹Ð€˜˜Ñ…É•Ð¹ÑåÁ”€ôôô€™¥±”œ¤É•ÑÕÉ¸ì(€€€€€Í•Ñ¥ÉÑåMÑ…Ñ”¡ÑÉÕ”¤ì(€€€õô½¹MÕ‰µ¥Ñ…ÁÑÕÉ”õì ¤€ôøÍ•Ñ¥ÉÑåMÑ…Ñ”¡™…±Í”¥ôø(€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¡•±°ˆø4(€€€€€€€ì…¥Í5½‰¥±”€˜˜€ñ…Í¥‘”±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¥‘•‰…Èˆø4(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ‰É…¹ˆøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ‰É…¹µµ…É¬ˆùLð½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ‰É…¹µ½ÁäˆøñÍÑÉ½¹œùM==eð½ÍÑÉ½¹œøñÍµ…±°ûžº‡žB’â·–þð½Íµ…±°øð½ÍÁ…¸øð½‘¥Øø4(€€€€€€€€€€ñQ…‰	ÕÑÑ½¹ÌÑ…ˆõíÑ…‰ôÍ•ÑQ…ˆõí¹…Ù¥…Ñ•Q…‰ôµ½‰¥±”õí™…±Í•ô€¼ø4(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¥‘•‰…Èµ™½½Ñ•Èˆø4(€€€€€€€€€€€€ñ„±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¥‘”µ…Ñ¥½¸ˆ¡É•˜ôˆ¼ˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µÉ•ÑÕÉ¸µ¡…Ðˆû¢þS–n{–¾ç¢¾tð½„ø4(€€€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¥‘”µ…Ñ¥½¸ÍÕ‰Ñ±”ˆ½¹±¥¬õí±½½ÕÑôû¦–ëžº‡žBð½‰ÕÑÑ½¸ø4(€€€€€€€€€€ð½‘¥Øø4(€€€€€€€€ð½…Í¥‘”ùô4(4(€€€€€€€í¥Í5½‰¥±”€˜˜€ñ¡•…‘•È±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µ¡•…‘•Èˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µ‰É…¹ˆøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µ¥½¸ˆøñ%½¸¹…µ”õíQ	L¹™¥¹ ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€ôôôÑ…ˆ¤ü¹¥½¸€üü€½Ù•ÉÙ¥•Üô€¼øð½ÍÁ…¸øñ‘¥ØøñÍÑÉ½¹œùM==eƒžº‡žB’â·–þð½ÍÑÉ½¹œøñÍµ…±°ùíÁ…”¹Ñ¥Ñ±•ôð½Íµ…±°øð½‘¥Øøð½‘¥Øøñ„±…ÍÍ9…µ”ô‰…‘µ¥¸µÉ•ÑÕÉ¸ˆ¡É•˜ôˆ¼ˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µÉ•ÑÕÉ¸µ¡…Ðˆû¢þS–n{–¾ç¢¾tð½„øð½¡•…‘•Èùô4(4(€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…‘µ¥¸µµ…¥¸ˆø4(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µµ…¥¸µ¥¹¹•Èˆø4(€€€€€€€€€€€í¥Í5½‰¥±”€˜˜€ñQ…‰	ÕÑÑ½¹ÌÑ…ˆõíÑ…‰ôÍ•ÑQ…ˆõí¹…Ù¥…Ñ•Q…‰ôµ½‰¥±”€¼ùô4(€€€€€€€€€€€ì…¥Í5½‰¥±”€˜˜€ñ¡•…‘•È±…ÍÍ9…µ”ô‰…‘µ¥¸µ½¹Ñ•¹Ðµ¡•…‘•Èˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÑ¥Ñ±”µÝÉ…ÀˆøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ•å•‰É½ÜˆùM==e5%8ð½ÍÁ…¸øñ ÄùíÁ…”¹Ñ¥Ñ±•ôð½ ÄøñÀùíÁ…”¹‘•ÍÉ¥ÁÑ¥½¹ôð½Àøð½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ¡•…‘•Èµ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰…‘µ¥¸µ¡•…‘•Èµ‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÙ½¥±½…‘=Ù•ÉÙ¥•Ü ¥ôû–"ßšZÀð½‰ÕÑÑ½¸øð½‘¥Øøð½¡•…‘•Èùô4(€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µ½¹Ñ•¹Ðˆø4(€€€€€€€€€€€€€í¥Í5½‰¥±”€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µÑ¥Ñ±”ˆøñ ÄùíÁ…”¹Ñ¥Ñ±•ôð½ ÄøñÀùíÁ…”¹‘•ÍÉ¥ÁÑ¥½¹ôð½Àøð½‘¥Øùô4(€€€€€€€€€€€€€€ñM•Ñ¥½¹9½Ñ¥”¹½Ñ¥”õí¹½Ñ¥•ô€¼ø4(€€€€€€€€€€€€€í½¹Ñ•¹Ñô4(€€€€€€€€€€€€ð½‘¥Øø4(€€€€€€€€€€ð½‘¥Øø4(€€€€€€€€ð½Í•Ñ¥½¸ø4(€€€€€€ð½‘¥Øø4(€€€€ð½µ…¥¸ø4(€€¤ì4)ô4(
+          <label>é¢„è®¾ ID<input value={draft.id} disabled={Boolean(editingId)} onChange={(e) => update({ id: e.target.value })} /></label>
+          <label>æŒ‡æ´¾èƒ½åŠ›<select value={draft.slot} onChange={(e) => update({ slot: e.target.value as ModelSlot })}>
+            {MODEL_SLOTS.map((slot) => <option key={slot} value={slot}>{SLOT_LABELS[slot]}</option>)}
+          </select></label>
+          <label>æŽ¥å£åè®®<select value={draft.provider} onChange={(e) => update({ provider: e.target.value })}>
+            {SLOT_PROVIDERS[draft.slot].map((provider) => <option key={provider} value={provider}>{provider}</option>)}
+          </select></label>
+          <label>æ¨¡åž‹å<input value={draft.model} onChange={(e) => update({ model: e.target.value })} /></label>
+          <label>æŽ¥å£åœ°å€<input value={draft.baseUrl} placeholder="ç•™ç©ºåˆ™ç”¨é»˜è®¤åœ°å€" onChange={(e) => update({ baseUrl: e.target.value })} /></label>
+          <label>å¯†é’¥çŽ¯å¢ƒå˜é‡<input value={draft.apiKeyEnv} placeholder="ä¾‹å¦‚ GLM_API_KEY" onChange={(e) => update({ apiKeyEnv: e.target.value })} /></label>
+          <label>å¤‡æ³¨<input value={draft.notes} onChange={(e) => update({ notes: eâ€¦5422 tokens truncatedâ€¦0027)) void adminApi.deleteMedia(m.id).then(load).catch((e) => onNotice(errorText(e))); }}>åˆ é™¤</button></div>) : <EmptyState>æš‚æ— åª’ä½“æ–‡ä»¶</EmptyState>}
+      </article>
+
+      <article className="admin-card">
+        <h2>èŠå¤©è®°å½•</h2>
+        <p>æ°¸ä¹…ä¼šè¯ä»…æ”¯æŒæ•´ä½“æ¸…ç©ºï¼Œé¿å…è¯¯åˆ å•æ¡ä¸Šä¸‹æ–‡é€ æˆè®°å¿†æ–­è£‚ã€‚</p>
+        <div className="admin-actions"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('ç¡®è®¤æ¸…ç©ºå…¨éƒ¨èŠå¤©è®°å½•ï¼Ÿæ­¤æ“ä½œä¸å¯æ’¤é”€ã€‚')) void adminApi.clearChat().then(() => onNotice('èŠå¤©è®°å½•å·²æ¸…ç©º')).catch((e) => onNotice(errorText(e))); }}>æ¸…ç©ºèŠå¤©è®°å½•</button></div>
+      </article>
+    </section>
+  );
+}
+
+function StickerUpload({ onDone, onNotice }: { onDone: () => Promise<void>; onNotice: (s: string) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const upload = async () => {
+    if (!file) return;
+    const form = new FormData();
+    form.append('name', file.name.replace(/\.[^.]+$/, ''));
+    form.append('emotion', 'neutral');
+    form.append('tags', 'neutral');
+    form.append('file', file);
+    try {
+      await adminApi.uploadSticker(form);
+      setFile(null);
+      await onDone();
+      onNotice('è¡¨æƒ…åŒ…å·²ä¸Šä¼ ');
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+  return <div className="admin-upload"><input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /><button type="button" disabled={!file} onClick={() => void upload()}>ä¸Šä¼ è¡¨æƒ…åŒ…</button></div>;
+}
+
+function OperationsPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [errors, setErrors] = useState<AdminError[]>([]);
+  const [jobs, setJobs] = useState<AdminJob[]>([]);
+  const [backups, setBackups] = useState<AdminBackup[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const [e, j, b] = await Promise.all([adminApi.errors(), adminApi.jobs(), adminApi.backups()]);
+      setErrors(e.errors);
+      setJobs(j.jobs);
+      setBackups(b.backups);
+    } catch (err) {
+      onNotice(errorText(err));
+    }
+  }, [onNotice]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const run = async (work: () => Promise<unknown>, message: string) => {
+    try {
+      await work();
+      await load();
+      onNotice(message);
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+
+  return (
+    <section className="admin-operations">
+      <article className="admin-card" data-testid="admin-error-list">
+        <div className="admin-card-subtitle"><h2>æœ€è¿‘é”™è¯¯</h2><span className="admin-count-badge">{errors.length}</span></div>
+        {errors.length ? errors.map((e) => <div className="admin-list-row" key={e.id}><span>{e.scope} Â· {e.message}</span><small>{new Date(e.createdAt).toLocaleString()}</small></div>) : <EmptyState>æš‚æ— é”™è¯¯è®°å½•</EmptyState>}
+        <div className="admin-actions"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('ç¡®è®¤æ¸…ç©ºé”™è¯¯è®°å½•ï¼Ÿ')) void run(() => adminApi.clearErrors(), 'é”™è¯¯è®°å½•å·²æ¸…ç©º'); }}>æ¸…ç©ºé”™è¯¯è®°å½•</button></div>
+      </article>
+
+      <article className="admin-card" data-testid="admin-job-list">
+        <div className="admin-card-subtitle"><h2>åŽå°ä»»åŠ¡</h2><span className="admin-count-badge">{jobs.length}</span></div>
+        {jobs.length ? jobs.map((j) => <div className="admin-list-row" key={j.id}><span>{j.type} Â· {j.status}</span><small>{j.attempts}/{j.max_attempts}</small></div>) : <EmptyState>æš‚æ— åŽå°ä»»åŠ¡</EmptyState>}
+      </article>
+
+      <article className="admin-card" data-testid="admin-backup-list">
+        <div className="admin-card-heading"><div><h2>å¤‡ä»½</h2><p>{backups.length} ä»½å¯ç”¨å¤‡ä»½</p></div><button type="button" onClick={() => void run(() => adminApi.createBackup(), 'å¤‡ä»½å·²åˆ›å»º')}>åˆ›å»ºå¤‡ä»½</button></div>
+        {backups.length ? backups.map((b) => <div className="admin-list-row" key={b.name}><span>{b.name} Â· {formatBytes(b.bytes)}</span><div><button type="button" onClick={() => void run(() => adminApi.verifyBackup(b.name), 'å¤‡ä»½æ ¡éªŒå®Œæˆ')}>æ ¡éªŒ</button><button type="button" onClick={() => { if (confirmAction(`ç¡®è®¤æ¢å¤å¤‡ä»½â€œ${b.name}â€ï¼Ÿ`)) void run(() => adminApi.restoreBackup(b.name), 'å¤‡ä»½å·²æ¢å¤ï¼Œè¯·åˆ·æ–°èŠå¤©é¡µé¢'); }}>æ¢å¤</button><button type="button" className="admin-danger" onClick={() => { if (confirmAction(`ç¡®è®¤åˆ é™¤å¤‡ä»½â€œ${b.name}â€ï¼Ÿ`)) void run(() => adminApi.deleteBackup(b.name), 'å¤‡ä»½å·²åˆ é™¤'); }}>åˆ é™¤</button></div></div>) : <EmptyState>æš‚æ— å¤‡ä»½ï¼Œå¯å…ˆåˆ›å»ºä¸€ä»½</EmptyState>}
+      </article>
+    </section>
+  );
+}
+
+/** Loads the persona the avatar editor edits, which the old page shell owned. */
+function AvatarPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [persona, setPersona] = useState<AdminPersona | null>(null);
+  useEffect(() => {
+    void adminApi.persona().then((r) => setPersona(r.persona)).catch((e) => onNotice(errorText(e)));
+  }, [onNotice]);
+  if (!persona) return <p className="admin-muted">æ­£åœ¨è¯»å–å¤´åƒè®¾ç½®â€¦</p>;
+  return <AvatarEditor persona={persona} onPersona={setPersona} onNotice={onNotice} />;
+}
+
+function TabButtons({ tab, setTab, mobile }: { tab: Tab; setTab: (tab: Tab) => void; mobile: boolean }) {
+  return (
+    <nav className={mobile ? 'admin-mobile-tabs' : 'admin-side-nav'} aria-label="ç®¡ç†é¢æ¿å¯¼èˆª">
+      {mobile
+        ? TABS.map((item) => (
+          <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+            {item.label}
+          </button>
+        ))
+        : NAV_GROUPS.map((group) => (
+          <Fragment key={group}>
+            <p className="admin-nav-group">{group}</p>
+            {TABS.filter((item) => item.group === group).map((item) => (
+              <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+                <span className="admin-nav-icon"><Icon name={item.icon} /></span>
+                <span className="admin-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
+              </button>
+            ))}
+          </Fragment>
+        ))}
+    </nav>
+  );
+}
+
+function Overview({ data, counts, onRefresh }: { data: Dashboard; counts: { available: number; total: number }; onRefresh: () => void }) {
+  const db = data.system.database;
+  const storage = data.system.storage;
+  const tiles = [
+    { label: 'æ¶ˆæ¯ä¸Žè®°å¿†', value: `${Number(db.messages ?? 0).toLocaleString()} æ¡æ¶ˆæ¯`, detail: `${Number(db.memories ?? 0).toLocaleString()} æ¡è®°å¿†`, icon: 'message' as const },
+    { label: 'æ¨¡åž‹èƒ½åŠ›', value: `${counts.available} / ${counts.total} å¯ç”¨`, detail: 'æŒ‰æœåŠ¡ç«¯å®žé™…èƒ½åŠ›ç»Ÿè®¡', icon: 'cpu' as const },
+    { label: 'å­˜å‚¨å ç”¨', value: formatBytes(storage.mediaBytes), detail: `${Number(db.media ?? 0).toLocaleString()} ä¸ªåª’ä½“æ–‡ä»¶`, icon: 'storage' as const },
+    { label: 'å¤‡ä»½', value: `${data.backups.length} ä»½`, detail: `å¾…å¤„ç†ä»»åŠ¡ ${Number(db.pendingJobs ?? 0)}`, icon: 'backup' as const }
+  ];
+
+  return <>
+    <section className="admin-status-card" data-testid="admin-system-status">
+      <div><span className="admin-health-dot" /><strong>è¿è¡Œæ­£å¸¸</strong></div>
+      <span>ç‰ˆæœ¬ {data.system.version}</span>
+      <span>å·²è¿è¡Œ {formatUptime(data.system.uptimeSec)}</span>
+      <button type="button" onClick={onRefresh}>åˆ·æ–°çŠ¶æ€</button>
+    </section>
+    <section className="admin-summary">
+      {tiles.map((tile) => <div className="admin-summary-tile" key={tile.label}><div className="admin-summary-top"><span>{tile.label}</span><span className="admin-summary-icon"><Icon name={tile.icon} /></span></div><strong>{tile.value}</strong><small>{tile.detail}</small></div>)}
+    </section>
+  </>;
+}
+
+export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: Tab } = {}) {
+  const [token, setToken] = useState(() => getAdminToken());
+  const [tokenInput, setTokenInput] = useState('');
+  const [tab, setTab] = useState<Tab>(() => tabFromAdminPath(window.location.pathname, initialTab));
+  const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
+  const [data, setData] = useState<Dashboard | null>(null);
+  const [notice, setNotice] = useAutoNotice();
+  const [loading, setLoading] = useState(false);
+  const isMobile = useIsMobile();
+
+  const setDirtyState = useCallback((value: boolean) => {
+    dirtyRef.current = value;
+    setDirty(value);
+  }, []);
+
+  useEffect(() => {
+    const routeTab = tabFromAdminPath(window.location.pathname, initialTab);
+    const canonicalPath = adminPathForTab(routeTab);
+    if (window.location.pathname !== canonicalPath) {
+      window.history.replaceState(null, '', canonicalPath);
+    }
+
+    const onPopState = () => {
+      const next = tabFromAdminPath(window.location.pathname, initialTab);
+      if (dirtyRef.current && !window.confirm('å½“å‰ä¿®æ”¹å°šæœªä¿å­˜ï¼Œç¡®å®šç¦»å¼€å—ï¼Ÿ')) {
+        window.history.pushState(null, '', adminPathForTab(tab));
+        return;
+      }
+      setDirtyState(false);
+      setTab(next);
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [initialTab, setDirtyState, tab]);
+
+  const navigateTab = useCallback((next: Tab) => {
+    if (next === tab) return;
+    if (dirtyRef.current && !window.confirm('å½“å‰ä¿®æ”¹å°šæœªä¿å­˜ï¼Œç¡®å®šç¦»å¼€å—ï¼Ÿ')) return;
+    setDirtyState(false);
+    window.history.pushState(null, '', adminPathForTab(next));
+    setTab(next);
+  }, [setDirtyState, tab]);
+
+  const loadOverview = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const [system, capabilities, backups] = await Promise.all([
+        adminApi.system(),
+        adminApi.capabilities(),
+        adminApi.backups()
+      ]);
+      setData({ system, capabilities, backups: backups.backups });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        clearAdminToken();
+        setToken(null);
+        setData(null);
+      } else {
+        setNotice(errorText(e));
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { void loadOverview(); }, [loadOverview]);
+
+  const submitToken = (e: FormEvent) => {
+    e.preventDefault();
+    const next = tokenInput.trim();
+    if (!next) return;
+    setAdminToken(next);
+    setToken(next);
+    setTokenInput('');
+  };
+
+  const logout = () => {
+    clearAdminToken();
+    setToken(null);
+    setData(null);
+    setNotice(null);
+  };
+
+  const counts = useMemo(
+    () => data ? capabilityCounts(data.capabilities.capabilities) : { available: 0, total: 0 },
+    [data]
+  );
+
+  if (!token) {
+    return <main className="admin-page admin-v2 admin-lock-page" data-testid="admin-lock"><form className="admin-lock-card" onSubmit={submitToken}><span className="admin-lock-icon"><Icon name="lock" /></span><span className="admin-eyebrow">SOOYA ç®¡ç†ä¸­å¿ƒ</span><h1>è¾“å…¥ç®¡ç†ä»¤ç‰Œ</h1><p>ä»¤ç‰Œåªä¿å­˜åœ¨å½“å‰è®¾å¤‡ï¼Œç”¨äºŽè®¿é—®ç®¡ç†æŽ¥å£ã€‚</p><label htmlFor="admin-token">ç®¡ç†ä»¤ç‰Œ</label><input id="admin-token" type="password" autoComplete="current-password" value={tokenInput} onChange={(e) => setTokenInput(e.target.value)} /><button type="submit" disabled={!tokenInput.trim()}>è¿›å…¥ç®¡ç†ä¸­å¿ƒ</button></form></main>;
+  }
+
+  if (loading && !data) {
+    return <main className="admin-page admin-v2 admin-loading"><div className="admin-loading-card"><div className="admin-spinner" />æ­£åœ¨è¯»å–ç³»ç»ŸçŠ¶æ€â€¦</div></main>;
+  }
+
+  if (!data) {
+    return <main className="admin-page admin-v2 admin-error"><div className="admin-error-card"><p>{notice ?? 'æ— æ³•åŠ è½½ç®¡ç†ä¿¡æ¯'}</p><button type="button" onClick={() => void loadOverview()}>é‡è¯•</button></div></main>;
+  }
+
+  const page = PAGE_COPY[tab];
+  const content = tab === 'overview'
+    ? <Overview data={data} counts={counts} onRefresh={() => void loadOverview()} />
+    : tab === 'persona'
+      ? <PersonaPanel onNotice={setNotice} />
+      : tab === 'avatar'
+        ? <AvatarPanel onNotice={setNotice} />
+        : tab === 'voice'
+          ? <VoiceEditor onNotice={setNotice} />
+          : tab === 'life'
+            ? <LifePanel onNotice={setNotice} />
+            : tab === 'models'
+                ? <ModelsPanel onNotice={setNotice} />
+                : tab === 'content'
+                  ? <ContentPanel onNotice={setNotice} />
+                  : tab === 'storage'
+                    ? <StorageEditor onNotice={setNotice} />
+                    : <OperationsPanel onNotice={setNotice} />;
+
+  return (
+    <main className="admin-page admin-v2" data-testid="admin-dashboard" data-dirty={dirty || undefined} onInputCapture={(event) => {
+      const target = event.target as HTMLInputElement;
+      if (target instanceof HTMLInputElement && target.type === 'file') return;
+      setDirtyState(true);
+    }} onSubmitCapture={() => setDirtyState(false)}>
+      <div className="admin-shell">
+        {!isMobile && <aside className="admin-sidebar">
+          <div className="admin-brand"><span className="admin-brand-mark">S</span><span className="admin-brand-copy"><strong>SOOYA</strong><small>ç®¡ç†ä¸­å¿ƒ</small></span></div>
+          <TabButtons tab={tab} setTab={navigateTab} mobile={false} />
+          <div className="admin-sidebar-footer">
+            <a className="admin-side-action" href="/" data-testid="admin-return-chat">è¿”å›žå¯¹è¯</a>
+            <button type="button" className="admin-side-action subtle" onClick={logout}>é€€å‡ºç®¡ç†</button>
+          </div>
+        </aside>}
+
+        {isMobile && <header className="admin-mobile-header"><div className="admin-mobile-brand"><span className="admin-mobile-icon"><Icon name={TABS.find((item) => item.id === tab)?.icon ?? 'overview'} /></span><div><strong>SOOYA ç®¡ç†ä¸­å¿ƒ</strong><small>{page.title}</small></div></div><a className="admin-return" href="/" data-testid="admin-return-chat">è¿”å›žå¯¹è¯</a></header>}
+
+        <section className="admin-main">
+          <div className="admin-main-inner">
+            {isMobile && <TabButtons tab={tab} setTab={navigateTab} mobile />}
+            {!isMobile && <header className="admin-content-header"><div className="admin-title-wrap"><span className="admin-eyebrow">SOOYA ADMIN</span><h1>{page.title}</h1><p>{page.description}</p></div><div className="admin-header-actions"><button type="button" className="admin-header-button" onClick={() => void loadOverview()}>åˆ·æ–°</button></div></header>}
+            <div className="admin-mobile-content">
+              {isMobile && <div className="admin-mobile-title"><h1>{page.title}</h1><p>{page.description}</p></div>}
+              <SectionNotice notice={notice} />
+              {content}
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
