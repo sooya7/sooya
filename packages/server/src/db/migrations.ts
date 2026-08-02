@@ -621,6 +621,35 @@ export const MIGRATIONS: Migration[] = [
         UPDATE memories SET active = 0, updated_at = datetime('now') WHERE kind = 'summary' AND active = 1;
       `);
     }
+  },
+  {
+    version: 13,
+    name: 'proactive_reach_out_attempts',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE proactive_attempts (
+          id                         TEXT PRIMARY KEY,
+          candidate_id               TEXT,
+          candidate_kind             TEXT,
+          candidate_activity         TEXT,
+          status                     TEXT NOT NULL CHECK (status IN ('blocked','sent','failed')),
+          blocked_reason             TEXT,
+          requested_mode             TEXT CHECK (requested_mode IN ('text','text_sticker','voice','image')),
+          final_mode                 TEXT CHECK (final_mode IN ('text','text_sticker','voice','image')),
+          fallback_reason            TEXT,
+          message_id                 TEXT REFERENCES messages(id) ON DELETE SET NULL,
+          send_success               INTEGER NOT NULL DEFAULT 0,
+          user_response_message_id   TEXT REFERENCES messages(id) ON DELETE SET NULL,
+          user_responded_at          TEXT,
+          detail_json                TEXT NOT NULL DEFAULT '{}',
+          created_at                 TEXT NOT NULL,
+          updated_at                 TEXT NOT NULL
+        );
+        CREATE INDEX idx_proactive_attempts_created ON proactive_attempts(created_at DESC);
+        CREATE INDEX idx_proactive_attempts_response ON proactive_attempts(user_response_message_id, created_at DESC);
+        CREATE INDEX idx_proactive_attempts_candidate ON proactive_attempts(candidate_id, created_at DESC);
+      `);
+    }
   }
 ];
 
