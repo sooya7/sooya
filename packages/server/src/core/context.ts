@@ -1,6 +1,6 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { SummaryRepo } from '../db/repos/misc.repo.js';
-import type { MemoryService } from './memory.js';
+import type { MemoryService, RecallMatch } from './memory.js';
 import type { Persona } from '../config/schema.js';
 import type { ChatMessage } from './types.js';
 import type { ChatTurn, ChatContentPart } from '../providers/types.js';
@@ -26,6 +26,27 @@ export interface BuiltContext {
   droppedSummaries: number;
   droppedMemories: number;
   droppedRecentMessages: number;
+  memoryTrace: MemoryRecallTrace;
+}
+
+export interface MemoryTraceEntry {
+  id: string;
+  kind: string;
+  content: string;
+  sources: string[];
+  strategy: 'embedding' | 'fts';
+  score: number | null;
+  reason: string;
+  included: boolean;
+  droppedReason?: 'deduplicated_persona' | 'deduplicated_summary' | 'deduplicated_recent' | 'budget';
+}
+
+export interface MemoryRecallTrace {
+  query: string;
+  strategy: string;
+  fallbackReason?: string;
+  entries: MemoryTraceEntry[];
+  stats: { recalled: number; included: number; deduplicated: number; budgetDropped: number };
 }
 
 export interface ContextOptions {
@@ -44,6 +65,8 @@ export interface ContextOptions {
 }
 
 export class ContextBuilder {
+  private lastTrace: MemoryRecallTrace = { query: '', strategy: 'none', entries: [], stats: { recalled: 0, included: 0, deduplicated: 0, budgetDropped: 0 } };
+
   constructor(
     private readonly messages: MessageRepo,
     private readonly summaries: SummaryRepo,
@@ -54,6 +77,10 @@ export class ContextBuilder {
     private readonly life?: LifeEngine,
     private readonly timeZone = 'Asia/Shanghai'
   ) {}
+
+  memoryRecallTrace(): MemoryRecallTrace {
+    return this.lastTrace;
+  }
 
   async build(persona: Persona, latestUserText: string, opts: ContextOptions): Promise<BuiltContext> {
     const recent = mergeContextMessages(this.messages.recent(opts.recentMessages), opts.batchMessageIds?.map((id) => this.messages.get(id)).filter((message): message is ChatMessage => Boolean(message)) ?? []);
@@ -104,13 +131,44 @@ export class ContextBuilder {
     }
     const visionUsed = turns.some((turn) => turn.content.some((part) => part.type === 'image'));
 
-    const summaryLines = activeSummaries
+    const deduped = dedupeSources(persona, recent, activeSummaries, recall.matches);
+    const summaryLines = deduped.summaries
       .slice()
       .sort((a, b) => a.from_seq - b.from_seq)
       .map((summary) => `· ${summary.content}`);
-    const usedSummaries = addBudgetedLines(systemParts, turns, '以前聊过的重点（阶段摘要）：', summaryLines, inputBudget);
-    const memoryLines = recall.memories.map((memory) => `· [${memory.kind}] ${memory.content}`);
-    const usedMemories = addBudgetedLines(systemParts, turns, '关于用户你已经知道的事：', memoryLines, inputBudget);
+    const summaryBudget = budgetLines(systemParts, turns, '以前聊过的重点（阶段摘要）：', summaryLines, inputBudget);
+    const usedSummaries = summaryBudget.accepted.length;
+    const memoryLines = deduped.matches.filter((match) => !match.droppedReason).map((match) => `· [${match.memory.kind}] ${match.memory.content}`);
+    const memoryBudget = budgetLines(systemParts, turns, '关于用户你已经知道的事：', memoryLines, inputBudget);
+    const usedMemories = memoryBudget.accepted.length;
+
+    const traceEntries: MemoryTraceEntry[] = deduped.matches.map((match) => {
+      const included = !match.droppedReason && memoryBudget.accepted.some((line) => line.includes(match.memory.content));
+      return {
+        id: match.memory.id,
+        kind: match.memory.kind,
+        content: match.memory.content,
+        sources: match.memory.sources,
+        strategy: match.strategy,
+        score: match.score,
+        reason: match.reason,
+        included,
+        ...(match.droppedReason ? { droppedReason: match.droppedReason } : included ? {} : { droppedReason: 'budget' as const })
+      };
+    });
+    const deduplicated = traceEntries.filter((entry) => entry.droppedReason?.startsWith('deduplicated')).length;
+    this.lastTrace = {
+      query: recallQuery,
+      strategy: recall.strategy,
+      fallbackReason: recall.fallbackReason,
+      entries: traceEntries,
+      stats: {
+        recalled: traceEntries.length,
+        included: traceEntries.filter((entry) => entry.included).length,
+        deduplicated,
+        budgetDropped: traceEntries.filter((entry) => entry.droppedReason === 'budget').length
+      }
+    };
 
     /*
      * Her own state goes in before the capability notes: what she is doing is
@@ -150,7 +208,8 @@ export class ContextBuilder {
       estimatedInputTokens,
       droppedSummaries: activeSummaries.length - usedSummaries,
       droppedMemories: recall.memories.length - usedMemories,
-      droppedRecentMessages: convertedTurns.length - turns.length
+      droppedRecentMessages: convertedTurns.length - turns.length,
+      memoryTrace: this.lastTrace
     };
   }
 
@@ -232,15 +291,62 @@ function tryAddSystemPart(systemParts: string[], turns: ChatTurn[], part: string
   return true;
 }
 
-function addBudgetedLines(systemParts: string[], turns: ChatTurn[], heading: string, lines: string[], budget: number): number {
+function budgetLines(systemParts: string[], turns: ChatTurn[], heading: string, lines: string[], budget: number): { accepted: string[]; dropped: string[] } {
   const accepted: string[] = [];
+  const dropped: string[] = [];
   for (const line of lines) {
     const block = `${heading}\n${[...accepted, line].join('\n')}`;
-    if (estimateContextTokens([...systemParts, block], turns) > budget) continue;
+    if (estimateContextTokens([...systemParts, block], turns) > budget) {
+      dropped.push(line);
+      continue;
+    }
     accepted.push(line);
   }
   if (accepted.length > 0) systemParts.push(`${heading}\n${accepted.join('\n')}`);
-  return accepted.length;
+  return { accepted, dropped };
+}
+
+function dedupeSources(
+  persona: Persona,
+  recent: ChatMessage[],
+  summaries: ReturnType<SummaryRepo['active']>,
+  matches: RecallMatch[]
+): { summaries: typeof summaries; matches: Array<RecallMatch & { droppedReason?: MemoryTraceEntry['droppedReason'] }> } {
+  const personaText = [persona.systemPrompt, persona.speakingStyle, persona.relationshipContext].map(normalizeFactText).filter(Boolean);
+  const recentText = recent.map(plainText).map(normalizeFactText).filter(Boolean);
+  const summaryKeep = summaries.slice();
+  const memoryMatches: Array<RecallMatch & { droppedReason?: MemoryTraceEntry['droppedReason'] }> = matches.map((match) => ({ ...match }));
+  for (const match of memoryMatches) {
+    if (personaText.some((text) => similarFact(text, normalizeFactText(match.memory.content)))) {
+      match.droppedReason = 'deduplicated_persona';
+      continue;
+    }
+    if (recentText.some((text) => similarFact(text, normalizeFactText(match.memory.content)))) {
+      match.droppedReason = 'deduplicated_recent';
+    }
+  }
+  for (let i = summaryKeep.length - 1; i >= 0; i--) {
+    const summary = summaryKeep[i]!;
+    const summaryText = normalizeFactText(summary.content);
+    if (personaText.some((text) => similarFact(text, summaryText))) {
+      summaryKeep.splice(i, 1);
+      continue;
+    }
+    const duplicate = memoryMatches.find((match) => !match.droppedReason && similarFact(summaryText, normalizeFactText(match.memory.content)));
+    if (!duplicate) continue;
+    if (normalizeFactText(duplicate.memory.content).length >= summaryText.length) summaryKeep.splice(i, 1);
+    else duplicate.droppedReason = 'deduplicated_summary';
+  }
+  return { summaries: summaryKeep, matches: memoryMatches };
+}
+
+function normalizeFactText(text: string): string {
+  return text.toLowerCase().replace(/^(?:用户|我|她|助手)\s*/, '').replace(/[\s\u3000.,!?;:，。！？；：、"“”'‘’()（）[\]【】]/g, '');
+}
+
+function similarFact(left: string, right: string): boolean {
+  if (!left || !right) return false;
+  return left === right || (Math.min(left.length, right.length) >= 6 && (left.includes(right) || right.includes(left)));
 }
 
 function trimToTokenEstimate(text: string, maxTokens: number): string {

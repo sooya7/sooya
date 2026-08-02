@@ -128,6 +128,27 @@ describe('SSE streaming', () => {
     await stream.close();
   });
 
+  it('never streams a long image directive as visible assistant text', async () => {
+    const prompt = 'A young woman sleeping peacefully in bed, hugging a soft white blanket, dim warm nightlight on bedside table, a cute corgi plushie tucked beside her, realistic photography, soft warm tones';
+    const marker = `[[image:${prompt}]]`;
+    h = await createHarness({ image: 'ok', chat: { script: [[marker.slice(0, 49), marker.slice(49)]] } });
+    const base = await listen(h);
+    const stream = await openStream(base);
+    await stream.waitFor('stream.ready');
+
+    await fetch(`${base}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clientMsgId: 'sse-directive-leak', content: [{ type: 'text', text: '画一张图' }] })
+    });
+
+    const completed = await stream.waitFor('reply.completed', 10000);
+    const deltas = stream.events.filter((event) => event.event === 'reply.text.delta');
+    expect(deltas.every((event) => !String(event.data.text ?? '').includes('[[image:'))).toBe(true);
+    expect(JSON.stringify(completed.data)).not.toContain('[[image:');
+    await stream.close();
+  });
+
   it('replays missed events after a disconnect (no refresh needed)', async () => {
     h = await createHarness({ chat: { script: [['断线期间的回复']] } });
     const base = await listen(h);

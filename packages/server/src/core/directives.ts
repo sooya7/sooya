@@ -125,6 +125,14 @@ const MARKER_EXACT_RE = new RegExp(String.raw`^\[{1,2}\s*(?:${KIND_ALT})\s*(?::\
 const MARKER_LOOKAHEAD = 48;
 
 /**
+ * A model image prompt can be much longer than the normal bracket lookahead.
+ * Once the prefix is unambiguously a protocol marker, keep it private until it
+ * closes; if a broken provider never closes it, discard the bounded buffer
+ * instead of ever showing the protocol to the user.
+ */
+const MAX_MARKER_BUFFER = 8_192;
+
+/**
  * True for a truncated marker such as "[voic" or "[[sticker:开" — that is, a
  * span that is still capable of becoming a marker once more text arrives.
  * Anything already ruled out (`[备注`, `[这是一段正文`) must return false so the
@@ -215,9 +223,12 @@ export class StreamingDirectiveFilter {
 
       const close = this.pending.indexOf(']');
       if (close < 0) {
-        // Still waiting for the closing bracket. Bail out once it is clear this
-        // is prose rather than a marker, so plain text is never held hostage.
-        if (this.pending.length > MARKER_LOOKAHEAD || !isPartialMarker(this.pending)) {
+        // Still waiting for the closing bracket. A known marker prefix gets a
+        // larger bounded buffer because image prompts are commonly hundreds of
+        // characters long; ordinary bracketed prose keeps the short lookahead.
+        if (isPartialMarker(this.pending)) {
+          if (this.pending.length > MAX_MARKER_BUFFER) this.pending = '';
+        } else if (this.pending.length > MARKER_LOOKAHEAD) {
           out += this.pending;
           this.pending = '';
         }

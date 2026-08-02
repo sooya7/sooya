@@ -82,6 +82,13 @@ describe('StreamingDirectiveFilter with single brackets', () => {
   });
 
   it('keeps double-bracket behaviour intact', () => {
+    const prompt = 'A young woman sleeping peacefully in bed, hugging a soft white blanket, dim warm nightlight on bedside table, a cute corgi plushie tucked beside her, realistic photography, soft warm tones';
+    const imageMarker = `[[image:${prompt}]]`;
+    expect(stream([imageMarker.slice(0, 49), imageMarker.slice(49)])).toBe('');
+
+    const hint = 'a warm celebratory reaction with a smiling character and confetti';
+    const stickerMarker = `[[sticker:${hint}]]`;
+    expect(stream([stickerMarker.slice(0, 49), stickerMarker.slice(49)])).toBe('');
     expect(stream(['你好', '[[voice]]', '再见'])).toBe('你好再见');
     expect(stream(['你好[[stic', 'ker:开心]]'])).toBe('你好');
   });

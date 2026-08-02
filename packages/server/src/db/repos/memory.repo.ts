@@ -2,9 +2,10 @@ import type { DbLike } from '../handle.js';
 import type { MemoryRecord } from '../../core/types.js';
 import { newMemoryId, nowIso } from '../../util/ids.js';
 
-export type MemoryKind = MemoryRecord['kind'];
+/** `summary` remains readable for legacy rows, but new ordinary memories may not use it. */
+export type MemoryKind = Exclude<MemoryRecord['kind'], 'summary'>;
 
-interface MemoryRow {
+export interface MemoryRow {
   id: string;
   rowid?: number;
   kind: MemoryKind;
@@ -20,6 +21,9 @@ interface MemoryRow {
   embedding_dim: number | null;
   embedding_model: string | null;
   active: number;
+  supersedes_id: string | null;
+  superseded_by_id: string | null;
+  archived_at: string | null;
 }
 
 export interface UpsertMemoryInput {
@@ -29,6 +33,11 @@ export interface UpsertMemoryInput {
   confidence?: number;
   expiresAt?: string | null;
   sourceMessageId?: string | null;
+}
+
+export interface MemoryReplacement {
+  previous: MemoryRecord;
+  replacement: MemoryRecord;
 }
 
 export function normalizeMemoryText(text: string): string {
@@ -113,6 +122,78 @@ export class MemoryRepo {
     return { record: this.toRecord(this.rowById(id)!), merged: false };
   }
 
+  replace(previousId: string, input: UpsertMemoryInput | string): MemoryReplacement {
+    return this.supersede(previousId, input);
+  }
+
+  supersede(previousId: string, input: UpsertMemoryInput | string): MemoryReplacement {
+    const tx = this.db.transaction(() => {
+      const previous = this.rowById(previousId);
+      if (!previous) throw new Error(`memory ${previousId} not found`);
+      if (previous.active !== 1) throw new Error(`memory ${previousId} is not active`);
+
+      const ts = nowIso();
+      let replacementId: string;
+      if (typeof input === 'string') {
+        const existing = this.rowById(input);
+        if (!existing) throw new Error(`replacement memory ${input} not found`);
+        if (existing.id === previousId) throw new Error('a memory cannot supersede itself');
+        if (existing.active !== 1) throw new Error(`replacement memory ${input} is not active`);
+        replacementId = existing.id;
+      } else {
+        replacementId = newMemoryId();
+      }
+
+      this.db
+        .prepare('UPDATE memories SET active = 0, updated_at = ? WHERE id = ?')
+        .run(ts, previousId);
+
+      if (typeof input === 'string') {
+        this.db
+          .prepare('UPDATE memories SET supersedes_id = ?, updated_at = ? WHERE id = ?')
+          .run(previousId, ts, replacementId);
+      } else {
+        const normalized = normalizeMemoryText(input.content);
+        this.db
+          .prepare(
+            `INSERT INTO memories
+              (id, kind, content, normalized, importance, confidence, created_at, updated_at, expires_at, hits, active,
+               supersedes_id, superseded_by_id, archived_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, NULL, NULL)`
+          )
+          .run(
+            replacementId,
+            input.kind,
+            input.content,
+            normalized,
+            input.importance ?? 0.5,
+            input.confidence ?? 0.6,
+            ts,
+            ts,
+            input.expiresAt ?? null,
+            previousId
+          );
+        if (input.sourceMessageId) this.addSource(replacementId, input.sourceMessageId);
+      }
+
+      this.db
+        .prepare('UPDATE memories SET superseded_by_id = ?, updated_at = ? WHERE id = ?')
+        .run(replacementId, ts, previousId);
+
+      return {
+        previous: this.toRecord(this.rowById(previousId)!),
+        replacement: this.toRecord(this.rowById(replacementId)!)
+      };
+    });
+    return tx() as MemoryReplacement;
+  }
+
+  archive(id: string, archivedAt = nowIso()): boolean {
+    return this.db
+      .prepare("UPDATE memories SET archived_at = ?, updated_at = ? WHERE id = ? AND kind = 'project' AND active = 1")
+      .run(archivedAt, archivedAt, id).changes > 0;
+  }
+
   addSource(memoryId: string, messageId: string): void {
     this.db
       .prepare('INSERT OR IGNORE INTO memory_sources(memory_id, message_id, created_at) VALUES (?, ?, ?)')
@@ -134,7 +215,7 @@ export class MemoryRepo {
     return row ? this.toRecord(row) : undefined;
   }
 
-  list(opts: { limit?: number; offset?: number; kind?: MemoryKind; includeInactive?: boolean } = {}): MemoryRecord[] {
+  list(opts: { limit?: number; offset?: number; kind?: MemoryRecord['kind']; includeInactive?: boolean } = {}): MemoryRecord[] {
     const limit = Math.min(opts.limit ?? 100, 500);
     const offset = opts.offset ?? 0;
     const where: string[] = [];
@@ -153,7 +234,8 @@ export class MemoryRepo {
   activeWithEmbeddings(dim: number): Array<{ row: MemoryRow; vector: number[] }> {
     const rows = this.db
       .prepare(
-        `SELECT * FROM memories WHERE active = 1 AND embedding IS NOT NULL AND embedding_dim = ?
+        `SELECT * FROM memories WHERE active = 1 AND (kind <> 'project' OR archived_at IS NULL)
+          AND embedding IS NOT NULL AND embedding_dim = ?
           AND (expires_at IS NULL OR expires_at > ?)`
       )
       .all(dim, nowIso()) as MemoryRow[];
@@ -174,7 +256,8 @@ export class MemoryRepo {
         const rows = this.db
           .prepare(
             `SELECT m.*, bm25(memories_fts) AS rank FROM memories_fts f JOIN memories m ON m.rowid = f.rowid
-             WHERE memories_fts MATCH ? AND m.active = 1 AND (m.expires_at IS NULL OR m.expires_at > ?)
+             WHERE memories_fts MATCH ? AND m.active = 1 AND (m.kind <> 'project' OR m.archived_at IS NULL)
+               AND (m.expires_at IS NULL OR m.expires_at > ?)
              ORDER BY rank LIMIT ?`
           )
           .all(match, nowIso(), limit) as MemoryRow[];
@@ -197,7 +280,8 @@ export class MemoryRepo {
     if (qGrams.size === 0) return [];
     const rows = this.db
       .prepare(
-        `SELECT * FROM memories WHERE active = 1 AND (expires_at IS NULL OR expires_at > ?)
+        `SELECT * FROM memories WHERE active = 1 AND (kind <> 'project' OR archived_at IS NULL)
+          AND (expires_at IS NULL OR expires_at > ?)
          ORDER BY importance DESC LIMIT 2000`
       )
       .all(nowIso()) as MemoryRow[];
@@ -249,13 +333,21 @@ export class MemoryRepo {
   }
 
   count(activeOnly = true): number {
-    const sql = activeOnly ? 'SELECT COUNT(*) c FROM memories WHERE active = 1' : 'SELECT COUNT(*) c FROM memories';
+    const sql = activeOnly
+      ? `SELECT COUNT(*) c FROM memories WHERE active = 1 AND (kind <> 'project' OR archived_at IS NULL)`
+      : 'SELECT COUNT(*) c FROM memories';
     return (this.db.prepare(sql).get() as { c: number }).c;
   }
 
   countWithEmbeddings(): number {
-    return (this.db.prepare('SELECT COUNT(*) c FROM memories WHERE embedding IS NOT NULL AND active = 1').get() as { c: number })
-      .c;
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) c FROM memories
+           WHERE embedding IS NOT NULL AND active = 1 AND (kind <> 'project' OR archived_at IS NULL)`
+        )
+        .get() as { c: number }
+    ).c;
   }
 
   sources(memoryId: string): string[] {
@@ -278,7 +370,10 @@ export class MemoryRepo {
       expiresAt: row.expires_at,
       hits: row.hits,
       sources: this.sources(row.id),
-      hasEmbedding: !!row.embedding
+      hasEmbedding: !!row.embedding,
+      supersedesId: row.supersedes_id,
+      supersededById: row.superseded_by_id,
+      archivedAt: row.archived_at
     };
   }
 }
