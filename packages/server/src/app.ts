@@ -180,6 +180,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const mediaStore = new MediaStore(env.mediaDirs, repos.media, { maxUploadBytes: env.MAX_UPLOAD_BYTES });
   const mediaVariants = new ImageVariantService(env.mediaDirs.variants, (message, id) => repos.errors.add('media.variant', message, { id }));
   const stickerLibrary = new StickerLibrary(repos.stickers, repos.media, mediaStore);
+  mediaStore.setOnDelete(() => stickerLibrary.invalidate());
   const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl: opts.fetchImpl });
   const bus = new EventBus(repos.events);
   const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE });

@@ -69,12 +69,19 @@ export interface SaveOptions {
 }
 
 export class MediaStore {
+  private onDelete: (() => void) | null = null;
+
   constructor(
     private readonly dirs: MediaDirs,
     private readonly repo: MediaRepo,
     private readonly limits: { maxUploadBytes: number }
   ) {
     for (const dir of Object.values(dirs)) ensureDirSync(dir);
+  }
+
+  /** Callback fired after a media record is permanently removed from disk + DB. */
+  setOnDelete(fn: () => void): void {
+    this.onDelete = fn;
   }
 
   dirFor(kind: MediaRow['kind']): string {
@@ -205,6 +212,7 @@ export class MediaStore {
     await fsp.rm(this.absolutePath(row), { force: true });
     await removeVariants(this.dirs.variants, id);
     if (!this.repo.delete(id)) throw new Error('media database record deletion failed');
+    this.onDelete?.();
     return true;
   }
 

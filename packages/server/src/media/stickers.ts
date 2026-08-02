@@ -25,11 +25,22 @@ export interface StickerSelection {
  * reported as available.
  */
 export class StickerLibrary {
+  private availableCache: Sticker[] | null = null;
+  private allCache: Sticker[] | null = null;
+
   constructor(
     private readonly repo: StickerRepo,
     private readonly mediaRepo: MediaRepo,
     private readonly store: MediaStore
-  ) {}
+  ) {
+    this.repo.setOnChange(() => this.invalidate());
+  }
+
+  /** Drop cached directory/stat results after any sticker or media mutation. */
+  invalidate(): void {
+    this.availableCache = null;
+    this.allCache = null;
+  }
 
   /** Import built-in stickers. Idempotent: existing names are skipped. */
   async importBuiltin(assetsDir: string): Promise<{ imported: number; skipped: number; failed: number }> {
@@ -81,7 +92,8 @@ export class StickerLibrary {
 
   /** Enabled stickers whose media file actually exists on disk. */
   available(): Sticker[] {
-    return this.repo
+    if (this.availableCache) return this.availableCache;
+    const result = this.repo
       .list({ enabledOnly: true })
       .map((s) => {
         const media = this.mediaRepo.get(s.mediaId);
@@ -89,13 +101,18 @@ export class StickerLibrary {
         return { ...s, available: ok, mime: media?.mime };
       })
       .filter((s) => s.available);
+    this.availableCache = result;
+    return result;
   }
 
   all(): Sticker[] {
-    return this.repo.list().map((s) => {
+    if (this.allCache) return this.allCache;
+    const result = this.repo.list().map((s) => {
       const media = this.mediaRepo.get(s.mediaId);
       return { ...s, available: media ? this.store.exists(media) : false, mime: media?.mime };
     });
+    this.allCache = result;
+    return result;
   }
 
   markUsed(id: string): void {

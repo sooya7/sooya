@@ -31,7 +31,18 @@ export interface Sticker {
 }
 
 export class StickerRepo {
+  private onChange: (() => void) | null = null;
+
   constructor(private readonly db: DbLike) {}
+
+  /** Callback fired after every mutation, so cache owners can invalidate. */
+  setOnChange(fn: () => void): void {
+    this.onChange = fn;
+  }
+
+  private notify(): void {
+    this.onChange?.();
+  }
 
   create(input: { mediaId: string; name: string; tags: string[]; emotion: string; enabled?: boolean; id?: string }): Sticker {
     const id = input.id ?? newStickerId();
@@ -41,6 +52,7 @@ export class StickerRepo {
          VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?)`
       )
       .run(id, input.mediaId, input.name, JSON.stringify(input.tags), input.emotion, input.enabled === false ? 0 : 1, nowIso());
+    this.notify();
     return this.get(id)!;
   }
 
@@ -71,15 +83,19 @@ export class StickerRepo {
     if (sets.length === 0) return this.get(id);
     values.push(id);
     this.db.prepare(`UPDATE stickers SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    this.notify();
     return this.get(id);
   }
 
   markUsed(id: string): void {
     this.db.prepare('UPDATE stickers SET use_count = use_count + 1, last_used_at = ? WHERE id = ?').run(nowIso(), id);
+    this.notify();
   }
 
   delete(id: string): boolean {
-    return this.db.prepare('DELETE FROM stickers WHERE id = ?').run(id).changes > 0;
+    const ok = this.db.prepare('DELETE FROM stickers WHERE id = ?').run(id).changes > 0;
+    if (ok) this.notify();
+    return ok;
   }
 
   count(enabledOnly = true): number {

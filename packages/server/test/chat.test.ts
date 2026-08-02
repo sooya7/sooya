@@ -292,6 +292,10 @@ describe('stickers', () => {
     const media = h.app.repos.media.get(first.mediaId)!;
     const fs = await import('node:fs/promises');
     await fs.rm(h.app.services.mediaStore.absolutePath(media), { force: true });
+    // Direct file removal bypasses the store's delete hook, so the cached
+    // directory/stat results stay stale until the next invalidation (a sticker
+    // mutation, a mediaStore.delete, or a restart).
+    h.app.services.stickerLibrary.invalidate();
     expect(h.app.services.stickerLibrary.count()).toBe(before - 1);
     expect(h.app.services.stickerLibrary.available().find((s) => s.id === first.id)).toBeUndefined();
   });
