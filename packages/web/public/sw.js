@@ -88,13 +88,19 @@ self.addEventListener('fetch', (event) => {
 
   if (url.pathname.startsWith('/api/')) return;
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).then((response) => {
-      const copy = response.clone();
-      void caches.open(SHELL_CACHE).then((cache) => cache.put('/index.html', copy));
-      return response;
-    }).catch(async () => {
-      const cache = await caches.open(SHELL_CACHE);
-      return (await cache.match('/index.html')) ?? (await cache.match('/')) ?? Response.error();
+    // 整页导航用 stale-while-revalidate：先返回缓存的 shell（近零延迟），网络响应只
+    // 在后台刷新缓存。原 network-first 在经 Cloudflare 回源时（实测单次往返约 1s+），
+    // 每次聊天↔管理后台切换都要在关键路径上等一次网络，页面才明显卡顿。
+    event.respondWith(caches.open(SHELL_CACHE).then(async (cache) => {
+      const cached = (await cache.match('/index.html')) ?? (await cache.match('/'));
+      const network = fetch(request).then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          void cache.put('/index.html', copy);
+        }
+        return response;
+      }).catch(() => cached ?? Response.error());
+      return cached ?? network;
     }));
     return;
   }
