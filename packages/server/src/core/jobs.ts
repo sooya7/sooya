@@ -136,7 +136,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const candidates = await deps.memory.extractCandidates(userText, assistantText);
     if (candidates.length === 0) return;
     const result = await deps.memory.remember(candidates, userMessageId);
-    if (result.stored > 0 || result.merged > 0) deps.bus.publish('memory.updated', { stored: result.stored, merged: result.merged });
+    if (result.stored > 0 || result.merged > 0 || result.superseded > 0) deps.bus.publish('memory.updated', result);
   });
 
   worker.register('push.reply', async (payload) => {

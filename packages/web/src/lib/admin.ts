@@ -121,6 +121,26 @@ export interface AdminMemory {
   hasEmbedding: boolean;
 }
 
+export interface AdminRecallTraceEntry {
+  id: string;
+  kind: string;
+  content: string;
+  sources: string[];
+  strategy: string;
+  score: number | null;
+  reason: string;
+  included: boolean;
+  droppedReason?: string;
+}
+
+export interface AdminRecallTrace {
+  query: string;
+  strategy: string;
+  fallbackReason?: string;
+  entries: AdminRecallTraceEntry[];
+  stats: { recalled: number; included: number; deduplicated: number; budgetDropped: number };
+}
+
 export interface AdminMedia {
   id: string;
   kind: string;
@@ -209,7 +229,7 @@ export const adminApi = {
       `/api/admin/model-presets/${encodeURIComponent(id)}/apply`,
       { method: 'POST' }
     ),
-  memories: () => adminRequest<{ memories: AdminMemory[]; stats: Record<string, unknown> }>('/api/admin/memories'),
+  memories: () => adminRequest<{ memories: AdminMemory[]; stats: Record<string, unknown>; recall?: AdminRecallTrace }>('/api/admin/memories'),
   deleteMemory: (id: string) =>
     adminRequest<{ deleted: boolean }>(`/api/admin/memories/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   clearMemories: () => adminRequest<{ cleared: boolean }>('/api/admin/memories/clear', { method: 'POST' }),

@@ -496,7 +496,11 @@ export function registerAdminRoutes(app: SooyaApp): void {
 
   server.get('/api/admin/memories', guard, async (req) => {
     const q = req.query as { limit?: string; offset?: string; kind?: string };
-    return { memories: repos.memories.list({ limit: Number(q.limit ?? 100), offset: Number(q.offset ?? 0), kind: q.kind as never }), stats: services.memory.stats() };
+    return {
+      memories: repos.memories.list({ limit: Number(q.limit ?? 100), offset: Number(q.offset ?? 0), kind: q.kind as never }),
+      stats: services.memory.stats(),
+      recall: services.context.memoryRecallTrace()
+    };
   });
   server.delete('/api/admin/memories/:id', guard, async (req, reply) => {
     const ok = repos.memories.delete((req.params as { id: string }).id);

@@ -606,6 +606,21 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX idx_life_events_shareable ON life_events(shareable, shared_at, happened_at DESC);
       `);
     }
+  },
+  {
+    version: 12,
+    name: 'memory_lifecycle_supersession',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE memories ADD COLUMN supersedes_id TEXT REFERENCES memories(id) ON DELETE SET NULL;
+        ALTER TABLE memories ADD COLUMN superseded_by_id TEXT REFERENCES memories(id) ON DELETE SET NULL;
+        ALTER TABLE memories ADD COLUMN archived_at TEXT;
+        CREATE INDEX idx_memories_supersedes ON memories(supersedes_id);
+        CREATE INDEX idx_memories_superseded_by ON memories(superseded_by_id);
+        CREATE INDEX idx_memories_archived ON memories(kind, archived_at, active);
+        UPDATE memories SET active = 0, updated_at = datetime('now') WHERE kind = 'summary' AND active = 1;
+      `);
+    }
   }
 ];
 
