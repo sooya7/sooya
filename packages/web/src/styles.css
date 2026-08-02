@@ -233,7 +233,7 @@ button {
   align-items: center;
   gap: 10px;
   justify-content: center;
-  margin: 16px 0 4px;
+  padding: 16px 0 4px;
   color: var(--ink-faint);
   font-size: 11px;
 }
@@ -264,6 +264,14 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* Virtualized thread: the list becomes a relatively-positioned spacer whose height is
+   the virtualizer total; each message is absolutely positioned by translateY. */
+.messages.virtualized {
+  display: block;
+  position: relative;
+  gap: 0;
 }
 
 .bottom-anchor {

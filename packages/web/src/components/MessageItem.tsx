@@ -27,7 +27,7 @@ function formatClock(iso: string, timeZone?: string): string { const d = new Dat
 function formatFullDateTime(iso: string, timeZone?: string): string { const d = new Date(iso); if (Number.isNaN(d.getTime())) return ''; return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', ...(timeZone ? { timeZone } : {}) }).format(d); }
 function formatBytes(n: number): string { return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`; }
 function messageText(message: ChatMessage): string { return message.content.map((part) => part.type === 'text' ? stripModelDirectivesForDisplay(part.text) : part.type === 'audio' ? part.transcript ?? '' : '').filter(Boolean).join('\n'); }
-function highlighted(text: string, query?: string): React.ReactNode {
+function highlightedText(text: string, query?: string): React.ReactNode {
   const needle = query?.trim();
   if (!needle) return text;
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -102,6 +102,9 @@ function FilePart({ part, mine }: { part: MessagePart; mine: boolean }) {
 interface Props {
   message: ChatMessage; personaName: string; avatar: string; userAvatar: string; showAvatar: boolean; timeZone?: string;
   highlightQuery?: string;
+  /** Jump-to target: flashes the row via `.message-highlight`. `highlightNonce` bumps
+   * so clicking the same message twice re-runs the animation. */
+  highlighted?: boolean; highlightNonce?: number;
   /** The message being replied to, when it is still loaded. */
   quoted?: ChatMessage | null; quotedLabel?: string; quotedStatus?: 'loading' | 'ready' | 'missing' | 'error'; onQuotedClick?: (messageId: string) => void;
   /**
@@ -114,7 +117,7 @@ interface Props {
   onRetry?: (message: ChatMessage) => void; onResend?: (message: ChatMessage) => void; onQuote?: (message: ChatMessage) => void; onWithdraw?: (message: ChatMessage) => void; onOpenImage?: (mediaId: string) => void; onNotice?: (text: string) => void;
 }
 
-export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, timeZone, highlightQuery, quoted, quotedLabel, quotedStatus, onQuotedClick, previousId, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
+export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, timeZone, highlightQuery, highlighted, highlightNonce, quoted, quotedLabel, quotedStatus, onQuotedClick, previousId, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
   const mine = message.role === 'user';
   // Every assistant turn carries `replyTo` for stream recovery, so a preview is only
   // worth showing when it says something the bubble order does not: not the message
@@ -130,6 +133,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   const replayable = isReplayableUserMessage(message);
   const retryable = isRetryableFailedMessage(message);
   const [menu, setMenu] = useState<{ x: number; y: number; selectedText: string } | null>(null);
+  const [flash, setFlash] = useState(false);
   const messageRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const press = useRef<{ timer: number; pointerId: number; x: number; y: number } | null>(null);
@@ -162,6 +166,15 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
     return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', key); };
   }, [menu]);
 
+  useEffect(() => {
+    if (!highlighted) { setFlash(false); return; }
+    // Toggle off→on so a repeat click on the same row re-runs the animation.
+    setFlash(false);
+    const raf = window.requestAnimationFrame(() => setFlash(true));
+    const timer = window.setTimeout(() => setFlash(false), 1800);
+    return () => { window.cancelAnimationFrame(raf); window.clearTimeout(timer); };
+  }, [highlighted, highlightNonce]);
+
   if (message.role === 'system') return <div className="system-row"><span>{message.content.map((part) => part.text).filter(Boolean).join(' ')}</span></div>;
   const openMenu = (x: number, y: number) => setMenu({
     x: Math.max(8, Math.min(window.innerWidth - 220, x)),
@@ -175,7 +188,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   const act = async (work: () => void | Promise<void>, success?: string) => { setMenu(null); try { await work(); if (success) onNotice?.(success); } catch (error) { onNotice?.((error as Error).message); } };
 
   return (
-    <div ref={messageRef} className={`msg-row ${mine ? 'mine' : 'theirs'}`} data-role={message.role} data-status={message.status} data-message-id={message.id} data-testid="message"
+    <div ref={messageRef} className={`msg-row ${mine ? 'mine' : 'theirs'}${flash ? ' message-highlight' : ''}`} data-role={message.role} data-status={message.status} data-message-id={message.id} data-testid="message"
       onContextMenu={(event) => { event.preventDefault(); openMenu(event.clientX, event.clientY); }}
       onPointerDown={(event) => {
         if (event.pointerType === 'mouse') return;
@@ -198,7 +211,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
             <span className="reply-text">{quoted ? quotedPreview(quoted) : quotedStatus === 'loading' ? '正在读取原消息…' : quotedStatus === 'error' ? '原消息暂时无法读取' : '原消息已删除或不可用'}</span>
           </div>
         )}
-        <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': { const displayText = stripModelDirectivesForDisplay(part.text); return displayText ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{highlighted(displayText, highlightQuery)}</div> : null; } case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>
+        <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': { const displayText = stripModelDirectivesForDisplay(part.text); return displayText ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{highlightedText(displayText, highlightQuery)}</div> : null; } case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>
         <div className="msg-meta"><span className="clock" title={formatFullDateTime(message.createdAt, timeZone)}>{formatClock(message.createdAt, timeZone)}</span>{message.pendingLocal && message.status !== 'failed' && <span className="sending-dot" aria-label="发送中" />}{failedMessage && <span className="failed-flag">发送失败{retryable && onRetry && <button type="button" className="retry-btn" onClick={() => onRetry(message)}>重试</button>}</span>}<button type="button" className="message-menu-button" aria-label="消息操作" onClick={(event) => openMenu(event.clientX, event.clientY)}>···</button></div>
       </div>
       {menu && <div ref={menuRef} className="message-action-menu" role="menu" aria-label="消息操作" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 10000 }}>
