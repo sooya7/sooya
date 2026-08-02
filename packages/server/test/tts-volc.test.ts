@@ -94,6 +94,12 @@ describe('native 火山 TTS provider', () => {
     expect(req.audio_params).not.toHaveProperty('emotion');
   });
 
+  it('omits a model field from req_params even when configured, since the vendor selects the model via X-Api-Resource-Id', async () => {
+    const { provider, read } = capture(config({ model: 'seed-tts-2.0' }), stream([mp3Chunk()]));
+    await provider.synthesize('测试');
+    expect(read()!.json.req_params).not.toHaveProperty('model');
+  });
+
   it('serialises additions as a JSON string, because a raw object panics the vendor behind a 200', async () => {
     const { provider, read } = capture(config(), stream([mp3Chunk()]));
     await provider.synthesize('好耶', { instructions: '慢一点。' });

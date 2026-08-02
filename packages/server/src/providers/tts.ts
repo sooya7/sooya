@@ -212,8 +212,9 @@ export class VolcTTSProvider implements TTSProvider {
               audioParams.emotion_scale = this.cfg.emotionScale;
             }
           }
+          // The vendor selects the model via X-Api-Resource-Id; a `model` field in
+          // req_params makes it answer 45000001 InvalidModel, so it must be omitted.
           const reqParams: Record<string, unknown> = { text: spokenText, speaker: voice, audio_params: audioParams };
-          if (this.cfg.model) reqParams.model = this.cfg.model;
           const additions: Record<string, unknown> = {};
           if (transport === 'instruction' && opts.instructions && shouldSendInstructions(this.cfg)) {
             // The official instruction channel for 2.0 voices. Only the first entry
