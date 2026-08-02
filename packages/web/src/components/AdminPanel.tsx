@@ -317,7 +317,293 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
           <label>模型名<input value={draft.model} onChange={(e) => update({ model: e.target.value })} /></label>
           <label>接口地址<input value={draft.baseUrl} placeholder="留空则用默认地址" onChange={(e) => update({ baseUrl: e.target.value })} /></label>
           <label>密钥环境变量<input value={draft.apiKeyEnv} placeholder="例如 GLM_API_KEY" onChange={(e) => update({ apiKeyEnv: e.target.value })} /></label>
-          <label>备注<input value={draft.notes} onChange={(e) => update({ notes: e…5422 tokens truncated…0027)) void adminApi.deleteMedia(m.id).then(load).catch((e) => onNotice(errorText(e))); }}>删除</button></div>) : <EmptyState>暂无媒体文件</EmptyState>}
+          <label>备注<input value={draft.notes} onChange={(e) => update({ notes: e.target.value })} /></label>
+          <div className="admin-preset-form-actions">
+            <button type="button" className="admin-primary" disabled={busy} onClick={submit}>{editingId ? '保存修改' : '添加到模型库'}</button>
+            <button type="button" disabled={busy} onClick={() => { setDraft(null); setEditingId(null); }}>取消</button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [models, setModels] = useState<AdminModels | null>(null);
+  const [selected, setSelected] = useState<ModelSlot>('chat');
+  const [available, setAvailable] = useState<string[] | null>(null);
+  const [keyDraft, setKeyDraft] = useState('');
+  const [pulling, setPulling] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [libraryKey, setLibraryKey] = useState(0);
+
+  useEffect(() => {
+    void adminApi.models().then((r) => setModels(r.models)).catch((e) => onNotice(errorText(e)));
+  }, [onNotice]);
+
+  const config = (models?.[selected] ?? {}) as Record<string, unknown>;
+  const discoveryUnsupported = config.provider === 'anuma-input-images';
+  const update = (key: string, value: unknown) => setModels((prev) => ({
+    ...(prev ?? {}),
+    [selected]: { ...config, [key]: value }
+  }));
+
+  const save = async () => {
+    if (!models) return;
+    try {
+      const typed = keyDraft.trim();
+      const r = await adminApi.updateModels({ [selected]: { ...config, ...(typed ? { apiKey: typed } : {}) } });
+      setModels(r.models);
+      setKeyDraft('');
+      // The old verdict was about the config that was just replaced.
+      setTestResult(null);
+      onNotice(typed ? '模型配置与密钥已保存' : '模型配置已保存');
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+
+  /** Asks the endpoint what it serves. The key stays server-side. */
+  const pull = async () => {
+    if (discoveryUnsupported) {
+      onNotice('Anuma 不提供模型列表，请手动填写模型名');
+      return;
+    }
+    if (keyDraft.trim()) {
+      onNotice('请先点击“保存模型配置”，再拉取模型列表');
+      return;
+    }
+    setPulling(true);
+    try {
+      const r = await adminApi.discoverModels(selected, String(config.baseUrl ?? '').trim() || undefined);
+      setAvailable(r.models);
+      onNotice(`拉取到 ${r.models.length} 个模型`);
+    } catch (e) {
+      setAvailable(null);
+      onNotice(errorText(e));
+    } finally {
+      setPulling(false);
+    }
+  };
+
+  /**
+   * Probes the endpoint once with the *saved* config, so "saved" can be told
+   * apart from "actually works". Unsaved form edits are not part of the probe.
+   */
+  const runTest = async () => {
+    if (selected === 'image' && !confirmAction('测试出图会真实调用图片服务并消耗一次额度，确定继续吗？')) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await adminApi.testModel(selected, selected === 'image');
+      const text = `连接正常：${r.provider}${r.model ? ` / ${r.model}` : ''}，${r.detail}，耗时 ${r.latencyMs} ms`;
+      setTestResult({ ok: true, text });
+      onNotice(text);
+    } catch (e) {
+      const text = errorText(e);
+      setTestResult({ ok: false, text });
+      onNotice(text);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  /** Saves what is on screen into the library as a new entry. */
+  const addToLibrary = async () => {
+    try {
+      const current = await adminApi.modelPresets();
+      const draft = presetFromConfig(selected, config, current.presets);
+      if (typeof draft === 'string') {
+        onNotice(draft);
+        return;
+      }
+      await adminApi.saveModelPresets([...current.presets, draft]);
+      setLibraryKey((k) => k + 1);
+      onNotice(`已添加到模型库：${draft.name}`);
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+
+  if (!models) return <p className="admin-muted">正在读取模型配置…</p>;
+
+  return (
+    <section className="admin-model-layout" data-testid="admin-models-form">
+      <aside>
+        <h2>模型能力</h2>
+        {CAPABILITIES.map(([key, label]) => (
+          <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); setKeyDraft(''); setTestResult(null); }}>
+            <span>{label}</span>
+            <small>{String((models[key] as Record<string, unknown> | undefined)?.model ?? '未独立配置')}</small>
+          </button>
+        ))}
+      </aside>
+      <div className="admin-form-card">
+        <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description="编辑当前能力使用的真实服务端配置。" />
+        <ModelLibrary onNotice={onNotice} onApplied={setModels} reloadKey={libraryKey} />
+        <label>接口协议<select value={String(config.provider ?? 'none')} onChange={(e) => update('provider', e.target.value)}>
+          {interfaceOptions(selected, config.provider == null ? null : String(config.provider)).map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select></label>
+        <label className="admin-form-wide">
+          模型名
+          <span className="admin-inline-field">
+            <input list="admin-model-options" value={String(config.model ?? '')} onChange={(e) => update('model', e.target.value)} />
+            <button type="button" data-testid="admin-model-pull" disabled={pulling || discoveryUnsupported} onClick={() => void pull()}>{pulling ? '拉取中…' : '拉取模型'}</button>
+          </span>
+          <datalist id="admin-model-options">
+            {(available ?? []).map((name) => <option key={name} value={name} />)}
+          </datalist>
+          <small>
+            {available
+              ? `拉取到 ${available.length} 个模型，点输入框可选；列表可能不全，仍可手填。`
+              : discoveryUnsupported
+                ? 'Anuma 不提供模型列表接口，请直接填写供应商提供的模型名。'
+                : '从接口地址拉取该服务提供的模型名。密钥不会离开服务器。'}
+          </small>
+        </label>
+        <label className="admin-form-wide">
+          接口地址
+          <input
+            value={String(config.baseUrl ?? '')}
+            placeholder={selected === 'image' ? 'https://你的 NewAPI 地址/v1' : undefined}
+            onChange={(e) => update('baseUrl', e.target.value)}
+          />
+          {selected === 'image' && (config.provider === 'openai-compatible' || config.provider === 'openai-images') && (
+            <small>NewAPI 请填到 /v1 根路径，不要填 /images/generations；修改 API Key 后先保存，再拉取模型。</small>
+          )}
+        </label>
+        {selected === 'image' && (config.provider === 'openai-compatible' || config.provider === 'openai-images') && (
+          <label>
+            New-Api-User（可选）
+            <input value={String(config.newApiUserId ?? '')} onChange={(e) => update('newApiUserId', e.target.value)} placeholder="NewAPI 用户 ID" />
+            <small>只有 NewAPI 的 /api/models 要求用户鉴权时填写；不知道就先留空。</small>
+          </label>
+        )}
+        <label>
+          API Key
+          <input
+            type="password"
+            autoComplete="off"
+            data-testid="admin-model-apikey"
+            value={keyDraft}
+            placeholder={config.apiKeyConfigured ? '已配置，留空则不改' : '粘贴密钥'}
+            onChange={(e) => setKeyDraft(e.target.value)}
+          />
+          <small>{config.apiKeyConfigured ? '已保存一把密钥。要换就粘新的，留空则保持不变。' : '还没有密钥，粘贴后点保存。'}</small>
+        </label>
+        <label>请求超时（毫秒）<input type="number" value={String(config.timeoutMs ?? '')} onChange={(e) => update('timeoutMs', Number(e.target.value))} /></label>
+        {['chat', 'vision', 'summary'].includes(selected) && <>
+          <label>最大输出 Token<input type="number" value={String(config.maxTokens ?? '')} onChange={(e) => update('maxTokens', Number(e.target.value))} /></label>
+          <label>Temperature<input type="number" step="0.1" value={String(config.temperature ?? '')} onChange={(e) => update('temperature', Number(e.target.value))} /></label>
+          <label>上下文窗口<input type="number" value={String(config.contextWindow ?? '')} onChange={(e) => update('contextWindow', Number(e.target.value))} /></label>
+          <label>最大重试次数<input type="number" value={String(config.maxRetries ?? '')} onChange={(e) => update('maxRetries', Number(e.target.value))} /></label>
+        </>}
+        {['chat', 'vision'].includes(selected) && (
+          <label className="admin-form-wide">
+            声明支持读图
+            <select value={config.supportsVision ? 'yes' : 'no'} onChange={(e) => update('supportsVision', e.target.value === 'yes')}>
+              <option value="no">否（发来的图片不会送给这个模型）</option>
+              <option value="yes">是（模型真的能读图才选）</option>
+            </select>
+            <small>谎报为「是」会让带图的回复整条失败，而不是降级成纯文字。</small>
+          </label>
+        )}
+        {selected === 'image' && <label>图片尺寸<input value={String(config.size ?? '')} onChange={(e) => update('size', e.target.value)} /></label>}
+        {selected === 'image' && config.provider === 'anuma-input-images' && <>
+          <p className="field-help">生成阶段不会自动重试，以免一次请求产生多张图片。</p>
+          <label>Anuma 上传超时（毫秒）<input type="number" min="1000" max="120000" value={String(config.uploadTimeoutMs ?? 20000)} onChange={(e) => update('uploadTimeoutMs', Number(e.target.value))} /></label>
+          <label>Anuma 上传重试次数<input type="number" min="0" max="3" value={String(config.uploadMaxRetries ?? 2)} onChange={(e) => update('uploadMaxRetries', Number(e.target.value))} /></label>
+          <p className="admin-muted admin-form-wide">Anuma 图生图会先上传参考图，再把 HTTPS 地址传给 generations；不会把图片 Base64 或签名地址写入日志。</p>
+        </>}
+        {selected === 'tts' && <>
+          <label>音色<input value={String(config.voice ?? '')} onChange={(e) => update('voice', e.target.value)} /></label>
+          <label>语速<input type="number" step="0.1" value={String(config.speed ?? '')} onChange={(e) => update('speed', Number(e.target.value))} /></label>
+          <label className="admin-form-wide">
+            情绪投递方式
+            <select value={String(config.emotionMode ?? 'auto')} onChange={(e) => update('emotionMode', e.target.value)}>
+              <option value="auto">自动（按音色 ID 判断，推荐）</option>
+              <option value="instruction">自然语言指令（豆包 2.0「指令遵循」音色）</option>
+              <option value="enum">emotion 枚举（仅「多情感」音色，ID 带 _emo_）</option>
+              <option value="off">不传情绪</option>
+            </select>
+            <small>两种音色家族收情绪的方式不一样。自动模式看音色 ID 里有没有 <code>_emo_</code>，换音色就自动跟着切。</small>
+          </label>
+          <label className="admin-form-wide">
+            Resource-Id（仅火山官方协议）
+            <input value={String(config.resourceId ?? '')} placeholder="seed-tts-2.0" onChange={(e) => update('resourceId', e.target.value)} />
+            <small>它同时决定模型版本和计费商品。官方说明：语音模型不支持通过 Auto 或控制台切换，必须在这里指定。</small>
+          </label>
+          <label>情绪强度（仅枚举方式，1~5）<input type="number" step="1" min="1" max="5" value={String(config.emotionScale ?? 4)} onChange={(e) => update('emotionScale', Number(e.target.value))} /></label>
+        </>}
+        {selected === 'embedding' && <label>向量维度<input type="number" value={String(config.dimensions ?? '')} onChange={(e) => update('dimensions', Number(e.target.value))} /></label>}
+        <div className="admin-actions">
+          {selected === 'image' && <small className="admin-muted">测试出图会真实调用图片服务并消耗一次额度。</small>}
+          <button type="button" onClick={() => void save()}>保存模型配置</button>
+          <button type="button" data-testid="admin-model-test" disabled={testing} onClick={() => void runTest()}>{testing ? '测试中…' : '测试连接'}</button>
+          <button type="button" data-testid="admin-model-add-preset" onClick={() => void addToLibrary()}>添加配置</button>
+        </div>
+        {testResult ? (
+          <p className={testResult.ok ? 'admin-test-result ok' : 'admin-test-result fail'} data-testid="admin-model-test-result">{testResult.text}</p>
+        ) : (
+          <small className="admin-muted">「测试连接」会用已保存的配置真发一次最小请求。改了表单要先保存再测。</small>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ContentPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [memories, setMemories] = useState<AdminMemory[]>([]);
+  const [recall, setRecall] = useState<AdminRecallTrace | null>(null);
+  const [stickers, setStickers] = useState<AdminSticker[]>([]);
+  const [media, setMedia] = useState<AdminMedia[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const [m, s, d] = await Promise.all([adminApi.memories(), adminApi.stickers(), adminApi.media()]);
+      setMemories(m.memories);
+      setRecall(m.recall ?? null);
+      setStickers(s.stickers);
+      setMedia(d.media);
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  }, [onNotice]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <section className="admin-content" data-testid="admin-content">
+      <article className="admin-card" data-testid="admin-memory-list">
+        <div className="admin-card-subtitle"><h2>记忆</h2><span className="admin-count-badge">{memories.length}</span></div>
+        {memories.length ? memories.slice(0, 8).map((m) => <div className="admin-list-row" key={m.id}><span>{m.content}</span><button type="button" onClick={() => void adminApi.deleteMemory(m.id).then(load).catch((e) => onNotice(errorText(e)))}>删除</button></div>) : <EmptyState>暂无长期记忆</EmptyState>}
+        <div className="admin-actions"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('确认清空全部记忆？')) void adminApi.clearMemories().then(load).catch((e) => onNotice(errorText(e))); }}>清空记忆</button></div>
+      </article>
+
+      {recall && <article className="admin-card" data-testid="admin-memory-recall">
+        <div className="admin-card-subtitle"><h2>最近一次记忆召回</h2><span>{recall.strategy}</span></div>
+        <p>查询：{recall.query || '（无）'}</p>
+        <p>候选 {recall.stats.recalled} · 纳入 {recall.stats.included} · 去重 {recall.stats.deduplicated} · 超预算 {recall.stats.budgetDropped}</p>
+        {recall.fallbackReason && <p>回退原因：{recall.fallbackReason}</p>}
+        {recall.entries.slice(0, 8).map((entry) => <div className="admin-list-row" key={entry.id}>
+          <span>{entry.included ? '已纳入' : `已丢弃（${entry.droppedReason ?? '未知'}）`} · {entry.kind} · {entry.content}</span>
+          <small>{entry.strategy} · {entry.reason}</small>
+        </div>)}
+        {!recall.entries.length && <EmptyState>最近一次没有召回记忆</EmptyState>}
+      </article>}
+
+      <article className="admin-card" data-testid="admin-sticker-list">
+        <div className="admin-card-subtitle"><h2>表情包</h2><span className="admin-count-badge">{stickers.length}</span></div>
+        {stickers.length ? stickers.slice(0, 8).map((s) => <div className="admin-list-row" key={s.id}><span>{s.name} · {s.emotion}</span><button type="button" onClick={() => { if (confirmAction(`删除表情包“${s.name}”？`)) void adminApi.deleteSticker(s.id).then(load).catch((e) => onNotice(errorText(e))); }}>删除</button></div>) : <EmptyState>暂无表情包</EmptyState>}
+        <StickerUpload onDone={load} onNotice={onNotice} />
+      </article>
+
+      <article className="admin-card" data-testid="admin-media-list">
+        <div className="admin-card-subtitle"><h2>媒体文件</h2><span className="admin-count-badge">{media.length}</span></div>
+        {media.length ? media.slice(0, 8).map((m) => <div className="admin-list-row" key={m.id}><span>{m.kind} · {formatBytes(m.bytes)}</span><button type="button" onClick={() => { if (confirmAction('删除该媒体文件？')) void adminApi.deleteMedia(m.id).then(load).catch((e) => onNotice(errorText(e))); }}>删除</button></div>) : <EmptyState>暂无媒体文件</EmptyState>}
       </article>
 
       <article className="admin-card">
