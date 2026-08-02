@@ -28,9 +28,11 @@ import { Replier } from './core/replier.js';
 import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
 import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig } from './core/life.js';
 import { LifeRepo } from './db/repos/life.repo.js';
+import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
 import { ReplyCoordinator } from './core/reply-coordinator.js';
 import { PushService } from './core/push.js';
+import { ProactiveComposer } from './core/proactive.js';
 import { StorageService } from './core/storage.js';
 import { maintenanceCoordinator } from './core/maintenance.js';
 import { EventBus } from './events/bus.js';
@@ -81,6 +83,7 @@ export interface SooyaApp {
     errors: ErrorLogRepo;
     pushSubscriptions: PushSubscriptionRepo;
     life: LifeRepo;
+    proactive: ProactiveAttemptRepo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
     replyBatches: ReplyBatchRepo;
@@ -92,6 +95,7 @@ export interface SooyaApp {
     capabilities: CapabilityRegistry;
     memory: MemoryService;
     life: LifeEngine;
+    proactive: ProactiveComposer;
     push: PushService;
     storage: StorageService;
     context: ContextBuilder;
@@ -166,6 +170,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     errors: new ErrorLogRepo(dbHandle),
     pushSubscriptions: new PushSubscriptionRepo(dbHandle),
     life: new LifeRepo(dbHandle),
+    proactive: new ProactiveAttemptRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle),
     replyBatches: new ReplyBatchRepo(dbHandle)
@@ -196,10 +201,22 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
         from: policy.silentFrom ?? DEFAULT_LIFE_CONFIG.silentHours.from,
         to: policy.silentTo ?? DEFAULT_LIFE_CONFIG.silentHours.to
       },
-      reachOut: policy.reachOut ?? true
+      reachOut: policy.reachOut ?? true,
+      proactiveMode: policy.proactiveMode ?? DEFAULT_LIFE_CONFIG.proactiveMode
     };
   };
   const life = new LifeEngine(repos.life, lifeSettings, opts.clock);
+  const proactive = new ProactiveComposer({
+    attempts: repos.proactive,
+    jobs: repos.jobs,
+    messages: repos.messages,
+    life,
+    capabilities,
+    config,
+    media: mediaStore,
+    stickers: stickerLibrary,
+    bus
+  });
   const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, repos.mediaText, env.ENABLE_LIFE_ENGINE ? life : undefined, env.LIFE_TIME_ZONE);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
@@ -254,6 +271,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     bus,
     backups,
     life,
+    proactive,
     capabilities,
     config,
     reachOutEnabled: env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT,
@@ -359,7 +377,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     reopenDatabase: () => {
