@@ -81,26 +81,21 @@ export function registerFeatureRoutes(app: SooyaApp): void {
    * quiet hours, or simply has nothing finished worth mentioning.
    */
   server.get('/api/admin/life', adminGuard, async () => {
-    const recent = repos.messages.recent(40);
-    const lastUser = [...recent].reverse().find((msg) => msg.role === 'user');
-    const lastAssistant = [...recent].reverse().find((msg) => msg.role === 'assistant');
-    const decision = services.life.shouldReachOut(
-      lastUser ? new Date(lastUser.createdAt) : null,
-      lastAssistant ? new Date(lastAssistant.createdAt) : null
-    );
+    const evaluation = services.proactive.evaluate();
     const settings = services.life.settings;
     return {
       snapshot: services.life.snapshot(),
       log: repos.life.recent(24),
       plans: repos.life.listPlans().slice(0, 50),
       events: repos.life.events(50),
+      proactive: repos.proactive.list(50),
       reachOut: {
-        reach: decision.reach,
-        reason: decision.reason,
-        candidate: decision.candidate ? { id: decision.candidate.id, activity: decision.candidate.activity, endedAt: decision.candidate.ended_at } : null,
+        reach: evaluation.reach,
+        reason: evaluation.reason,
+        candidate: evaluation.candidate ? { id: evaluation.candidate.id, activity: evaluation.candidate.activity, endedAt: evaluation.candidate.ended_at } : null,
         sharedLastDay: repos.life.countSharedSince(new Date(Date.now() - 86_400_000).toISOString()),
-        lastUserAt: lastUser?.createdAt ?? null,
-        lastAssistantAt: lastAssistant?.createdAt ?? null,
+        lastUserAt: evaluation.lastUserAt,
+        lastAssistantAt: evaluation.lastAssistantAt,
         // The env var is a kill switch the panel cannot override, so say so.
         enabledByDeployment: app.env.ENABLE_LIFE_ENGINE && app.env.ENABLE_LIFE_REACH_OUT
       },
@@ -110,7 +105,8 @@ export function registerFeatureRoutes(app: SooyaApp): void {
         maxReachOutsPerDay: settings.maxReachOutsPerDay,
         silentFrom: settings.silentHours.from,
         silentTo: settings.silentHours.to,
-        tzOffsetMinutes: settings.tzOffsetMinutes
+        tzOffsetMinutes: settings.tzOffsetMinutes,
+        proactiveMode: settings.proactiveMode ?? 'auto'
       }
     };
   });
@@ -185,7 +181,8 @@ export function registerFeatureRoutes(app: SooyaApp): void {
         maxReachOutsPerDay: settings.maxReachOutsPerDay,
         silentFrom: settings.silentHours.from,
         silentTo: settings.silentHours.to,
-        tzOffsetMinutes: settings.tzOffsetMinutes
+        tzOffsetMinutes: settings.tzOffsetMinutes,
+        proactiveMode: settings.proactiveMode ?? 'auto'
       }
     };
   });
