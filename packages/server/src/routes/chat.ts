@@ -10,6 +10,7 @@ const HistoryQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(
 const MessageContextQuerySchema = z.object({ before: z.coerce.number().int().min(0).max(100).default(20), after: z.coerce.number().int().min(0).max(100).default(20) });
 const MessageSearchQuerySchema = z.object({ q: z.string().trim().min(1).max(200), limit: z.coerce.number().int().min(1).max(50).default(30), cursor: z.string().regex(/^\d+$/u).optional() });
 const MessageDateQuerySchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), timeZone: z.string().trim().min(1).max(100).default('Asia/Shanghai'), limit: z.coerce.number().int().min(1).max(500).default(200) });
+const MessageIdParamsSchema = z.object({ id: z.string().min(1).max(80) });
 
 export function registerChatRoutes(app: SooyaApp): void {
   const { server, repos, services, env } = app;
@@ -57,15 +58,19 @@ export function registerChatRoutes(app: SooyaApp): void {
   });
 
   server.get('/api/messages/:id', { preHandler: auth }, async (req, reply) => {
-    const msg = repos.messages.get((req.params as { id: string }).id);
+    const params = MessageIdParamsSchema.safeParse(req.params);
+    if (!params.success) { reply.code(400); return { error: 'bad_request', issues: params.error.issues }; }
+    const msg = repos.messages.get(params.data.id);
     if (!msg) { reply.code(404); return { error: 'not_found' }; }
     return { message: msg };
   });
 
   server.get('/api/messages/:id/context', { preHandler: auth }, async (req, reply) => {
+    const params = MessageIdParamsSchema.safeParse(req.params);
+    if (!params.success) { reply.code(400); return { error: 'bad_request', issues: params.error.issues }; }
     const parsed = MessageContextQuerySchema.safeParse(req.query);
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
-    const { id } = req.params as { id: string };
+    const { id } = params.data;
     const context = repos.messages.context(id, parsed.data.before, parsed.data.after);
     if (!context) { reply.code(404); return { error: 'not_found' }; }
     return context;
@@ -93,7 +98,11 @@ export function registerChatRoutes(app: SooyaApp): void {
       return { ...created, event, batch };
     });
     const { message, created, event, batch } = tx();
-    if (!created) return { message, duplicate: true, replyPending: false };
+    if (!created) {
+      const batch = repos.replyBatches.findByMessage(message.id);
+      const pending = batch !== undefined && (batch.status === 'collecting' || batch.status === 'queued' || batch.status === 'running');
+      return { message, duplicate: true, replyPending: pending, ...(pending ? { batchId: batch.id } : {}) };
+    }
     services.bus.fanout(event!);
     void services.replyCoordinator.enqueue(batch!.id, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }).catch((error) => {
       repos.errors.add('reply-coordinator', (error as Error).message);
@@ -132,9 +141,11 @@ export function registerChatRoutes(app: SooyaApp): void {
   server.post('/api/messages/:id/withdraw', { preHandler: auth }, async (req, reply) => {
     const blocked = rejectBlockedWrite(reply);
     if (blocked) return blocked;
-    const id = (req.params as { id: string }).id;
+    const params = MessageIdParamsSchema.safeParse(req.params);
+    if (!params.success) { reply.code(400); return { error: 'bad_request', issues: params.error.issues }; }
+    const id = params.data.id;
     const now = Date.now();
-    const windowMs = 5 * 60_000;
+    const windowMs = env.WITHDRAW_WINDOW_MS;
     // Coordinate eligibility, conditional state transition, parts replacement,
     // audit and the durable message.updated event in one SQLite transaction.
     // Only the winning caller (kind === 'withdrawn') persists an event; the

@@ -70,6 +70,7 @@ const EnvSchema = z.object({
   CONTEXT_MEMORY_LIMIT: intish(8),
   SUMMARY_TRIGGER_MESSAGES: intish(40),
   SUMMARY_CHUNK_MESSAGES: intish(30),
+  WITHDRAW_WINDOW_MS: intish(5 * 60_000),
 
   ENABLE_BACKGROUND_JOBS: boolish(true),
   DISABLE_MEMORY_PIPELINE: boolish(false),

@@ -298,8 +298,11 @@ describe('upload limits and MIME enforcement', () => {
       form.append('images', new Blob([new Uint8Array(TEST_PNG)], { type: 'image/png' }), `f${i}.png`);
     }
     const res = await h.app.server.inject({ method: 'POST', url: '/api/media', payload: form });
-    const saved = res.statusCode === 200 ? res.json().media.length : 0;
+    const body = res.json() as { media: unknown[]; failed: Array<{ code?: string }> };
+    const saved = res.statusCode === 200 ? body.media.length : 0;
     expect(saved).toBeLessThanOrEqual(2);
+    // 超限分片被逐一丢弃并排空，每个都记入 failed 而不是中途 break 丢流。
+    expect(body.failed.filter((item) => item.code === 'TOO_MANY_FILES')).toHaveLength(2);
   });
 });
 

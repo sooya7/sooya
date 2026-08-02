@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lastUserMessageAt } from '../src/core/context.js';
+import { estimateTextTokens, lastUserMessageAt } from '../src/core/context.js';
 import type { ChatMessage } from '../src/core/types.js';
 
 describe('life context batch boundary', () => {
@@ -11,6 +11,14 @@ describe('life context batch boundary', () => {
     ];
 
     expect(lastUserMessageAt(recent, ['batch-1', 'batch-2'])?.toISOString()).toBe('2026-08-01T00:00:00.000Z');
+  });
+});
+
+describe('token estimation', () => {
+  it('counts CJK conservatively so long Chinese text does not blow the context window', () => {
+    expect(estimateTextTokens('中文')).toBe(3);
+    expect(estimateTextTokens('hello')).toBe(2);
+    expect(estimateTextTokens('')).toBe(0);
   });
 });
 

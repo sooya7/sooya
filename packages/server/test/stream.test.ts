@@ -213,6 +213,19 @@ describe('SSE streaming', () => {
     expect(body.lastEventSeq).toBeGreaterThan(0);
   });
 
+  it('rejects an out-of-range limit on the polling fallback', async () => {
+    h = await createHarness();
+    for (const limit of ['-5', '0', 'abc', '999']) {
+      const res = await h.app.server.inject({ method: 'GET', url: `/api/events?limit=${limit}` });
+      expect(res.statusCode, `limit=${limit}`).toBe(400);
+      expect(res.json().error).toBe('bad_request');
+    }
+    const ok = await h.app.server.inject({ method: 'GET', url: '/api/events?limit=200' });
+    expect(ok.statusCode).toBe(200);
+    const okSince = await h.app.server.inject({ method: 'GET', url: '/api/events?since=0' });
+    expect(okSince.statusCode).toBe(200);
+  });
+
   it('a reply written to the database is always reachable via REST even if no event arrives', async () => {
     h = await createHarness({ chat: { script: [['数据库里的回复']] } });
     const base = await listen(h);

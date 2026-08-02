@@ -2,8 +2,10 @@ import type { FastifyReply } from 'fastify';
 import type { SooyaApp } from '../app.js';
 import { requireChatToken } from './auth.js';
 import type { StreamEvent } from '../core/types.js';
+import { z } from 'zod';
 
 const HEARTBEAT_MS = 15_000;
+const EventsLimitSchema = z.coerce.number().int().min(1).max(500);
 
 /**
  * SSE stream with durable replay.
@@ -126,10 +128,12 @@ export function registerStreamRoutes(app: SooyaApp): void {
   });
 
   /** Polling fallback for environments where SSE is blocked. */
-  server.get('/api/events', { preHandler: auth }, async (req) => {
+  server.get('/api/events', { preHandler: auth }, async (req, reply) => {
     const q = req.query as { since?: string; limit?: string };
     const since = parseSeq(q.since) ?? 0;
-    const limit = Math.min(Number(q.limit ?? 200) || 200, 500);
+    const parsed = EventsLimitSchema.safeParse(q.limit ?? '200');
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const limit = parsed.data;
     const events = services.bus.replay(since, limit).map(serialize);
     return { events, lastEventSeq: services.bus.lastSeq() };
   });

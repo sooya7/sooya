@@ -101,6 +101,43 @@ describe('idempotency and concurrency', () => {
     expect(h.state.chatCalls).toHaveLength(1);
   });
 
+  it('a duplicate send reports replyPending while the reply is still being generated', async () => {
+    h = await createHarness({ chat: { script: [['慢回复']], delayMs: 800 } });
+    const post = (clientMsgId: string) =>
+      h.app.server.inject({
+        method: 'POST',
+        url: '/api/messages',
+        payload: { clientMsgId, content: [{ type: 'text', text: '你好' }] }
+      });
+    const first = (await post('dup-pending-1')).json() as any;
+    expect(first.duplicate).toBe(false);
+    const batch = h.app.repos.replyBatches.findByMessage(first.message.id);
+    expect(batch).toBeTruthy();
+    expect(['collecting', 'queued', 'running']).toContain(batch!.status);
+
+    const second = (await post('dup-pending-1')).json() as any;
+    expect(second.duplicate).toBe(true);
+    expect(second.replyPending).toBe(true);
+    expect(second.batchId).toBe(batch!.id);
+
+    // 等回复完成后重发，应回 replyPending:false。
+    await new Promise((resolve) => setTimeout(resolve, 950));
+    const third = (await post('dup-pending-1')).json() as any;
+    expect(third.duplicate).toBe(true);
+    expect(third.replyPending).toBe(false);
+    expect(third.batchId).toBeUndefined();
+  });
+
+  it('rejects an oversized withdraw target id', async () => {
+    h = await createHarness();
+    const res = await h.app.server.inject({
+      method: 'POST',
+      url: `/api/messages/${'x'.repeat(81)}/withdraw`
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('bad_request');
+  });
+
   it('batches concurrent sends into one reply to the latest user message', async () => {
     h = await createHarness({ chat: { script: [['A']], delayMs: 20 } });
     await Promise.all([

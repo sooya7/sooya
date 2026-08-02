@@ -270,7 +270,8 @@ export function estimateTextTokens(text: string): number {
     if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(char)) cjk++;
     else if (!/\s/u.test(char)) other++;
   }
-  return cjk + Math.ceil(other / 4);
+  // CJK 按 1.25 token/字估算，避免低估触发上游 context_length_exceeded。
+  return Math.ceil(cjk * 1.25) + Math.ceil(other / 4);
 }
 
 function estimateContextTokens(systemParts: string[], turns: ChatTurn[]): number {

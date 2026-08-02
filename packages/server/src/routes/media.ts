@@ -22,7 +22,7 @@ export function registerMediaRoutes(app: SooyaApp): void {
       for await (const part of req.parts()) {
         if (part.type !== 'file') continue;
         count++;
-        if (count > env.MAX_UPLOAD_FILES) { failed.push({ filename: part.filename ?? 'unknown', error: 'too many files', code: 'TOO_MANY_FILES' }); break; }
+        if (count > env.MAX_UPLOAD_FILES) { failed.push({ filename: part.filename ?? 'unknown', error: 'too many files', code: 'TOO_MANY_FILES' }); part.file.resume(); continue; }
         let buffer: Buffer;
         try { buffer = await part.toBuffer(); }
         catch (err) { const error = err as Error & { code?: string }; failed.push({ filename: part.filename ?? 'unknown', error: error.code === 'FST_REQ_FILE_TOO_LARGE' ? 'file too large' : error.message, code: error.code === 'FST_REQ_FILE_TOO_LARGE' ? 'TOO_LARGE' : 'READ_FAILED' }); continue; }
@@ -103,8 +103,25 @@ export function registerMediaRoutes(app: SooyaApp): void {
       return reply.send(streamFile(servePath, app));
     }
     if (range) {
-      const match = /bytes=(\d*)-(\d*)/.exec(range);
-      if (match) { const start = match[1] ? Number(match[1]) : 0; const end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1; if (start >= stat.size || start > end) { reply.code(416).header('content-range', `bytes */${stat.size}`); return reply.send(); } void reply.code(206).header('content-range', `bytes ${start}-${end}/${stat.size}`).header('content-length', String(end - start + 1)); return reply.send(streamFile(located.path, app, { start, end })); }
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+      if (match && !(match[1] === '' && match[2] === '')) {
+        const size = stat.size;
+        let start: number;
+        let end: number;
+        if (match[1] === '') {
+          // 后缀范围 bytes=-N：取文件最后 N 字节，不是前缀。
+          const n = Number(match[2]);
+          if (n <= 0) { reply.code(416).header('content-range', `bytes */${size}`); return reply.send(); }
+          start = Math.max(0, size - n);
+          end = size - 1;
+        } else {
+          start = Number(match[1]);
+          end = match[2] === '' ? size - 1 : Math.min(Number(match[2]), size - 1);
+        }
+        if (start >= size || start > end) { reply.code(416).header('content-range', `bytes */${size}`); return reply.send(); }
+        void reply.code(206).header('content-range', `bytes ${start}-${end}/${size}`).header('content-length', String(end - start + 1));
+        return reply.send(streamFile(located.path, app, { start, end }));
+      }
     }
     void reply.header('content-length', String(stat.size));
     return reply.send(streamFile(located.path, app));

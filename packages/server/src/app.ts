@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
@@ -369,7 +370,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     credentials: false,
     allowedHeaders: ['content-type', 'x-sooya-token', 'x-admin-token', 'authorization']
   });
-  await server.register(multipart, { limits: { fileSize: env.MAX_UPLOAD_BYTES, files: env.MAX_UPLOAD_FILES, fields: 20, fieldSize: 64 * 1024 } });
+  // 不设 limits.files：multipart 库会在第 N+1 个文件直接抛 413，打断 media.ts 对超限分片的
+  // resume 排空。文件数上限由业务计数接管；请求总大小仍受 bodyLimit 与 fileSize 双重约束。
+  await server.register(multipart, { limits: { fileSize: env.MAX_UPLOAD_BYTES, fields: 20, fieldSize: 64 * 1024 } });
 
   const app: SooyaApp = {
     server,
@@ -478,20 +481,22 @@ function scheduleRecurring(app: SooyaApp): void {
   if (env.BACKUP_ON_START) repos.jobs.enqueue('backup.create', { reason: 'startup' });
 }
 
+// 用 fileURLToPath 而非 new URL(import.meta.url).pathname：后者在 Windows 上产生 /C:/... 且不解码百分号。
+const here = path.dirname(fileURLToPath(import.meta.url));
+
 function resolveAssetsDir(): string | null {
   const candidates = [
     process.env.SOOYA_ASSETS_DIR,
     path.resolve(process.cwd(), 'assets/stickers'),
     path.resolve(process.cwd(), '../../assets/stickers'),
-    path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../assets/stickers'),
-    path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../../assets/stickers')
+    path.resolve(here, '../../../assets/stickers'),
+    path.resolve(here, '../../../../assets/stickers')
   ].filter(Boolean) as string[];
   for (const candidate of candidates) if (fs.existsSync(candidate)) return candidate;
   return null;
 }
 
 function resolveWebDir(): string | null {
-  const here = path.dirname(new URL(import.meta.url).pathname);
   const candidates = [path.resolve(process.cwd(), 'public'), path.resolve(process.cwd(), 'packages/web/dist'), path.resolve(here, '../public'), path.resolve(here, '../../../web/dist')];
   for (const candidate of candidates) if (fs.existsSync(path.join(candidate, 'index.html'))) return candidate;
   return null;

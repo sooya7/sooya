@@ -115,4 +115,35 @@ describe('媒体缓存响应头', () => {
     expect(res.statusCode).toBe(206);
     expect(res.rawPayload.length).toBe(8);
   });
+
+  it('Range 后缀形式 bytes=-N 返回文件尾部而不是头部', async () => {
+    h = await createHarness({ startWorkers: false });
+    const row = await seedImage(h, PNG);
+    const res = await h.app.server.inject({
+      method: 'GET',
+      url: `/api/media/${row.id}`,
+      headers: { range: 'bytes=-5' }
+    });
+    expect(res.statusCode).toBe(206);
+    expect(res.rawPayload.length).toBe(5);
+    expect(res.rawPayload.equals(PNG.subarray(PNG.length - 5))).toBe(true);
+    expect(res.headers['content-range']).toBe(`bytes ${PNG.length - 5}-${PNG.length - 1}/${PNG.length}`);
+  });
+
+  it('Range bytes=-0 与越界均回 416', async () => {
+    h = await createHarness({ startWorkers: false });
+    const row = await seedImage(h, PNG);
+    const zero = await h.app.server.inject({ method: 'GET', url: `/api/media/${row.id}`, headers: { range: 'bytes=-0' } });
+    expect(zero.statusCode).toBe(416);
+    const past = await h.app.server.inject({ method: 'GET', url: `/api/media/${row.id}`, headers: { range: `bytes=${PNG.length}-` } });
+    expect(past.statusCode).toBe(416);
+  });
+
+  it('空 Range bytes=- 被忽略，回 200 全文', async () => {
+    h = await createHarness({ startWorkers: false });
+    const row = await seedImage(h, PNG);
+    const res = await h.app.server.inject({ method: 'GET', url: `/api/media/${row.id}`, headers: { range: 'bytes=-' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.rawPayload.length).toBe(PNG.length);
+  });
 });
