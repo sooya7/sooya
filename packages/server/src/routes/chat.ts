@@ -87,6 +87,7 @@ export function registerChatRoutes(app: SooyaApp): void {
         parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: null, transcript: null })),
         meta: { directives }
       });
+      if (created.created) repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
       const batch = created.created ? repos.replyBatches.addMessage(created.message.id, services.replyCoordinator.dueAt()) : null;
       return { ...created, event, batch };
@@ -116,6 +117,7 @@ export function registerChatRoutes(app: SooyaApp): void {
         parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: null, transcript: null })),
         meta: { directives }
       });
+      if (created.created) repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
       const batch = created.created ? repos.replyBatches.addMessage(created.message.id, services.replyCoordinator.dueAt()) : null;
       return { ...created, event, batch };
