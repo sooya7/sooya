@@ -92,6 +92,8 @@ export function registerFeatureRoutes(app: SooyaApp): void {
     return {
       snapshot: services.life.snapshot(),
       log: repos.life.recent(24),
+      plans: repos.life.listPlans().slice(0, 50),
+      events: repos.life.events(50),
       reachOut: {
         reach: decision.reach,
         reason: decision.reason,
@@ -111,6 +113,58 @@ export function registerFeatureRoutes(app: SooyaApp): void {
         tzOffsetMinutes: settings.tzOffsetMinutes
       }
     };
+  });
+
+  server.post('/api/admin/life/plans', adminGuard, async (req, reply) => {
+    const parsed = z.object({
+      title: z.string().trim().min(1).max(200),
+      kind: z.string().trim().min(1).max(40),
+      plannedStart: z.string().trim().max(80).nullable().optional(),
+      plannedEnd: z.string().trim().max(80).nullable().optional(),
+      status: z.enum(['planned', 'active', 'paused', 'completed', 'cancelled', 'skipped']).optional(),
+      source: z.enum(['routine', 'generated', 'admin', 'conversation']).optional(),
+      priority: z.number().int().min(-100).max(100).optional()
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid_life_plan', message: parsed.error.message.slice(0, 300) };
+    }
+    const plan = repos.life.createPlan(parsed.data);
+    repos.audit.add('life', 'plan.created', plan.id, { title: plan.title, kind: plan.kind, status: plan.status });
+    services.bus.publish('life.updated', { plan: plan.id });
+    return { plan };
+  });
+
+  server.patch('/api/admin/life/plans/:id', adminGuard, async (req, reply) => {
+    const id = String((req.params as { id: string }).id);
+    if (!IdSchema.safeParse(id).success) {
+      reply.code(400);
+      return { error: 'bad_plan_id' };
+    }
+    const parsed = z.object({
+      title: z.string().trim().min(1).max(200).optional(),
+      kind: z.string().trim().min(1).max(40).optional(),
+      plannedStart: z.string().trim().max(80).nullable().optional(),
+      plannedEnd: z.string().trim().max(80).nullable().optional(),
+      status: z.enum(['planned', 'active', 'paused', 'completed', 'cancelled', 'skipped']).optional(),
+      priority: z.number().int().min(-100).max(100).optional()
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid_life_plan', message: parsed.error.message.slice(0, 300) };
+    }
+    const plan = repos.life.updatePlan(id, {
+      ...parsed.data,
+      planned_start: parsed.data.plannedStart,
+      planned_end: parsed.data.plannedEnd
+    });
+    if (!plan) {
+      reply.code(404);
+      return { error: 'life_plan_not_found' };
+    }
+    repos.audit.add('life', 'plan.updated', plan.id, { status: plan.status });
+    services.bus.publish('life.updated', { plan: plan.id });
+    return { plan };
   });
 
   server.put('/api/admin/life/settings', adminGuard, async (req, reply) => {

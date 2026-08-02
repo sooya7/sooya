@@ -565,6 +565,47 @@ export const MIGRATIONS: Migration[] = [
         END;
       `);
     }
+  },
+  {
+    version: 11,
+    name: 'life_engine_2_plans_events',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE life_plans (
+          id            TEXT PRIMARY KEY,
+          title         TEXT NOT NULL,
+          kind          TEXT NOT NULL,
+          planned_start TEXT,
+          planned_end   TEXT,
+          status        TEXT NOT NULL CHECK (status IN ('planned','active','paused','completed','cancelled','skipped')),
+          source        TEXT NOT NULL CHECK (source IN ('routine','generated','admin','conversation')),
+          priority      INTEGER NOT NULL DEFAULT 0,
+          meta_json     TEXT NOT NULL DEFAULT '{}',
+          created_at    TEXT NOT NULL,
+          updated_at    TEXT NOT NULL
+        );
+        CREATE INDEX idx_life_plans_status_time ON life_plans(status, planned_start, priority DESC);
+
+        CREATE TABLE life_events (
+          id           TEXT PRIMARY KEY,
+          plan_id      TEXT REFERENCES life_plans(id) ON DELETE SET NULL,
+          log_id       TEXT UNIQUE REFERENCES life_log(id) ON DELETE CASCADE,
+          event_type   TEXT NOT NULL,
+          activity     TEXT NOT NULL,
+          kind         TEXT NOT NULL,
+          description  TEXT NOT NULL,
+          mood_before  TEXT,
+          mood_after   TEXT,
+          happened_at  TEXT NOT NULL,
+          shareable    INTEGER NOT NULL DEFAULT 0,
+          shared_at    TEXT,
+          meta_json    TEXT NOT NULL DEFAULT '{}',
+          created_at   TEXT NOT NULL
+        );
+        CREATE INDEX idx_life_events_happened ON life_events(happened_at DESC);
+        CREATE INDEX idx_life_events_shareable ON life_events(shareable, shared_at, happened_at DESC);
+      `);
+    }
   }
 ];
 
