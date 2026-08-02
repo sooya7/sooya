@@ -136,12 +136,22 @@ export function useChat() {
     return () => { cancelled = true; streamRef.current?.stop(); streamRef.current = null; };
   }, [applyMessages, refreshLife, reload, resync, startStream]);
 
-  const loadOlder = useCallback(async () => {
-    if (loadingOlder || !hasMore) return;
-    const oldest = messages.find((m) => !m.pendingLocal); if (!oldest) return;
+  /**
+   * Fetches the next older page. Resolves true when messages were actually
+   * merged, false when nothing changed (already loading, exhausted history,
+   * empty page, or failure) — callers use that to release their scroll
+   * compensation state, which otherwise never resets when the array stays put.
+   */
+  const loadOlder = useCallback(async (): Promise<boolean> => {
+    if (loadingOlder || !hasMore) return false;
+    const oldest = messages.find((m) => !m.pendingLocal); if (!oldest) return false;
     setLoadingOlder(true);
-    try { const result = await api.messages({ limit: PAGE_SIZE, before: oldest.seq }); setMessages((prev) => mergeMessages(prev, result.messages)); setHasMore(result.hasMore); }
-    catch (err) { setError((err as Error).message); } finally { setLoadingOlder(false); }
+    try {
+      const result = await api.messages({ limit: PAGE_SIZE, before: oldest.seq });
+      setMessages((prev) => mergeMessages(prev, result.messages));
+      setHasMore(result.hasMore);
+      return result.messages.length > 0;
+    } catch (err) { setError((err as Error).message); return false; } finally { setLoadingOlder(false); }
   }, [hasMore, loadingOlder, messages]);
 
   const ensureQuotedMessage = useCallback((id: string): Promise<ChatMessage | null> => {

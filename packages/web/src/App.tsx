@@ -36,7 +36,7 @@ function ChatApp() {
   const userAvatar = useAuthenticatedMedia(chat.persona?.userAvatar ? mediaThumbnailPath(chat.persona.userAvatar, AVATAR_IMAGE_CSS_WIDTH) : chat.persona?.userAvatar, 'user', 'image');
   const scrollerRef = useRef<HTMLDivElement | null>(null); const bottomRef = useRef<HTMLDivElement | null>(null); const sentinelRef = useRef<HTMLDivElement | null>(null); const messagesRef = useRef<HTMLDivElement | null>(null);
   const [stickToBottom, setStickToBottom] = useState(true); const [unread, setUnread] = useState(0); const [notice, setNotice] = useState<string | null>(null); const [tokenInput, setTokenInput] = useState(''); const [quote, setQuote] = useState<ChatMessage | null>(null); const [swUpdate, setSwUpdate] = useState<ServiceWorkerUpdateController | null>(null); const [historyOpen, setHistoryOpen] = useState(false); const [searchQuery, setSearchQuery] = useState(''); const [searchHits, setSearchHits] = useState<MessageSearchHit[]>([]); const [searchIndex, setSearchIndex] = useState(0); const [historyBusy, setHistoryBusy] = useState(false); const [historyError, setHistoryError] = useState<string | null>(null); const [dateQuery, setDateQuery] = useState(''); const [highlightedId, setHighlightedId] = useState<string | null>(null); const [highlightNonce, setHighlightNonce] = useState(0);
-  const stickToBottomRef = useRef(true); const prevCountRef = useRef(0); const prevTotalSizeRef = useRef(0); const prevLastIdRef = useRef<string | null>(null); const loadingOlderRef = useRef(false); const didInitialScrollRef = useRef(false);
+  const stickToBottomRef = useRef(true); const prevTotalSizeRef = useRef(0); const prevLastIdRef = useRef<string | null>(null); const loadingOlderRef = useRef(false); const didInitialScrollRef = useRef(false);
   const historyScrollTopRef = useRef(0);
   // 渲染期镜像 chat.messages：跳转的 setTimeout 回调里读它，避免拿到陈旧的数组闭包。
   const latestMessagesRef = useRef(chat.messages);
@@ -54,7 +54,7 @@ function ChatApp() {
   useLayoutEffect(() => {
     const el = scrollerRef.current; if (!el) return; const messages = chat.messages; const count = messages.length; const lastId = messages[count - 1]?.id ?? null;
     if (!didInitialScrollRef.current && count > 0) {
-      didInitialScrollRef.current = true; prevCountRef.current = count; prevLastIdRef.current = lastId;
+      didInitialScrollRef.current = true; prevLastIdRef.current = lastId;
       // 首屏贴底：先按估算滚一次，等 measureElement 提交后 rAF 再校正到真实底部。
       virtualizer.scrollToIndex(count - 1, { align: 'end' });
       window.requestAnimationFrame(() => { if (scrollerRef.current) virtualizer.scrollToIndex(count - 1, { align: 'end' }); });
@@ -64,11 +64,11 @@ function ChatApp() {
     if (loadingOlderRef.current) { const delta = virtualizer.getTotalSize() - prevTotalSizeRef.current; if (delta > 0) el.scrollTop += delta; loadingOlderRef.current = false; }
     else if (stickToBottomRef.current) bottomRef.current?.scrollIntoView({ block: 'end' });
     if (appended > 0 && !stickToBottomRef.current) setUnread((value) => value + appended);
-    prevCountRef.current = count; prevLastIdRef.current = lastId;
+    prevLastIdRef.current = lastId;
   }, [chat.messages]);
 
   useEffect(() => { const scroller = scrollerRef.current; const content = messagesRef.current; if (!scroller || !content || typeof ResizeObserver === 'undefined') return; const observer = new ResizeObserver(() => { if (!loadingOlderRef.current && stickToBottomRef.current) scroller.scrollTop = scroller.scrollHeight; }); observer.observe(content); return () => observer.disconnect(); }, []);
-  useEffect(() => { const sentinel = sentinelRef.current; const scroller = scrollerRef.current; if (!sentinel || !scroller) return; const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting && chat.hasMore && !chat.loadingOlder) { loadingOlderRef.current = true; prevTotalSizeRef.current = virtualizer.getTotalSize(); void chat.loadOlder(); } }, { root: scroller, rootMargin: '120px 0px 0px 0px' }); observer.observe(sentinel); return () => observer.disconnect(); }, [chat.hasMore, chat.loadOlder, chat.loadingOlder]);
+  useEffect(() => { const sentinel = sentinelRef.current; const scroller = scrollerRef.current; if (!sentinel || !scroller) return; const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting && chat.hasMore && !chat.loadingOlder) { loadingOlderRef.current = true; prevTotalSizeRef.current = virtualizer.getTotalSize(); void chat.loadOlder().then((added) => { if (!added) { loadingOlderRef.current = false; prevTotalSizeRef.current = virtualizer.getTotalSize(); } }); } }, { root: scroller, rootMargin: '120px 0px 0px 0px' }); observer.observe(sentinel); return () => observer.disconnect(); }, [chat.hasMore, chat.loadOlder, chat.loadingOlder]);
   useEffect(() => {
     // main.tsx registers the worker and forwards a waiting update here.
     const onReady = (event: Event) => setSwUpdate((event as CustomEvent<ServiceWorkerUpdateController>).detail);

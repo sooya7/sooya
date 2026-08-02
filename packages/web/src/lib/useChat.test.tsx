@@ -655,7 +655,7 @@ describe('useChat loadOlder()', () => {
     stubRoutes({ messages: () => older.promise });
     const chat = await mountChat();
 
-    let first!: Promise<void>;
+    let first!: Promise<boolean>;
     await act(async () => { first = chat().loadOlder(); });
     expect(chat().loadingOlder).toBe(true);
 
