@@ -51,6 +51,8 @@ export interface CreateMessageInput {
   status?: MessageStatus;
   clientMsgId?: string | null;
   replyTo?: string | null;
+  /** Reply batch this assistant message belongs to; indexed for recovery. */
+  batchId?: string | null;
   parts: CreatePartInput[];
   meta?: Record<string, unknown>;
 }
@@ -109,8 +111,8 @@ export class MessageRepo {
       const seq = nextSeq(this.db, 'message_seq');
       this.db
         .prepare(
-          `INSERT INTO messages (id, conversation_id, role, created_at, updated_at, seq, status, client_msg_id, reply_to, error, meta_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+          `INSERT INTO messages (id, conversation_id, role, created_at, updated_at, seq, status, client_msg_id, reply_to, error, batch_id, meta_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`
         )
         .run(
           id,
@@ -122,6 +124,7 @@ export class MessageRepo {
           input.status ?? 'sent',
           input.clientMsgId ?? null,
           input.replyTo ?? null,
+          input.batchId ?? null,
           JSON.stringify(input.meta ?? {})
         );
       input.parts.forEach((p, idx) => this.insertPart(id, idx, p));
@@ -309,7 +312,7 @@ export class MessageRepo {
   findAssistantByBatchId(batchId: string): ChatMessage | undefined {
     const row = this.db.prepare(
       `SELECT * FROM messages
-       WHERE conversation_id = ? AND role = 'assistant' AND json_extract(meta_json, '$.batchId') = ?
+       WHERE conversation_id = ? AND batch_id = ?
        ORDER BY seq DESC LIMIT 1`
     ).get(CONVERSATION_ID, batchId) as MessageRow | undefined;
     return row ? this.hydrate([row])[0] : undefined;
@@ -318,7 +321,7 @@ export class MessageRepo {
   failInterruptedBatchShell(batchId: string): number {
     return this.db.prepare(
       `UPDATE messages SET status = 'failed', error = 'interrupted by restart', updated_at = ?
-       WHERE role = 'assistant' AND status = 'sending' AND json_extract(meta_json, '$.batchId') = ?`
+       WHERE batch_id = ? AND status = 'sending'`
     ).run(nowIso(), batchId).changes;
   }
 

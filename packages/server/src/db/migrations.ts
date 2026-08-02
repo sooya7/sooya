@@ -650,6 +650,30 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX idx_proactive_attempts_candidate ON proactive_attempts(candidate_id, created_at DESC);
       `);
     }
+  },
+  {
+    version: 14,
+    name: 'messages_batch_id_column',
+    up: (db) => {
+      /*
+       * Batch recovery used to look up assistant messages by
+       * json_extract(meta_json, '$.batchId'), which no ordinary index can
+       * serve. Promote batchId to a real column so findAssistantByBatchId and
+       * failInterruptedBatchShell query by indexed key. The old partial unique
+       * index on the JSON expression is rebuilt on the column with identical
+       * semantics: at most one active assistant message per batch.
+       */
+      db.exec(`
+        ALTER TABLE messages ADD COLUMN batch_id TEXT;
+        DROP INDEX idx_messages_one_active_reply_per_batch;
+        UPDATE messages SET batch_id = json_extract(meta_json, '$.batchId')
+          WHERE role = 'assistant' AND json_extract(meta_json, '$.batchId') IS NOT NULL;
+        CREATE INDEX idx_messages_batch ON messages(batch_id);
+        CREATE UNIQUE INDEX idx_messages_one_active_reply_per_batch
+          ON messages(batch_id)
+          WHERE role = 'assistant' AND status IN ('sending','sent') AND batch_id IS NOT NULL;
+      `);
+    }
   }
 ];
 

@@ -104,6 +104,7 @@ export class Replier {
           role: 'assistant',
           status: 'sending',
           replyTo: latestUserMessage.id,
+          batchId,
           parts: [],
           meta: { replyTo: latestUserMessage.id, batchId, batchMessageIds: userMessages.map((message) => message.id) }
         }).message,

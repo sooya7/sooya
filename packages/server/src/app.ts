@@ -309,7 +309,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const requeued = repos.jobs.recoverStuck();
   if (requeued > 0) logger.warn({ requeued }, 'requeued interrupted jobs');
   const orphaned = dbHandle.prepare(
-    "UPDATE messages SET status = 'failed', error = 'interrupted by restart' WHERE status = 'sending' AND json_extract(meta_json, '$.batchId') IS NULL"
+    "UPDATE messages SET status = 'failed', error = 'interrupted by restart' WHERE status = 'sending' AND batch_id IS NULL"
   ).run().changes;
   if (orphaned > 0) logger.warn({ orphaned }, 'marked interrupted assistant messages as failed');
   await cleanupTempFiles([env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files]);
