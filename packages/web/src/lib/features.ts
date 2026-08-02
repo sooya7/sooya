@@ -37,6 +37,7 @@ export interface LifeSettings {
   silentFrom: number;
   silentTo: number;
   tzOffsetMinutes: number;
+  proactiveMode?: 'auto' | 'text' | 'text_sticker' | 'voice' | 'image';
 }
 
 export interface LifeLogRow {
@@ -80,11 +81,31 @@ export interface LifeEventRow {
   created_at: string;
 }
 
+export interface ProactiveAttempt {
+  id: string;
+  candidateId: string | null;
+  candidateKind: string | null;
+  candidateActivity: string | null;
+  status: 'blocked' | 'sent' | 'failed';
+  blockedReason: string | null;
+  requestedMode: 'text' | 'text_sticker' | 'voice' | 'image' | null;
+  finalMode: 'text' | 'text_sticker' | 'voice' | 'image' | null;
+  fallbackReason: string | null;
+  messageId: string | null;
+  sendSuccess: boolean;
+  userResponseMessageId: string | null;
+  userRespondedAt: string | null;
+  detail: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface LifePanelData {
   snapshot: LifeSnapshot;
   log: LifeLogRow[];
   plans: LifePlanRow[];
   events: LifeEventRow[];
+  proactive: ProactiveAttempt[];
   reachOut: {
     reach: boolean;
     reason: string;

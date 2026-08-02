@@ -31,6 +31,7 @@ export const LifePolicySchema = z.object({
   /** She stays quiet at least this long after the user's last message. */
   quietGapMinutes: z.number().int().min(5).max(1440).optional(),
   maxReachOutsPerDay: z.number().int().min(0).max(20).optional(),
+  proactiveMode: z.enum(['auto', 'text', 'text_sticker', 'voice', 'image']).optional(),
   /** Local hours she will not message during. from===to means never silent. */
   silentFrom: z.number().int().min(0).max(23).optional(),
   silentTo: z.number().int().min(0).max(23).optional()

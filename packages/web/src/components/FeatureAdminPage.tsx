@@ -132,7 +132,8 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
         quietGapMinutes: form.quietGapMinutes,
         maxReachOutsPerDay: form.maxReachOutsPerDay,
         silentFrom: form.silentFrom,
-        silentTo: form.silentTo
+        silentTo: form.silentTo,
+        proactiveMode: form.proactiveMode
       });
       await load();
       onNotice('生活设置已保存');
@@ -216,7 +217,23 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
           <input aria-label="静默开始" type="number" min={0} max={23} value={form.silentFrom} onChange={(event) => setForm({ ...form, silentFrom: Number(event.target.value) })} />
           <input aria-label="静默结束" type="number" min={0} max={23} value={form.silentTo} onChange={(event) => setForm({ ...form, silentTo: Number(event.target.value) })} />
         </div>
+        <div className="admin-list-row">
+          <span>主动分享模式</span>
+          <select aria-label="主动分享模式" value={form.proactiveMode ?? 'auto'} onChange={(event) => setForm({ ...form, proactiveMode: event.target.value as LifeSettings['proactiveMode'] })}>
+            <option value="auto">自动（默认文字优先）</option><option value="text">文字</option><option value="text_sticker">文字＋表情包</option><option value="voice">语音</option><option value="image">图片</option>
+          </select>
+        </div>
         <div className="admin-actions"><button type="button" disabled={busy} onClick={() => void save()}>保存生活设置</button></div>
+      </div>
+
+      <div className="admin-card" data-testid="life-proactive-attempts">
+        <div className="admin-card-subtitle"><h2>主动分享记录</h2><span className="admin-count-badge">{data.proactive.length}</span></div>
+        {data.proactive.length === 0 ? <div className="admin-empty">还没有主动分享尝试。</div> : data.proactive.slice(0, 12).map((attempt) => (
+          <div className="admin-list-row" key={attempt.id}>
+            <span><strong>{attempt.candidateActivity ?? '无候选'}</strong><small> · {attempt.requestedMode ?? '未选模式'} → {attempt.finalMode ?? '未发送'}</small></span>
+            <small>{attempt.status === 'blocked' ? `阻断：${attempt.blockedReason ?? '未知'}` : attempt.status === 'failed' ? `失败：${attempt.blockedReason ?? attempt.fallbackReason ?? '未知'}` : `${attempt.sendSuccess ? '已发送' : '未发送'} · ${attempt.userResponseMessageId ? '用户已响应' : '未响应'}`}</small>
+          </div>
+        ))}
       </div>
 
       <div className="admin-card">

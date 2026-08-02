@@ -307,8 +307,601 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
             const name = e.target.value;
             update(editingId ? { name } : { name, id: draft.id || suggestId(name) });
           }} /></label>
-          <label>é¢„è®¾ ID<input value={drë~ü¶‰Ëkºwµç@€¤ì4)ô4(4)™Õ¹Ñ¥½¸MÑ¥­•ÉUÁ±½…¡ì½¹½¹”°½¹9½Ñ¥”ôèì½¹½¹”è€ ¤€ôøAÉ½µ¥Í”ñÙ½¥øì½¹9½Ñ¥”è€¡ÌèÍÑÉ¥¹œ¤€ôøÙ½¥ô¤ì4(€½¹ÍĞm™¥±”°Í•Ñ¥±•t€ôÕÍ•MÑ…Ñ”ñ¥±”ğ¹Õ±°ø¡¹Õ±°¤ì4(€½¹ÍĞÕÁ±½…€ô…Íå¹Œ€ ¤€ôøì4(€€€¥˜€ …™¥±”¤É•ÑÕÉ¸ì4(€€€½¹ÍĞ™½É´€ô¹•Ü½Éµ…Ñ„ ¤ì4(€€€™½É´¹…ÁÁ•¹ ¹…µ”œ°™¥±”¹¹…µ”¹É•Á±…” ½p¹mx¹t¬¼°€œœ¤¤ì4(€€€™½É´¹…ÁÁ•¹ •µ½Ñ¥½¸œ°€¹•ÕÑÉ…°œ¤ì4(€€€™½É´¹…ÁÁ•¹ Ñ…Ìœ°€¹•ÕÑÉ…°œ¤ì4(€€€™½É´¹…ÁÁ•¹ ™¥±”œ°™¥±”¤ì4(€€€ÑÉäì4(€€€€€…İ…¥Ğ…‘µ¥¹Á¤¹ÕÁ±½…‘MÑ¥­•È¡™½É´¤ì4(€€€€€Í•Ñ¥±”¡¹Õ±°¤ì4(€€€€€…İ…¥Ğ½¹½¹” ¤ì4(€€€€€½¹9½Ñ¥” Ÿ¢†£š–2–ŞË’â+’ò€œ¤ì4(€€€ô…Ñ €¡”¤ì4(€€€€€½¹9½Ñ¥”¡•ÉÉ½ÉQ•áĞ¡”¤¤ì4(€€€ô4(€ôì4(€É•ÑÕÉ¸€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÕÁ±½…ˆøñ¥¹ÁÕĞÑåÁ”ô‰™¥±”ˆ…•ÁĞô‰¥µ…”¼¨ˆ½¹¡…¹”õì¡”¤€ôøÍ•Ñ¥±”¡”¹Ñ…É•Ğ¹™¥±•Ìü¹lÁt€üü¹Õ±°¥ô€¼øñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ‘¥Í…‰±•õì…™¥±•ô½¹±¥¬õì ¤€ôøÙ½¥ÕÁ±½… ¥ôû’â+’òƒ¢†£š–2ğ½‰ÕÑÑ½¸øğ½‘¥Øøì4)ô4(4)™Õ¹Ñ¥½¸=Á•É…Ñ¥½¹ÍA…¹•°¡ì½¹9½Ñ¥”ôèì½¹9½Ñ¥”è€¡ØèÍÑÉ¥¹œ¤€ôøÙ½¥ô¤ì4(€½¹ÍĞm•ÉÉ½ÉÌ°Í•ÑÉÉ½ÉÍt€ôÕÍ•MÑ…Ñ”ñ‘µ¥¹ÉÉ½Émtø¡mt¤ì4(€½¹ÍĞm©½‰Ì°Í•Ñ)½‰Ít€ôÕÍ•MÑ…Ñ”ñ‘µ¥¹)½‰mtø¡mt¤ì4(€½¹ÍĞm‰…­ÕÁÌ°Í•Ñ	…­ÕÁÍt€ôÕÍ•MÑ…Ñ”ñ‘µ¥¹	…­ÕÁmtø¡mt¤ì4(4(€½¹ÍĞ±½…€ôÕÍ•…±±‰…¬¡…Íå¹Œ€ ¤€ôøì4(€€€ÑÉäì4(€€€€€½¹ÍĞm”°¨°‰t€ô…İ…¥ĞAÉ½µ¥Í”¹…±°¡m…‘µ¥¹Á¤¹•ÉÉ½ÉÌ ¤°…‘µ¥¹Á¤¹©½‰Ì ¤°…‘µ¥¹Á¤¹‰…­ÕÁÌ ¥t¤ì4(€€€€€Í•ÑÉÉ½ÉÌ¡”¹•ÉÉ½ÉÌ¤ì4(€€€€€Í•Ñ)½‰Ì¡¨¹©½‰Ì¤ì4(€€€€€Í•Ñ	…­ÕÁÌ¡ˆ¹‰…­ÕÁÌ¤ì4(€€€ô…Ñ €¡•ÉÈ¤ì4(€€€€€½¹9½Ñ¥”¡•ÉÉ½ÉQ•áĞ¡•ÉÈ¤¤ì4(€€€ô4(€ô°m½¹9½Ñ¥•t¤ì4(4(€ÕÍ•™™•Ğ  ¤€ôøìÙ½¥±½… ¤ìô°m±½…‘t¤ì4(4(€½¹ÍĞÉÕ¸€ô…Íå¹Œ€¡İ½É¬è€ ¤€ôøAÉ½µ¥Í”ñÕ¹­¹½İ¸ø°µ•ÍÍ…”èÍÑÉ¥¹œ¤€ôøì4(€€€ÑÉäì4(€€€€€…İ…¥Ğİ½É¬ ¤ì4(€€€€€…İ…¥Ğ±½… ¤ì4(€€€€€½¹9½Ñ¥”¡µ•ÍÍ…”¤ì4(€€€ô…Ñ €¡”¤ì4(€€€€€½¹9½Ñ¥”¡•ÉÉ½ÉQ•áĞ¡”¤¤ì4(€€€ô4(€ôì4(4(€É•ÑÕÉ¸€ 4(€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ½Á•É…Ñ¥½¹Ìˆø4(€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Éˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ•ÉÉ½Èµ±¥ÍĞˆø4(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ…ÉµÍÕ‰Ñ¥Ñ±”ˆøñ Èûšr¢şG¦Rg¢¾¼ğ½ ÈøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ½Õ¹Ğµ‰…‘”ˆùí•ÉÉ½ÉÌ¹±•¹Ñ¡ôğ½ÍÁ…¸øğ½‘¥Øø4(€€€€€€€í•ÉÉ½ÉÌ¹±•¹Ñ €ü•ÉÉ½ÉÌ¹µ…À ¡”¤€ôø€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ±¥ÍĞµÉ½Üˆ­•äõí”¹¥‘ôøñÍÁ…¸ùí”¹Í½Á•ôƒ
-Üí”¹µ•ÍÍ…•ôğ½ÍÁ…¸øñÍµ…±°ùí¹•Ü…Ñ”¡”¹É•…Ñ•‘Ğ¤¹Ñ½1½…±•MÑÉ¥¹œ ¥ôğ½Íµ…±°øğ½‘¥Øø¤€è€ñµÁÑåMÑ…Ñ”ûšjš^ƒ¦Rg¢¾¿¢ºÃ–öTğ½µÁÑåMÑ…Ñ”ùô4(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰…‘µ¥¸µ‘…¹•Èˆ½¹±¥¬õì ¤€ôøì¥˜€¡½¹™¥ÉµÑ¥½¸ Ÿ†»¢º“šâ¦ë¦Rg¢¾¿¢ºÃ–öW¾ò|œ¤¤Ù½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹±•…ÉÉÉ½ÉÌ ¤°€Ÿ¦Rg¢¾¿¢ºÃ–öW–ŞËšâ¦èœ¤ìõôûšâ¦ë¦Rg¢¾¿¢ºÃ–öTğ½‰ÕÑÑ½¸øğ½‘¥Øø4(€€€€€€ğ½…ÉÑ¥±”ø4(4(€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Éˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ©½ˆµ±¥ÍĞˆø4(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ…ÉµÍÕ‰Ñ¥Ñ±”ˆøñ Èû–B;–>Ã’îï–*„ğ½ ÈøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ½Õ¹Ğµ‰…‘”ˆùí©½‰Ì¹±•¹Ñ¡ôğ½ÍÁ…¸øğ½‘¥Øø4(€€€€€€€í©½‰Ì¹±•¹Ñ €ü©½‰Ì¹µ…À ¡¨¤€ôø€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ±¥ÍĞµÉ½Üˆ­•äõí¨¹¥‘ôøñÍÁ…¸ùí¨¹ÑåÁ•ôƒ
-Üí¨¹ÍÑ…ÑÕÍôğ½ÍÁ…¸øñÍµ…±°ùí¨¹…ÑÑ•µÁÑÍô½í¨¹µ…á}…ÑÑ•µÁÑÍôğ½Íµ…±°øğ½‘¥Øø¤€è€ñµÁÑåMÑ…Ñ”ûšjš^ƒ–B;–>Ã’îï–*„ğ½µÁÑåMÑ…Ñ”ùô4(€€€€€€ğ½…ÉÑ¥±”ø4(4(€€€€€€ñ…ÉÑ¥±”±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Éˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ‰…­ÕÀµ±¥ÍĞˆø4(€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ…Éµ¡•…‘¥¹œˆøñ‘¥Øøñ Èû–’’îôğ½ ÈøñÀùí‰…­ÕÁÌ¹±•¹Ñ¡ôƒ’î÷–>¿R£–’’îôğ½Àøğ½‘¥Øøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÙ½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹É•…Ñ•	…­ÕÀ ¤°€Ÿ–’’î÷–ŞË–"o–îèœ¥ôû–"o–îë–’’îôğ½‰ÕÑÑ½¸øğ½‘¥Øø4(€€€€€€€í‰…­ÕÁÌ¹±•¹Ñ €ü‰…­ÕÁÌ¹µ…À ¡ˆ¤€ôø€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ±¥ÍĞµÉ½Üˆ­•äõíˆ¹¹…µ•ôøñÍÁ…¸ùíˆ¹¹…µ•ôƒ
-Üí™½Éµ…Ñ	åÑ•Ì¡ˆ¹‰åÑ•Ì¥ôğ½ÍÁ…¸øñ‘¥Øøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÙ½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹Ù•É¥™å	…­ÕÀ¡ˆ¹¹…µ”¤°€Ÿ–’’î÷š‚‡¦ª3–º3š"@œ¥ôûš‚‡¦ª0ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøì¥˜€¡½¹™¥ÉµÑ¥½¸¡ƒ†»¢º“š‹–’7–’’î÷Šp‘íˆ¹¹…µ•÷Šw¾ò}€¤¤Ù½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹É•ÍÑ½É•	…­ÕÀ¡ˆ¹¹…µ”¤°€Ÿ–’’î÷–ŞËš‹–’7¾ò3¢¾ß–"ßšZÃ¢+–’§¦†×¦vˆœ¤ìõôûš‹–’4ğ½‰ÕÑÑ½¸øñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰…‘µ¥¸µ‘…¹•Èˆ½¹±¥¬õì ¤€ôøì¥˜€¡½¹™¥ÉµÑ¥½¸¡ƒ†»¢º“–"ƒ¦f“–’’î÷Šp‘íˆ¹¹…µ•÷Šw¾ò}€¤¤Ù½¥ÉÕ¸  ¤€ôø…‘µ¥¹Á¤¹‘•±•Ñ•	…­ÕÀ¡ˆ¹¹…µ”¤°€Ÿ–’’î÷–ŞË–"ƒ¦fœ¤ìõôû–"ƒ¦fğ½‰ÕÑÑ½¸øğ½‘¥Øøğ½‘¥Øø¤€è€ñµÁÑåMÑ…Ñ”ûšjš^ƒ–’’î÷¾ò3–>¿–#–"o–îë’â’îôğ½µÁÑåMÑ…Ñ”ùô4(€€€€€€ğ½…ÉÑ¥±”ø4(€€€€ğ½Í•Ñ¥½¸ø4(€€¤ì4)ô4(4(¼¨¨1½…‘ÌÑ¡”Á•ÉÍ½¹„Ñ¡”…Ù…Ñ…È•‘¥Ñ½È•‘¥ÑÌ°İ¡¥ Ñ¡”½±Á…”Í¡•±°½İ¹•¸€¨¼4)™Õ¹Ñ¥½¸Ù…Ñ…ÉA…¹•°¡ì½¹9½Ñ¥”ôèì½¹9½Ñ¥”è€¡ØèÍÑÉ¥¹œ¤€ôøÙ½¥ô¤ì4(€½¹ÍĞmÁ•ÉÍ½¹„°Í•ÑA•ÉÍ½¹…t€ôÕÍ•MÑ…Ñ”ñ‘µ¥¹A•ÉÍ½¹„ğ¹Õ±°ø¡¹Õ±°¤ì4(€ÕÍ•™™•Ğ  ¤€ôøì4(€€€Ù½¥…‘µ¥¹Á¤¹Á•ÉÍ½¹„ ¤¹Ñ¡•¸ ¡È¤€ôøÍ•ÑA•ÉÍ½¹„¡È¹Á•ÉÍ½¹„¤¤¹…Ñ  ¡”¤€ôø½¹9½Ñ¥”¡•ÉÉ½ÉQ•áĞ¡”¤¤¤ì4(€ô°m½¹9½Ñ¥•t¤ì4(€¥˜€ …Á•ÉÍ½¹„¤É•ÑÕÉ¸€ñÀ±…ÍÍ9…µ”ô‰…‘µ¥¸µµÕÑ•ˆûš¶–r£¢¾ï–>[–’Ó–?¢ºûö»Š˜ğ½Àøì4(€É•ÑÕÉ¸€ñÙ…Ñ…É‘¥Ñ½ÈÁ•ÉÍ½¹„õíÁ•ÉÍ½¹…ô½¹A•ÉÍ½¹„õíÍ•ÑA•ÉÍ½¹…ô½¹9½Ñ¥”õí½¹9½Ñ¥•ô€¼øì4)ô4(4)™Õ¹Ñ¥½¸Q…‰	ÕÑÑ½¹Ì¡ìÑ…ˆ°Í•ÑQ…ˆ°µ½‰¥±”ôèìÑ…ˆèQ…ˆìÍ•ÑQ…ˆè€¡Ñ…ˆèQ…ˆ¤€ôøÙ½¥ìµ½‰¥±”è‰½½±•…¸ô¤ì4(€É•ÑÕÉ¸€ 4(€€€€ñ¹…Ø±…ÍÍ9…µ”õíµ½‰¥±”€ü€…‘µ¥¸µµ½‰¥±”µÑ…‰Ìœ€è€…‘µ¥¸µÍ¥‘”µ¹…Øô…É¥„µ±…‰•°ô‹º‡B¦v‹švÿ–¾ó¢"¨ˆø4(€€€€€íµ½‰¥±”4(€€€€€€€€üQ	L¹µ…À ¡¥Ñ•´¤€ôø€ 4(€€€€€€€€€€ñ‰ÕÑÑ½¸­•äõí¥Ñ•´¹¥‘ôÑåÁ”ô‰‰ÕÑÑ½¸ˆ‘…Ñ„µÑ•ÍÑ¥õí…‘µ¥¸µÑ…ˆ´‘í¥Ñ•´¹¥‘õô…É¥„µÕÉÉ•¹ĞõíÑ…ˆ€ôôô¥Ñ•´¹¥€ü€Á…”œ€èÕ¹‘•™¥¹•‘ô±…ÍÍ9…µ”õíÑ…ˆ€ôôô¥Ñ•´¹¥€ü€…Ñ¥Ù”œ€è€œô½¹±¥¬õì ¤€ôøÍ•ÑQ…ˆ¡¥Ñ•´¹¥¥ôø4(€€€€€€€€€€€í¥Ñ•´¹±…‰•±ô4(€€€€€€€€€€ğ½‰ÕÑÑ½¸ø4(€€€€€€€€¤¤4(€€€€€€€€è9Y}I=UAL¹µ…À ¡É½ÕÀ¤€ôø€ 4(€€€€€€€€€€ñÉ…µ•¹Ğ­•äõíÉ½ÕÁôø4(€€€€€€€€€€€€ñÀ±…ÍÍ9…µ”ô‰…‘µ¥¸µ¹…ØµÉ½ÕÀˆùíÉ½ÕÁôğ½Àø4(€€€€€€€€€€€íQ	L¹™¥±Ñ•È ¡¥Ñ•´¤€ôø¥Ñ•´¹É½ÕÀ€ôôôÉ½ÕÀ¤¹µ…À ¡¥Ñ•´¤€ôø€ 4(€€€€€€€€€€€€€€ñ‰ÕÑÑ½¸­•äõí¥Ñ•´¹¥‘ôÑåÁ”ô‰‰ÕÑÑ½¸ˆ‘…Ñ„µÑ•ÍÑ¥õí…‘µ¥¸µÑ…ˆ´‘í¥Ñ•´¹¥‘õô…É¥„µÕÉÉ•¹ĞõíÑ…ˆ€ôôô¥Ñ•´¹¥€ü€Á…”œ€èÕ¹‘•™¥¹•‘ô±…ÍÍ9…µ”õíÑ…ˆ€ôôô¥Ñ•´¹¥€ü€…Ñ¥Ù”œ€è€œô½¹±¥¬õì ¤€ôøÍ•ÑQ…ˆ¡¥Ñ•´¹¥¥ôø4(€€€€€€€€€€€€€€€€ñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ¹…Øµ¥½¸ˆøñ%½¸¹…µ”õí¥Ñ•´¹¥½¹ô€¼øğ½ÍÁ…¸ø4(€€€€€€€€€€€€€€€€ñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ¹…Øµ½ÁäˆøñÍÑÉ½¹œùí¥Ñ•´¹±…‰•±ôğ½ÍÑÉ½¹œøñÍµ…±°ùí¥Ñ•´¹‘•ÍÉ¥ÁÑ¥½¹ôğ½Íµ…±°øğ½ÍÁ…¸ø4(€€€€€€€€€€€€€€ğ½‰ÕÑÑ½¸ø4(€€€€€€€€€€€€¤¥ô4(€€€€€€€€€€ğ½É…µ•¹Ğø4(€€€€€€€€¤¥ô4(€€€€ğ½¹…Øø4(€€¤ì4)ô4(4)™Õ¹Ñ¥½¸=Ù•ÉÙ¥•Ü¡ì‘…Ñ„°½Õ¹ÑÌ°½¹I•™É•Í ôèì‘…Ñ„è…Í¡‰½…Éì½Õ¹ÑÌèì…Ù…¥±…‰±”è¹Õµ‰•ÈìÑ½Ñ…°è¹Õµ‰•Èôì½¹I•™É•Í è€ ¤€ôøÙ½¥ô¤ì4(€½¹ÍĞ‘ˆ€ô‘…Ñ„¹ÍåÍÑ•´¹‘…Ñ…‰…Í”ì4(€½¹ÍĞÍÑ½É…”€ô‘…Ñ„¹ÍåÍÑ•´¹ÍÑ½É…”ì4(€½¹ÍĞÑ¥±•Ì€ôl4(€€€ì±…‰•°è€ŸšÚ#š¿’â;¢ºÃ–şœ°Ù…±Õ”è€‘í9Õµ‰•È¡‘ˆ¹µ•ÍÍ…•Ì€üü€À¤¹Ñ½1½…±•MÑÉ¥¹œ ¥ôƒšv‡šÚ#š½€°‘•Ñ…¥°è€‘í9Õµ‰•È¡‘ˆ¹µ•µ½É¥•Ì€üü€À¤¹Ñ½1½…±•MÑÉ¥¹œ ¥ôƒšv‡¢ºÃ–ş€°¥½¸è€µ•ÍÍ…”œ…Ì½¹ÍĞô°4(€€€ì±…‰•°è€Ÿš¢‡–z/¢÷–*lœ°Ù…±Õ”è€‘í½Õ¹ÑÌ¹…Ù…¥±…‰±•ô€¼€‘í½Õ¹ÑÌ¹Ñ½Ñ…±ôƒ–>¿R¡€°‘•Ñ…¥°è€Ÿš2'šr7–*‡®¿–º{¦f¢÷–*oî¢º„œ°¥½¸è€ÁÔœ…Ì½¹ÍĞô°4(€€€ì±…‰•°è€Ÿ–¶c–
-£–6ƒR œ°Ù…±Õ”è™½Éµ…Ñ	åÑ•Ì¡ÍÑ½É…”¹µ•‘¥…	åÑ•Ì¤°‘•Ñ…¥°è€‘í9Õµ‰•È¡‘ˆ¹µ•‘¥„€üü€À¤¹Ñ½1½…±•MÑÉ¥¹œ ¥ôƒ’â«–ªK’öOšZ’îÙ€°¥½¸è€ÍÑ½É…”œ…Ì½¹ÍĞô°4(€€€ì±…‰•°è€Ÿ–’’îôœ°Ù…±Õ”è€‘í‘…Ñ„¹‰…­ÕÁÌ¹±•¹Ñ¡ôƒ’îõ€°‘•Ñ…¥°èƒ–ú–’B’îï–*„€‘í9Õµ‰•È¡‘ˆ¹Á•¹‘¥¹)½‰Ì€üü€À¥õ€°¥½¸è€‰…­ÕÀœ…Ì½¹ÍĞô4(€tì4(4(€É•ÑÕÉ¸€ğø4(€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÑ…ÑÕÌµ…Éˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µÍåÍÑ•´µÍÑ…ÑÕÌˆø4(€€€€€€ñ‘¥ØøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ¡•…±Ñ µ‘½Ğˆ€¼øñÍÑÉ½¹œû¢şC¢†3š¶–âàğ½ÍÑÉ½¹œøğ½‘¥Øø4(€€€€€€ñÍÁ…¸û&#šr°í‘…Ñ„¹ÍåÍÑ•´¹Ù•ÉÍ¥½¹ôğ½ÍÁ…¸ø4(€€€€€€ñÍÁ…¸û–ŞË¢şC¢†0í™½Éµ…ÑUÁÑ¥µ”¡‘…Ñ„¹ÍåÍÑ•´¹ÕÁÑ¥µ•M•Œ¥ôğ½ÍÁ…¸ø4(€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õí½¹I•™É•Í¡ôû–"ßšZÃ*Ûšğ½‰ÕÑÑ½¸ø4(€€€€ğ½Í•Ñ¥½¸ø4(€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÕµµ…Éäˆø4(€€€€€íÑ¥±•Ì¹µ…À ¡Ñ¥±”¤€ôø€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÕµµ…ÉäµÑ¥±”ˆ­•äõíÑ¥±”¹±…‰•±ôøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÕµµ…ÉäµÑ½ÀˆøñÍÁ…¸ùíÑ¥±”¹±…‰•±ôğ½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÕµµ…Éäµ¥½¸ˆøñ%½¸¹…µ”õíÑ¥±”¹¥½¹ô€¼øğ½ÍÁ…¸øğ½‘¥ØøñÍÑÉ½¹œùíÑ¥±”¹Ù…±Õ•ôğ½ÍÑÉ½¹œøñÍµ…±°ùíÑ¥±”¹‘•Ñ…¥±ôğ½Íµ…±°øğ½‘¥Øø¥ô4(€€€€ğ½Í•Ñ¥½¸ø4(€€ğ¼øì4)ô4(4)•áÁ½ÉĞ‘•™…Õ±Ğ™Õ¹Ñ¥½¸‘µ¥¹A…¹•°¡ì¥¹¥Ñ¥…±Q…ˆ€ô€½Ù•ÉÙ¥•Üœôèì¥¹¥Ñ¥…±Q…ˆüèQ…ˆô€ôíô¤ì4(€½¹ÍĞmÑ½­•¸°Í•ÑQ½­•¹t€ôÕÍ•MÑ…Ñ”  ¤€ôø•Ñ‘µ¥¹Q½­•¸ ¤¤ì4(€½¹ÍĞmÑ½­•¹%¹ÁÕĞ°Í•ÑQ½­•¹%¹ÁÕÑt€ôÕÍ•MÑ…Ñ” œœ¤ì4(€½¹ÍĞmÑ…ˆ°Í•ÑQ…‰t€ôÕÍ•MÑ…Ñ”ñQ…ˆø  ¤€ôøÑ…‰É½µ‘µ¥¹A…Ñ ¡İ¥¹‘½Ü¹±½…Ñ¥½¸¹Á…Ñ¡¹…µ”°¥¹¥Ñ¥…±Q…ˆ¤¤ì4(€½¹ÍĞm‘¥ÉÑä°Í•Ñ¥ÉÑåt€ôÕÍ•MÑ…Ñ”¡™…±Í”¤ì4(€½¹ÍĞ‘¥ÉÑåI•˜€ôÕÍ•I•˜¡™…±Í”¤ì4(€½¹ÍĞm‘…Ñ„°Í•Ñ…Ñ…t€ôÕÍ•MÑ…Ñ”ñ…Í¡‰½…Éğ¹Õ±°ø¡¹Õ±°¤ì4(€½¹ÍĞm¹½Ñ¥”°Í•Ñ9½Ñ¥•t€ôÕÍ•ÕÑ½9½Ñ¥” ¤ì4(€½¹ÍĞm±½…‘¥¹œ°Í•Ñ1½…‘¥¹t€ôÕÍ•MÑ…Ñ”¡™…±Í”¤ì4(€½¹ÍĞ¥Í5½‰¥±”€ôÕÍ•%Í5½‰¥±” ¤ì4(4(€½¹ÍĞÍ•Ñ¥ÉÑåMÑ…Ñ”€ôÕÍ•…±±‰…¬ ¡Ù…±Õ”è‰½½±•…¸¤€ôøì4(€€€‘¥ÉÑåI•˜¹ÕÉÉ•¹Ğ€ôÙ…±Õ”ì4(€€€Í•Ñ¥ÉÑä¡Ù…±Õ”¤ì4(€ô°mt¤ì4(4(€ÕÍ•™™•Ğ  ¤€ôøì4(€€€½¹ÍĞÉ½ÕÑ•Q…ˆ€ôÑ…‰É½µ‘µ¥¹A…Ñ ¡İ¥¹‘½Ü¹±½…Ñ¥½¸¹Á…Ñ¡¹…µ”°¥¹¥Ñ¥…±Q…ˆ¤ì4(€€€½¹ÍĞ…¹½¹¥…±A…Ñ €ô…‘µ¥¹A…Ñ¡½ÉQ…ˆ¡É½ÕÑ•Q…ˆ¤ì4(€€€¥˜€¡İ¥¹‘½Ü¹±½…Ñ¥½¸¹Á…Ñ¡¹…µ”€„ôô…¹½¹¥…±A…Ñ ¤ì4(€€€€€İ¥¹‘½Ü¹¡¥ÍÑ½Éä¹É•Á±…•MÑ…Ñ”¡¹Õ±°°€œœ°…¹½¹¥…±A…Ñ ¤ì4(€€€ô4(4(€€€½¹ÍĞ½¹A½ÁMÑ…Ñ”€ô€ ¤€ôøì4(€€€€€½¹ÍĞ¹•áĞ€ôÑ…‰É½µ‘µ¥¹A…Ñ ¡İ¥¹‘½Ü¹±½…Ñ¥½¸¹Á…Ñ¡¹…µ”°¥¹¥Ñ¥…±Q…ˆ¤ì4(€€€€€¥˜€¡‘¥ÉÑåI•˜¹ÕÉÉ•¹Ğ€˜˜€…İ¥¹‘½Ü¹½¹™¥É´ Ÿ–öO–&7’ş»šRç–Âkšr«’şw–¶c¾ò3†»–ºkšï–ò–B_¾ò|œ¤¤ì4(€€€€€€€İ¥¹‘½Ü¹¡¥ÍÑ½Éä¹ÁÕÍ¡MÑ…Ñ”¡¹Õ±°°€œœ°…‘µ¥¹A…Ñ¡½ÉQ…ˆ¡Ñ…ˆ¤¤ì4(€€€€€€€É•ÑÕÉ¸ì4(€€€€€ô4(€€€€€Í•Ñ¥ÉÑåMÑ…Ñ”¡™…±Í”¤ì4(€€€€€Í•ÑQ…ˆ¡¹•áĞ¤ì4(€€€ôì4(€€€½¹ÍĞ½¹	•™½É•U¹±½…€ô€¡•Ù•¹Ğè	•™½É•U¹±½…‘Ù•¹Ğ¤€ôøì4(€€€€€¥˜€ …‘¥ÉÑåI•˜¹ÕÉÉ•¹Ğ¤É•ÑÕÉ¸ì4(€€€€€•Ù•¹Ğ¹ÁÉ•Ù•¹Ñ•™…Õ±Ğ ¤ì4(€€€€€•Ù•¹Ğ¹É•ÑÕÉ¹Y…±Õ”€ô€œœì4(€€€ôì4(€€€İ¥¹‘½Ü¹…‘‘Ù•¹Ñ1¥ÍÑ•¹•È Á½ÁÍÑ…Ñ”œ°½¹A½ÁMÑ…Ñ”¤ì4(€€€İ¥¹‘½Ü¹…‘‘Ù•¹Ñ1¥ÍÑ•¹•È ‰•™½É•Õ¹±½…œ°½¹	•™½É•U¹±½…¤ì4(€€€É•ÑÕÉ¸€ ¤€ôøì4(€€€€€İ¥¹‘½Ü¹É•µ½Ù•Ù•¹Ñ1¥ÍÑ•¹•È Á½ÁÍÑ…Ñ”œ°½¹A½ÁMÑ…Ñ”¤ì4(€€€€€İ¥¹‘½Ü¹É•µ½Ù•Ù•¹Ñ1¥ÍÑ•¹•È ‰•™½É•Õ¹±½…œ°½¹	•™½É•U¹±½…¤ì4(€€€ôì4(€ô°m¥¹¥Ñ¥…±Q…ˆ°Í•Ñ¥ÉÑåMÑ…Ñ”°Ñ…‰t¤ì4(4(€½¹ÍĞ¹…Ù¥…Ñ•Q…ˆ€ôÕÍ•…±±‰…¬ ¡¹•áĞèQ…ˆ¤€ôøì4(€€€¥˜€¡¹•áĞ€ôôôÑ…ˆ¤É•ÑÕÉ¸ì4(€€€¥˜€¡‘¥ÉÑåI•˜¹ÕÉÉ•¹Ğ€˜˜€…İ¥¹‘½Ü¹½¹™¥É´ Ÿ–öO–&7’ş»šRç–Âkšr«’şw–¶c¾ò3†»–ºkšï–ò–B_¾ò|œ¤¤É•ÑÕÉ¸ì4(€€€Í•Ñ¥ÉÑåMÑ…Ñ”¡™…±Í”¤ì4(€€€İ¥¹‘½Ü¹¡¥ÍÑ½Éä¹ÁÕÍ¡MÑ…Ñ”¡¹Õ±°°€œœ°…‘µ¥¹A…Ñ¡½ÉQ…ˆ¡¹•áĞ¤¤ì4(€€€Í•ÑQ…ˆ¡¹•áĞ¤ì4(€ô°mÍ•Ñ¥ÉÑåMÑ…Ñ”°Ñ…‰t¤ì4(4(€½¹ÍĞ±½…‘=Ù•ÉÙ¥•Ü€ôÕÍ•…±±‰…¬¡…Íå¹Œ€ ¤€ôøì4(€€€¥˜€ …Ñ½­•¸¤É•ÑÕÉ¸ì4(€€€Í•Ñ1½…‘¥¹œ¡ÑÉÕ”¤ì4(€€€ÑÉäì4(€€€€€½¹ÍĞmÍåÍÑ•´°…Á…‰¥±¥Ñ¥•Ì°‰…­ÕÁÍt€ô…İ…¥ĞAÉ½µ¥Í”¹…±°¡l4(€€€€€€€…‘µ¥¹Á¤¹ÍåÍÑ•´ ¤°4(€€€€€€€…‘µ¥¹Á¤¹…Á…‰¥±¥Ñ¥•Ì ¤°4(€€€€€€€…‘µ¥¹Á¤¹‰…­ÕÁÌ ¤4(€€€€€t¤ì4(€€€€€Í•Ñ…Ñ„¡ìÍåÍÑ•´°…Á…‰¥±¥Ñ¥•Ì°‰…­ÕÁÌè‰…­ÕÁÌ¹‰…­ÕÁÌô¤ì4(€€€ô…Ñ €¡”¤ì4(€€€€€¥˜€¡”¥¹ÍÑ…¹•½˜Á¥ÉÉ½È€˜˜”¹ÍÑ…ÑÕÌ€ôôô€ĞÀÄ¤ì4(€€€€€€€±•…É‘µ¥¹Q½­•¸ ¤ì4(€€€€€€€Í•ÑQ½­•¸¡¹Õ±°¤ì4(€€€€€€€Í•Ñ…Ñ„¡¹Õ±°¤ì4(€€€€€ô•±Í”ì4(€€€€€€€Í•Ñ9½Ñ¥”¡•ÉÉ½ÉQ•áĞ¡”¤¤ì4(€€€€€ô4(€€€ô™¥¹…±±äì4(€€€€€Í•Ñ1½…‘¥¹œ¡™…±Í”¤ì4(€€€ô4(€ô°mÑ½­•¹t¤ì4(4(€ÕÍ•™™•Ğ  ¤€ôøìÙ½¥±½…‘=Ù•ÉÙ¥•Ü ¤ìô°m±½…‘=Ù•ÉÙ¥•İt¤ì4(4(€½¹ÍĞÍÕ‰µ¥ÑQ½­•¸€ô€¡”è½ÉµÙ•¹Ğ¤€ôøì4(€€€”¹ÁÉ•Ù•¹Ñ•™…Õ±Ğ ¤ì4(€€€½¹ÍĞ¹•áĞ€ôÑ½­•¹%¹ÁÕĞ¹ÑÉ¥´ ¤ì4(€€€¥˜€ …¹•áĞ¤É•ÑÕÉ¸ì4(€€€Í•Ñ‘µ¥¹Q½­•¸¡¹•áĞ¤ì4(€€€Í•ÑQ½­•¸¡¹•áĞ¤ì4(€€€Í•ÑQ½­•¹%¹ÁÕĞ œœ¤ì4(€ôì4(4(€½¹ÍĞ±½½ÕĞ€ô€ ¤€ôøì4(€€€±•…É‘µ¥¹Q½­•¸ ¤ì4(€€€Í•ÑQ½­•¸¡¹Õ±°¤ì4(€€€Í•Ñ…Ñ„¡¹Õ±°¤ì4(€€€Í•Ñ9½Ñ¥”¡¹Õ±°¤ì4(€ôì4(4(€½¹ÍĞ½Õ¹ÑÌ€ôÕÍ•5•µ¼ 4(€€€€ ¤€ôø‘…Ñ„€ü…Á…‰¥±¥Ñå½Õ¹ÑÌ¡‘…Ñ„¹…Á…‰¥±¥Ñ¥•Ì¹…Á…‰¥±¥Ñ¥•Ì¤€èì…Ù…¥±…‰±”è€À°Ñ½Ñ…°è€Àô°4(€€€m‘…Ñ…t4(€€¤ì4(4(€¥˜€ …Ñ½­•¸¤ì4(€€€É•ÑÕÉ¸€ñµ…¥¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÁ…”…‘µ¥¸µØÈ…‘µ¥¸µ±½¬µÁ…”ˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ±½¬ˆøñ™½É´±…ÍÍ9…µ”ô‰…‘µ¥¸µ±½¬µ…Éˆ½¹MÕ‰µ¥ĞõíÍÕ‰µ¥ÑQ½­•¹ôøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ±½¬µ¥½¸ˆøñ%½¸¹…µ”ô‰±½¬ˆ€¼øğ½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ•å•‰É½ÜˆùM==eƒº‡B’â·–şğ½ÍÁ…¸øñ Äû¢úO–—º‡B’î“&0ğ½ ÄøñÀû’î“&3–>«’şw–¶c–r£–öO–&7¢ºû–’¾ò3R£’ê;¢ºÿ¦^»º‡Bš:—–>ğ½Àøñ±…‰•°¡Ñµ±½Èô‰…‘µ¥¸µÑ½­•¸ˆûº‡B’î“&0ğ½±…‰•°øñ¥¹ÁÕĞ¥ô‰…‘µ¥¸µÑ½­•¸ˆÑåÁ”ô‰Á…ÍÍİ½Éˆ…ÕÑ½½µÁ±•Ñ”ô‰ÕÉÉ•¹ĞµÁ…ÍÍİ½ÉˆÙ…±Õ”õíÑ½­•¹%¹ÁÕÑô½¹¡…¹”õì¡”¤€ôøÍ•ÑQ½­•¹%¹ÁÕĞ¡”¹Ñ…É•Ğ¹Ù…±Õ”¥ô€¼øñ‰ÕÑÑ½¸ÑåÁ”ô‰ÍÕ‰µ¥Ğˆ‘¥Í…‰±•õì…Ñ½­•¹%¹ÁÕĞ¹ÑÉ¥´ ¥ôû¢şo–—º‡B’â·–şğ½‰ÕÑÑ½¸øğ½™½É´øğ½µ…¥¸øì4(€ô4(4(€¥˜€¡±½…‘¥¹œ€˜˜€…‘…Ñ„¤ì4(€€€É•ÑÕÉ¸€ñµ…¥¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÁ…”…‘µ¥¸µØÈ…‘µ¥¸µ±½…‘¥¹œˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ±½…‘¥¹œµ…Éˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍÁ¥¹¹•Èˆ€¼ûš¶–r£¢¾ï–>[Îïî*ÛšŠ˜ğ½‘¥Øøğ½µ…¥¸øì4(€ô4(4(€¥˜€ …‘…Ñ„¤ì4(€€€É•ÑÕÉ¸€ñµ…¥¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÁ…”…‘µ¥¸µØÈ…‘µ¥¸µ•ÉÉ½Èˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ•ÉÉ½Èµ…ÉˆøñÀùí¹½Ñ¥”€üü€Ÿš^ƒšÎW–*ƒ¢ö÷º‡B’ş‡š¼ôğ½Àøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÙ½¥±½…‘=Ù•ÉÙ¥•Ü ¥ôû¦7¢¾Tğ½‰ÕÑÑ½¸øğ½‘¥Øøğ½µ…¥¸øì4(€ô4(4(€½¹ÍĞÁ…”€ôA}=AemÑ…‰tì4(€½¹ÍĞ½¹Ñ•¹Ğ€ôÑ…ˆ€ôôô€½Ù•ÉÙ¥•Üœ4(€€€€ü€ñ=Ù•ÉÙ¥•Ü‘…Ñ„õí‘…Ñ…ô½Õ¹ÑÌõí½Õ¹ÑÍô½¹I•™É•Í õì ¤€ôøÙ½¥±½…‘=Ù•ÉÙ¥•Ü ¥ô€¼ø4(€€€€èÑ…ˆ€ôôô€Á•ÉÍ½¹„œ4(€€€€€€ü€ñA•ÉÍ½¹…A…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€èÑ…ˆ€ôôô€…Ù…Ñ…Èœ4(€€€€€€€€ü€ñÙ…Ñ…ÉA…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€èÑ…ˆ€ôôô€Ù½¥”œ4(€€€€€€€€€€ü€ñY½¥•‘¥Ñ½È½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€èÑ…ˆ€ôôô€±¥™”œ4(€€€€€€€€€€€€ü€ñ1¥™•A…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€€€èÑ…ˆ€ôôô€µ½‘•±Ìœ4(€€€€€€€€€€€€€€€€ü€ñ5½‘•±ÍA…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€€€€€€€èÑ…ˆ€ôôô€½¹Ñ•¹Ğœ4(€€€€€€€€€€€€€€€€€€ü€ñ½¹Ñ•¹ÑA…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€€€€€€€€€èÑ…ˆ€ôôô€ÍÑ½É…”œ4(€€€€€€€€€€€€€€€€€€€€ü€ñMÑ½É…•‘¥Ñ½È½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼ø4(€€€€€€€€€€€€€€€€€€€€è€ñ=Á•É…Ñ¥½¹ÍA…¹•°½¹9½Ñ¥”õíÍ•Ñ9½Ñ¥•ô€¼øì4(4(€É•ÑÕÉ¸€ 4(€€€€ñµ…¥¸±…ÍÍ9…µ”ô‰…‘µ¥¸µÁ…”…‘µ¥¸µØÈˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µ‘…Í¡‰½…Éˆ‘…Ñ„µ‘¥ÉÑäõí‘¥ÉÑäñğÕ¹‘•™¥¹•‘ô½¹%¹ÁÕÑ…ÁÑÕÉ”õì¡•Ù•¹Ğ¤€ôøì(€€€€€½¹ÍĞÑ…É•Ğ€ô•Ù•¹Ğ¹Ñ…É•Ğ…Ì!Q51%¹ÁÕÑ±•µ•¹Ğì(€€€€€¥˜€¡Ñ…É•Ğ¥¹ÍÑ…¹•½˜!Q51%¹ÁÕÑ±•µ•¹Ğ€˜˜Ñ…É•Ğ¹ÑåÁ”€ôôô€™¥±”œ¤É•ÑÕÉ¸ì(€€€€€Í•Ñ¥ÉÑåMÑ…Ñ”¡ÑÉÕ”¤ì(€€€õô½¹MÕ‰µ¥Ñ…ÁÑÕÉ”õì ¤€ôøÍ•Ñ¥ÉÑåMÑ…Ñ”¡™…±Í”¥ôø(€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¡•±°ˆø4(€€€€€€€ì…¥Í5½‰¥±”€˜˜€ñ…Í¥‘”±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¥‘•‰…Èˆø4(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ‰É…¹ˆøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ‰É…¹µµ…É¬ˆùLğ½ÍÁ…¸øñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ‰É…¹µ½ÁäˆøñÍÑÉ½¹œùM==eğ½ÍÑÉ½¹œøñÍµ…±°ûº‡B’â·–şğ½Íµ…±°øğ½ÍÁ…¸øğ½‘¥Øø4(€€€€€€€€€€ñQ…‰	ÕÑÑ½¹ÌÑ…ˆõíÑ…‰ôÍ•ÑQ…ˆõí¹…Ù¥…Ñ•Q…‰ôµ½‰¥±”õí™…±Í•ô€¼ø4(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¥‘•‰…Èµ™½½Ñ•Èˆø4(€€€€€€€€€€€€ñ„±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¥‘”µ…Ñ¥½¸ˆ¡É•˜ôˆ¼ˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µÉ•ÑÕÉ¸µ¡…Ğˆû¢şS–n{–¾ç¢¾tğ½„ø4(€€€€€€€€€€€€ñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰…‘µ¥¸µÍ¥‘”µ…Ñ¥½¸ÍÕ‰Ñ±”ˆ½¹±¥¬õí±½½ÕÑôû¦–ëº‡Bğ½‰ÕÑÑ½¸ø4(€€€€€€€€€€ğ½‘¥Øø4(€€€€€€€€ğ½…Í¥‘”ùô4(4(€€€€€€€í¥Í5½‰¥±”€˜˜€ñ¡•…‘•È±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µ¡•…‘•Èˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µ‰É…¹ˆøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µ¥½¸ˆøñ%½¸¹…µ”õíQ	L¹™¥¹ ¡¥Ñ•´¤€ôø¥Ñ•´¹¥€ôôôÑ…ˆ¤ü¹¥½¸€üü€½Ù•ÉÙ¥•Üô€¼øğ½ÍÁ…¸øñ‘¥ØøñÍÑÉ½¹œùM==eƒº‡B’â·–şğ½ÍÑÉ½¹œøñÍµ…±°ùíÁ…”¹Ñ¥Ñ±•ôğ½Íµ…±°øğ½‘¥Øøğ½‘¥Øøñ„±…ÍÍ9…µ”ô‰…‘µ¥¸µÉ•ÑÕÉ¸ˆ¡É•˜ôˆ¼ˆ‘…Ñ„µÑ•ÍÑ¥ô‰…‘µ¥¸µÉ•ÑÕÉ¸µ¡…Ğˆû¢şS–n{–¾ç¢¾tğ½„øğ½¡•…‘•Èùô4(4(€€€€€€€€ñÍ•Ñ¥½¸±…ÍÍ9…µ”ô‰…‘µ¥¸µµ…¥¸ˆø4(€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µµ…¥¸µ¥¹¹•Èˆø4(€€€€€€€€€€€í¥Í5½‰¥±”€˜˜€ñQ…‰	ÕÑÑ½¹ÌÑ…ˆõíÑ…‰ôÍ•ÑQ…ˆõí¹…Ù¥…Ñ•Q…‰ôµ½‰¥±”€¼ùô4(€€€€€€€€€€€ì…¥Í5½‰¥±”€˜˜€ñ¡•…‘•È±…ÍÍ9…µ”ô‰…‘µ¥¸µ½¹Ñ•¹Ğµ¡•…‘•Èˆøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µÑ¥Ñ±”µİÉ…ÀˆøñÍÁ…¸±…ÍÍ9…µ”ô‰…‘µ¥¸µ•å•‰É½ÜˆùM==e5%8ğ½ÍÁ…¸øñ ÄùíÁ…”¹Ñ¥Ñ±•ôğ½ ÄøñÀùíÁ…”¹‘•ÍÉ¥ÁÑ¥½¹ôğ½Àøğ½‘¥Øøñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µ¡•…‘•Èµ…Ñ¥½¹Ìˆøñ‰ÕÑÑ½¸ÑåÁ”ô‰‰ÕÑÑ½¸ˆ±…ÍÍ9…µ”ô‰…‘µ¥¸µ¡•…‘•Èµ‰ÕÑÑ½¸ˆ½¹±¥¬õì ¤€ôøÙ½¥±½…‘=Ù•ÉÙ¥•Ü ¥ôû–"ßšZÀğ½‰ÕÑÑ½¸øğ½‘¥Øøğ½¡•…‘•Èùô4(€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µ½¹Ñ•¹Ğˆø4(€€€€€€€€€€€€€í¥Í5½‰¥±”€˜˜€ñ‘¥Ø±…ÍÍ9…µ”ô‰…‘µ¥¸µµ½‰¥±”µÑ¥Ñ±”ˆøñ ÄùíÁ…”¹Ñ¥Ñ±•ôğ½ ÄøñÀùíÁ…”¹‘•ÍÉ¥ÁÑ¥½¹ôğ½Àøğ½‘¥Øùô4(€€€€€€€€€€€€€€ñM•Ñ¥½¹9½Ñ¥”¹½Ñ¥”õí¹½Ñ¥•ô€¼ø4(€€€€€€€€€€€€€í½¹Ñ•¹Ñô4(€€€€€€€€€€€€ğ½‘¥Øø4(€€€€€€€€€€ğ½‘¥Øø4(€€€€€€€€ğ½Í•Ñ¥½¸ø4(€€€€€€ğ½‘¥Øø4(€€€€ğ½µ…¥¸ø4(€€¤ì4)ô4(
+          <label>é¢„è®¾ ID<input value={draft.id} disabled={Boolean(editingId)} onChange={(e) => update({ id: e.target.value })} /></label>
+          <label>æŒ‡æ´¾èƒ½åŠ›<select value={draft.slot} onChange={(e) => update({ slot: e.target.value as ModelSlot })}>
+            {MODEL_SLOTS.map((slot) => <option key={slot} value={slot}>{SLOT_LABELS[slot]}</option>)}
+          </select></label>
+          <label>æ¥å£åè®®<select value={draft.provider} onChange={(e) => update({ provider: e.target.value })}>
+            {SLOT_PROVIDERS[draft.slot].map((provider) => <option key={provider} value={provider}>{provider}</option>)}
+          </select></label>
+          <label>æ¨¡å‹å<input value={draft.model} onChange={(e) => update({ model: e.target.value })} /></label>
+          <label>æ¥å£åœ°å€<input value={draft.baseUrl} placeholder="ç•™ç©ºåˆ™ç”¨é»˜è®¤åœ°å€" onChange={(e) => update({ baseUrl: e.target.value })} /></label>
+          <label>å¯†é’¥ç¯å¢ƒå˜é‡<input value={draft.apiKeyEnv} placeholder="ä¾‹å¦‚ GLM_API_KEY" onChange={(e) => update({ apiKeyEnv: e.target.value })} /></label>
+          <label>å¤‡æ³¨<input value={draft.notes} onChange={(e) => update({ notes: e.target.value })} /></label>
+          <div className="admin-preset-form-actions">
+            <button type="button" className="admin-primary" disabled={busy} onClick={submit}>{editingId ? 'ä¿å­˜ä¿®æ”¹' : 'æ·»åŠ åˆ°æ¨¡å‹åº“'}</button>
+            <button type="button" disabled={busy} onClick={() => { setDraft(null); setEditingId(null); }}>å–æ¶ˆ</button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [models, setModels] = useState<AdminModels | null>(null);
+  const [selected, setSelected] = useState<ModelSlot>('chat');
+  const [available, setAvailable] = useState<string[] | null>(null);
+  const [keyDraft, setKeyDraft] = useState('');
+  const [pulling, setPulling] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [libraryKey, setLibraryKey] = useState(0);
+
+  useEffect(() => {
+    void adminApi.models().then((r) => setModels(r.models)).catch((e) => onNotice(errorText(e)));
+  }, [onNotice]);
+
+  const config = (models?.[selected] ?? {}) as Record<string, unknown>;
+  const discoveryUnsupported = config.provider === 'anuma-input-images';
+  const update = (key: string, value: unknown) => setModels((prev) => ({
+    ...(prev ?? {}),
+    [selected]: { ...config, [key]: value }
+  }));
+
+  const save = async () => {
+    if (!models) return;
+    try {
+      const typed = keyDraft.trim();
+      const r = await adminApi.updateModels({ [selected]: { ...config, ...(typed ? { apiKey: typed } : {}) } });
+      setModels(r.models);
+      setKeyDraft('');
+      // The old verdict was about the config that was just replaced.
+      setTestResult(null);
+      onNotice(typed ? 'æ¨¡å‹é…ç½®ä¸å¯†é’¥å·²ä¿å­˜' : 'æ¨¡å‹é…ç½®å·²ä¿å­˜');
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+
+  /** Asks the endpoint what it serves. The key stays server-side. */
+  const pull = async () => {
+    if (discoveryUnsupported) {
+      onNotice('Anuma ä¸æä¾›æ¨¡å‹åˆ—è¡¨ï¼Œè¯·æ‰‹åŠ¨å¡«å†™æ¨¡å‹å');
+      return;
+    }
+    if (keyDraft.trim()) {
+      onNotice('è¯·å…ˆç‚¹å‡»â€œä¿å­˜æ¨¡å‹é…ç½®â€ï¼Œå†æ‹‰å–æ¨¡å‹åˆ—è¡¨');
+      return;
+    }
+    setPulling(true);
+    try {
+      const r = await adminApi.discoverModels(selected, String(config.baseUrl ?? '').trim() || undefined);
+      setAvailable(r.models);
+      onNotice(`æ‹‰å–åˆ° ${r.models.length} ä¸ªæ¨¡å‹`);
+    } catch (e) {
+      setAvailable(null);
+      onNotice(errorText(e));
+    } finally {
+      setPulling(false);
+    }
+  };
+
+  /**
+   * Probes the endpoint once with the *saved* config, so "saved" can be told
+   * apart from "actually works". Unsaved form edits are not part of the probe.
+   */
+  const runTest = async () => {
+    if (selected === 'image' && !confirmAction('æµ‹è¯•å‡ºå›¾ä¼šçœŸå®è°ƒç”¨å›¾ç‰‡æœåŠ¡å¹¶æ¶ˆè€—ä¸€æ¬¡é¢åº¦ï¼Œç¡®å®šç»§ç»­å—ï¼Ÿ')) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await adminApi.testModel(selected, selected === 'image');
+      const text = `è¿æ¥æ­£å¸¸ï¼š${r.provider}${r.model ? ` / ${r.model}` : ''}ï¼Œ${r.detail}ï¼Œè€—æ—¶ ${r.latencyMs} ms`;
+      setTestResult({ ok: true, text });
+      onNotice(text);
+    } catch (e) {
+      const text = errorText(e);
+      setTestResult({ ok: false, text });
+      onNotice(text);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  /** Saves what is on screen into the library as a new entry. */
+  const addToLibrary = async () => {
+    try {
+      const current = await adminApi.modelPresets();
+      const draft = presetFromConfig(selected, config, current.presets);
+      if (typeof draft === 'string') {
+        onNotice(draft);
+        return;
+      }
+      await adminApi.saveModelPresets([...current.presets, draft]);
+      setLibraryKey((k) => k + 1);
+      onNotice(`å·²æ·»åŠ åˆ°æ¨¡å‹åº“ï¼š${draft.name}`);
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+
+  if (!models) return <p className="admin-muted">æ­£åœ¨è¯»å–æ¨¡å‹é…ç½®â€¦</p>;
+
+  return (
+    <section className="admin-model-layout" data-testid="admin-models-form">
+      <aside>
+        <h2>æ¨¡å‹èƒ½åŠ›</h2>
+        {CAPABILITIES.map(([key, label]) => (
+          <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); setKeyDraft(''); setTestResult(null); }}>
+            <span>{label}</span>
+            <small>{String((models[key] as Record<string, unknown> | undefined)?.model ?? 'æœªç‹¬ç«‹é…ç½®')}</small>
+          </button>
+        ))}
+      </aside>
+      <div className="admin-form-card">
+        <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? 'æ¨¡å‹é…ç½®'} description="ç¼–è¾‘å½“å‰èƒ½åŠ›ä½¿ç”¨çš„çœŸå®æœåŠ¡ç«¯é…ç½®ã€‚" />
+        <ModelLibrary onNotice={onNotice} onApplied={setModels} reloadKey={libraryKey} />
+        <label>æ¥å£åè®®<select value={String(config.provider ?? 'none')} onChange={(e) => update('provider', e.target.value)}>
+          {interfaceOptions(selected, config.provider == null ? null : String(config.provider)).map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select></label>
+        <label className="admin-form-wide">
+          æ¨¡å‹å
+          <span className="admin-inline-field">
+            <input list="admin-model-options" value={String(config.model ?? '')} onChange={(e) => update('model', e.target.value)} />
+            <button type="button" data-testid="admin-model-pull" disabled={pulling || discoveryUnsupported} onClick={() => void pull()}>{pulling ? 'æ‹‰å–ä¸­â€¦' : 'æ‹‰å–æ¨¡å‹'}</button>
+          </span>
+          <datalist id="admin-model-options">
+            {(available ?? []).map((name) => <option key={name} value={name} />)}
+          </datalist>
+          <small>
+            {available
+              ? `æ‹‰å–åˆ° ${available.length} ä¸ªæ¨¡å‹ï¼Œç‚¹è¾“å…¥æ¡†å¯é€‰ï¼›åˆ—è¡¨å¯èƒ½ä¸å…¨ï¼Œä»å¯æ‰‹å¡«ã€‚`
+              : discoveryUnsupported
+                ? 'Anuma ä¸æä¾›æ¨¡å‹åˆ—è¡¨æ¥å£ï¼Œè¯·ç›´æ¥å¡«å†™ä¾›åº”å•†æä¾›çš„æ¨¡å‹åã€‚'
+                : 'ä»æ¥å£åœ°å€æ‹‰å–è¯¥æœåŠ¡æä¾›çš„æ¨¡å‹åã€‚å¯†é’¥ä¸ä¼šç¦»å¼€æœåŠ¡å™¨ã€‚'}
+          </small>
+        </label>
+        <label className="admin-form-wide">
+          æ¥å£åœ°å€
+          <input
+            value={String(config.baseUrl ?? '')}
+            placeholder={selected === 'image' ? 'https://ä½ çš„ NewAPI åœ°å€/v1' : undefined}
+            onChange={(e) => update('baseUrl', e.target.value)}
+          />
+          {selected === 'image' && (config.provider === 'openai-compatible' || config.provider === 'openai-images') && (
+            <small>NewAPI è¯·å¡«åˆ° /v1 æ ¹è·¯å¾„ï¼Œä¸è¦å¡« /images/generationsï¼›ä¿®æ”¹ API Key åå…ˆä¿å­˜ï¼Œå†æ‹‰å–æ¨¡å‹ã€‚</small>
+          )}
+        </label>
+        {selected === 'image' && (config.provider === 'openai-compatible' || config.provider === 'openai-images') && (
+          <label>
+            New-Api-Userï¼ˆå¯é€‰ï¼‰
+            <input value={String(config.newApiUserId ?? '')} onChange={(e) => update('newApiUserId', e.target.value)} placeholder="NewAPI ç”¨æˆ· ID" />
+            <small>åªæœ‰ NewAPI çš„ /api/models è¦æ±‚ç”¨æˆ·é‰´æƒæ—¶å¡«å†™ï¼›ä¸çŸ¥é“å°±å…ˆç•™ç©ºã€‚</small>
+          </label>
+        )}
+        <label>
+          API Key
+          <input
+            type="password"
+            autoComplete="off"
+            data-testid="admin-model-apikey"
+            value={keyDraft}
+            placeholder={config.apiKeyConfigured ? 'å·²é…ç½®ï¼Œç•™ç©ºåˆ™ä¸æ”¹' : 'ç²˜è´´å¯†é’¥'}
+            onChange={(e) => setKeyDraft(e.target.value)}
+          />
+          <small>{config.apiKeyConfigured ? 'å·²ä¿å­˜ä¸€æŠŠå¯†é’¥ã€‚è¦æ¢å°±ç²˜æ–°çš„ï¼Œç•™ç©ºåˆ™ä¿æŒä¸å˜ã€‚' : 'è¿˜æ²¡æœ‰å¯†é’¥ï¼Œç²˜è´´åç‚¹ä¿å­˜ã€‚'}</small>
+        </label>
+        <label>è¯·æ±‚è¶…æ—¶ï¼ˆæ¯«ç§’ï¼‰<input type="number" value={String(config.timeoutMs ?? '')} onChange={(e) => update('timeoutMs', Number(e.target.value))} /></label>
+        {['chat', 'vision', 'summary'].includes(selected) && <>
+          <label>æœ€å¤§è¾“å‡º Token<input type="number" value={String(config.maxTokens ?? '')} onChange={(e) => update('maxTokens', Number(e.target.value))} /></label>
+          <label>Temperature<input type="number" step="0.1" value={String(config.temperature ?? '')} onChange={(e) => update('temperature', Number(e.target.value))} /></label>
+          <label>ä¸Šä¸‹æ–‡çª—å£<input type="number" value={String(config.contextWindow ?? '')} onChange={(e) => update('contextWindow', Number(e.target.value))} /></label>
+          <label>æœ€å¤§é‡è¯•æ¬¡æ•°<input type="number" value={String(config.maxRetries ?? '')} onChange={(e) => update('maxRetries', Number(e.target.value))} /></label>
+        </>}
+        {['chat', 'vision'].includes(selected) && (
+          <label className="admin-form-wide">
+            å£°æ˜æ”¯æŒè¯»å›¾
+            <select value={config.supportsVision ? 'yes' : 'no'} onChange={(e) => update('supportsVision', e.target.value === 'yes')}>
+              <option value="no">å¦ï¼ˆå‘æ¥çš„å›¾ç‰‡ä¸ä¼šé€ç»™è¿™ä¸ªæ¨¡å‹ï¼‰</option>
+              <option value="yes">æ˜¯ï¼ˆæ¨¡å‹çœŸçš„èƒ½è¯»å›¾æ‰é€‰ï¼‰</option>
+            </select>
+            <small>è°æŠ¥ä¸ºã€Œæ˜¯ã€ä¼šè®©å¸¦å›¾çš„å›å¤æ•´æ¡å¤±è´¥ï¼Œè€Œä¸æ˜¯é™çº§æˆçº¯æ–‡å­—ã€‚</small>
+          </label>
+        )}
+        {selected === 'image' && <label>å›¾ç‰‡å°ºå¯¸<input value={String(config.size ?? '')} onChange={(e) => update('size', e.target.value)} /></label>}
+        {selected === 'image' && config.provider === 'anuma-input-images' && <>
+          <p className="field-help">ç”Ÿæˆé˜¶æ®µä¸ä¼šè‡ªåŠ¨é‡è¯•ï¼Œä»¥å…ä¸€æ¬¡è¯·æ±‚äº§ç”Ÿå¤šå¼ å›¾ç‰‡ã€‚</p>
+          <label>Anuma ä¸Šä¼ è¶…æ—¶ï¼ˆæ¯«ç§’ï¼‰<input type="number" min="1000" max="120000" value={String(config.uploadTimeoutMs ?? 20000)} onChange={(e) => update('uploadTimeoutMs', Number(e.target.value))} /></label>
+          <label>Anuma ä¸Šä¼ é‡è¯•æ¬¡æ•°<input type="number" min="0" max="3" value={String(config.uploadMaxRetries ?? 2)} onChange={(e) => update('uploadMaxRetries', Number(e.target.value))} /></label>
+          <p className="admin-muted admin-form-wide">Anuma å›¾ç”Ÿå›¾ä¼šå…ˆä¸Šä¼ å‚è€ƒå›¾ï¼Œå†æŠŠ HTTPS åœ°å€ä¼ ç»™ generationsï¼›ä¸ä¼šæŠŠå›¾ç‰‡ Base64 æˆ–ç­¾ååœ°å€å†™å…¥æ—¥å¿—ã€‚</p>
+        </>}
+        {selected === 'tts' && <>
+          <label>éŸ³è‰²<input value={String(config.voice ?? '')} onChange={(e) => update('voice', e.target.value)} /></label>
+          <label>è¯­é€Ÿ<input type="number" step="0.1" value={String(config.speed ?? '')} onChange={(e) => update('speed', Number(e.target.value))} /></label>
+          <label className="admin-form-wide">
+            æƒ…ç»ªæŠ•é€’æ–¹å¼
+            <select value={String(config.emotionMode ?? 'auto')} onChange={(e) => update('emotionMode', e.target.value)}>
+              <option value="auto">è‡ªåŠ¨ï¼ˆæŒ‰éŸ³è‰² ID åˆ¤æ–­ï¼Œæ¨èï¼‰</option>
+              <option value="instruction">è‡ªç„¶è¯­è¨€æŒ‡ä»¤ï¼ˆè±†åŒ… 2.0ã€ŒæŒ‡ä»¤éµå¾ªã€éŸ³è‰²ï¼‰</option>
+              <option value="enum">emotion æšä¸¾ï¼ˆä»…ã€Œå¤šæƒ…æ„Ÿã€éŸ³è‰²ï¼ŒID å¸¦ _emo_ï¼‰</option>
+              <option value="off">ä¸ä¼ æƒ…ç»ª</option>
+            </select>
+            <small>ä¸¤ç§éŸ³è‰²å®¶æ—æ”¶æƒ…ç»ªçš„æ–¹å¼ä¸ä¸€æ ·ã€‚è‡ªåŠ¨æ¨¡å¼çœ‹éŸ³è‰² ID é‡Œæœ‰æ²¡æœ‰ <code>_emo_</code>ï¼Œæ¢éŸ³è‰²å°±è‡ªåŠ¨è·Ÿç€åˆ‡ã€‚</small>
+          </label>
+          <label className="admin-form-wide">
+            Resource-Idï¼ˆä»…ç«å±±å®˜æ–¹åè®®ï¼‰
+            <input value={String(config.resourceId ?? '')} placeholder="seed-tts-2.0" onChange={(e) => update('resourceId', e.target.value)} />
+            <small>å®ƒåŒæ—¶å†³å®šæ¨¡å‹ç‰ˆæœ¬å’Œè®¡è´¹å•†å“ã€‚å®˜æ–¹è¯´æ˜ï¼šè¯­éŸ³æ¨¡å‹ä¸æ”¯æŒé€šè¿‡ Auto æˆ–æ§åˆ¶å°åˆ‡æ¢ï¼Œå¿…é¡»åœ¨è¿™é‡ŒæŒ‡å®šã€‚</small>
+          </label>
+          <label>æƒ…ç»ªå¼ºåº¦ï¼ˆä»…æšä¸¾æ–¹å¼ï¼Œ1~5ï¼‰<input type="number" step="1" min="1" max="5" value={String(config.emotionScale ?? 4)} onChange={(e) => update('emotionScale', Number(e.target.value))} /></label>
+        </>}
+        {selected === 'embedding' && <label>å‘é‡ç»´åº¦<input type="number" value={String(config.dimensions ?? '')} onChange={(e) => update('dimensions', Number(e.target.value))} /></label>}
+        <div className="admin-actions">
+          {selected === 'image' && <small className="admin-muted">æµ‹è¯•å‡ºå›¾ä¼šçœŸå®è°ƒç”¨å›¾ç‰‡æœåŠ¡å¹¶æ¶ˆè€—ä¸€æ¬¡é¢åº¦ã€‚</small>}
+          <button type="button" onClick={() => void save()}>ä¿å­˜æ¨¡å‹é…ç½®</button>
+          <button type="button" data-testid="admin-model-test" disabled={testing} onClick={() => void runTest()}>{testing ? 'æµ‹è¯•ä¸­â€¦' : 'æµ‹è¯•è¿æ¥'}</button>
+          <button type="button" data-testid="admin-model-add-preset" onClick={() => void addToLibrary()}>æ·»åŠ é…ç½®</button>
+        </div>
+        {testResult ? (
+          <p className={testResult.ok ? 'admin-test-result ok' : 'admin-test-result fail'} data-testid="admin-model-test-result">{testResult.text}</p>
+        ) : (
+          <small className="admin-muted">ã€Œæµ‹è¯•è¿æ¥ã€ä¼šç”¨å·²ä¿å­˜çš„é…ç½®çœŸå‘ä¸€æ¬¡æœ€å°è¯·æ±‚ã€‚æ”¹äº†è¡¨å•è¦å…ˆä¿å­˜å†æµ‹ã€‚</small>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ContentPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [memories, setMemories] = useState<AdminMemory[]>([]);
+  const [recall, setRecall] = useState<AdminRecallTrace | null>(null);
+  const [stickers, setStickers] = useState<AdminSticker[]>([]);
+  const [media, setMedia] = useState<AdminMedia[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const [m, s, d] = await Promise.all([adminApi.memories(), adminApi.stickers(), adminApi.media()]);
+      setMemories(m.memories);
+      setRecall(m.recall ?? null);
+      setStickers(s.stickers);
+      setMedia(d.media);
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  }, [onNotice]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <section className="admin-content" data-testid="admin-content">
+      <article className="admin-card" data-testid="admin-memory-list">
+        <div className="admin-card-subtitle"><h2>è®°å¿†</h2><span className="admin-count-badge">{memories.length}</span></div>
+        {memories.length ? memories.slice(0, 8).map((m) => <div className="admin-list-row" key={m.id}><span>{m.content}</span><button type="button" onClick={() => void adminApi.deleteMemory(m.id).then(load).catch((e) => onNotice(errorText(e)))}>åˆ é™¤</button></div>) : <EmptyState>æš‚æ— é•¿æœŸè®°å¿†</EmptyState>}
+        <div className="admin-actions"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('ç¡®è®¤æ¸…ç©ºå…¨éƒ¨è®°å¿†ï¼Ÿ')) void adminApi.clearMemories().then(load).catch((e) => onNotice(errorText(e))); }}>æ¸…ç©ºè®°å¿†</button></div>
+      </article>
+
+      {recall && <article className="admin-card" data-testid="admin-memory-recall">
+        <div className="admin-card-subtitle"><h2>æœ€è¿‘ä¸€æ¬¡è®°å¿†å¬å›</h2><span>{recall.strategy}</span></div>
+        <p>æŸ¥è¯¢ï¼š{recall.query || 'ï¼ˆæ— ï¼‰'}</p>
+        <p>å€™é€‰ {recall.stats.recalled} Â· çº³å…¥ {recall.stats.included} Â· å»é‡ {recall.stats.deduplicated} Â· è¶…é¢„ç®— {recall.stats.budgetDropped}</p>
+        {recall.fallbackReason && <p>å›é€€åŸå› ï¼š{recall.fallbackReason}</p>}
+        {recall.entries.slice(0, 8).map((entry) => <div className="admin-list-row" key={entry.id}>
+          <span>{entry.included ? 'å·²çº³å…¥' : `å·²ä¸¢å¼ƒï¼ˆ${entry.droppedReason ?? 'æœªçŸ¥'}ï¼‰`} Â· {entry.kind} Â· {entry.content}</span>
+          <small>{entry.strategy} Â· {entry.reason}</small>
+        </div>)}
+        {!recall.entries.length && <EmptyState>æœ€è¿‘ä¸€æ¬¡æ²¡æœ‰å¬å›è®°å¿†</EmptyState>}
+      </article>}
+
+      <article className="admin-card" data-testid="admin-sticker-list">
+        <div className="admin-card-subtitle"><h2>è¡¨æƒ…åŒ…</h2><span className="admin-count-badge">{stickers.length}</span></div>
+        {stickers.length ? stickers.slice(0, 8).map((s) => <div className="admin-list-row" key={s.id}><span>{s.name} Â· {s.emotion}</span><button type="button" onClick={() => { if (confirmAction(`åˆ é™¤è¡¨æƒ…åŒ…â€œ${s.name}â€ï¼Ÿ`)) void adminApi.deleteSticker(s.id).then(load).catch((e) => onNotice(errorText(e))); }}>åˆ é™¤</button></div>) : <EmptyState>æš‚æ— è¡¨æƒ…åŒ…</EmptyState>}
+        <StickerUpload onDone={load} onNotice={onNotice} />
+      </article>
+
+      <article className="admin-card" data-testid="admin-media-list">
+        <div className="admin-card-subtitle"><h2>åª’ä½“æ–‡ä»¶</h2><span className="admin-count-badge">{media.length}</span></div>
+        {media.length ? media.slice(0, 8).map((m) => <div className="admin-list-row" key={m.id}><span>{m.kind} Â· {formatBytes(m.bytes)}</span><button type="button" onClick={() => { if (confirmAction('åˆ é™¤è¯¥åª’ä½“æ–‡ä»¶ï¼Ÿ')) void adminApi.deleteMedia(m.id).then(load).catch((e) => onNotice(errorText(e))); }}>åˆ é™¤</button></div>) : <EmptyState>æš‚æ— åª’ä½“æ–‡ä»¶</EmptyState>}
+      </article>
+
+      <article className="admin-card">
+        <h2>èŠå¤©è®°å½•</h2>
+        <p>æ°¸ä¹…ä¼šè¯ä»…æ”¯æŒæ•´ä½“æ¸…ç©ºï¼Œé¿å…è¯¯åˆ å•æ¡ä¸Šä¸‹æ–‡é€ æˆè®°å¿†æ–­è£‚ã€‚</p>
+        <div className="admin-actions"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('ç¡®è®¤æ¸…ç©ºå…¨éƒ¨èŠå¤©è®°å½•ï¼Ÿæ­¤æ“ä½œä¸å¯æ’¤é”€ã€‚')) void adminApi.clearChat().then(() => onNotice('èŠå¤©è®°å½•å·²æ¸…ç©º')).catch((e) => onNotice(errorText(e))); }}>æ¸…ç©ºèŠå¤©è®°å½•</button></div>
+      </article>
+    </section>
+  );
+}
+
+function StickerUpload({ onDone, onNotice }: { onDone: () => Promise<void>; onNotice: (s: string) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const upload = async () => {
+    if (!file) return;
+    const form = new FormData();
+    form.append('name', file.name.replace(/\.[^.]+$/, ''));
+    form.append('emotion', 'neutral');
+    form.append('tags', 'neutral');
+    form.append('file', file);
+    try {
+      await adminApi.uploadSticker(form);
+      setFile(null);
+      await onDone();
+      onNotice('è¡¨æƒ…åŒ…å·²ä¸Šä¼ ');
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+  return <div className="admin-upload"><input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /><button type="button" disabled={!file} onClick={() => void upload()}>ä¸Šä¼ è¡¨æƒ…åŒ…</button></div>;
+}
+
+function OperationsPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [errors, setErrors] = useState<AdminError[]>([]);
+  const [jobs, setJobs] = useState<AdminJob[]>([]);
+  const [backups, setBackups] = useState<AdminBackup[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const [e, j, b] = await Promise.all([adminApi.errors(), adminApi.jobs(), adminApi.backups()]);
+      setErrors(e.errors);
+      setJobs(j.jobs);
+      setBackups(b.backups);
+    } catch (err) {
+      onNotice(errorText(err));
+    }
+  }, [onNotice]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const run = async (work: () => Promise<unknown>, message: string) => {
+    try {
+      await work();
+      await load();
+      onNotice(message);
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+
+  return (
+    <section className="admin-operations">
+      <article className="admin-card" data-testid="admin-error-list">
+        <div className="admin-card-subtitle"><h2>æœ€è¿‘é”™è¯¯</h2><span className="admin-count-badge">{errors.length}</span></div>
+        {errors.length ? errors.map((e) => <div className="admin-list-row" key={e.id}><span>{e.scope} Â· {e.message}</span><small>{new Date(e.createdAt).toLocaleString()}</small></div>) : <EmptyState>æš‚æ— é”™è¯¯è®°å½•</EmptyState>}
+        <div className="admin-actions"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('ç¡®è®¤æ¸…ç©ºé”™è¯¯è®°å½•ï¼Ÿ')) void run(() => adminApi.clearErrors(), 'é”™è¯¯è®°å½•å·²æ¸…ç©º'); }}>æ¸…ç©ºé”™è¯¯è®°å½•</button></div>
+      </article>
+
+      <article className="admin-card" data-testid="admin-job-list">
+        <div className="admin-card-subtitle"><h2>åå°ä»»åŠ¡</h2><span className="admin-count-badge">{jobs.length}</span></div>
+        {jobs.length ? jobs.map((j) => <div className="admin-list-row" key={j.id}><span>{j.type} Â· {j.status}</span><small>{j.attempts}/{j.max_attempts}</small></div>) : <EmptyState>æš‚æ— åå°ä»»åŠ¡</EmptyState>}
+      </article>
+
+      <article className="admin-card" data-testid="admin-backup-list">
+        <div className="admin-card-heading"><div><h2>å¤‡ä»½</h2><p>{backups.length} ä»½å¯ç”¨å¤‡ä»½</p></div><button type="button" onClick={() => void run(() => adminApi.createBackup(), 'å¤‡ä»½å·²åˆ›å»º')}>åˆ›å»ºå¤‡ä»½</button></div>
+        {backups.length ? backups.map((b) => <div className="admin-list-row" key={b.name}><span>{b.name} Â· {formatBytes(b.bytes)}</span><div><button type="button" onClick={() => void run(() => adminApi.verifyBackup(b.name), 'å¤‡ä»½æ ¡éªŒå®Œæˆ')}>æ ¡éªŒ</button><button type="button" onClick={() => { if (confirmAction(`ç¡®è®¤æ¢å¤å¤‡ä»½â€œ${b.name}â€ï¼Ÿ`)) void run(() => adminApi.restoreBackup(b.name), 'å¤‡ä»½å·²æ¢å¤ï¼Œè¯·åˆ·æ–°èŠå¤©é¡µé¢'); }}>æ¢å¤</button><button type="button" className="admin-danger" onClick={() => { if (confirmAction(`ç¡®è®¤åˆ é™¤å¤‡ä»½â€œ${b.name}â€ï¼Ÿ`)) void run(() => adminApi.deleteBackup(b.name), 'å¤‡ä»½å·²åˆ é™¤'); }}>åˆ é™¤</button></div></div>) : <EmptyState>æš‚æ— å¤‡ä»½ï¼Œå¯å…ˆåˆ›å»ºä¸€ä»½</EmptyState>}
+      </article>
+    </section>
+  );
+}
+
+/** Loads the persona the avatar editor edits, which the old page shell owned. */
+function AvatarPanel({ onNotice }: { onNotice: (v: string) => void }) {
+  const [persona, setPersona] = useState<AdminPersona | null>(null);
+  useEffect(() => {
+    void adminApi.persona().then((r) => setPersona(r.persona)).catch((e) => onNotice(errorText(e)));
+  }, [onNotice]);
+  if (!persona) return <p className="admin-muted">æ­£åœ¨è¯»å–å¤´åƒè®¾ç½®â€¦</p>;
+  return <AvatarEditor persona={persona} onPersona={setPersona} onNotice={onNotice} />;
+}
+
+function TabButtons({ tab, setTab, mobile }: { tab: Tab; setTab: (tab: Tab) => void; mobile: boolean }) {
+  return (
+    <nav className={mobile ? 'admin-mobile-tabs' : 'admin-side-nav'} aria-label="ç®¡ç†é¢æ¿å¯¼èˆª">
+      {mobile
+        ? TABS.map((item) => (
+          <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+            {item.label}
+          </button>
+        ))
+        : NAV_GROUPS.map((group) => (
+          <Fragment key={group}>
+            <p className="admin-nav-group">{group}</p>
+            {TABS.filter((item) => item.group === group).map((item) => (
+              <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
+                <span className="admin-nav-icon"><Icon name={item.icon} /></span>
+                <span className="admin-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
+              </button>
+            ))}
+          </Fragment>
+        ))}
+    </nav>
+  );
+}
+
+function Overview({ data, counts, onRefresh }: { data: Dashboard; counts: { available: number; total: number }; onRefresh: () => void }) {
+  const db = data.system.database;
+  const storage = data.system.storage;
+  const tiles = [
+    { label: 'æ¶ˆæ¯ä¸è®°å¿†', value: `${Number(db.messages ?? 0).toLocaleString()} æ¡æ¶ˆæ¯`, detail: `${Number(db.memories ?? 0).toLocaleString()} æ¡è®°å¿†`, icon: 'message' as const },
+    { label: 'æ¨¡å‹èƒ½åŠ›', value: `${counts.available} / ${counts.total} å¯ç”¨`, detail: 'æŒ‰æœåŠ¡ç«¯å®é™…èƒ½åŠ›ç»Ÿè®¡', icon: 'cpu' as const },
+    { label: 'å­˜å‚¨å ç”¨', value: formatBytes(storage.mediaBytes), detail: `${Number(db.media ?? 0).toLocaleString()} ä¸ªåª’ä½“æ–‡ä»¶`, icon: 'storage' as const },
+    { label: 'å¤‡ä»½', value: `${data.backups.length} ä»½`, detail: `å¾…å¤„ç†ä»»åŠ¡ ${Number(db.pendingJobs ?? 0)}`, icon: 'backup' as const }
+  ];
+
+  return <>
+    <section className="admin-status-card" data-testid="admin-system-status">
+      <div><span className="admin-health-dot" /><strong>è¿è¡Œæ­£å¸¸</strong></div>
+      <span>ç‰ˆæœ¬ {data.system.version}</span>
+      <span>å·²è¿è¡Œ {formatUptime(data.system.uptimeSec)}</span>
+      <button type="button" onClick={onRefresh}>åˆ·æ–°çŠ¶æ€</button>
+    </section>
+    <section className="admin-summary">
+      {tiles.map((tile) => <div className="admin-summary-tile" key={tile.label}><div className="admin-summary-top"><span>{tile.label}</span><span className="admin-summary-icon"><Icon name={tile.icon} /></span></div><strong>{tile.value}</strong><small>{tile.detail}</small></div>)}
+    </section>
+  </>;
+}
+
+export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: Tab } = {}) {
+  const [token, setToken] = useState(() => getAdminToken());
+  const [tokenInput, setTokenInput] = useState('');
+  const [tab, setTab] = useState<Tab>(() => tabFromAdminPath(window.location.pathname, initialTab));
+  const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
+  const [data, setData] = useState<Dashboard | null>(null);
+  const [notice, setNotice] = useAutoNotice();
+  const [loading, setLoading] = useState(false);
+  const isMobile = useIsMobile();
+
+  const setDirtyState = useCallback((value: boolean) => {
+    dirtyRef.current = value;
+    setDirty(value);
+  }, []);
+
+  useEffect(() => {
+    const routeTab = tabFromAdminPath(window.location.pathname, initialTab);
+    const canonicalPath = adminPathForTab(routeTab);
+    if (window.location.pathname !== canonicalPath) {
+      window.history.replaceState(null, '', canonicalPath);
+    }
+
+    const onPopState = () => {
+      const next = tabFromAdminPath(window.location.pathname, initialTab);
+      if (dirtyRef.current && !window.confirm('å½“å‰ä¿®æ”¹å°šæœªä¿å­˜ï¼Œç¡®å®šç¦»å¼€å—ï¼Ÿ')) {
+        window.history.pushState(null, '', adminPathForTab(tab));
+        return;
+      }
+      setDirtyState(false);
+      setTab(next);
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [initialTab, setDirtyState, tab]);
+
+  const navigateTab = useCallback((next: Tab) => {
+    if (next === tab) return;
+    if (dirtyRef.current && !window.confirm('å½“å‰ä¿®æ”¹å°šæœªä¿å­˜ï¼Œç¡®å®šç¦»å¼€å—ï¼Ÿ')) return;
+    setDirtyState(false);
+    window.history.pushState(null, '', adminPathForTab(next));
+    setTab(next);
+  }, [setDirtyState, tab]);
+
+  const loadOverview = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const [system, capabilities, backups] = await Promise.all([
+        adminApi.system(),
+        adminApi.capabilities(),
+        adminApi.backups()
+      ]);
+      setData({ system, capabilities, backups: backups.backups });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        clearAdminToken();
+        setToken(null);
+        setData(null);
+      } else {
+        setNotice(errorText(e));
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { void loadOverview(); }, [loadOverview]);
+
+  const submitToken = (e: FormEvent) => {
+    e.preventDefault();
+    const next = tokenInput.trim();
+    if (!next) return;
+    setAdminToken(next);
+    setToken(next);
+    setTokenInput('');
+  };
+
+  const logout = () => {
+    clearAdminToken();
+    setToken(null);
+    setData(null);
+    setNotice(null);
+  };
+
+  const counts = useMemo(
+    () => data ? capabilityCounts(data.capabilities.capabilities) : { available: 0, total: 0 },
+    [data]
+  );
+
+  if (!token) {
+    return <main className="admin-page admin-v2 admin-lock-page" data-testid="admin-lock"><form className="admin-lock-card" onSubmit={submitToken}><span className="admin-lock-icon"><Icon name="lock" /></span><span className="admin-eyebrow">SOOYA ç®¡ç†ä¸­å¿ƒ</span><h1>è¾“å…¥ç®¡ç†ä»¤ç‰Œ</h1><p>ä»¤ç‰Œåªä¿å­˜åœ¨å½“å‰è®¾å¤‡ï¼Œç”¨äºè®¿é—®ç®¡ç†æ¥å£ã€‚</p><label htmlFor="admin-token">ç®¡ç†ä»¤ç‰Œ</label><input id="admin-token" type="password" autoComplete="current-password" value={tokenInput} onChange={(e) => setTokenInput(e.target.value)} /><button type="submit" disabled={!tokenInput.trim()}>è¿›å…¥ç®¡ç†ä¸­å¿ƒ</button></form></main>;
+  }
+
+  if (loading && !data) {
+    return <main className="admin-page admin-v2 admin-loading"><div className="admin-loading-card"><div className="admin-spinner" />æ­£åœ¨è¯»å–ç³»ç»ŸçŠ¶æ€â€¦</div></main>;
+  }
+
+  if (!data) {
+    return <main className="admin-page admin-v2 admin-error"><div className="admin-error-card"><p>{notice ?? 'æ— æ³•åŠ è½½ç®¡ç†ä¿¡æ¯'}</p><button type="button" onClick={() => void loadOverview()}>é‡è¯•</button></div></main>;
+  }
+
+  const page = PAGE_COPY[tab];
+  const content = tab === 'overview'
+    ? <Overview data={data} counts={counts} onRefresh={() => void loadOverview()} />
+    : tab === 'persona'
+      ? <PersonaPanel onNotice={setNotice} />
+      : tab === 'avatar'
+        ? <AvatarPanel onNotice={setNotice} />
+        : tab === 'voice'
+          ? <VoiceEditor onNotice={setNotice} />
+          : tab === 'life'
+            ? <LifePanel onNotice={setNotice} />
+            : tab === 'models'
+                ? <ModelsPanel onNotice={setNotice} />
+                : tab === 'content'
+                  ? <ContentPanel onNotice={setNotice} />
+                  : tab === 'storage'
+                    ? <StorageEditor onNotice={setNotice} />
+                    : <OperationsPanel onNotice={setNotice} />;
+
+  return (
+    <main className="admin-page admin-v2" data-testid="admin-dashboard" data-dirty={dirty || undefined} onInputCapture={(event) => {
+      const target = event.target as HTMLInputElement;
+      if (target instanceof HTMLInputElement && target.type === 'file') return;
+      setDirtyState(true);
+    }} onSubmitCapture={() => setDirtyState(false)}>
+      <div className="admin-shell">
+        {!isMobile && <aside className="admin-sidebar">
+          <div className="admin-brand"><span className="admin-brand-mark">S</span><span className="admin-brand-copy"><strong>SOOYA</strong><small>ç®¡ç†ä¸­å¿ƒ</small></span></div>
+          <TabButtons tab={tab} setTab={navigateTab} mobile={false} />
+          <div className="admin-sidebar-footer">
+            <a className="admin-side-action" href="/" data-testid="admin-return-chat">è¿”å›å¯¹è¯</a>
+            <button type="button" className="admin-side-action subtle" onClick={logout}>é€€å‡ºç®¡ç†</button>
+          </div>
+        </aside>}
+
+        {isMobile && <header className="admin-mobile-header"><div className="admin-mobile-brand"><span className="admin-mobile-icon"><Icon name={TABS.find((item) => item.id === tab)?.icon ?? 'overview'} /></span><div><strong>SOOYA ç®¡ç†ä¸­å¿ƒ</strong><small>{page.title}</small></div></div><a className="admin-return" href="/" data-testid="admin-return-chat">è¿”å›å¯¹è¯</a></header>}
+
+        <section className="admin-main">
+          <div className="admin-main-inner">
+            {isMobile && <TabButtons tab={tab} setTab={navigateTab} mobile />}
+            {!isMobile && <header className="admin-content-header"><div className="admin-title-wrap"><span className="admin-eyebrow">SOOYA ADMIN</span><h1>{page.title}</h1><p>{page.description}</p></div><div className="admin-header-actions"><button type="button" className="admin-header-button" onClick={() => void loadOverview()}>åˆ·æ–°</button></div></header>}
+            <div className="admin-mobile-content">
+              {isMobile && <div className="admin-mobile-title"><h1>{page.title}</h1><p>{page.description}</p></div>}
+              <SectionNotice notice={notice} />
+              {content}
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}

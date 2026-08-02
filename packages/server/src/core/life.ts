@@ -53,6 +53,8 @@ export interface LifeConfig {
   silentHours: { from: number; to: number };
   /** Panel switch. The env kill-switch still wins over this. */
   reachOut: boolean;
+  /** Auto stays text-first; explicit modes are useful for controlled deployments. */
+  proactiveMode?: 'auto' | 'text' | 'text_sticker' | 'voice' | 'image';
 }
 
 export const DEFAULT_LIFE_CONFIG: LifeConfig = {
@@ -61,7 +63,8 @@ export const DEFAULT_LIFE_CONFIG: LifeConfig = {
   quietGapMinutes: 180,
   maxReachOutsPerDay: 3,
   silentHours: { from: 0, to: 9 },
-  reachOut: true
+  reachOut: true,
+  proactiveMode: 'auto'
 };
 
 export interface ResolvedActivity {
