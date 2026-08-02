@@ -10,6 +10,7 @@ import type { CapabilityRegistry } from './capabilities.js';
 import type { ChatProvider } from '../providers/types.js';
 import type { ConfigStore } from '../config/store.js';
 import type { PushService } from './push.js';
+import type { ProactiveComposer } from './proactive.js';
 import type { StorageService } from './storage.js';
 import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
 import { extractText } from '../media/text-extractor.js';
@@ -98,6 +99,7 @@ export interface JobDeps {
   bus: EventBus;
   backups: BackupService;
   life: LifeEngine;
+  proactive: ProactiveComposer;
   capabilities: CapabilityRegistry;
   config: ConfigStore;
   reachOutEnabled: boolean;
@@ -157,34 +159,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const result = deps.life.tick();
     if (result.changed) deps.bus.publish('life.updated', { activity: result.activity, kind: result.kind, mood: result.mood });
     if (!deps.reachOutEnabled) return;
-
-    const recent = deps.messages.recent(40);
-    const lastUser = [...recent].reverse().find((msg) => msg.role === 'user');
-    const lastAssistant = [...recent].reverse().find((msg) => msg.role === 'assistant');
-    const decision = deps.life.shouldReachOut(
-      lastUser ? new Date(lastUser.createdAt) : null,
-      lastAssistant ? new Date(lastAssistant.createdAt) : null
-    );
-    if (!decision.reach || !decision.candidate) return;
-
-    const provider = deps.capabilities.chatProvider();
-    if (!provider.configured) return;
-    const persona = deps.config.getPersona();
-    const text = await composeReachOut(provider, persona.systemPrompt, deps.life.contextLines(lastUser ? new Date(lastUser.createdAt) : null), decision.candidate.activity);
-    if (!text) return;
-
-    const created = deps.messages.create({
-      role: 'assistant',
-      status: 'sent',
-      parts: [{ type: 'text', text }],
-      // Marked so the client can tell it apart, and so a later audit can
-      // measure how often she spoke first.
-      meta: { proactive: true, lifeLogId: decision.candidate.id, activity: decision.candidate.activity }
-    });
-    if (!created.created) return;
-    deps.life.markShared(decision.candidate.id);
-    deps.bus.persist('message.received', { message: created.message });
-    deps.jobs.enqueue('push.reply', { messageId: created.message.id }, { maxAttempts: 3 });
+    await deps.proactive.run();
   });
 
   worker.register('memory.embed.backfill', async () => { await deps.memory.backfillEmbeddings(20); });
