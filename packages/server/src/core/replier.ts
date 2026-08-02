@@ -176,7 +176,7 @@ export class Replier {
         } else {
           this.deps.messages.updatePart(textPartId, { text: visibleText });
         }
-        this.deps.bus.publish('reply.text.delta', { messageId: shell.id, delta: visible, text: visibleText });
+        this.deps.bus.publish('reply.text.delta', { messageId: shell.id, delta: visible });
       };
 
       if (provider.configured) {

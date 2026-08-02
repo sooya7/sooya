@@ -457,7 +457,7 @@ function scheduleRecurring(app: SooyaApp): void {
   const maintenance = setInterval(() => {
     try {
       repos.jobs.enqueue('maintenance', {});
-      services.bus.prune(2000);
+      services.bus.prune(env.EVENTS_KEEP);
     } catch { /* ignore */ }
   }, 30 * 60 * 1000);
   maintenance.unref?.();

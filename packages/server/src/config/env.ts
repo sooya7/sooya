@@ -65,6 +65,8 @@ const EnvSchema = z.object({
   BACKUP_INTERVAL_MS: intish(6 * 60 * 60 * 1000),
   BACKUP_KEEP: intish(7),
   BACKUP_ON_START: boolish(false),
+  /* Durable event log retention: how many tail events survive each prune. */
+  EVENTS_KEEP: intish(2000),
 
   CONTEXT_RECENT_MESSAGES: intish(24),
   CONTEXT_MEMORY_LIMIT: intish(8),
