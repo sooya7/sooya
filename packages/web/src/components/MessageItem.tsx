@@ -4,13 +4,17 @@ import { BUBBLE_IMAGE_CSS_WIDTH, fetchAuthenticatedMedia, mediaThumbnailPath, re
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 import type { ChatMessage, MessagePart } from '../lib/types.js';
 import { isReplayableUserMessage, isRetryableFailedMessage } from '../lib/useChat.js';
+import { stripModelDirectivesForDisplay } from '../lib/messageDirectives.js';
 import { AudioBubble } from './AudioBubble.js';
 import { AuthenticatedImage } from './AuthenticatedMedia.js';
 
 /** One line of the quoted message: its text, or what kind of media it was. */
 function quotedPreview(message: ChatMessage): string {
   for (const part of message.content) {
-    if (part.type === 'text' && part.text?.trim()) return part.text.trim();
+    if (part.type === 'text') {
+      const text = stripModelDirectivesForDisplay(part.text);
+      if (text) return text;
+    }
     if (part.type === 'audio') return part.transcript?.trim() ? `[语音] ${part.transcript.trim()}` : '[语音]';
     if (part.type === 'image') return '[图片]';
     if (part.type === 'sticker') return '[表情]';
@@ -22,7 +26,7 @@ function quotedPreview(message: ChatMessage): string {
 function formatClock(iso: string, timeZone?: string): string { const d = new Date(iso); if (Number.isNaN(d.getTime())) return ''; return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false, hourCycle: 'h23', ...(timeZone ? { timeZone } : {}) }).format(d); }
 function formatFullDateTime(iso: string, timeZone?: string): string { const d = new Date(iso); if (Number.isNaN(d.getTime())) return ''; return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', ...(timeZone ? { timeZone } : {}) }).format(d); }
 function formatBytes(n: number): string { return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`; }
-function messageText(message: ChatMessage): string { return message.content.map((part) => part.type === 'text' ? part.text ?? '' : part.type === 'audio' ? part.transcript ?? '' : '').filter(Boolean).join('\n'); }
+function messageText(message: ChatMessage): string { return message.content.map((part) => part.type === 'text' ? stripModelDirectivesForDisplay(part.text) : part.type === 'audio' ? part.transcript ?? '' : '').filter(Boolean).join('\n'); }
 function highlighted(text: string, query?: string): React.ReactNode {
   const needle = query?.trim();
   if (!needle) return text;
@@ -194,7 +198,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
             <span className="reply-text">{quoted ? quotedPreview(quoted) : quotedStatus === 'loading' ? '正在读取原消息…' : quotedStatus === 'error' ? '原消息暂时无法读取' : '原消息已删除或不可用'}</span>
           </div>
         )}
-        <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': return part.text ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{highlighted(part.text, highlightQuery)}</div> : null; case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>
+        <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': { const displayText = stripModelDirectivesForDisplay(part.text); return displayText ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{highlighted(displayText, highlightQuery)}</div> : null; } case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>
         <div className="msg-meta"><span className="clock" title={formatFullDateTime(message.createdAt, timeZone)}>{formatClock(message.createdAt, timeZone)}</span>{message.pendingLocal && message.status !== 'failed' && <span className="sending-dot" aria-label="发送中" />}{failedMessage && <span className="failed-flag">发送失败{retryable && onRetry && <button type="button" className="retry-btn" onClick={() => onRetry(message)}>重试</button>}</span>}<button type="button" className="message-menu-button" aria-label="消息操作" onClick={(event) => openMenu(event.clientX, event.clientY)}>···</button></div>
       </div>
       {menu && <div ref={menuRef} className="message-action-menu" role="menu" aria-label="消息操作" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 10000 }}>
