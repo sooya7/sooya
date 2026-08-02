@@ -269,9 +269,12 @@ test('the user can upload and send an image', async ({ page }) => {
 });
 
 test('history loads older messages when scrolling up, without jumping', async ({ page, baseURL }) => {
-  // Seed enough history through the API so paging is required.
-  for (let i = 0; i < 24; i++) {
-    await chatApi(baseURL!, '/api/messages/sync', {
+  test.setTimeout(120_000);
+  await control({ chunkDelayMs: 0, delayMs: 0 });
+  // Fire-and-forget seeds stay fast; background replies never matter for the
+  // assertion, which only needs the first seeded message to be reachable.
+  for (let i = 0; i < 45; i++) {
+    await chatApi(baseURL!, '/api/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ clientMsgId: `hist-${i}-${Date.now()}`, content: [{ type: 'text', text: `历史消息 ${i}` }] })
@@ -280,17 +283,50 @@ test('history loads older messages when scrolling up, without jumping', async ({
   await page.goto('/');
   await expect(page.locator('[data-testid="message"]').first()).toBeVisible();
 
+  // Virtualized: only the viewport window is in the DOM, never the whole history.
   const initial = await page.locator('[data-testid="message"]').count();
   expect(initial).toBeGreaterThan(0);
-  expect(initial).toBeLessThan(48); // paged, not all at once
+  expect(initial).toBeLessThan(60);
 
-  await page.getByTestId('scroller').evaluate((el) => {
-    el.scrollTop = 0;
-  });
-  await expect.poll(async () => page.locator('[data-testid="message"]').count(), { timeout: 15_000 }).toBeGreaterThan(initial);
+  // Each sentinel hit loads one page, so keep nudging to the top until paging has
+  // surfaced the very first seeded message.
+  await expect
+    .poll(async () => {
+      await page.getByTestId('scroller').evaluate((el) => {
+        el.scrollTop = 0;
+      });
+      return (await page.locator('[data-testid="message"]').first().innerText()).includes('历史消息 0');
+    }, { timeout: 15_000 })
+    .toBe(true);
+});
 
-  // The oldest visible message must be older than before -> real pagination.
-  await expect(page.locator('[data-testid="message"]').first()).toContainText('历史消息');
+test('messages beyond the old 800-node cap are still reachable by scrolling up', async ({ page, baseURL }) => {
+  test.setTimeout(120_000);
+  await control({ chunkDelayMs: 0, delayMs: 0 });
+  // Seed well over 800 messages. The previous slice(-800) rendering kept only the
+  // newest 800 in the DOM, so the first seeded message could never be scrolled to.
+  // Fire-and-forget POSTs keep seeding fast; background replies land on their own.
+  for (let i = 0; i < 810; i++) {
+    await chatApi(baseURL!, '/api/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clientMsgId: `deep-${i}-${Date.now()}`, content: [{ type: 'text', text: `深海旧事 ${i}` }] })
+    });
+  }
+  await page.goto('/');
+  await expect(page.locator('[data-testid="message"]').first()).toBeVisible();
+
+  await expect
+    .poll(
+      async () => {
+        await page.getByTestId('scroller').evaluate((el) => {
+          el.scrollTop = 0;
+        });
+        return (await page.locator('[data-testid="message"]').first().innerText()).includes('深海旧事 0');
+      },
+      { timeout: 60_000 }
+    )
+    .toBe(true);
 });
 
 test('reading history is not interrupted by a new reply', async ({ page, baseURL }) => {

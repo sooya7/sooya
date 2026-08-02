@@ -403,7 +403,7 @@ describe('useChat SSE 活动状态', () => {
 
     const stages: Array<[string, Record<string, unknown>, string]> = [
       ['reply.thinking', {}, '正在思考'],
-      ['reply.text.delta', { messageId: 'm_9', text: '在' }, '正在输入'],
+      ['reply.text.delta', { messageId: 'm_9', delta: '在' }, '正在输入'],
       ['reply.sticker.selecting', {}, '正在挑表情'],
       ['reply.image.generating', {}, '正在生成图片'],
       ['reply.audio.generating', {}, '正在生成语音'],
@@ -422,7 +422,7 @@ describe('useChat 流式草稿', () => {
   it('首个 delta 造出草稿气泡，后续 delta 就地覆盖同一条', async () => {
     const { chat, push } = await mountStreaming();
 
-    await push('reply.text.delta', { messageId: 'm_9', text: '你' });
+    await push('reply.text.delta', { messageId: 'm_9', delta: '你' });
     const draft = chat().messages.find((m) => m.id === 'm_9');
     expect(draft).toBeDefined();
     expect(draft!.role).toBe('assistant');
@@ -432,15 +432,15 @@ describe('useChat 流式草稿', () => {
     expect(chat().messages.at(-1)!.id).toBe('m_9');
     expect(draft!.content.map((p) => [p.type, p.text])).toEqual([['text', '你']]);
 
-    await push('reply.text.delta', { messageId: 'm_9', text: '你好呀' });
-    // delta 给的是累积后的全量文本：就地覆盖，既不能追加拼接，也不能再冒出第二个气泡。
+    await push('reply.text.delta', { messageId: 'm_9', delta: '好呀' });
+    // delta 是增量片段：客户端按 messageId 就地累积，既不能起第二个气泡，也不能覆盖丢失。
     expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_9']);
     expect(chat().messages.at(-1)!.content.map((p) => p.text)).toEqual(['你好呀']);
   });
 
   it('reply.completed 带 message 时用真消息替掉草稿', async () => {
     const { chat, push } = await mountStreaming();
-    await push('reply.text.delta', { messageId: 'm_9', text: '你' });
+    await push('reply.text.delta', { messageId: 'm_9', delta: '你' });
     await push('reply.completed', { message: message({ id: 'm_9', seq: 9, content: [part({ id: 'p_9', text: '你好呀' })] }) });
 
     expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_9']);

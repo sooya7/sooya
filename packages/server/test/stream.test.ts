@@ -124,7 +124,7 @@ describe('SSE streaming', () => {
     await stream.waitFor('reply.completed');
     const deltas = stream.events.filter((e) => e.event === 'reply.text.delta');
     expect(deltas.length).toBeGreaterThanOrEqual(4);
-    expect(deltas.at(-1)!.data.text).toBe('一二三四');
+    expect(deltas.reduce((s, e) => s + String(e.data.delta ?? ''), '')).toBe('一二三四');
     await stream.close();
   });
 
@@ -144,7 +144,7 @@ describe('SSE streaming', () => {
 
     const completed = await stream.waitFor('reply.completed', 10000);
     const deltas = stream.events.filter((event) => event.event === 'reply.text.delta');
-    expect(deltas.every((event) => !String(event.data.text ?? '').includes('[[image:'))).toBe(true);
+    expect(deltas.every((event) => !String(event.data.delta ?? '').includes('[[image:'))).toBe(true);
     expect(JSON.stringify(completed.data)).not.toContain('[[image:');
     await stream.close();
   });

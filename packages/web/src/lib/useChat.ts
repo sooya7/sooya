@@ -86,7 +86,7 @@ export function useChat() {
           case 'persona.updated': if (data.persona) setPersona((old) => ({ ...(old ?? { name: 'SOOYA', avatar: '/avatars/sooya.svg', userAvatar: '/avatars/user.svg', tagline: '' }), ...(data.persona as PersonaInfo) })); break;
           case 'reply.queued': setActivity({ thinking: true, label: `正在看你刚发的 ${Number(data.count ?? 1)} 条消息` }); break;
           case 'reply.thinking': setActivity({ thinking: true, label: '正在思考' }); break;
-          case 'reply.text.delta': { const id = String(data.messageId ?? ''); const text = String(data.text ?? ''); setActivity({ thinking: true, label: '正在输入' }); if (id) { draftRef.current.set(id, text); setMessages((prev) => applyDraft(prev, id, text)); } break; }
+          case 'reply.text.delta': { const id = String(data.messageId ?? ''); const delta = String(data.delta ?? ''); setActivity({ thinking: true, label: '正在输入' }); if (id) { const accumulated = (draftRef.current.get(id) ?? '') + delta; draftRef.current.set(id, accumulated); setMessages((prev) => applyDraft(prev, id, accumulated)); } break; }
           case 'reply.sticker.selecting': setActivity({ thinking: true, label: '正在挑表情' }); break;
           case 'reply.image.generating': setActivity({ thinking: true, label: '正在生成图片' }); break;
           case 'reply.audio.generating': setActivity({ thinking: true, label: '正在生成语音' }); break;
