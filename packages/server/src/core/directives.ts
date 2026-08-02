@@ -107,8 +107,8 @@ export function parseEmotionArg(arg: string | null | undefined): string | null {
   return m ? m[1]!.toLowerCase() : null;
 }
 
-const MARKER_KINDS = ['sticker', 'image', 'voice', 'voice-only', 'sticker-only'] as const;
-const KIND_ALT = 'sticker-only|voice-only|sticker|image|voice';
+const MARKER_KINDS = ['sticker', 'image', 'voice', 'voice-only', 'sticker-only', '表情包', '图片', '语音'] as const;
+const KIND_ALT = 'sticker-only|voice-only|sticker|image|voice|表情包|图片|语音';
 
 /**
  * The prompt teaches `[[marker]]`, but models emit the single-bracket form and
@@ -139,7 +139,7 @@ const MAX_MARKER_BUFFER = 8_192;
  * streaming filter releases it instead of holding prose hostage.
  */
 function isPartialMarker(rest: string): boolean {
-  const m = /^\[{1,2}\s*([a-z-]*)\s*(.?)/i.exec(rest);
+  const m = /^\[{1,2}\s*([a-z\u4e00-\u9fff-]*)\s*(.?)/i.exec(rest);
   if (!m) return false;
   const kind = (m[1] ?? '').toLowerCase();
   // Text follows the kind: only ':' can still lead to a marker, and only when
@@ -176,7 +176,7 @@ export function stripModelDirectives(raw: string): StripResult {
   if (singlePartial && isPartialMarker(singlePartial[0])) cleaned = cleaned.slice(0, singlePartial.index);
   const text = cleaned
     .replace(MARKER_RE, (_m, kind: string, arg?: string) => {
-      const k = kind.toLowerCase();
+      const k = canonicalMarkerKind(kind);
       const value = (arg ?? '').trim();
       if (k === 'sticker') directives.sticker = value || 'auto';
       else if (k === 'image') directives.imagePrompt = value || null;
@@ -199,6 +199,14 @@ export function stripModelDirectives(raw: string): StripResult {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return { text, directives };
+}
+
+function canonicalMarkerKind(kind: string): 'sticker' | 'image' | 'voice' | 'voice-only' | 'sticker-only' {
+  const normalized = kind.toLowerCase();
+  if (normalized === '表情包') return 'sticker';
+  if (normalized === '图片') return 'image';
+  if (normalized === '语音') return 'voice';
+  return normalized as 'sticker' | 'image' | 'voice' | 'voice-only' | 'sticker-only';
 }
 
 /**

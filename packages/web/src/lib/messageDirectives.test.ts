@@ -10,6 +10,10 @@ describe('stripModelDirectivesForDisplay', () => {
     expect(stripModelDirectivesForDisplay('[[image:A sunny daytime room with a notebook]]')).toBe('');
   });
 
+  it('hides Chinese protocol aliases from historical messages', () => {
+    expect(stripModelDirectivesForDisplay('我来啦 [表情包:委屈巴巴]')).toBe('我来啦');
+  });
+
   it('does not remove ordinary bracketed text', () => {
     expect(stripModelDirectivesForDisplay('数组 arr[[0]] 和 [备注] 都是普通文字')).toBe('数组 arr[[0]] 和 [备注] 都是普通文字');
   });

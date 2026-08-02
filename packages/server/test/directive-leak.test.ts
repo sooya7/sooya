@@ -38,6 +38,16 @@ describe('single-bracket directive markers', () => {
     expect(directives.imagePrompt).toBe('窗台上睡着的猫');
   });
 
+  it('strips Chinese aliases emitted by the model', () => {
+    const sticker = stripModelDirectives('\u5148\u966a\u4f60\u804a\u804a[\u8868\u60c5\u5305:\u59d4\u5c48\u5df4\u5df4]');
+    expect(sticker.text).toBe('\u5148\u966a\u4f60\u804a\u804a');
+    expect(sticker.directives.sticker).toBe('\u59d4\u5c48\u5df4\u5df4');
+
+    const image = stripModelDirectives('[\u56fe\u7247:\u4e00\u53ea\u5728\u7a97\u8fb9\u7761\u89c9\u7684\u67ef\u57fa]');
+    expect(image.text).toBe('');
+    expect(image.directives.imagePrompt).toBe('\u4e00\u53ea\u5728\u7a97\u8fb9\u7761\u89c9\u7684\u67ef\u57fa');
+  });
+
   it('still handles a mismatched bracket count', () => {
     const { text, directives } = stripModelDirectives('好的[[voice]');
     expect(text).toBe('好的');
@@ -79,6 +89,10 @@ describe('StreamingDirectiveFilter with single brackets', () => {
   it('drops an unterminated marker at the end of a stream', () => {
     expect(stream(['好的', '[voic'])).toBe('好的');
     expect(stream(['好的', '[[stick'])).toBe('好的');
+  });
+
+  it('never emits a Chinese sticker alias while streaming', () => {
+    expect(stream(['\u597d\u7684', '[\u8868\u60c5', '\u5305:\u59d4\u5c48\u5df4\u5df4]', '\u518d\u804a'])).toBe('\u597d\u7684\u518d\u804a');
   });
 
   it('keeps double-bracket behaviour intact', () => {

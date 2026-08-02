@@ -4,7 +4,7 @@
  * applies this small, deliberately narrow filter so historical messages from
  * an older server build cannot expose an image prompt.
  */
-const MODEL_MARKER_RE = /\[{1,2}\s*(?:sticker-only|voice-only|sticker|image|voice)(?:\s*:\s*[^\]]*)?\s*\]{1,2}/gi;
+const MODEL_MARKER_RE = /\[{1,2}\s*(?:sticker-only|voice-only|sticker|image|voice|表情包|图片|语音)(?:\s*:\s*[^\]]*)?\s*\]{1,2}/gi;
 
 export function stripModelDirectivesForDisplay(text: string | null | undefined): string {
   return (text ?? '')
