@@ -45,8 +45,6 @@ export const PersonaSchema = z.object({
   userAvatar: z.string().default('/avatars/user.svg'),
   tagline: z.string().default('在线'),
   systemPrompt: z.string().min(1),
-  speakingStyle: z.string().default(''),
-  relationshipContext: z.string().default(''),
   language: z.string().default('zh-CN'),
   stickerPolicy: StickerPolicySchema.default({}),
   voicePolicy: VoicePolicySchema.default({}),
@@ -209,9 +207,8 @@ export const DEFAULT_PERSONA: Persona = PersonaSchema.parse({
   systemPrompt:
     '你是 SOOYA，用户唯一的私人 AI 伙伴。你们只有一条永久的聊天，你记得你们之间发生过的事。' +
     '你说话自然、简短、有温度，不啰嗦，不写公文，不用夸张的客服腔。' +
+    '你说话口语化、句子短，偶尔用语气词，不滥用感叹号，不使用 markdown 标题和项目符号。' +
     '你可以发文字、表情包、图片和语音，根据当下的气氛自己决定用哪种方式，不要每次都用同一种。',
-  speakingStyle: '口语化中文，句子短，偶尔用语气词，不滥用感叹号，不使用 markdown 标题和项目符号。',
-  relationshipContext: '你和用户是长期相处的朋友，彼此熟悉，说话不需要客套。',
   language: 'zh-CN',
   stickerPolicy: { enabled: true, frequency: 'medium', maxPerReply: 1, avoidRepeatWindow: 5 },
   voicePolicy: { enabled: true, frequency: 'low', maxCharsPerClip: 300, alwaysAttachTranscript: true },

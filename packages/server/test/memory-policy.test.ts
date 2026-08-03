@@ -115,7 +115,7 @@ describe('memory context dedupe and observability', () => {
     }).record;
     h.app.repos.summaries.create({ fromSeq: 1, toSeq: 2, content: '用户喜欢手冲咖啡' });
     h.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '我喜欢手冲咖啡' }] });
-    const persona = { ...h.app.config.getPersona(), relationshipContext: '用户喜欢手冲咖啡' };
+    const persona = { ...h.app.config.getPersona(), systemPrompt: `${h.app.config.getPersona().systemPrompt}\n\n用户喜欢手冲咖啡` };
 
     const built = await h.app.services.context.build(persona, '手冲咖啡', options);
     expect(built.system.match(/用户喜欢手冲咖啡/g)).toHaveLength(1);

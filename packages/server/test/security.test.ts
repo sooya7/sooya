@@ -417,13 +417,13 @@ describe('admin API surface', () => {
       method: 'PUT',
       url: '/api/admin/persona',
       headers: { 'x-admin-token': ADMIN_TOKEN },
-      payload: { speakingStyle: '更简短一点' }
+      payload: { systemPrompt: '更简短一点' }
     });
     expect(put.statusCode).toBe(200);
-    expect(put.json().persona.speakingStyle).toBe('更简短一点');
+    expect(put.json().persona.systemPrompt).toBe('更简短一点');
     // Persisted to disk atomically.
     const onDisk = JSON.parse(fs.readFileSync(h.app.config.personaPath, 'utf8'));
-    expect(onDisk.speakingStyle).toBe('更简短一点');
+    expect(onDisk.systemPrompt).toBe('更简短一点');
   });
 
   it('updates the model configuration and rebuilds capabilities', async () => {

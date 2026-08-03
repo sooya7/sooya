@@ -99,8 +99,6 @@ export interface AdminPersona {
   userAvatar: string;
   tagline: string;
   systemPrompt: string;
-  speakingStyle: string;
-  relationshipContext: string;
   language: string;
   stickerPolicy: Record<string, unknown>;
   voicePolicy: Record<string, unknown>;

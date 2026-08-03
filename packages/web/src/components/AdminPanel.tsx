@@ -85,7 +85,7 @@ export function tabFromAdminPath(pathname: string, fallback: Tab = 'overview'): 
 
 const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
   overview: { title: '系统概览', description: '查看 SOOYA 当前运行状态和资源使用情况。' },
-  persona: { title: '助手配置', description: '调整助手身份、语气和关系设定。' },
+  persona: { title: '助手配置', description: '调整助手身份、语气和说话方式。' },
   models: { title: '模型配置', description: '管理每项能力对应的接口与模型。' },
   avatar: { title: '双方头像', description: '上传助手与用户头像，聊天页面即时生效。' },
   voice: { title: '情绪语音', description: '配置语音合成的情绪、语速与表达方式。' },
@@ -181,8 +181,6 @@ function PersonaPanel({ onNotice }: { onNotice: (v: string) => void }) {
         name: persona.name,
         tagline: persona.tagline,
         systemPrompt: persona.systemPrompt,
-        speakingStyle: persona.speakingStyle,
-        relationshipContext: persona.relationshipContext,
         language: persona.language
       });
       setPersona(r.persona);
@@ -201,8 +199,6 @@ function PersonaPanel({ onNotice }: { onNotice: (v: string) => void }) {
       <label>名称<input value={persona.name} onChange={(e) => setPersona({ ...persona, name: e.target.value })} /></label>
       <label>状态文字<input value={persona.tagline} onChange={(e) => setPersona({ ...persona, tagline: e.target.value })} /></label>
       <label className="admin-form-wide">系统提示词<textarea value={persona.systemPrompt} onChange={(e) => setPersona({ ...persona, systemPrompt: e.target.value })} /></label>
-      <label>说话风格<textarea value={persona.speakingStyle} onChange={(e) => setPersona({ ...persona, speakingStyle: e.target.value })} /></label>
-      <label>关系设定<textarea value={persona.relationshipContext} onChange={(e) => setPersona({ ...persona, relationshipContext: e.target.value })} /></label>
       <label>语言<input value={persona.language} onChange={(e) => setPersona({ ...persona, language: e.target.value })} /></label>
       <div className="admin-actions"><button type="submit">保存人设</button></div>
     </form>
