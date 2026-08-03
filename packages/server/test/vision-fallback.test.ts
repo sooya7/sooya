@@ -133,4 +133,23 @@ describe('vision input rejection fallback', () => {
     expect(body.outcome.degraded).toContain('chat:provider_unavailable');
     expect(body.outcome.degraded).not.toContain('chat:vision_unsupported');
   });
+
+  it('labels history images as unsupported-vision, not as broken files, when the model cannot see', async () => {
+    h = await createHarness({ vision: false, chat: { script: [['好。'], ['好的。']] } });
+    const form = new FormData();
+    form.set('image', new Blob([new Uint8Array(TEST_PNG)], { type: 'image/png' }), 'a.png');
+    const upload = await h.app.server.inject({ method: 'POST', url: '/api/media', payload: form });
+    const mediaId = upload.json().media[0].id as string;
+    await h.app.server.inject({
+      method: 'POST', url: '/api/messages/sync',
+      payload: { clientMsgId: 'vf-novision-1', content: [{ type: 'text', text: '看这个' }, { type: 'image', mediaId }] }
+    });
+    await sendText(h.app, '那再聊点别的', 'vf-novision-2');
+
+    const lastCall = h.state.chatCalls.at(-1)!;
+    const userText = JSON.stringify(lastCall.body);
+    expect(userText).toContain('当前模型不支持看图');
+    expect(userText).not.toContain('图片未能读取');
+  });
 });
+

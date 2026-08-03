@@ -46,6 +46,8 @@ export interface HarnessOptions {
   embedding?: 'ok' | 'fail' | 'off';
   /** Fixed dimension for the fake embedding provider. */
   embeddingDim?: number;
+  /** Declare vision support on the chat model (default true). */
+  vision?: boolean;
   skipStickerImport?: boolean;
   startWorkers?: boolean;
   /** Reply for GET <baseUrl>/models, used by the model-discovery route. */
@@ -225,7 +227,7 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       baseUrl: 'https://fake.example.com/v1',
       apiKey: 'sk-test-key-000000',
       model: 'fake-chat',
-      supportsVision: true,
+      supportsVision: opts.vision ?? true,
       supportsStreaming: true,
       maxRetries: 0,
       timeoutMs: 5000
@@ -342,4 +344,5 @@ export async function sendText(app: SooyaApp, text: string, clientMsgId?: string
   });
   return { res, body: res.json() as Record<string, any> };
 }
+
 

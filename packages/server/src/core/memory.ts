@@ -322,8 +322,7 @@ export class MemoryService {
   stats(): { total: number; withEmbedding: number; coverage: number; byKind: Record<string, number> } {
     const total = this.repo.count(true);
     const withEmbedding = this.repo.countWithEmbeddings();
-    const byKind: Record<string, number> = {};
-    for (const m of this.repo.list({ limit: 500 })) byKind[m.kind] = (byKind[m.kind] ?? 0) + 1;
+    const byKind = this.repo.countByKind();
     return { total, withEmbedding, coverage: total === 0 ? 0 : withEmbedding / total, byKind };
   }
 }
@@ -394,3 +393,4 @@ function factIdentity(kind: MemoryKind, content: string): string | null {
 function ftsMatches(memories: MemoryRecord[]): RecallMatch[] {
   return memories.map((memory) => ({ memory, strategy: 'fts', score: null, reason: 'FTS lexical match' }));
 }
+

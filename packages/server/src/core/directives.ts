@@ -50,9 +50,19 @@ const IMAGE_PROMPT_EXTRACT = [
   /generate (?:an? )?image of (.+)$/i
 ];
 
+/**
+ * 「你会画画吗」「能读出来吗」问的是能力，不是下指令。直接按指令触发会把能力问题
+ * 当真去调一次昂贵的生图/语音。判定：有「会/能/可以…」+ 能力词作宾语（图/画/语音/
+ * 表情等，不含具体主题），并以问句尾收束——「能画一只猫吗」「你会画猫吗」这类带具体
+ * 主题的祈使疑问不受影响，仍然正常触发。
+ */
+const ABILITY_QUESTION_RE =
+  /(?:会不会|能不能|会|能|可以|可否|能否)(?:[^，。！!？?、\n]{0,12})(?:画画|画图|生成图|生成图片|图片|生图|插图|海报|表情包|表情|语音|音频|读出来|照片|视频|画|图)[吗么嘛呢？?~～。]*$/u;
+
 export function parseUserDirectives(text: string): UserDirectives {
   const t = (text ?? '').trim();
   if (!t) return {};
+  if (ABILITY_QUESTION_RE.test(t)) return {};
   const d: UserDirectives = {};
   const has = (patterns: RegExp[]) => patterns.some((p) => p.test(t));
 
@@ -269,4 +279,5 @@ export class StreamingDirectiveFilter {
     return rest;
   }
 }
+
 

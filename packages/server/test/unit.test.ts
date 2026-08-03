@@ -61,6 +61,22 @@ describe('user directive parsing', () => {
     expect(d.wantVoice).toBeUndefined();
     expect(d.wantImage).toBeUndefined();
   });
+
+  it('treats ability questions as questions, not commands', () => {
+    for (const q of ['你会画画吗', '你会画画吗？', '你能画图吗', '可以生成图片吗', '你会不会画画', '会发语音吗', '你可以读出来吗', '能读出来吗']) {
+      const d = parseUserDirectives(q);
+      expect(d.wantImage, q).toBeUndefined();
+      expect(d.wantVoice, q).toBeUndefined();
+      expect(d.wantSticker, q).toBeUndefined();
+    }
+  });
+
+  it('still fires on requests that mention a concrete subject', () => {
+    // 带具体主题的祈使是请求，不是能力问题；guard 不得拦截。
+    expect(parseUserDirectives('能画一张猫吗').wantImage).toBe(true);
+    expect(parseUserDirectives('用语音说晚安').wantVoice).toBe(true);
+    expect(parseUserDirectives('发个表情').wantSticker).toBe(true);
+  });
 });
 
 describe('model directive markers', () => {
@@ -325,3 +341,4 @@ describe('atomic writes and temp cleanup', () => {
     expect(fs.existsSync(keep)).toBe(true);
   });
 });
+

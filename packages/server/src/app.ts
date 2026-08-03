@@ -461,6 +461,9 @@ function scheduleRecurring(app: SooyaApp): void {
     try {
       repos.jobs.enqueue('maintenance', {});
       services.bus.prune(env.EVENTS_KEEP);
+      // 周期性兜底：入队后因进程内异常或计时器丢失而滞留的批次，靠重启之外的另一条
+      // 路径重新拉起，避免「消息发出去了但永远等不到回复」。recover 只碰开放批次，幂等。
+      services.replyCoordinator.recover({ recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
     } catch { /* ignore */ }
   }, 30 * 60 * 1000);
   maintenance.unref?.();
@@ -513,4 +516,5 @@ function resolveWebDir(): string | null {
 }
 
 export { VERSION };
+
 

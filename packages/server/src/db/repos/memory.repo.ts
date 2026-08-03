@@ -339,6 +339,17 @@ export class MemoryRepo {
     return (this.db.prepare(sql).get() as { c: number }).c;
   }
 
+  countByKind(): Record<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT kind, COUNT(*) c FROM memories
+         WHERE active = 1 AND (kind <> 'project' OR archived_at IS NULL)
+         GROUP BY kind`
+      )
+      .all() as Array<{ kind: string; c: number }>;
+    return Object.fromEntries(rows.map((r) => [r.kind, r.c]));
+  }
+
   countWithEmbeddings(): number {
     return (
       this.db
@@ -414,3 +425,4 @@ export function ngrams(text: string, n: number): Set<string> {
   for (let i = 0; i + n <= chars.length; i++) out.add(chars.slice(i, i + n).join(''));
   return out;
 }
+

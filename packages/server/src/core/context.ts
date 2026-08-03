@@ -249,7 +249,9 @@ export class ContextBuilder {
               }
             }
           }
-          textBits.push('[图片未能读取：文件过大或格式不支持]');
+          // 能力缺失与文件失败是两回事：模型不支持看图时图片根本没坏，让模型解释
+          // 「图片打不开」会系统性误导对话。能力缺失用独立文案，文件真的读不了才说读取失败。
+          textBits.push(allowVision ? '[图片未能读取：文件过大或格式不支持]' : '[图片：当前模型不支持看图]');
           break;
         }
         default:
@@ -437,4 +439,5 @@ function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): st
   );
   return lines.join('\n');
 }
+
 

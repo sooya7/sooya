@@ -66,12 +66,20 @@ function applyPragmas(db: Db): void {
   db.pragma('temp_store = MEMORY');
 }
 
-/** Returns null when healthy, otherwise the failure reason. */
-export function checkIntegrity(db: Db): string | null {
+/**
+ * Returns null when healthy, otherwise the failure reason.
+ * `quick` uses PRAGMA quick_check (structure only, ~10x faster), which is the
+ * right check for the startup hot path; the full integrity_check is reserved
+ * for low-frequency verification (backup validation, restore). The failure
+ * string keeps the `integrity_check:` prefix either way so the classifier and
+ * log lines stay unchanged.
+ */
+export function checkIntegrity(db: Db, opts: { quick?: boolean } = {}): string | null {
   try {
-    const rows = db.pragma('integrity_check') as Array<{ integrity_check: string }>;
-    const first = rows[0]?.integrity_check;
-    if (first !== 'ok') return `integrity_check: ${rows.map((r) => r.integrity_check).join('; ')}`;
+    const pragma = opts.quick ? 'quick_check' : 'integrity_check';
+    const rows = db.pragma(pragma) as Array<Record<string, string>>;
+    const first = Object.values(rows[0] ?? {})[0];
+    if (first !== 'ok') return `integrity_check: ${rows.map((r) => Object.values(r)[0]).join('; ')}`;
     const fk = db.pragma('foreign_key_check') as unknown[];
     if (fk.length > 0) return `foreign_key_check: ${fk.length} violation(s)`;
     return null;
@@ -209,7 +217,7 @@ export function openDatabase(opts: OpenDbOptions): OpenDbResult {
   let failure: { kind: DbFailureKind; reason: string } | null = null;
   try {
     db = tryOpen();
-    const integrity = checkIntegrity(db);
+    const integrity = checkIntegrity(db, { quick: true });
     if (integrity) failure = { kind: classifyIntegrityFailure(integrity), reason: integrity };
   } catch (err) {
     failure = { kind: classifyDbError(err), reason: (err as Error).message };
@@ -363,3 +371,4 @@ export function nextSeq(db: Pick<Db, 'prepare'>, name: 'message_seq' | 'event_se
   if (!row) throw new Error(`counter ${name} missing`);
   return row.value;
 }
+

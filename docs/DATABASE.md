@@ -306,13 +306,15 @@ INSERT INTO counters(name, value) VALUES ('message_seq', 0), ('event_seq', 0);
 
 ## 损坏检测与恢复
 
-启动时执行 `PRAGMA integrity_check` 与 `PRAGMA foreign_key_check`。任一失败时：
+启动时对主库执行 `PRAGMA quick_check`（结构校验，速度快）与 `PRAGMA foreign_key_check`；
+备份校验与恢复验证仍用完整的 `PRAGMA integrity_check`。任一失败时：
 
 1. 把损坏的 `.db` / `-wal` / `-shm` 改名为 `sooya.db.corrupt-<时间戳>`（**保留证据，不删除**）；
 2. 在 `backups/` 里按时间倒序寻找第一个能通过 `integrity_check` 的备份并复制回来；
-3. 备份也不可用时，创建一个全新的空库并跑完迁移；
-4. 无论走哪条路径，进程都**正常启动**，`/health/ready` 通过 `dbRecovered` 与
-   `dbRecoveredFrom`（`backup` / `fresh`）如实上报。
+3. 备份也不可用时，**拒绝启动**（`DatabaseUnusableError`），数据库文件保持原样——从不
+   用空库替代它，避免重演 2026-07-31 的「原生模块缺失被误判损坏、真库被改名」事故；
+4. 恢复成功时进程正常启动，`/health/ready` 通过 `dbRecovered` 与 `dbRecoveredFrom`
+   （`backup`）如实上报；`inconsistent`（外键不一致但可读）照常服务但标记 `dbInconsistent`。
 
 ---
 
@@ -360,3 +362,4 @@ SELECT * FROM memories
  WHERE active=1 AND embedding IS NOT NULL AND embedding_dim=?
    AND (expires_at IS NULL OR expires_at > ?);
 ```
+

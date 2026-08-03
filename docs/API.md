@@ -348,7 +348,7 @@ Authorization: Bearer <WEB_CHAT_TOKEN>
 
 ## 管理 API
 
-v1 **不提供管理面板网页**，只预留后端接口。全部需要 `X-Admin-Token`。
+v1 提供管理面板网页（`/admin/features` 进入功能管理，`/admin` 面板用于人格/模型/能力配置），并预留后端接口。全部需要 `X-Admin-Token`；`ADMIN_API_TOKEN` 未配置时所有管理接口返回 503。
 
 ### 人格
 
@@ -433,3 +433,4 @@ v1 **不提供管理面板网页**，只预留后端接口。全部需要 `X-Adm
 | 416 | – | Range 请求越界 |
 | 500 | `backup_failed` | 备份失败 |
 | 503 | `admin_disabled` | 未配置 `ADMIN_API_TOKEN` |
+

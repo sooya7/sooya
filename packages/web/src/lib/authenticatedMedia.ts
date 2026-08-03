@@ -271,7 +271,10 @@ export function safeDownloadName(name: string | null | undefined, fallback: stri
 }
 
 function matchesExpectedType(contentType: string, expected: ExpectedMedia): boolean {
-  if (expected === 'file') return contentType !== 'text/html' && contentType !== 'application/json';
+  // 文件永远走 blob URL + <a download> 下载，从不内联渲染，所以 text/html /
+  // application/json 是合法下载内容——拒绝它们会误杀网页快照、JSON 导出等正常文件。
+  // image / audio 仍严格校验，防止把别的类型当图片渲染。
+  if (expected === 'file') return true;
   return contentType.startsWith(`${expected}/`);
 }
 
@@ -283,3 +286,4 @@ function responseError(status: number): AuthenticatedMediaError {
   if (status >= 500) return new AuthenticatedMediaError('server', status, '媒体服务暂时不可用');
   return new AuthenticatedMediaError('http', status, `媒体请求失败（${status}）`);
 }
+

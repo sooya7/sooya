@@ -213,6 +213,15 @@ describe('authenticated media', () => {
     expect(blobForMediaUrl('blob:old')).toBeNull();
   });
 
+  it('delivers html and json as downloadable files (never rendered inline)', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:file-ok');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>snapshot</html>', { status: 200, headers: { 'content-type': 'text/html' } })));
+    await expect(fetchAuthenticatedMedia('/api/media/file_1', { scope: 'user', token: 'secret', expected: 'file' })).resolves.toMatchObject({ contentType: 'text/html' });
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"a":1}', { status: 200, headers: { 'content-type': 'application/json' } })));
+    await expect(fetchAuthenticatedMedia('/api/media/file_2', { scope: 'user', token: 'secret', expected: 'file' })).resolves.toMatchObject({ contentType: 'application/json' });
+  });
+
   it('rejects empty media and reports Object URL creation failures safely', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob([], { type: 'image/png' }), {
       status: 200,
@@ -405,3 +414,4 @@ describe('媒体缓存', () => {
     expect(init?.cache).not.toBe('no-store');
   });
 });
+
