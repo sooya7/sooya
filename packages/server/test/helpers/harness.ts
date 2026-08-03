@@ -31,6 +31,8 @@ export interface FakeProviderState {
   discoverCalls: string[];
   discoverHeaders: Array<Record<string, string>>;
   imageCalls: number;
+  /** Recorded image generation/upload requests, so tests can assert input_images. */
+  imageRequests: Array<{ url: string; body: Record<string, unknown> }>;
   ttsCalls: number;
   embedCalls: number;
 }
@@ -39,7 +41,7 @@ export interface HarnessOptions {
   env?: Record<string, string>;
   chat?: FakeChatOptions;
   /** Enable a fake image provider that returns a real PNG. */
-  image?: 'ok' | 'fail' | 'off';
+  image?: 'ok' | 'fail' | 'anuma' | 'off';
   tts?: 'ok' | 'fail' | 'off';
   embedding?: 'ok' | 'fail' | 'off';
   /** Fixed dimension for the fake embedding provider. */
@@ -60,7 +62,7 @@ export interface Harness {
   /** Replace the scripted chat responses at runtime. */
   setChatScript: (script: string[][]) => void;
   setChatError: (err: Error | null) => void;
-  setImageMode: (mode: 'ok' | 'fail' | 'off') => void;
+  setImageMode: (mode: 'ok' | 'fail' | 'anuma' | 'off') => void;
   setTtsMode: (mode: 'ok' | 'fail' | 'off') => void;
   cleanup: () => Promise<void>;
 }
@@ -125,7 +127,7 @@ function sseResponse(chunks: string[]): Response {
 
 export async function createHarness(opts: HarnessOptions = {}): Promise<Harness> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sooya-test-'));
-  const state: FakeProviderState = { chatCalls: [], discoverCalls: [], discoverHeaders: [], imageCalls: 0, ttsCalls: 0, embedCalls: 0 };
+  const state: FakeProviderState = { chatCalls: [], discoverCalls: [], discoverHeaders: [], imageCalls: 0, imageRequests: [], ttsCalls: 0, embedCalls: 0 };
 
   let script = opts.chat?.script ?? [['好的。']];
   let chatError: Error | null = opts.chat?.chatError ?? null;
@@ -182,8 +184,16 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       }
       return sseResponse(chunks);
     }
+    if (url.includes('/media/upload')) {
+      if (imageMode === 'fail') return new Response('image backend exploded', { status: 500 });
+      return new Response(JSON.stringify({ url: 'https://cdn.example/reference.png' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
     if (url.includes('/images/generations') || url.includes('/images/edits')) {
       state.imageCalls++;
+      state.imageRequests.push({ url, body: (body ?? {}) as Record<string, unknown> });
       if (imageMode === 'fail') return new Response('image backend exploded', { status: 500 });
       return new Response(JSON.stringify({ data: [{ b64_json: PNG_1x1.toString('base64') }] }), {
         status: 200,
@@ -234,14 +244,25 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     image:
       imageMode === 'off'
         ? { provider: 'none' }
-        : {
-            provider: 'openai-images',
-            baseUrl: 'https://fake.example.com/v1',
-            apiKey: 'sk-test-key-000000',
-            model: 'fake-image',
-            maxRetries: 0,
-            timeoutMs: 5000
-          },
+        : imageMode === 'anuma'
+          ? {
+              provider: 'anuma-input-images',
+              baseUrl: 'https://fake.example.com/v1',
+              apiKey: 'sk-test-key-000000',
+              model: 'fake-anuma-image',
+              maxRetries: 0,
+              timeoutMs: 5000,
+              uploadTimeoutMs: 1000,
+              uploadMaxRetries: 0
+            }
+          : {
+              provider: 'openai-images',
+              baseUrl: 'https://fake.example.com/v1',
+              apiKey: 'sk-test-key-000000',
+              model: 'fake-image',
+              maxRetries: 0,
+              timeoutMs: 5000
+            },
     tts:
       ttsMode === 'off'
         ? { provider: 'none' }
@@ -321,3 +342,4 @@ export async function sendText(app: SooyaApp, text: string, clientMsgId?: string
   });
   return { res, body: res.json() as Record<string, any> };
 }
+

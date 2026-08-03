@@ -1,6 +1,7 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { MediaStore } from '../media/store.js';
 import type { StickerLibrary } from '../media/stickers.js';
+import type { PersonaReferenceLoader } from '../media/persona-references.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ContextBuilder } from './context.js';
 import type { EventBus } from '../events/bus.js';
@@ -65,6 +66,7 @@ export class Replier {
       config: ConfigStore;
       errorLog: ErrorLogRepo;
       settings: SettingsRepo;
+      personaReferences: PersonaReferenceLoader;
     }
   ) {}
 
@@ -299,8 +301,9 @@ export class Replier {
       }
 
       // 3b. Image
-      if (plan.imagePrompt) {
-        this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: plan.imagePrompt.slice(0, 200) });
+      const imagePrompt = plan.selfImagePrompt ?? plan.imagePrompt;
+      if (imagePrompt) {
+        this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: imagePrompt.slice(0, 200) });
         const referenceMediaIds = userMessages.flatMap((message) =>
           message.content.filter((part) => part.type === 'image' && part.mediaId).map((part) => part.mediaId!)
         );
@@ -308,7 +311,8 @@ export class Replier {
           type: 'image',
           status: 'pending',
           meta: {
-            prompt: plan.imagePrompt.slice(0, 500),
+            prompt: imagePrompt.slice(0, 500),
+            selfie: !!plan.selfImagePrompt,
             ...(referenceMediaIds.length === 1 ? { referenceMediaId: referenceMediaIds[0] } : {})
           }
         });
@@ -332,13 +336,18 @@ export class Replier {
               );
             }
             try {
-              img = await provider.edit(plan.imagePrompt, reference.data, { mime: reference.row.mime });
+              img = await provider.edit(imagePrompt, reference.data, { mime: reference.row.mime });
             } catch (err) {
               if (!(err instanceof ImageEditUnsupportedError)) throw err;
-              img = await provider.generate(plan.imagePrompt);
+              img = await provider.generate(imagePrompt);
             }
+          } else if (plan.selfImagePrompt) {
+            const refs = await this.deps.personaReferences.load();
+            img = refs.length > 0
+              ? await provider.generate(imagePrompt, { referenceImages: refs })
+              : await provider.generate(imagePrompt);
           } else {
-            img = await provider.generate(plan.imagePrompt);
+            img = await provider.generate(imagePrompt);
           }
           const media = await this.deps.media.save({
             kind: 'image',
@@ -346,7 +355,7 @@ export class Replier {
             data: img.data,
             declaredMime: img.mime,
             filename: 'generated.png',
-            meta: { prompt: plan.imagePrompt.slice(0, 500) }
+            meta: { prompt: imagePrompt.slice(0, 500), selfie: !!plan.selfImagePrompt }
           });
           this.deps.messages.updatePart(partId, { mediaId: media.id, status: 'sent' });
           producedParts.push('image');
@@ -557,6 +566,7 @@ export class Replier {
     stickerOnly: boolean;
     forceDifferent: boolean;
     imagePrompt: string | null;
+    selfImagePrompt: string | null;
     voice: boolean;
     voiceOnly: boolean;
   } {
@@ -585,10 +595,15 @@ export class Replier {
 
     // Image
     let imagePrompt: string | null = null;
+    let selfImagePrompt: string | null = null;
+    if (persona.imagePolicy.enabled && persona.referenceImages.length > 0) {
+      if (model.selfImagePrompt) selfImagePrompt = model.selfImagePrompt;
+    }
     if (persona.imagePolicy.enabled) {
       if (model.imagePrompt) imagePrompt = model.imagePrompt;
       else if (user.wantImage && user.imagePrompt) imagePrompt = user.imagePrompt;
     }
+    if (selfImagePrompt && !caps.has('image')) selfImagePrompt = null;
     if (imagePrompt && !caps.has('image') && !user.wantImage && !model.imagePrompt) imagePrompt = null;
 
     // Voice
@@ -598,7 +613,7 @@ export class Replier {
     }
     const voiceOnly = voice && (user.voiceOnly === true || model.voiceOnly === true);
 
-    return { sticker, stickerHint, stickerRequired, stickerOnly, forceDifferent, imagePrompt, voice, voiceOnly };
+    return { sticker, stickerHint, stickerRequired, stickerOnly, forceDifferent, imagePrompt, selfImagePrompt, voice, voiceOnly };
   }
 }
 
@@ -647,3 +662,4 @@ export function guessEmotion(text: string): string {
   }
   return '开心';
 }
+

@@ -20,6 +20,7 @@ import { MediaTextRepo } from './db/repos/media-text.repo.js';
 import { AuditRepo, PushSubscriptionRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
 import { MediaStore } from './media/store.js';
 import { StickerLibrary } from './media/stickers.js';
+import { PersonaReferenceLoader } from './media/persona-references.js';
 import { ImageVariantService } from './media/variants.js';
 import { CapabilityRegistry } from './core/capabilities.js';
 import { MemoryService } from './core/memory.js';
@@ -225,7 +226,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
     keepRecent: env.CONTEXT_RECENT_MESSAGES
   });
-  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings });
+  const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(), () => config.getPersona().referenceImages);
+  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences });
   const replyCoordinator = new ReplyCoordinator({
     messages: repos.messages,
     batches: repos.replyBatches,
@@ -497,6 +499,13 @@ function resolveAssetsDir(): string | null {
   return null;
 }
 
+function resolveReferencesDir(): string | null {
+  const stickersDir = resolveAssetsDir();
+  if (!stickersDir) return null;
+  const refsDir = path.join(path.dirname(stickersDir), 'references');
+  return fs.existsSync(refsDir) ? refsDir : null;
+}
+
 function resolveWebDir(): string | null {
   const candidates = [path.resolve(process.cwd(), 'public'), path.resolve(process.cwd(), 'packages/web/dist'), path.resolve(here, '../public'), path.resolve(here, '../../../web/dist')];
   for (const candidate of candidates) if (fs.existsSync(path.join(candidate, 'index.html'))) return candidate;
@@ -504,3 +513,4 @@ function resolveWebDir(): string | null {
 }
 
 export { VERSION };
+

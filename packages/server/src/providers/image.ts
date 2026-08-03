@@ -179,10 +179,16 @@ export class AnumaImageProvider implements ImageProvider {
     return b.endsWith(suffix) ? b : `${b}${suffix}`;
   }
 
-  async generate(prompt: string, opts: { signal?: AbortSignal } = {}): Promise<GeneratedImage> {
+  async generate(prompt: string, opts: { signal?: AbortSignal; referenceImages?: Array<{ data: Buffer; mime: string }> } = {}): Promise<GeneratedImage> {
     if (!this.configured) throw new ProviderNotConfiguredError('image');
-    const json = await this.postGeneration(prompt, undefined, opts.signal);
-    return materializeImage(json, this.cfg, this.deps);
+    const refs = opts.referenceImages ?? [];
+    if (refs.length === 0) {
+      const json = await this.postGeneration(prompt, undefined, opts.signal);
+      return materializeImage(json, this.cfg, this.deps);
+    }
+    // 只取第一张：anuma 参考图验证路径为单图（config/image-persona.json verification 记录）
+    const ref = refs[0]!;
+    return this.edit(prompt, ref.data, { mime: ref.mime, signal: opts.signal });
   }
 
   async edit(prompt: string, image: Buffer, opts: { mime?: string; signal?: AbortSignal } = {}): Promise<GeneratedImage> {
@@ -348,3 +354,4 @@ export function createImageProvider(cfg: ImageModelConfig, deps: ProviderDeps): 
   if (cfg.provider === 'anuma-input-images') return new AnumaImageProvider(cfg, deps);
   return new OpenAIImageProvider(cfg, deps);
 }
+

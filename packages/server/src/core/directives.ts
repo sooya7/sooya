@@ -88,6 +88,7 @@ export function parseUserDirectives(text: string): UserDirectives {
 export interface ModelDirectives {
   sticker?: string | null;
   imagePrompt?: string | null;
+  selfImagePrompt?: string | null;
   voice?: boolean;
   voiceOnly?: boolean;
   stickerOnly?: boolean;
@@ -107,8 +108,8 @@ export function parseEmotionArg(arg: string | null | undefined): string | null {
   return m ? m[1]!.toLowerCase() : null;
 }
 
-const MARKER_KINDS = ['sticker', 'image', 'voice', 'voice-only', 'sticker-only', '表情包', '图片', '语音'] as const;
-const KIND_ALT = 'sticker-only|voice-only|sticker|image|voice|表情包|图片|语音';
+const MARKER_KINDS = ['sticker', 'image', 'image-self', 'voice', 'voice-only', 'sticker-only', '表情包', '图片', '语音'] as const;
+const KIND_ALT = 'image-self|sticker-only|voice-only|sticker|image|voice|表情包|图片|语音';
 
 /**
  * The prompt teaches `[[marker]]`, but models emit the single-bracket form and
@@ -180,6 +181,7 @@ export function stripModelDirectives(raw: string): StripResult {
       const value = (arg ?? '').trim();
       if (k === 'sticker') directives.sticker = value || 'auto';
       else if (k === 'image') directives.imagePrompt = value || null;
+      else if (k === 'image-self') directives.selfImagePrompt = value || null;
       else if (k === 'voice') {
         directives.voice = true;
         const mood = parseEmotionArg(value);
@@ -201,12 +203,13 @@ export function stripModelDirectives(raw: string): StripResult {
   return { text, directives };
 }
 
-function canonicalMarkerKind(kind: string): 'sticker' | 'image' | 'voice' | 'voice-only' | 'sticker-only' {
+function canonicalMarkerKind(kind: string): 'sticker' | 'image' | 'image-self' | 'voice' | 'voice-only' | 'sticker-only' {
   const normalized = kind.toLowerCase();
   if (normalized === '表情包') return 'sticker';
   if (normalized === '图片') return 'image';
   if (normalized === '语音') return 'voice';
-  return normalized as 'sticker' | 'image' | 'voice' | 'voice-only' | 'sticker-only';
+  if (normalized === 'image-self') return 'image-self';
+  return normalized as 'sticker' | 'image' | 'image-self' | 'voice' | 'voice-only' | 'sticker-only';
 }
 
 /**
@@ -266,3 +269,4 @@ export class StreamingDirectiveFilter {
     return rest;
   }
 }
+

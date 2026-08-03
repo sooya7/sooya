@@ -45,6 +45,7 @@ export const PersonaSchema = z.object({
   userAvatar: z.string().default('/avatars/user.svg'),
   tagline: z.string().default('在线'),
   systemPrompt: z.string().min(1),
+  referenceImages: z.array(z.string()).default([]),
   language: z.string().default('zh-CN'),
   stickerPolicy: StickerPolicySchema.default({}),
   voicePolicy: VoicePolicySchema.default({}),
@@ -242,6 +243,11 @@ export const DEFAULT_PERSONA: Persona = PersonaSchema.parse({
 ## 硬性执行要求（不可违反）
 - 当决定要发送语音或生成图片时，**必须实际调用对应的生成工具**，不允许只在文字回复中描述"我发了一条语音""图片发给你了"却没有真正调用工具生成——绝不能出现只嘴上说而没有真实调用的情况
 - 生成SOOYA自己的照片/自拍时，**必须使用参考图作为生成依据**，保持形象一致，不能凭空生成新的长相`,
+  referenceImages: [
+    '01_main_reference_front_half.png',
+    '02_reference_full_body_standing.png',
+    '03_reference_side_profile.png'
+  ],
   language: 'zh-CN',
   stickerPolicy: { enabled: true, frequency: 'medium', maxPerReply: 1, avoidRepeatWindow: 5 },
   voicePolicy: { enabled: true, frequency: 'low', maxCharsPerClip: 300, alwaysAttachTranscript: true },
@@ -249,3 +255,4 @@ export const DEFAULT_PERSONA: Persona = PersonaSchema.parse({
 });
 
 export const DEFAULT_MODELS: ModelsConfig = ModelsConfigSchema.parse({});
+

@@ -60,4 +60,22 @@ describe('image reference reply orchestration', () => {
     expect(text.status).toBe('sent');
     expect(h.state.imageCalls).toBe(0);
   });
+
+  it('uses persona references for an [[image-self]] selfie and marks it in metadata', async () => {
+    h = await createHarness({ image: 'anuma', chat: { script: [['发一张[[image-self:我站在窗边的自拍]]']] } });
+    const response = await h.app.server.inject({
+      method: 'POST',
+      url: '/api/messages/sync',
+      payload: { clientMsgId: 'selfie-1', content: [{ type: 'text', text: '给我看看你' }] }
+    });
+
+    const body = response.json();
+    const image = body.reply.content.find((part: any) => part.type === 'image');
+    expect(image.status).toBe('sent');
+    expect(image.meta.selfie).toBe(true);
+
+    const gen = h.state.imageRequests.filter((r) => r.url.includes('/images/generations')).pop();
+    expect(gen?.body).toMatchObject({ input_images: ['https://cdn.example/reference.png'] });
+  });
 });
+

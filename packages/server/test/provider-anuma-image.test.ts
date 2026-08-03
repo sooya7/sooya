@@ -82,6 +82,29 @@ describe('Anuma input_images image provider', () => {
     });
   });
 
+  it('generate attaches a persona reference image when referenceImages is passed', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const provider = new AnumaImageProvider(config(), deps(async (input, init) => {
+      calls.push({ url: String(input), init });
+      if (String(input).includes('/media/upload')) {
+        return new Response(JSON.stringify({ url: 'https://cdn.example/persona.png?sig=secret' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }] }), { status: 200 });
+    }));
+
+    const result = await provider.generate('我的自拍', { referenceImages: [{ data: PNG, mime: 'image/png' }] });
+
+    expect(result.data).toEqual(PNG);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.url).toContain('/media/upload');
+    expect(JSON.parse(String(calls[1]?.init?.body))).toMatchObject({
+      model: 'anuma-image',
+      prompt: '我的自拍',
+      n: 1,
+      input_images: ['https://cdn.example/persona.png?sig=secret']
+    });
+  });
+
   it('materializes a URL response without exposing the signed URL in provider errors', async () => {
     const fetchSpy = vi.fn<typeof fetch>(async () => new Response(PNG, { status: 200, headers: { 'content-type': 'image/png' } }));
     vi.stubGlobal('fetch', fetchSpy);
@@ -161,3 +184,4 @@ describe('Anuma input_images image provider', () => {
     expect(String(error)).not.toContain('sig=secret');
   });
 });
+

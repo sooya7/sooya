@@ -415,7 +415,12 @@ function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): st
     lines.push(`· [[sticker:情绪]] 发一个表情包。可用表情：${opts.stickerCatalogue}`);
     lines.push('· [[sticker-only:情绪]] 这一条只发表情包，不发文字。');
   }
-  if (persona.imagePolicy.enabled) lines.push('· [[image:详细的英文或中文画面描述]] 生成并发送一张图片。');
+  if (persona.imagePolicy.enabled) {
+    lines.push('· [[image:详细的英文或中文画面描述]] 生成并发送一张图片。');
+    if (persona.referenceImages.length > 0) {
+      lines.push('· [[image-self:画面描述]] 生成并发送一张你自己的照片/自拍。系统会自动附上你的形象参考图，保证长相与平时一致——生成你自己的形象时务必用这个标记，普通内容仍用 [[image:...]]。');
+    }
+  }
   if (persona.voicePolicy.enabled) {
     lines.push('· [[voice]] 把这条文字同时用语音发出来。');
     lines.push('· [[voice-only]] 这一条只发语音，不显示文字（文字会作为语音文稿保留）。');
@@ -432,3 +437,4 @@ function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): st
   );
   return lines.join('\n');
 }
+

@@ -84,7 +84,7 @@ export interface GeneratedImage {
 export interface ImageProvider {
   readonly name: string;
   readonly configured: boolean;
-  generate(prompt: string, opts?: { size?: string; signal?: AbortSignal }): Promise<GeneratedImage>;
+  generate(prompt: string, opts?: { size?: string; signal?: AbortSignal; referenceImages?: Array<{ data: Buffer; mime: string }> }): Promise<GeneratedImage>;
   edit(prompt: string, image: Buffer, opts?: { mime?: string; signal?: AbortSignal }): Promise<GeneratedImage>;
   inspectHealth(): Promise<HealthStatus>;
 }
@@ -160,3 +160,4 @@ export class ImageReferenceError extends Error {
     super(message);
   }
 }
+
