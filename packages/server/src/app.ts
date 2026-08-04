@@ -121,6 +121,8 @@ export interface SooyaApp {
   };
   /** Injected in tests so routes can reach the network through a stub. */
   fetchImpl?: typeof fetch;
+  /** Handles started by scheduleRecurring; cleared on close() so tests don't leak timers. */
+  recurringTimers: NodeJS.Timeout[];
   reopenDatabase: () => void;
   close: () => Promise<void>;
 }
@@ -386,6 +388,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
+    recurringTimers: [],
     reopenDatabase: () => {
       const previous = dbHandle.raw;
       closeDatabase(previous);
@@ -393,6 +396,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       dbHandle.swap(reopened.db);
     },
     close: async () => {
+      for (const timer of app.recurringTimers.splice(0)) clearInterval(timer);
       await replyCoordinator.stop();
       await worker.stop();
       try { await server.close(); } catch { /* ignore */ }
@@ -467,6 +471,7 @@ function scheduleRecurring(app: SooyaApp): void {
     } catch { /* ignore */ }
   }, 30 * 60 * 1000);
   maintenance.unref?.();
+  app.recurringTimers.push(maintenance);
 
   if (env.ENABLE_LIFE_ENGINE && env.LIFE_TICK_INTERVAL_MS > 0) {
     // Enqueued immediately as well: a restart should not leave her state
@@ -476,6 +481,7 @@ function scheduleRecurring(app: SooyaApp): void {
       try { repos.jobs.enqueue('life.tick', {}); } catch { /* ignore */ }
     }, env.LIFE_TICK_INTERVAL_MS);
     life.unref?.();
+    app.recurringTimers.push(life);
   }
 
   if (env.BACKUP_INTERVAL_MS > 0) {
@@ -483,6 +489,7 @@ function scheduleRecurring(app: SooyaApp): void {
       try { repos.jobs.enqueue('backup.create', { reason: 'scheduled' }); } catch { /* ignore */ }
     }, env.BACKUP_INTERVAL_MS);
     backup.unref?.();
+    app.recurringTimers.push(backup);
   }
   if (env.BACKUP_ON_START) repos.jobs.enqueue('backup.create', { reason: 'startup' });
 }

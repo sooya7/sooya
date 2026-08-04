@@ -19,10 +19,12 @@ type LogFn = (level: 'info' | 'warn' | 'error', msg: string, extra?: Record<stri
 
 /**
  * Loads SOOYA's appearance reference images from the assets/references dir so a
- * `[[image-self]]` generation can keep her look consistent. Missing files are
- * skipped so the generation degrades to no reference instead of failing — but
- * each skip is logged as a warning, because a misconfigured file name would
- * otherwise silently disable reference-based generation forever.
+ * `[[image-self]]` generation can keep her look consistent. The image provider
+ * only consumes a single reference, so this stops at the first readable file
+ * instead of reading every configured image into memory on each generation.
+ * Missing files are skipped so the generation degrades to no reference instead
+ * of failing — but each skip is logged as a warning, because a misconfigured
+ * file name would otherwise silently disable reference-based generation forever.
  */
 export class PersonaReferenceLoader {
   constructor(
@@ -39,21 +41,20 @@ export class PersonaReferenceLoader {
       }
       return [];
     }
-    const refs: PersonaReference[] = [];
     for (const name of configured) {
       try {
         const data = await fsp.readFile(path.join(this.refsDir, name));
         const mime = MIME_BY_EXT[path.extname(name).toLowerCase()] ?? 'image/png';
-        refs.push({ data, mime, name });
+        return [{ data, mime, name }];
       } catch (err) {
-        // Missing/unreadable reference: degrade to no reference, but surface it
-        // so a wrong file name (e.g. bad extension) never fails silently.
+        // Missing/unreadable reference: try the next configured file, but surface
+        // the skip so a wrong file name (e.g. bad extension) never fails silently.
         this.onLog?.('warn', 'persona reference image missing, generation will run without it', { name, refsDir: this.refsDir, err: (err as Error).message });
       }
     }
-    if (configured.length > 0 && refs.length === 0) {
+    if (configured.length > 0) {
       this.onLog?.('warn', 'all persona reference images failed to load', { refsDir: this.refsDir, names: configured });
     }
-    return refs;
+    return [];
   }
 }

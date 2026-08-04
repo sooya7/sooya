@@ -7,7 +7,8 @@
   "engines": { "node": ">=20.10.0" },
   "scripts": {
     "build": "npm run build -w @sooya/server && npm run build -w @sooya/web",
-    "dev": "npm run dev -w @sooya/server & npm run dev -w @sooya/web",
+    "dev": "npm run build -w @sooya/web && npm run dev -w @sooya/server",
+    "dev:parallel": "npm run dev -w @sooya/server & npm run dev -w @sooya/web",
     "start": "node packages/server/dist/main.js",
     "test": "npm run test -w @sooya/server",
     "test:e2e": "playwright test",
