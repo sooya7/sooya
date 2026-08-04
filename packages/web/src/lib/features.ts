@@ -21,6 +21,14 @@ export interface FeatureMedia {
   references?: { total: number; messages?: number; stickers?: number };
 }
 
+export interface PersonaReference {
+  name: string;
+  configured: boolean;
+  exists: boolean;
+  bytes: number;
+  framing: 'side' | 'full-body' | 'front';
+}
+
 export interface LifeSnapshot {
   activity: string;
   kind: string;
@@ -155,6 +163,17 @@ export const featureApi = {
     form.append('file', file, file.name);
     return request<{ persona: { avatar: string; userAvatar: string }; media: FeatureMedia }>(`/api/admin/persona/avatar/${slot}`, { method: 'POST', body: form });
   },
+
+  references: () => request<{ dir: string | null; references: PersonaReference[] }>('/api/admin/persona/references'),
+  uploadReference: (file: File) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return request<{ reference: PersonaReference; referenceImages: string[] }>('/api/admin/persona/references', { method: 'POST', body: form });
+  },
+  deleteReference: (name: string) =>
+    request<{ deleted: boolean; removedFile: boolean; referenceImages: string[] }>(`/api/admin/persona/references/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  referenceData: (name: string) =>
+    request<Blob>(`/api/admin/persona/references/${encodeURIComponent(name)}/data`, { raw: true }),
 
   gallery: (query: { trash?: boolean; origin?: string; favorite?: boolean; search?: string; from?: string; to?: string; limit?: number; offset?: number } = {}) =>
     request<{ media: FeatureMedia[]; stats: { count: number; bytes: number }; total: number }>(`/api/admin/gallery${params(query)}`),

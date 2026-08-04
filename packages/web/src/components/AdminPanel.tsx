@@ -1,7 +1,7 @@
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../lib/api.js';
 import { useAutoNotice } from '../lib/autoNotice.js';
-import { AvatarEditor, LifePanel, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
+import { AvatarEditor, LifePanel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
 import {
   interfaceOptions,
   MODEL_SLOTS,
@@ -853,7 +853,7 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
   const content = tab === 'overview'
     ? <Overview data={data} counts={counts} onRefresh={() => void loadOverview()} />
     : tab === 'persona'
-      ? <PersonaPanel onNotice={setNotice} />
+      ? <><PersonaPanel onNotice={setNotice} /><ReferencesEditor onNotice={setNotice} /></>
       : tab === 'avatar'
         ? <AvatarPanel onNotice={setNotice} />
         : tab === 'voice'

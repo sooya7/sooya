@@ -1,10 +1,16 @@
 import { z } from 'zod';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileTypeFromBuffer } from 'file-type';
 import type { SooyaApp } from '../app.js';
+import { resolveReferencesDir } from '../app.js';
 import { requireAdminToken, requireChatToken } from './auth.js';
 import { mediaMeta, toMediaRef, type MediaRow } from '../db/repos/media.repo.js';
 import type { BrowserPushSubscription } from '../core/push.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from '../core/voice.js';
 import { LifePolicySchema } from '../config/schema.js';
+import { classifyFraming } from '../media/persona-references.js';
+import { atomicWriteFile, ensureDirSync, safeJoin } from '../util/fsx.js';
 
 const IdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,80}$/);
 export function registerFeatureRoutes(app: SooyaApp): void {
@@ -60,6 +66,139 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       reply.code(e.code === 'STORAGE_HARD_LIMIT' ? 507 : 415);
       return { error: e.code ?? 'avatar_upload_failed', message: e.message.slice(0, 300) };
     }
+  });
+
+  /* --------------------------- persona references --------------------------- */
+  /*
+   * 参考图不走媒体库：它们是配置的一部分，文件名本身携带视角线索
+   * （side/full_body/front），自动选图靠它匹配。所以这里直接管理
+   * 磁盘文件 + persona.referenceImages 名单，而不生成 media 行。
+   */
+  const REF_NAME_RE = /^[A-Za-z0-9._-]{1,120}$/;
+  const REF_MIME_BY_EXT: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif'
+  };
+  const refItem = (dir: string | null, name: string, configured: boolean) => {
+    let exists = false;
+    let bytes = 0;
+    if (dir) {
+      try {
+        const stat = fs.statSync(safeJoin(dir, name));
+        exists = stat.isFile();
+        bytes = stat.size;
+      } catch { /* missing file: surface as exists=false */ }
+    }
+    return { name, configured, exists, bytes, framing: classifyFraming(name) };
+  };
+
+  server.get('/api/admin/persona/references', adminGuard, async () => {
+    const dir = resolveReferencesDir(app.env);
+    const configured = config.getPersona().referenceImages;
+    const seen = new Map<string, ReturnType<typeof refItem>>();
+    for (const name of configured) seen.set(name, refItem(dir, name, true));
+    if (dir && fs.existsSync(dir)) {
+      for (const entry of fs.readdirSync(dir)) {
+        if (!REF_MIME_BY_EXT[path.extname(entry).toLowerCase()]) continue;
+        if (!seen.has(entry)) seen.set(entry, refItem(dir, entry, false));
+      }
+    }
+    return { dir, references: [...seen.values()] };
+  });
+
+  server.post('/api/admin/persona/references', adminGuard, async (req, reply) => {
+    const dir = resolveReferencesDir(app.env);
+    if (!dir) {
+      reply.code(507);
+      return { error: 'references_dir_unavailable', message: '参考图目录不可用，请检查 assets/references 或 SOOYA_REFERENCES_DIR。' };
+    }
+    if (!req.isMultipart()) {
+      reply.code(400);
+      return { error: 'expected_multipart' };
+    }
+    let buffer: Buffer | null = null;
+    let filename = '';
+    try {
+      for await (const part of req.parts()) {
+        if (part.type !== 'file') continue;
+        buffer = await part.toBuffer();
+        filename = part.filename ?? '';
+        break;
+      }
+      if (!buffer) {
+        reply.code(400);
+        return { error: 'missing_file' };
+      }
+      if (buffer.length > app.env.MAX_UPLOAD_BYTES) {
+        reply.code(413);
+        return { error: 'file_too_large', message: `参考图不能超过 ${Math.round(app.env.MAX_UPLOAD_BYTES / 1024 / 1024)} MB。` };
+      }
+      await services.storage.assertWritable(buffer.length);
+      // 嗅探真实类型：扩展名可以伪装，字节不会。只收图片。
+      const sniffed = await fileTypeFromBuffer(buffer);
+      if (!sniffed || !REF_MIME_BY_EXT[`.${sniffed.ext}`]) {
+        reply.code(415);
+        return { error: 'unsupported_image', message: '只支持 PNG / JPG / WEBP / GIF 图片。' };
+      }
+      // 文件名只留安全字符；扩展名以嗅探结果为准，避免「.png 里装 exe」重演。
+      const base = path.basename(filename).replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80) || 'reference';
+      const name = `${base}.${sniffed.ext}`;
+      ensureDirSync(dir);
+      await atomicWriteFile(safeJoin(dir, name), buffer);
+      const current = config.getPersona().referenceImages;
+      if (!current.includes(name)) config.setPersona({ referenceImages: [...current, name] });
+      repos.audit.add('persona', 'reference.uploaded', name, { bytes: buffer.length, mime: sniffed.mime });
+      return { reference: refItem(dir, name, true), referenceImages: config.getPersona().referenceImages };
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      reply.code(e.code === 'STORAGE_HARD_LIMIT' ? 507 : 400);
+      return { error: e.code ?? 'reference_upload_failed', message: e.message.slice(0, 300) };
+    }
+  });
+
+  server.get('/api/admin/persona/references/:name/data', adminGuard, async (req, reply) => {
+    const { name } = req.params as { name: string };
+    const dir = resolveReferencesDir(app.env);
+    if (!REF_NAME_RE.test(name) || !dir) {
+      reply.code(400);
+      return { error: 'bad_name' };
+    }
+    let file: string;
+    try {
+      file = safeJoin(dir, name);
+    } catch {
+      reply.code(400);
+      return { error: 'bad_name' };
+    }
+    if (!fs.existsSync(file)) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    const mime = REF_MIME_BY_EXT[path.extname(name).toLowerCase()] ?? 'application/octet-stream';
+    return reply.type(mime).header('cache-control', 'no-store').send(fs.createReadStream(file));
+  });
+
+  server.delete('/api/admin/persona/references/:name', adminGuard, async (req, reply) => {
+    const { name } = req.params as { name: string };
+    if (!REF_NAME_RE.test(name)) {
+      reply.code(400);
+      return { error: 'bad_name' };
+    }
+    const current = config.getPersona().referenceImages;
+    if (current.includes(name)) config.setPersona({ referenceImages: current.filter((n) => n !== name) });
+    const dir = resolveReferencesDir(app.env);
+    let removedFile = false;
+    if (dir) {
+      try {
+        fs.unlinkSync(safeJoin(dir, name));
+        removedFile = true;
+      } catch { /* already gone */ }
+    }
+    repos.audit.add('persona', 'reference.deleted', name, { removedFile });
+    return { deleted: true, removedFile, referenceImages: config.getPersona().referenceImages };
   });
 
   /* -------------------------------- push ----------------------------------- */

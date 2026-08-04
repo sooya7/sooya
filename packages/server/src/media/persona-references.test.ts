@@ -55,7 +55,7 @@ describe('PersonaReferenceLoader', () => {
     await writeFile(path.join(dir, 'b.png'), Buffer.from('b-bytes'));
     await writeFile(path.join(dir, 'c.png'), Buffer.from('c-bytes'));
     const logs: Array<{ msg: string; extra?: Record<string, unknown> }> = [];
-    const loader = new PersonaReferenceLoader(dir, () => ['missing.jpg', 'b.png', 'c.png'], (level, msg, extra) => logs.push({ msg, extra }));
+    const loader = new PersonaReferenceLoader(dir, () => ['missing.jpg', 'b.png', 'c.png'], (_level, msg, extra) => logs.push({ msg, extra }));
     const refs = await loader.load();
     expect(refs).toHaveLength(1);
     expect(refs[0]).toMatchObject({ name: 'b.png' });

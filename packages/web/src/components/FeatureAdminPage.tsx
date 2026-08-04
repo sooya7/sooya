@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdminPersona } from '../lib/admin.js';
-import { adminMediaUrl, featureApi, type LifePanelData, type LifeSettings } from '../lib/features.js';
+import { adminMediaUrl, featureApi, type LifePanelData, type LifeSettings, type PersonaReference } from '../lib/features.js';
 import { formatGap, herClock, reachReasonText, slotProgress, sortedLog } from '../lib/lifeView.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 
@@ -38,6 +38,88 @@ export function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminP
       <div className="admin-summary">
         <label className="admin-card"><strong>SOOYA 头像</strong><img src={adminMediaUrl(persona.avatar)} alt="SOOYA 头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} />{assistantMedia.error && <small role="status">{assistantMedia.error}</small>}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('assistant', event.target.files?.[0])} /></label>
         <label className="admin-card"><strong>用户头像</strong><img src={adminMediaUrl(persona.userAvatar)} alt="用户头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} />{userMedia.error && <small role="status">{userMedia.error}</small>}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('user', event.target.files?.[0])} /></label>
+      </div>
+    </section>
+  );
+}
+
+const FRAMING_LABELS: Record<PersonaReference['framing'], string> = { side: '侧脸', 'full-body': '全身', front: '正面/半身' };
+
+/*
+ * 参考图管理。文件名里的视角线索（side/full_body/front）决定自拍时选哪张，
+ * 所以上传时保留原文件名；列表里展示识别出的视角，方便核对命名是否带线索。
+ */
+export function ReferencesEditor({ onNotice }: { onNotice: (s: string) => void }) {
+  const [list, setList] = useState<PersonaReference[] | null>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const createdUrls = useRef<string[]>([]);
+
+  const load = () => featureApi.references().then((r) => setList(r.references)).catch((error) => onNotice(errorText(error)));
+  useEffect(() => { void load(); }, []);
+  useEffect(() => () => { for (const url of createdUrls.current) URL.revokeObjectURL(url); }, []);
+
+  useEffect(() => {
+    if (!list) return;
+    let cancelled = false;
+    for (const ref of list) {
+      if (!ref.exists || thumbs[ref.name]) continue;
+      void featureApi.referenceData(ref.name).then((blob) => {
+        if (cancelled) return;
+        const url = URL.createObjectURL(blob);
+        createdUrls.current.push(url);
+        setThumbs((prev) => ({ ...prev, [ref.name]: url }));
+      }).catch(() => undefined);
+    }
+    return () => { cancelled = true; };
+  }, [list]);
+
+  const upload = async (file?: File) => {
+    if (!file || busy) return;
+    setBusy(true);
+    try {
+      const result = await featureApi.uploadReference(file);
+      onNotice(`参考图「${result.reference.name}」已上传并启用`);
+      await load();
+    } catch (error) {
+      onNotice(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (name: string) => {
+    if (!window.confirm(`删除参考图「${name}」？文件会一并删除，之后生成自拍将不再用它。`)) return;
+    try {
+      await featureApi.deleteReference(name);
+      onNotice('参考图已删除');
+      await load();
+    } catch (error) {
+      onNotice(errorText(error));
+    }
+  };
+
+  if (!list) return <section className="admin-form-card">正在读取参考图…</section>;
+  return (
+    <section className="admin-form-card" data-testid="reference-settings">
+      <div className="admin-panel-heading"><div><h2>形象参考图</h2><p>她发自拍时的长相依据。文件名带视角线索（side=侧脸、full_body=全身，其余默认正面），系统会按生成内容自动选图。</p></div></div>
+      {list.length === 0 && <p className="admin-muted">还没有参考图。上传后她生成自拍时会自动使用。</p>}
+      <div className="admin-summary">
+        {list.map((ref) => (
+          <div className="admin-card" key={ref.name}>
+            {thumbs[ref.name]
+              ? <img src={thumbs[ref.name]} alt={ref.name} style={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 12 }} />
+              : <div style={{ width: 120, height: 120, display: 'grid', placeItems: 'center', background: 'rgba(120,120,140,0.12)', borderRadius: 12 }}>无预览</div>}
+            <strong style={{ wordBreak: 'break-all' }}>{ref.name}</strong>
+            <small>{FRAMING_LABELS[ref.framing]} · {ref.exists ? bytes(ref.bytes) : '文件缺失'}{ref.configured ? '' : ' · 未启用'}</small>
+            <button type="button" onClick={() => void remove(ref.name)}>删除</button>
+          </div>
+        ))}
+        <label className="admin-card">
+          <strong>上传参考图</strong>
+          <small>PNG / JPG / WEBP / GIF；建议文件名带视角关键词（如 my_side_profile.png），自动选图靠它匹配。</small>
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={busy} onChange={(event) => void upload(event.target.files?.[0])} />
+        </label>
       </div>
     </section>
   );

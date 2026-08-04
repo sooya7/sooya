@@ -228,7 +228,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
     keepRecent: env.CONTEXT_RECENT_MESSAGES
   });
-  const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
+  const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
   const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences });
   const replyCoordinator = new ReplyCoordinator({
     messages: repos.messages,
@@ -509,7 +509,12 @@ function resolveAssetsDir(): string | null {
   return null;
 }
 
-function resolveReferencesDir(): string | null {
+export function resolveReferencesDir(env?: { SOOYA_REFERENCES_DIR?: string }): string | null {
+  // 显式配置优先：生产可以把参考图放在代码目录之外的持久化位置，
+  // 管理面板上传的图才不会随代码升级被覆盖。目录不存在也返回，
+  // 上传路由会负责创建；加载器读不到文件时自己会降级并报警。
+  const explicit = (env?.SOOYA_REFERENCES_DIR ?? process.env.SOOYA_REFERENCES_DIR)?.trim();
+  if (explicit) return path.resolve(explicit);
   const stickersDir = resolveAssetsDir();
   if (!stickersDir) return null;
   const refsDir = path.join(path.dirname(stickersDir), 'references');
