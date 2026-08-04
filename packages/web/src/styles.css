@@ -1656,6 +1656,10 @@ button {
 /* 搜索按钮插在铃铛和齿轮之间，使上面的相邻选择器失配；若不补这条，齿轮自身的
    margin-left:auto 会与铃铛的 auto 平分剩余空间，把管理入口推离搜索/提醒一组。 */
 .history-tool-button + .topbar-admin-entry { margin-left: 8px; }
+/* 没有铃铛时（如 iOS Safari 不支持 PushManager，NotificationBridge 不渲染），
+   承担 margin-left:auto 的元素整个消失，搜索/齿轮会贴着昵称；铃铛在时这条
+   相邻选择器失配、不生效，由搜索按钮自己顶上空位把整组推到右侧。 */
+.topbar-identity + .history-tool-button { margin-left: auto; }
 
 .notification-bell {
   width: 30px; height: 30px; padding: 0; cursor: pointer;

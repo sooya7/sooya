@@ -52,9 +52,9 @@ const CAPABILITIES = [
   ['vision', '视觉理解模型'],
   ['summary', '对话总结模型'],
   ['embedding', '向量模型'],
+  ['rerank', '记忆重排模型'],
   ['image', '图片生成模型'],
-  ['tts', '语音合成模型'],
-  ['rerank', '记忆重排模型']
+  ['tts', '语音合成模型']
 ] as const;
 
 /** Nav groups, so nine sections read as a structure instead of a list. */
