@@ -242,8 +242,25 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       reply.code(404);
       return { error: 'not_found' };
     }
+    /*
+     * 参考图会被槽位上传同名替换，不能长缓存；但每次都传 2MB 也太浪费。
+     * 折中：private, no-cache —— 浏览器可以存，但每次都要拿 ETag/Last-Modified
+     * 回来验证，没变就只回 304（几十字节）。private 避免 CDN 边缘存下管理图。
+     */
+    const stat = fs.statSync(file);
+    const etag = `"${stat.size.toString(16)}-${Math.round(stat.mtimeMs).toString(36)}"`;
+    const lastModified = stat.mtime.toUTCString();
+    const ifNoneMatch = req.headers['if-none-match'];
+    const ifModifiedSince = req.headers['if-modified-since'];
+    if ((typeof ifNoneMatch === 'string' && ifNoneMatch === etag) || (!ifNoneMatch && typeof ifModifiedSince === 'string' && ifModifiedSince === lastModified)) {
+      return reply.code(304).header('cache-control', 'private, no-cache').header('etag', etag).header('last-modified', lastModified).send();
+    }
     const mime = REF_MIME_BY_EXT[path.extname(name).toLowerCase()] ?? 'application/octet-stream';
-    return reply.type(mime).header('cache-control', 'no-store').send(fs.createReadStream(file));
+    return reply.type(mime)
+      .header('cache-control', 'private, no-cache')
+      .header('etag', etag)
+      .header('last-modified', lastModified)
+      .send(fs.createReadStream(file));
   });
 
   server.delete('/api/admin/persona/references/:name', adminGuard, async (req, reply) => {

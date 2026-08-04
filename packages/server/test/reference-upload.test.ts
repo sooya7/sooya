@@ -57,6 +57,14 @@ describe('管理面板参考图管理', () => {
     expect(data.headers['content-type']).toContain('image/png');
     expect(Buffer.from(data.rawPayload).equals(TEST_PNG)).toBe(true);
 
+    // 带 ETag 的条件请求：文件没变只回 304，不重传字节
+    const etag = data.headers['etag'] as string;
+    expect(etag).toBeTruthy();
+    const cached = await app.server.inject({ method: 'GET', url: '/api/admin/persona/references/front.png/data', headers: { ...ADMIN, 'if-none-match': etag } });
+    expect(cached.statusCode).toBe(304);
+    expect(cached.rawPayload.length).toBe(0);
+    expect(String(cached.headers['cache-control'])).toContain('private');
+
     const del = await app.server.inject({ method: 'DELETE', url: '/api/admin/persona/references/front.png', headers: ADMIN });
     expect(del.statusCode).toBe(200);
     expect((del.json() as { removedFile: boolean; referenceImages: string[] }).removedFile).toBe(true);
