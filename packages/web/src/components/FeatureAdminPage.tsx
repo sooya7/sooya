@@ -70,7 +70,7 @@ export function ReferencesEditor({ onNotice }: { onNotice: (s: string) => void }
         const url = URL.createObjectURL(blob);
         createdUrls.current.push(url);
         setThumbs((prev) => ({ ...prev, [ref.name]: url }));
-      }).catch(() => undefined);
+      }).catch((error) => { if (!cancelled) onNotice(`「${ref.name}」预览加载失败: ${errorText(error)}`); });
     }
     return () => { cancelled = true; };
   }, [list]);
