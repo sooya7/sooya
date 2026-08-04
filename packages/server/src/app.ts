@@ -226,7 +226,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
     keepRecent: env.CONTEXT_RECENT_MESSAGES
   });
-  const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(), () => config.getPersona().referenceImages);
+  const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
   const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences });
   const replyCoordinator = new ReplyCoordinator({
     messages: repos.messages,
