@@ -74,6 +74,21 @@ export interface EmbeddingProvider {
   inspectHealth(): Promise<HealthStatus>;
 }
 
+/** One document's relevance verdict from a reranker. */
+export interface RerankMatch {
+  /** Position of the document in the request's `documents` array. */
+  index: number;
+  /** Relevance score; only the ordering is comparable across vendors. */
+  score: number;
+}
+
+export interface RerankProvider {
+  readonly name: string;
+  readonly configured: boolean;
+  rerank(query: string, documents: string[], signal?: AbortSignal): Promise<RerankMatch[]>;
+  inspectHealth(): Promise<HealthStatus>;
+}
+
 export interface GeneratedImage {
   data: Buffer;
   mime: string;

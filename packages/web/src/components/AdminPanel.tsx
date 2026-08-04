@@ -53,7 +53,8 @@ const CAPABILITIES = [
   ['summary', '对话总结模型'],
   ['embedding', '向量模型'],
   ['image', '图片生成模型'],
-  ['tts', '语音合成模型']
+  ['tts', '语音合成模型'],
+  ['rerank', '记忆重排模型']
 ] as const;
 
 /** Nav groups, so nine sections read as a structure instead of a list. */
@@ -535,6 +536,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           <label>情绪强度（仅枚举方式，1~5）<input type="number" step="1" min="1" max="5" value={String(config.emotionScale ?? 4)} onChange={(e) => update('emotionScale', Number(e.target.value))} /></label>
         </>}
         {selected === 'embedding' && <label>向量维度<input type="number" value={String(config.dimensions ?? '')} onChange={(e) => update('dimensions', Number(e.target.value))} /></label>}
+        {selected === 'rerank' && <label>重排候选数（向量初筛取前 N 条送去重排）<input type="number" min="2" max="50" value={String(config.candidateLimit ?? 16)} onChange={(e) => update('candidateLimit', Number(e.target.value))} /></label>}
         <div className="admin-actions">
           {selected === 'image' && <small className="admin-muted">测试出图会真实调用图片服务并消耗一次额度。</small>}
           <button type="button" onClick={() => void save()}>保存模型配置</button>

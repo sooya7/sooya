@@ -163,8 +163,22 @@ export const TtsModelSchema = z.object({
 });
 export type TtsModelConfig = z.infer<typeof TtsModelSchema>;
 
+export const RerankModelSchema = z.object({
+  configSource: ModelConfigSourceSchema,
+  provider: z.enum(['openai-rerank', 'none']).default('none'),
+  baseUrl: z.string().default(''),
+  apiKey: z.string().default(''),
+  apiKeyEnv: z.string().optional(),
+  model: z.string().default(''),
+  timeoutMs: z.number().int().min(1000).max(60_000).default(10_000),
+  maxRetries: z.number().int().min(0).max(5).default(1),
+  /** How many vector-first-stage candidates the reranker scores per recall. */
+  candidateLimit: z.number().int().min(2).max(50).default(16)
+});
+export type RerankModelConfig = z.infer<typeof RerankModelSchema>;
+
 /** The fixed capability slots a model can be assigned to. */
-export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts'] as const;
+export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'rerank'] as const;
 export const ModelSlotSchema = z.enum(MODEL_SLOTS);
 export type ModelSlot = z.infer<typeof ModelSlotSchema>;
 
@@ -195,7 +209,8 @@ export const ModelsConfigSchema = z.object({
   summary: ChatModelSchema.optional(),
   embedding: EmbeddingModelSchema.default({}),
   image: ImageModelSchema.default({}),
-  tts: TtsModelSchema.default({})
+  tts: TtsModelSchema.default({}),
+  rerank: RerankModelSchema.default({})
 });
 export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
 

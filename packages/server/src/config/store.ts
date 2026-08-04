@@ -16,8 +16,8 @@ export interface ConfigStoreOptions {
   onLog?: (level: 'warn' | 'info' | 'error', msg: string, extra?: Record<string, unknown>) => void;
 }
 
-type ModelSection = 'chat' | 'vision' | 'summary' | 'embedding' | 'image' | 'tts';
-const MODEL_SECTIONS: ModelSection[] = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts'];
+type ModelSection = 'chat' | 'vision' | 'summary' | 'embedding' | 'image' | 'tts' | 'rerank';
+const MODEL_SECTIONS: ModelSection[] = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'rerank'];
 
 /**
  * Persona + model configuration, persisted as JSON files under CONFIG_DIR.
@@ -181,6 +181,18 @@ export class ConfigStore {
       }
       const ttsVoice = pick('SOOYA_TTS_VOICE');
       if (ttsVoice) next.tts.voice = ttsVoice;
+    }
+
+    const rerankKey = pick(next.rerank.apiKeyEnv ?? '', 'SOOYA_RERANK_API_KEY', 'OPENAI_API_KEY');
+    if (rerankKey && !ownKey('rerank')) next.rerank.apiKey = rerankKey;
+    if (!panelManaged('rerank')) {
+      const rerankBase = pick('SOOYA_RERANK_BASE_URL');
+      if (rerankBase) next.rerank.baseUrl = rerankBase;
+      const rerankModel = pick('SOOYA_RERANK_MODEL');
+      if (rerankModel) {
+        next.rerank.model = rerankModel;
+        if (next.rerank.provider === 'none') next.rerank.provider = 'openai-rerank';
+      }
     }
 
     return next;

@@ -35,6 +35,9 @@ export interface FakeProviderState {
   imageRequests: Array<{ url: string; body: Record<string, unknown> }>;
   ttsCalls: number;
   embedCalls: number;
+  rerankCalls: number;
+  /** Recorded rerank requests so tests can assert the documents sent. */
+  rerankRequests: Array<{ url: string; body: Record<string, unknown> }>;
 }
 
 export interface HarnessOptions {
@@ -46,6 +49,9 @@ export interface HarnessOptions {
   embedding?: 'ok' | 'fail' | 'off';
   /** Fixed dimension for the fake embedding provider. */
   embeddingDim?: number;
+  rerank?: 'ok' | 'fail' | 'off';
+  /** Custom rerank ordering: indexes into the request's documents array. */
+  rerankOrder?: (documents: string[]) => number[];
   /** Declare vision support on the chat model (default true). */
   vision?: boolean;
   skipStickerImport?: boolean;
@@ -129,7 +135,7 @@ function sseResponse(chunks: string[]): Response {
 
 export async function createHarness(opts: HarnessOptions = {}): Promise<Harness> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sooya-test-'));
-  const state: FakeProviderState = { chatCalls: [], discoverCalls: [], discoverHeaders: [], imageCalls: 0, imageRequests: [], ttsCalls: 0, embedCalls: 0 };
+  const state: FakeProviderState = { chatCalls: [], discoverCalls: [], discoverHeaders: [], imageCalls: 0, imageRequests: [], ttsCalls: 0, embedCalls: 0, rerankCalls: 0, rerankRequests: [] };
 
   let script = opts.chat?.script ?? [['好的。']];
   let chatError: Error | null = opts.chat?.chatError ?? null;
@@ -137,6 +143,7 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
   let ttsMode = opts.tts ?? 'off';
   const embeddingMode = opts.embedding ?? 'off';
   const embeddingDim = opts.embeddingDim ?? 8;
+  const rerankMode = opts.rerank ?? 'off';
   let callIndex = 0;
 
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -218,6 +225,18 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
         headers: { 'content-type': 'application/json' }
       });
     }
+    if (url.includes('/rerank')) {
+      state.rerankCalls++;
+      state.rerankRequests.push({ url, body: (body ?? {}) as Record<string, unknown> });
+      if (rerankMode === 'fail') return new Response('rerank backend exploded', { status: 500 });
+      const documents = (body as { documents?: string[] } | null)?.documents ?? [];
+      const order = opts.rerankOrder ? opts.rerankOrder(documents) : documents.map((_, i) => i).reverse();
+      const results = order.map((index, rank) => ({ index, relevance_score: 1 - rank * 0.1 }));
+      return new Response(JSON.stringify({ model: 'fake-rerank', results }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
     return new Response('unexpected url in test: ' + url, { status: 404 });
   };
 
@@ -277,6 +296,18 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
             maxRetries: 0,
             timeoutMs: 5000
           },
+    rerank:
+      rerankMode === 'off'
+        ? { provider: 'none' }
+        : {
+            provider: 'openai-rerank',
+            baseUrl: 'https://fake.example.com/v1',
+            apiKey: 'sk-test-key-000000',
+            model: 'fake-rerank',
+            maxRetries: 0,
+            timeoutMs: 5000,
+            candidateLimit: 16
+          }
   };
   fs.mkdirSync(path.join(dir, 'config'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'config', 'models.json'), JSON.stringify(models, null, 2));

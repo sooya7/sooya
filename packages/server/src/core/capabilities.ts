@@ -2,16 +2,18 @@ import type { ConfigStore } from '../config/store.js';
 import { createChatProvider, type ProviderDeps } from '../providers/chat/openai.js';
 import { createEmbeddingProvider, OpenAIEmbeddingProvider } from '../providers/embedding.js';
 import { createImageProvider } from '../providers/image.js';
+import { createRerankProvider } from '../providers/rerank.js';
 import { createTTSProvider } from '../providers/tts.js';
 import type {
   ChatProvider,
   EmbeddingProvider,
   HealthStatus,
   ImageProvider,
+  RerankProvider,
   TTSProvider
 } from '../providers/types.js';
 
-export type CapabilityName = 'chat' | 'vision' | 'summary' | 'embedding' | 'image' | 'tts';
+export type CapabilityName = 'chat' | 'vision' | 'summary' | 'embedding' | 'image' | 'tts' | 'rerank';
 
 /**
  * Central model gateway / capability registry.
@@ -25,6 +27,7 @@ export class CapabilityRegistry {
   private embedding!: EmbeddingProvider;
   private image!: ImageProvider;
   private tts!: TTSProvider;
+  private rerank!: RerankProvider;
 
   constructor(
     private readonly config: ConfigStore,
@@ -41,6 +44,7 @@ export class CapabilityRegistry {
     this.embedding = createEmbeddingProvider(models.embedding, this.deps);
     this.image = createImageProvider(models.image, this.deps);
     this.tts = createTTSProvider(models.tts, this.deps);
+    this.rerank = createRerankProvider(models.rerank, this.deps);
   }
 
   chatProvider(): ChatProvider {
@@ -78,6 +82,15 @@ export class CapabilityRegistry {
     return this.tts;
   }
 
+  rerankProvider(): RerankProvider {
+    return this.rerank;
+  }
+
+  /** Number of vector candidates the reranker scores per recall. */
+  rerankCandidateLimit(): number {
+    return this.config.getModels().rerank.candidateLimit;
+  }
+
   has(cap: CapabilityName): boolean {
     switch (cap) {
       case 'chat':
@@ -92,6 +105,8 @@ export class CapabilityRegistry {
         return this.image.configured;
       case 'tts':
         return this.tts.configured;
+      case 'rerank':
+        return this.rerank.configured;
       default:
         return false;
     }
@@ -99,13 +114,14 @@ export class CapabilityRegistry {
 
   async statuses(): Promise<Record<CapabilityName, HealthStatus>> {
     const visionCfg = this.config.chatModelFor('vision');
-    const [chat, vision, summary, embedding, image, tts] = await Promise.all([
+    const [chat, vision, summary, embedding, image, tts, rerank] = await Promise.all([
       this.chat.inspectHealth(),
       this.vision.inspectHealth(),
       this.summary.inspectHealth(),
       this.embedding.inspectHealth(),
       this.image.inspectHealth(),
-      this.tts.inspectHealth()
+      this.tts.inspectHealth(),
+      this.rerank.inspectHealth()
     ]);
     return {
       chat,
@@ -119,7 +135,8 @@ export class CapabilityRegistry {
       summary: { ...summary, capability: 'summary' },
       embedding,
       image,
-      tts
+      tts,
+      rerank
     };
   }
 }

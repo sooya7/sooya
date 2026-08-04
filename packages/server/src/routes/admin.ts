@@ -156,6 +156,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
     'openai-embeddings',
     'openai-images',
     'openai-tts',
+    'openai-rerank',
     'anthropic-messages'
   ]);
   server.post('/api/admin/models/:slot/discover', guard, async (req, reply) => {
@@ -295,6 +296,15 @@ export function registerAdminRoutes(app: SooyaApp): void {
         const provider = caps.embeddingProvider();
         const result = await provider.embed([PROBE_TEXT], signal);
         return { provider: provider.name, model: result.model || undefined, detail: `返回了 ${result.dimensions} 维向量` };
+      }
+      if (slot === 'rerank') {
+        const provider = caps.rerankProvider();
+        const matches = await provider.rerank(PROBE_TEXT, ['一条与查询相关的文档', '一条完全无关的文档'], signal);
+        return {
+          provider: provider.name,
+          model: String(config.getModels().rerank.model ?? '') || undefined,
+          detail: `对 2 条候选文档完成排序，返回 ${matches.length} 条结果`
+        };
       }
       if (slot === 'tts') {
         const provider = caps.ttsProvider();

@@ -247,7 +247,9 @@ export class MemoryService {
 
   /**
    * Recall relevant memories. Uses embeddings when available and falls back to
-   * FTS, always reporting which strategy was used and why.
+   * FTS, always reporting which strategy was used and why. When a reranker is
+   * configured, the vector top candidates are re-scored by it; a rerank
+   * failure degrades to pure vector ordering.
    */
   async recall(query: string, limit = 8): Promise<RecallResult> {
     const total = this.repo.count(true);
@@ -265,15 +267,29 @@ export class MemoryService {
         if (vec && vec.length === dim) {
           const pool = this.repo.activeWithEmbeddings(dim);
           if (pool.length > 0) {
+            const rerankCfg = this.capabilities.rerankProvider().configured
+              ? this.config_rerankCandidateLimit()
+              : null;
+            const candidateLimit = rerankCfg ?? limit;
             const scored = pool
               .map((p) => ({ record: this.repo.toRecord(p.row), score: cosineSimilarity(vec, p.vector) }))
               .filter((s) => s.score >= 0.2)
               .sort((a, b) => b.score - a.score || b.record.importance - a.record.importance)
-              .slice(0, limit);
-            this.repo.bumpHits(scored.map((s) => s.record.id));
+              .slice(0, Math.max(candidateLimit, limit));
+            const final = rerankCfg ? await this.rerankCandidates(query, scored, limit) : null;
+            const picked = (final ?? scored).slice(0, limit);
+            this.repo.bumpHits(picked.map((s) => s.record.id));
+            const reranked = final !== null;
             return {
-              memories: scored.map((s) => s.record),
-              matches: scored.map((s) => ({ memory: s.record, strategy: 'embedding', score: s.score, reason: `embedding cosine ${s.score.toFixed(3)}` })),
+              memories: picked.map((s) => s.record),
+              matches: picked.map((s) => ({
+                memory: s.record,
+                strategy: 'embedding',
+                score: s.score,
+                reason: reranked
+                  ? `embedding cosine ${s.score.toFixed(3)}, reranked`
+                  : `embedding cosine ${s.score.toFixed(3)}`
+              })),
               strategy: 'embedding', embeddingCoverage: coverage
             };
           }
@@ -308,6 +324,37 @@ export class MemoryService {
     const fts = this.repo.searchFts(query, limit);
     this.repo.bumpHits(fts.map((m) => m.id));
     return { memories: fts, matches: ftsMatches(fts), strategy: 'fts', fallbackReason: 'embedding provider not configured', embeddingCoverage: coverage };
+  }
+
+  private config_rerankCandidateLimit(): number {
+    return this.capabilities.rerankCandidateLimit();
+  }
+
+  /**
+   * Rerank vector-first-stage candidates with the configured reranker.
+   * Returns candidates in reranker order (keeping their cosine scores) or
+   * null when the reranker is unavailable or fails, leaving the caller with
+   * the pure vector ordering.
+   */
+  private async rerankCandidates(
+    query: string,
+    candidates: Array<{ record: MemoryRecord; score: number }>,
+    limit: number
+  ): Promise<Array<{ record: MemoryRecord; score: number }> | null> {
+    if (candidates.length <= 1) return candidates;
+    const reranker = this.capabilities.rerankProvider();
+    if (!reranker.configured) return null;
+    try {
+      const matches = await reranker.rerank(query, candidates.map((c) => c.record.content));
+      if (matches.length === 0) return null;
+      return matches
+        .map((m) => candidates[m.index])
+        .filter((c): c is { record: MemoryRecord; score: number } => Boolean(c))
+        .slice(0, limit);
+    } catch (err) {
+      this.errorLog.add('memory.rerank', (err as Error).message);
+      return null;
+    }
   }
 
   /** Drop memories whose expiry has passed. Returns the number removed. */
