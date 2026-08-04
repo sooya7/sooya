@@ -194,6 +194,22 @@ export interface StripResult {
 }
 
 /**
+ * Reasoning-model traces leak into the text stream when the gateway does not
+ * separate `reasoning_content`. The model wraps them in `<think>…</think>`;
+ * when a think block is abandoned it may emit only a closing tag whose name
+ * carries a hash, e.g. `</think_never_used_51bce…>`. All forms must be
+ * stripped or the protocol leaks into the conversation.
+ */
+const THINK_TAG_RE = /<\/?think(?:_[0-9a-z_]{8,})?>/gi;
+const THINK_BLOCK_RE = /<think(?:_[0-9a-z_]{8,})?>[\s\S]*?<\/think(?:_[0-9a-z_]{8,})?>/gi;
+const OPEN_THINK_RE = /<think(?:_[0-9a-z_]{8,})?>[\s\S]*$/i;
+
+/** Removes reasoning traces from a completed text. */
+export function stripThinking(raw: string): string {
+  return raw.replace(THINK_BLOCK_RE, ' ').replace(THINK_TAG_RE, ' ').replace(OPEN_THINK_RE, ' ');
+}
+
+/**
  * Removes markers from a completed text and returns what they requested.
  * Handles both complete markers and a truncated one at the end of the stream.
  */
@@ -203,7 +219,7 @@ export function stripModelDirectives(raw: string): StripResult {
   let cleaned = partial ? raw.slice(0, partial.index) : raw;
   const singlePartial = TRAILING_SINGLE_PARTIAL_RE.exec(cleaned);
   if (singlePartial && isPartialMarker(singlePartial[0])) cleaned = cleaned.slice(0, singlePartial.index);
-  const text = cleaned
+  const text = stripThinking(cleaned)
     .replace(MARKER_RE, (_m, kind: string, arg?: string) => {
       const k = canonicalMarkerKind(kind);
       const value = (arg ?? '').trim();
@@ -246,15 +262,46 @@ function canonicalMarkerKind(kind: string): 'sticker' | 'image' | 'image-self' |
  */
 export class StreamingDirectiveFilter {
   private pending = '';
+  /** While inside a <think>…</think> block, emitted text is suppressed. */
+  private inThink = false;
 
   push(chunk: string): string {
     this.pending += chunk;
     let out = '';
     for (;;) {
+      // Inside a think block: only the closing tag matters.
+      if (this.inThink) {
+        const m = /<\/think(?:_[0-9a-z_]{8,})?>/i.exec(this.pending);
+        if (m) {
+          this.pending = this.pending.slice(m.index + m[0].length);
+          this.inThink = false;
+          continue;
+        }
+        // Keep only a tail that could still grow into a closing tag, so a
+        // runaway think block cannot pin unbounded memory.
+        this.pending = this.pending.slice(-16);
+        break;
+      }
+
       const open = this.pending.indexOf('[');
-      if (open < 0) {
-        out += this.pending;
-        this.pending = '';
+      const think = this.pending.search(/<think(?:_[0-9a-z_]{8,})?>/i);
+
+      // A think block opens before any bracket marker: swallow it wholesale.
+      if (think >= 0 && (open < 0 || think < open)) {
+        out += this.pending.slice(0, think);
+        const tag = /<think(?:_[0-9a-z_]{8,})?>/i.exec(this.pending)!;
+        this.pending = this.pending.slice(think + tag[0].length);
+        this.inThink = true;
+        continue;
+      }
+
+      // A dangling "<thin" or "</thi" at the very end could still grow into a
+      // think tag of either direction.
+      const dangling = /<\/?(?:t(?:h(?:i(?:n(?:k(?:_[0-9a-z_]{0,40})?)?)?)?)?)?$/i.exec(this.pending);
+      const searchEnd = dangling ? dangling.index : this.pending.length;
+      if (open < 0 || open >= searchEnd) {
+        out += this.pending.slice(0, searchEnd);
+        this.pending = this.pending.slice(searchEnd);
         break;
       }
       out += this.pending.slice(0, open);
@@ -285,15 +332,21 @@ export class StreamingDirectiveFilter {
       this.pending = this.pending.slice(end);
       if (!MARKER_EXACT_RE.test(span)) out += span;
     }
-    return out;
+    // An orphan closing tag (no opening <think>) must never reach the user.
+    return out.replace(/<\/think(?:_[0-9a-z_]{8,})?>/gi, '');
   }
 
-  /** Flush whatever is left (an unterminated marker is dropped). */
+  /** Flush whatever is left (an unterminated marker or think block is dropped). */
   flush(): string {
     const rest = this.pending;
     this.pending = '';
+    if (this.inThink) {
+      this.inThink = false;
+      return '';
+    }
     if (rest === '[') return '[';
     if (MARKER_EXACT_RE.test(rest) || isPartialMarker(rest)) return '';
+    // A trailing partial "<thin…" that never became a think tag: emit it.
     return rest;
   }
 }
