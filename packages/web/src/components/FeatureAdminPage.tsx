@@ -49,6 +49,7 @@ const FRAMING_ORDER: Array<PersonaReference['framing']> = ['front', 'full-body',
 /*
  * 参考图按视角分三个槽位：往哪个槽位传，系统就自动把它改成该视角的图
  * （后端重命名为带视角线索的规范名），并替换同视角的旧图，不用手改文件名。
+ * bundle 重建标记：用于生成新的资源哈希。
  */
 export function ReferencesEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [list, setList] = useState<PersonaReference[] | null>(null);
@@ -113,7 +114,7 @@ export function ReferencesEditor({ onNotice }: { onNotice: (s: string) => void }
             <label className="admin-card" key={framing}>
               <strong>{FRAMING_LABELS[framing]}</strong>
               {ref && thumbs[ref.name]
-                ? <img src={thumbs[ref.name]} alt={ref.name} style={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 12 }} />
+                ? <img src={thumbs[ref.name]} alt={ref.name} title={ref.name} style={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 12 }} />
                 : <div style={{ width: 120, height: 120, display: 'grid', placeItems: 'center', background: 'rgba(120,120,140,0.12)', borderRadius: 12 }}>{ref ? '无预览' : '未上传'}</div>}
               {ref
                 ? <small style={{ wordBreak: 'break-all' }}>{ref.name} · {ref.exists ? bytes(ref.bytes) : '文件缺失'}{ref.configured ? '' : ' · 未启用'}</small>
