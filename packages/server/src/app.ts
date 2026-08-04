@@ -317,6 +317,19 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     "UPDATE messages SET status = 'failed', error = 'interrupted by restart' WHERE status = 'sending' AND batch_id IS NULL"
   ).run().changes;
   if (orphaned > 0) logger.warn({ orphaned }, 'marked interrupted assistant messages as failed');
+  /*
+   * Messages already marked failed (e.g. interrupted batch shells) may still
+   * hold image/audio parts stuck in 'pending'; the frontend would render them
+   * as "generating…" forever. After a restart nothing will ever finish them,
+   * so mark them failed too. Runs AFTER the update above so newly orphaned
+   * messages are covered as well.
+   */
+  const orphanedParts = dbHandle.prepare(
+    `UPDATE message_parts SET status = 'failed', error = 'interrupted by restart'
+     WHERE status = 'pending' AND type IN ('image', 'audio')
+       AND message_id IN (SELECT id FROM messages WHERE status = 'failed')`
+  ).run().changes;
+  if (orphanedParts > 0) logger.warn({ orphanedParts }, 'marked interrupted media parts as failed');
   await cleanupTempFiles([env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files]);
 
   const state = { startedAt: new Date().toISOString(), dbRecovered: opened.recovered, dbRecoveredFrom: opened.recoveredFrom, dbInconsistent: opened.inconsistent, version: VERSION };

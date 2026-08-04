@@ -324,6 +324,32 @@ describe('crash recovery', () => {
     await second.close();
   });
 
+  it('marks interrupted media parts as failed on restart so the UI stops spinning', async () => {
+    const dir = makeTempDir('sooya-restart-parts-');
+    const env = {
+      NODE_ENV: 'test',
+      LOG_LEVEL: 'silent',
+      DATA_DIR: path.join(dir, 'data'),
+      CONFIG_DIR: path.join(dir, 'config'),
+      ENABLE_BACKGROUND_JOBS: 'false'
+    };
+    const first = await buildApp({ env, logger: pino({ level: 'silent' }), assetsDir: ASSETS_DIR, startWorkers: false });
+    // A reply killed mid-generation: shell still 'sending', image part still 'pending'.
+    const { message } = first.repos.messages.create({
+      role: 'assistant',
+      status: 'sending',
+      parts: [{ type: 'image', status: 'pending', meta: { prompt: '被中断的自拍', selfie: true } }]
+    });
+    await first.close();
+
+    const second = await buildApp({ env, logger: pino({ level: 'silent' }), assetsDir: ASSETS_DIR, startWorkers: false });
+    const after = second.repos.messages.page(10).messages.find((m) => m.id === message.id)!;
+    expect(after.status).toBe('failed');
+    expect(after.content[0]!.status).toBe('failed');
+    expect(after.content[0]!.error).toContain('interrupted');
+    await second.close();
+  });
+
   it('media files and messages survive a full restart', async () => {
     const dir = makeTempDir('sooya-persist-');
     const env = {
