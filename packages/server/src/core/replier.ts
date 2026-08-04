@@ -316,6 +316,10 @@ export class Replier {
             ...(referenceMediaIds.length === 1 ? { referenceMediaId: referenceMediaIds[0] } : {})
           }
         });
+        // Audio parts record duration; image parts used to leave it NULL, so
+        // there was no way to tell slow upstream generations apart from stuck
+        // ones. Measure the provider call (upload + generation + save).
+        const imageStartedAt = Date.now();
         try {
           if (referenceMediaIds.length > 1) {
             throw new ImageReferenceError(
@@ -357,7 +361,11 @@ export class Replier {
             filename: 'generated.png',
             meta: { prompt: imagePrompt.slice(0, 500), selfie: !!plan.selfImagePrompt }
           });
-          this.deps.messages.updatePart(partId, { mediaId: media.id, status: 'sent' });
+          this.deps.messages.updatePart(partId, {
+            mediaId: media.id,
+            status: 'sent',
+            duration: Math.round((Date.now() - imageStartedAt) / 1000)
+          });
           producedParts.push('image');
           this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'image', mediaId: media.id });
         } catch (err) {
@@ -373,6 +381,7 @@ export class Replier {
           this.deps.messages.updatePart(partId, {
             status: 'failed',
             error: reason,
+            duration: Math.round((Date.now() - imageStartedAt) / 1000),
             meta: { failure: { ...failure, message: reason } }
           });
           this.deps.errorLog.add('reply.image', failure.code, {

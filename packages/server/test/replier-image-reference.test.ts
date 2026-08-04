@@ -32,6 +32,7 @@ describe('image reference reply orchestration', () => {
     const image = body.reply.content.find((part: any) => part.type === 'image');
     expect(image.status).toBe('sent');
     expect(image.meta.referenceMediaId).toBe(referenceId);
+    expect(typeof image.duration).toBe('number');
     expect(h.state.imageCalls).toBe(1);
   });
 
@@ -57,6 +58,7 @@ describe('image reference reply orchestration', () => {
     const text = body.reply.content.find((part: any) => part.type === 'text');
     expect(image.status).toBe('failed');
     expect(image.error).toContain('一次图生图只能使用一张参考图');
+    expect(typeof image.duration).toBe('number');
     expect(text.status).toBe('sent');
     expect(h.state.imageCalls).toBe(0);
   });
