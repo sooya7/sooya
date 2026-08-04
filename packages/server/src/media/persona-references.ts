@@ -20,11 +20,15 @@ type LogFn = (level: 'info' | 'warn' | 'error', msg: string, extra?: Record<stri
 /**
  * Loads SOOYA's appearance reference images from the assets/references dir so a
  * `[[image-self]]` generation can keep her look consistent. The image provider
- * only consumes a single reference, so this stops at the first readable file
- * instead of reading every configured image into memory on each generation.
- * Missing files are skipped so the generation degrades to no reference instead
- * of failing — but each skip is logged as a warning, because a misconfigured
- * file name would otherwise silently disable reference-based generation forever.
+ * only consumes a single reference, so this picks the ONE configured image that
+ * best fits what the generation is showing: a side-profile shot uses the side
+ * reference, a full-body shot the standing one, and everything else the default
+ * front/half-body one. Selection matches framing keywords in the prompt against
+ * framing keywords in the file names, falling back to the first readable file
+ * when nothing fits or the chosen file cannot be read. Missing files are
+ * skipped so the generation degrades to no reference instead of failing — but
+ * each skip is logged as a warning, because a misconfigured file name would
+ * otherwise silently disable reference-based generation forever.
  */
 export class PersonaReferenceLoader {
   constructor(
@@ -33,7 +37,7 @@ export class PersonaReferenceLoader {
     private readonly onLog?: LogFn
   ) {}
 
-  async load(): Promise<PersonaReference[]> {
+  async load(hint?: string): Promise<PersonaReference[]> {
     const configured = this.names();
     if (!this.refsDir) {
       if (configured.length > 0) {
@@ -41,13 +45,20 @@ export class PersonaReferenceLoader {
       }
       return [];
     }
-    for (const name of configured) {
+    const wanted = hint ? classifyFraming(hint) : null;
+    const order = wanted
+      ? [...configured.filter((name) => classifyFraming(name) === wanted), ...configured.filter((name) => classifyFraming(name) !== wanted)]
+      : configured;
+    if (wanted && order.length > 0 && order[0] !== configured[0]) {
+      this.onLog?.('info', 'persona reference auto-selected from prompt framing', { framing: wanted, picked: order[0], hint: hint?.slice(0, 120) });
+    }
+    for (const name of order) {
       try {
         const data = await fsp.readFile(path.join(this.refsDir, name));
         const mime = MIME_BY_EXT[path.extname(name).toLowerCase()] ?? 'image/png';
         return [{ data, mime, name }];
       } catch (err) {
-        // Missing/unreadable reference: try the next configured file, but surface
+        // Missing/unreadable reference: try the next candidate, but surface
         // the skip so a wrong file name (e.g. bad extension) never fails silently.
         this.onLog?.('warn', 'persona reference image missing, generation will run without it', { name, refsDir: this.refsDir, err: (err as Error).message });
       }
@@ -57,4 +68,20 @@ export class PersonaReferenceLoader {
     }
     return [];
   }
+}
+
+type Framing = 'side' | 'full-body' | 'front';
+
+const SIDE_WORDS = /侧脸|侧面|侧颜|侧身|侧着|side|profile/i;
+const FULL_BODY_WORDS = /全身|站立|站着|站姿|从头到脚|全身照|full[\s_-]?body|standing|whole body|head to toe/i;
+
+/**
+ * Classifies a prompt or file name by framing. Side wins over full-body because
+ * a profile shot is the most reference-dependent framing; the plain front /
+ * half-body reference is the default when nothing more specific shows up.
+ */
+export function classifyFraming(text: string): Framing {
+  if (SIDE_WORDS.test(text)) return 'side';
+  if (FULL_BODY_WORDS.test(text)) return 'full-body';
+  return 'front';
 }

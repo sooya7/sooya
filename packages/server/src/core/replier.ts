@@ -342,7 +342,7 @@ export class Replier {
               img = await provider.generate(imagePrompt);
             }
           } else if (plan.selfImagePrompt) {
-            const refs = await this.deps.personaReferences.load();
+            const refs = await this.deps.personaReferences.load(imagePrompt);
             img = refs.length > 0
               ? await provider.generate(imagePrompt, { referenceImages: refs })
               : await provider.generate(imagePrompt);

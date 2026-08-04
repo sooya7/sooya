@@ -61,4 +61,43 @@ describe('PersonaReferenceLoader', () => {
     expect(refs[0]).toMatchObject({ name: 'b.png' });
     expect(logs.some((l) => l.extra?.name === 'missing.jpg')).toBe(true);
   });
+
+  const FRAMES = ['01_main_reference_front_half.png', '02_reference_full_body_standing.png', '03_reference_side_profile.png'];
+
+  async function makeFramedDir(): Promise<string> {
+    const dir = await makeDir();
+    for (const name of FRAMES) await writeFile(path.join(dir, name), Buffer.from(name));
+    return dir;
+  }
+
+  it('侧脸 prompt 自动选中侧面参考图', async () => {
+    const dir = await makeFramedDir();
+    const loader = new PersonaReferenceLoader(dir, () => FRAMES);
+    const refs = await loader.load('侧颜特写，夕阳下的侧脸');
+    expect(refs[0]?.name).toBe('03_reference_side_profile.png');
+  });
+
+  it('全身 prompt 自动选中站姿参考图', async () => {
+    const dir = await makeFramedDir();
+    const loader = new PersonaReferenceLoader(dir, () => FRAMES);
+    const refs = await loader.load('a full body shot, standing in the park');
+    expect(refs[0]?.name).toBe('02_reference_full_body_standing.png');
+  });
+
+  it('无视角线索或无 hint 时用第一张（正面半身）', async () => {
+    const dir = await makeFramedDir();
+    const loader = new PersonaReferenceLoader(dir, () => FRAMES);
+    expect((await loader.load('微笑自拍'))[0]?.name).toBe('01_main_reference_front_half.png');
+    expect((await loader.load())[0]?.name).toBe('01_main_reference_front_half.png');
+  });
+
+  it('选中的参考图缺失时回退到第一张可读的', async () => {
+    const dir = await makeDir();
+    await writeFile(path.join(dir, '01_main_reference_front_half.png'), Buffer.from('front'));
+    await writeFile(path.join(dir, '02_reference_full_body_standing.png'), Buffer.from('full'));
+    // 03 缺失
+    const loader = new PersonaReferenceLoader(dir, () => FRAMES);
+    const refs = await loader.load('侧脸');
+    expect(refs[0]?.name).toBe('01_main_reference_front_half.png');
+  });
 });

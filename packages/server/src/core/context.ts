@@ -420,7 +420,7 @@ function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): st
   if (persona.imagePolicy.enabled) {
     lines.push('· [[image:详细的英文或中文画面描述]] 生成并发送一张图片。');
     if (persona.referenceImages.length > 0) {
-      lines.push('· [[image-self:画面描述]] 生成并发送一张你自己的照片/自拍。系统会自动附上你的形象参考图，保证长相与平时一致——生成你自己的形象时务必用这个标记，普通内容仍用 [[image:...]]。');
+      lines.push('· [[image-self:画面描述]] 生成并发送一张你自己的照片/自拍。系统会自动附上你的形象参考图，保证长相与平时一致——生成你自己的形象时务必用这个标记，普通内容仍用 [[image:...]]。画面描述里写明拍摄视角（如正面半身、全身站姿、侧脸），系统会据此选择对应的参考图。');
     }
   }
   if (persona.voicePolicy.enabled) {
