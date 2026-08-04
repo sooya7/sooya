@@ -37,7 +37,7 @@ describe('merged admin console', () => {
     for (const editor of ['AvatarEditor', 'LifePanel', 'VoiceEditor', 'StorageEditor']) {
       expect(EDITORS).toContain(`export function ${editor}(`);
     }
-    expect(PANEL).toContain("import { AvatarEditor, LifePanel, StorageEditor, VoiceEditor } from './FeatureAdminPage.js'");
+    expect(PANEL).toContain("import { AvatarEditor, LifePanel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js'");
     for (const branch of ["tab === 'avatar'", "tab === 'voice'", "tab === 'life'", "tab === 'storage'"]) {
       expect(PANEL).toContain(branch);
     }
