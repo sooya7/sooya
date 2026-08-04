@@ -43,11 +43,12 @@ export function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminP
   );
 }
 
-const FRAMING_LABELS: Record<PersonaReference['framing'], string> = { side: '侧脸', 'full-body': '全身', front: '正面/半身' };
+const FRAMING_LABELS: Record<PersonaReference['framing'], string> = { front: '正面/半身', 'full-body': '全身', side: '侧脸' };
+const FRAMING_ORDER: Array<PersonaReference['framing']> = ['front', 'full-body', 'side'];
 
 /*
- * 参考图管理。文件名里的视角线索（side/full_body/front）决定自拍时选哪张，
- * 所以上传时保留原文件名；列表里展示识别出的视角，方便核对命名是否带线索。
+ * 参考图按视角分三个槽位：往哪个槽位传，系统就自动把它改成该视角的图
+ * （后端重命名为带视角线索的规范名），并替换同视角的旧图，不用手改文件名。
  */
 export function ReferencesEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [list, setList] = useState<PersonaReference[] | null>(null);
@@ -74,12 +75,12 @@ export function ReferencesEditor({ onNotice }: { onNotice: (s: string) => void }
     return () => { cancelled = true; };
   }, [list]);
 
-  const upload = async (file?: File) => {
+  const upload = async (framing: PersonaReference['framing'], file?: File) => {
     if (!file || busy) return;
     setBusy(true);
     try {
-      const result = await featureApi.uploadReference(file);
-      onNotice(`参考图「${result.reference.name}」已上传并启用`);
+      const result = await featureApi.uploadReferenceSlot(framing, file);
+      onNotice(`「${FRAMING_LABELS[framing]}」参考图已更新${result.replaced.length > 0 ? `，替换了 ${result.replaced.join('、')}` : ''}`);
       await load();
     } catch (error) {
       onNotice(errorText(error));
@@ -100,26 +101,28 @@ export function ReferencesEditor({ onNotice }: { onNotice: (s: string) => void }
   };
 
   if (!list) return <section className="admin-form-card">正在读取参考图…</section>;
+  const slotOf = (framing: PersonaReference['framing']) =>
+    list.find((r) => r.framing === framing && r.configured) ?? list.find((r) => r.framing === framing && r.exists);
   return (
     <section className="admin-form-card" data-testid="reference-settings">
-      <div className="admin-panel-heading"><div><h2>形象参考图</h2><p>她发自拍时的长相依据。文件名带视角线索（side=侧脸、full_body=全身，其余默认正面），系统会按生成内容自动选图。</p></div></div>
-      {list.length === 0 && <p className="admin-muted">还没有参考图。上传后她生成自拍时会自动使用。</p>}
+      <div className="admin-panel-heading"><div><h2>形象参考图</h2><p>她发自拍时的长相依据。往哪个视角传，就自动成为该视角的参考图（替换旧图），她生成自拍时按内容自动选用。</p></div></div>
       <div className="admin-summary">
-        {list.map((ref) => (
-          <div className="admin-card" key={ref.name}>
-            {thumbs[ref.name]
-              ? <img src={thumbs[ref.name]} alt={ref.name} style={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 12 }} />
-              : <div style={{ width: 120, height: 120, display: 'grid', placeItems: 'center', background: 'rgba(120,120,140,0.12)', borderRadius: 12 }}>无预览</div>}
-            <strong style={{ wordBreak: 'break-all' }}>{ref.name}</strong>
-            <small>{FRAMING_LABELS[ref.framing]} · {ref.exists ? bytes(ref.bytes) : '文件缺失'}{ref.configured ? '' : ' · 未启用'}</small>
-            <button type="button" onClick={() => void remove(ref.name)}>删除</button>
-          </div>
-        ))}
-        <label className="admin-card">
-          <strong>上传参考图</strong>
-          <small>PNG / JPG / WEBP / GIF；建议文件名带视角关键词（如 my_side_profile.png），自动选图靠它匹配。</small>
-          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={busy} onChange={(event) => void upload(event.target.files?.[0])} />
-        </label>
+        {FRAMING_ORDER.map((framing) => {
+          const ref = slotOf(framing);
+          return (
+            <label className="admin-card" key={framing}>
+              <strong>{FRAMING_LABELS[framing]}</strong>
+              {ref && thumbs[ref.name]
+                ? <img src={thumbs[ref.name]} alt={ref.name} style={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 12 }} />
+                : <div style={{ width: 120, height: 120, display: 'grid', placeItems: 'center', background: 'rgba(120,120,140,0.12)', borderRadius: 12 }}>{ref ? '无预览' : '未上传'}</div>}
+              {ref
+                ? <small style={{ wordBreak: 'break-all' }}>{ref.name} · {ref.exists ? bytes(ref.bytes) : '文件缺失'}{ref.configured ? '' : ' · 未启用'}</small>
+                : <small>还没有这个视角的参考图</small>}
+              <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={busy} onChange={(event) => { void upload(framing, event.target.files?.[0]); event.target.value = ''; }} />
+              {ref && <button type="button" onClick={(event) => { event.preventDefault(); void remove(ref.name); }}>删除</button>}
+            </label>
+          );
+        })}
       </div>
     </section>
   );

@@ -170,6 +170,11 @@ export const featureApi = {
     form.append('file', file, file.name);
     return request<{ reference: PersonaReference; referenceImages: string[] }>('/api/admin/persona/references', { method: 'POST', body: form });
   },
+  uploadReferenceSlot: (framing: PersonaReference['framing'], file: File) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return request<{ reference: PersonaReference; replaced: string[]; referenceImages: string[] }>(`/api/admin/persona/references/slot/${encodeURIComponent(framing)}`, { method: 'POST', body: form });
+  },
   deleteReference: (name: string) =>
     request<{ deleted: boolean; removedFile: boolean; referenceImages: string[] }>(`/api/admin/persona/references/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   referenceData: (name: string) =>

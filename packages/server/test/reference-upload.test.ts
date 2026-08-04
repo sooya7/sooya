@@ -82,6 +82,40 @@ describe('管理面板参考图管理', () => {
     expect(loose).toMatchObject({ configured: false, exists: true, framing: 'full-body' });
   });
 
+  it('往视角槽位上传会自动规范命名，并替换同视角旧图、保留其他视角', async () => {
+    const { app, refsDir } = await withRefsDir();
+    // 内置 persona 默认带 01/02/03 三张；先再铺一张侧脸，验证同视角会被一起替换
+    await app.server.inject({ method: 'POST', url: '/api/admin/persona/references', ...multipartFile('file', 'old_side.png', TEST_PNG, 'image/png') });
+
+    const front = await app.server.inject({ method: 'POST', url: '/api/admin/persona/references/slot/front', ...multipartFile('file', 'whatever.png', TEST_PNG, 'image/png') });
+    expect(front.statusCode).toBe(200);
+    const frontBody = front.json() as { reference: { name: string }; replaced: string[] };
+    expect(frontBody.reference.name).toBe('ref_front.png');
+    expect(frontBody.replaced).toEqual(['01_main_reference_front_half.png']);
+
+    const res = await app.server.inject({ method: 'POST', url: '/api/admin/persona/references/slot/side', ...multipartFile('file', 'IMG_2031.jpg', TEST_PNG, 'image/jpeg') });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { reference: { name: string; framing: string }; replaced: string[]; referenceImages: string[] };
+    // 字节是 PNG，扩展名以嗅探结果为准，不受声明的 image/jpeg 影响
+    expect(body.reference.name).toBe('ref_side.png');
+    expect(body.reference.framing).toBe('side');
+    expect(body.replaced).toEqual(['03_reference_side_profile.png', 'old_side.png']);
+    // 全身视角不受影响，正/侧都换成规范名
+    expect(body.referenceImages).toContain('02_reference_full_body_standing.png');
+    expect(body.referenceImages).toContain('ref_front.png');
+    expect(body.referenceImages).not.toContain('old_side.png');
+    expect(fs.existsSync(path.join(refsDir, 'ref_side.png'))).toBe(true);
+    expect(fs.existsSync(path.join(refsDir, 'ref_front.png'))).toBe(true);
+  });
+
+  it('槽位视角不合法时 400，且无令牌 401', async () => {
+    const { app } = await withRefsDir();
+    const bad = await app.server.inject({ method: 'POST', url: '/api/admin/persona/references/slot/diagonal', ...multipartFile('file', 'x.png', TEST_PNG, 'image/png') });
+    expect(bad.statusCode).toBe(400);
+    const noAuth = await app.server.inject({ method: 'POST', url: '/api/admin/persona/references/slot/side', headers: { 'content-type': 'multipart/form-data; boundary=x' }, payload: '--x--\r\n' });
+    expect(noAuth.statusCode).toBe(401);
+  });
+
   it('拒绝非法文件名与路径穿越，且无管理令牌一律 401', async () => {
     const { app } = await withRefsDir();
     const traversal = await app.server.inject({ method: 'GET', url: '/api/admin/persona/references/..%2F..%2Fetc%2Fpasswd/data', headers: ADMIN });

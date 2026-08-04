@@ -159,6 +159,71 @@ export function registerFeatureRoutes(app: SooyaApp): void {
     }
   });
 
+  /*
+   * 按视角槽位上传：正面 / 全身 / 侧脸各一格，传进来就自动改成带该视角
+   * 线索的规范文件名，并替换同视角的旧图，管理员不用操心文件名。
+   */
+  const SLOT_NAME_BY_FRAMING: Record<string, string> = { front: 'ref_front', 'full-body': 'ref_full_body', side: 'ref_side' };
+  server.post('/api/admin/persona/references/slot/:framing', adminGuard, async (req, reply) => {
+    const framing = (req.params as { framing: string }).framing;
+    const slotBase = SLOT_NAME_BY_FRAMING[framing];
+    if (!slotBase) {
+      reply.code(400);
+      return { error: 'bad_framing', message: '视角只能是 front、full-body 或 side。' };
+    }
+    const dir = resolveReferencesDir(app.env);
+    if (!dir) {
+      reply.code(507);
+      return { error: 'references_dir_unavailable', message: '参考图目录不可用，请检查 assets/references 或 SOOYA_REFERENCES_DIR。' };
+    }
+    if (!req.isMultipart()) {
+      reply.code(400);
+      return { error: 'expected_multipart' };
+    }
+    let buffer: Buffer | null = null;
+    try {
+      for await (const part of req.parts()) {
+        if (part.type !== 'file') continue;
+        buffer = await part.toBuffer();
+        break;
+      }
+      if (!buffer) {
+        reply.code(400);
+        return { error: 'missing_file' };
+      }
+      if (buffer.length > app.env.MAX_UPLOAD_BYTES) {
+        reply.code(413);
+        return { error: 'file_too_large', message: `参考图不能超过 ${Math.round(app.env.MAX_UPLOAD_BYTES / 1024 / 1024)} MB。` };
+      }
+      await services.storage.assertWritable(buffer.length);
+      const sniffed = await fileTypeFromBuffer(buffer);
+      if (!sniffed || !REF_MIME_BY_EXT[`.${sniffed.ext}`]) {
+        reply.code(415);
+        return { error: 'unsupported_image', message: '只支持 PNG / JPG / WEBP / GIF 图片。' };
+      }
+      const name = `${slotBase}.${sniffed.ext}`;
+      ensureDirSync(dir);
+      await atomicWriteFile(safeJoin(dir, name), buffer);
+      // 同视角的旧图下岗：文件删掉、名单移除；新图顶进旧位置（没有就追加）。
+      const current = config.getPersona().referenceImages;
+      const sameFraming = current.filter((n) => classifyFraming(n) === framing);
+      const next = current.filter((n) => classifyFraming(n) !== framing);
+      for (const old of sameFraming) {
+        if (old === name) continue;
+        try { fs.unlinkSync(safeJoin(dir, old)); } catch { /* already gone */ }
+      }
+      const insertAt = sameFraming.length > 0 ? current.indexOf(sameFraming[0]!) : next.length;
+      next.splice(Math.min(insertAt, next.length), 0, name);
+      config.setPersona({ referenceImages: next });
+      repos.audit.add('persona', 'reference.slot_uploaded', name, { framing, replaced: sameFraming.filter((n) => n !== name), bytes: buffer.length, mime: sniffed.mime });
+      return { reference: refItem(dir, name, true), replaced: sameFraming.filter((n) => n !== name), referenceImages: next };
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      reply.code(e.code === 'STORAGE_HARD_LIMIT' ? 507 : 400);
+      return { error: e.code ?? 'reference_upload_failed', message: e.message.slice(0, 300) };
+    }
+  });
+
   server.get('/api/admin/persona/references/:name/data', adminGuard, async (req, reply) => {
     const { name } = req.params as { name: string };
     const dir = resolveReferencesDir(app.env);
