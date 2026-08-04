@@ -25,3 +25,6 @@ release/
 .DS_Store
 test-results/
 .worktrees/
+
+# 根目录临时运维脚本(ssh/部署排查用),不进仓库
+/*.py
