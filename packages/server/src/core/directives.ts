@@ -14,6 +14,9 @@ export interface UserDirectives {
   wantSticker?: boolean;
   wantImage?: boolean;
   imagePrompt?: string | null;
+  /** The request is for a photo OF HER (自拍/拍张照), so a fallback should
+   *  go through [[image-self]] with her reference images, not plain image. */
+  selfieIntent?: boolean;
   wantVoice?: boolean;
   voiceOnly?: boolean;
   stickerOnly?: boolean;
@@ -41,11 +44,25 @@ const IMAGE_PATTERNS = [
   /(?:生成|画|做|来|给我).{0,6}(?:一)?(?:张|幅|个)?(?:图片?|画|插画|海报)/,
   /生成图/,
   /画(?:一)?(?:张|幅)/,
+  // “来张自拍”“拍一张”“发张照片”这类措辞同样是要图，不兜底的话模型一旦
+  // 忘了写标记，用户就只看到一句“给你拍了”而没有图。
+  /自拍/,
+  /拍(?:一)?(?:张|个)(?:照|相|自拍)?/,
+  /(?:发|来|给|要|想)(?:一)?(?:张|个|幅)(?:照片|相片|照)/,
+  /(?:发|来|给|要|想)(?:一)?(?:张|个|幅)?(?:照片|相片)/,
+  /(?:看看|看下|看一?下).{0,6}(?:照片|相片|自拍)/,
+  /(?:给我看|让我看).{0,6}(?:照片|相片|自拍)/,
+  /拍(?:一)?(?:张|个)你的(?:照片|相片|照)/,
+  /take (?:a |one )?(?:selfie|photo|pic)/i,
+  /send (?:me )?(?:a |one )?(?:selfie|photo|pic)/i,
   /draw (?:me )?(?:a|an)?/i,
   /generate (?:an? )?image/i
 ];
+/** Request clearly aimed at a picture of herself. */
+const SELFIE_PATTERNS = [/自拍/, /拍.{0,4}你的(?:照片|相片|照)/, /(?:发|来|给|要|想|看看|看下).{0,6}你的.{0,4}(?:照片|相片|样子)/, /selfie/i];
 const IMAGE_PROMPT_EXTRACT = [
   /(?:生成|画|做)(?:一)?(?:张|幅|个)?(?:图片?|画|插画|海报)?[，,:：]?\s*(.+)$/,
+  /(?:拍|发|来|给)(?:一)?(?:张|个|幅)?(?:自拍|照片|相片|照)[，,:：]?\s*(.+)$/,
   /draw (?:me )?(?:an? )?(.+)$/i,
   /generate (?:an? )?image of (.+)$/i
 ];
@@ -57,7 +74,7 @@ const IMAGE_PROMPT_EXTRACT = [
  * 主题的祈使疑问不受影响，仍然正常触发。
  */
 const ABILITY_QUESTION_RE =
-  /(?:会不会|能不能|会|能|可以|可否|能否)(?:[^，。！!？?、\n]{0,12})(?:画画|画图|生成图|生成图片|图片|生图|插图|海报|表情包|表情|语音|音频|读出来|照片|视频|画|图)[吗么嘛呢？?~～。]*$/u;
+  /(?:会不会|能不能|会|能|可以|可否|能否)(?:[^，。！!？?、\n]{0,12})(?:画画|画图|生成图|生成图片|图片|生图|插图|海报|表情包|表情|语音|音频|读出来|自拍|拍照|照片|视频|画|图)[吗么嘛呢？?~～。]*$/u;
 
 export function parseUserDirectives(text: string): UserDirectives {
   const t = (text ?? '').trim();
@@ -83,6 +100,7 @@ export function parseUserDirectives(text: string): UserDirectives {
 
   if (has(IMAGE_PATTERNS)) {
     d.wantImage = true;
+    if (has(SELFIE_PATTERNS)) d.selfieIntent = true;
     for (const p of IMAGE_PROMPT_EXTRACT) {
       const m = p.exec(t);
       if (m?.[1] && m[1].trim().length >= 2) {

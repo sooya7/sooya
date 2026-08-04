@@ -601,7 +601,12 @@ export class Replier {
     }
     if (persona.imagePolicy.enabled) {
       if (model.imagePrompt) imagePrompt = model.imagePrompt;
-      else if (user.wantImage && user.imagePrompt) imagePrompt = user.imagePrompt;
+      else if (user.wantImage && user.imagePrompt) {
+        // 用户要的是她本人的照片（自拍/拍张照）但模型忘了写标记：兜底
+        // 时走 selfie 链路带上参考图，而不是拿用户原话去画一张无关的图。
+        if (user.selfieIntent && persona.referenceImages.length > 0) selfImagePrompt = user.imagePrompt;
+        else imagePrompt = user.imagePrompt;
+      }
     }
     if (selfImagePrompt && !caps.has('image')) selfImagePrompt = null;
     if (imagePrompt && !caps.has('image') && !user.wantImage && !model.imagePrompt) imagePrompt = null;

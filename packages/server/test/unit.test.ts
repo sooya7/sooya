@@ -55,6 +55,23 @@ describe('user directive parsing', () => {
     expect(d.imagePrompt).toContain('猫');
   });
 
+  it('detects photo/selfie phrasings so the fallback covers them too', () => {
+    for (const t of ['来张自拍', '自拍一张', '拍一张', '拍一张给我看看', '发张照片', '给我看你的照片', '拍一张你的照片']) {
+      const d = parseUserDirectives(t);
+      expect(d.wantImage, t).toBe(true);
+    }
+    // 自拍类措辞要能识别出是要她本人的照片
+    expect(parseUserDirectives('来张自拍').selfieIntent).toBe(true);
+    expect(parseUserDirectives('拍一张你的照片').selfieIntent).toBe(true);
+    // 普通要图不算自拍
+    expect(parseUserDirectives('画一张猫').selfieIntent).toBeUndefined();
+  });
+
+  it('does not treat ordinary chat about photos as an image command', () => {
+    expect(parseUserDirectives('我今天去拍照了，好累').wantImage).toBeUndefined();
+    expect(parseUserDirectives('我拍你马屁').wantImage).toBeUndefined();
+  });
+
   it('does not fire on unrelated text', () => {
     const d = parseUserDirectives('今天天气不错，我们去散步吧');
     expect(d.wantSticker).toBeUndefined();
@@ -63,7 +80,7 @@ describe('user directive parsing', () => {
   });
 
   it('treats ability questions as questions, not commands', () => {
-    for (const q of ['你会画画吗', '你会画画吗？', '你能画图吗', '可以生成图片吗', '你会不会画画', '会发语音吗', '你可以读出来吗', '能读出来吗']) {
+    for (const q of ['你会画画吗', '你会画画吗？', '你能画图吗', '可以生成图片吗', '你会不会画画', '会发语音吗', '你可以读出来吗', '能读出来吗', '你会自拍吗', '可以拍照吗']) {
       const d = parseUserDirectives(q);
       expect(d.wantImage, q).toBeUndefined();
       expect(d.wantVoice, q).toBeUndefined();
