@@ -1,44 +1,98 @@
-/* SOOYA — light, modern messenger styling. Original design; no third-party assets. */
+/* SOOYA — warm companion theme; original design, no third-party assets. */
 
+/* theme:light:start */
 :root {
-  --bg: #f5f6f8;
-  --panel: #ffffff;
-  --panel-alt: #fbfbfc;
-  --ink: #1f2329;
-  /* #6b7280 measured 4.46:1 on --bg, just under the 4.5 AA floor. */
-  --ink-soft: #667085;
-  /* Decorative only (status dot, hairline borders, fills): never put text in it,
-     it measures 2.41:1 on --bg. Small meta text uses --ink-meta instead. */
-  --ink-faint: #9aa1ac;
-  /* Faint-looking but AA-compliant (4.6:1 on --bg) for 11-12px meta text such as
-     timestamps and the per-message menu, which sit on every single message. */
-  --ink-meta: #667085;
-  --line: #e6e8ec;
-  /* Shared with the admin console so the two halves read as one product. */
-  --accent: #6d5efc;
-  --accent-deep: #4c5fd7;
-  --grad: linear-gradient(135deg, #6d5efc, #2f80ed);
-  --grad-soft: linear-gradient(135deg, #f0edff, #e8f2ff);
-  /* Accent at low alpha, for tints and focus rings. A token because a literal
-     rgba() of the old blue accent had been left behind in two places. */
-  /* Was referenced by .sw-update-accept but never defined, so the button fell back
-     to the inherited dark ink: 3.5:1 on --accent, under AA. */
-  --accent-ink: #ffffff;
-  --accent-tint: rgba(109, 94, 252, 0.12);
-  --accent-line: rgba(109, 94, 252, 0.28);
-  --mine: var(--grad);
-  --mine-ink: #ffffff;
-  --danger: #e5484d;
-  /* #e5484d is only 3.62:1 on --bg. Text uses this deeper red (5.1:1); the two
-     `background: var(--danger)` fills keep the brighter one. */
-  --danger-ink: #c9252b;
+  color-scheme: light dark;
+  --bg: #f8f3f8;
+  --bg-deep: #eee5f1;
+  --bg-glow: #f3e6f5;
+  --panel: #fffafc;
+  --panel-alt: #f4edf5;
+  --surface-raised: #fffafc;
+  --surface-hover: #efe6f1;
+  --surface-glass: rgba(255, 250, 252, 0.86);
+  --ink: #302734;
+  --ink-soft: #665b69;
+  --ink-faint: #9a8e9e;
+  --ink-meta: #6d626f;
+  --line: #e2d7e4;
+  --line-strong: #cdbed1;
+  --accent: #7653a0;
+  --accent-deep: #69438f;
+  --accent-ink: #fffafc;
+  --accent-tint: rgba(118, 83, 160, 0.12);
+  --accent-line: rgba(118, 83, 160, 0.34);
+  --mine-start: #68468f;
+  --mine-end: #7653a0;
+  --mine: linear-gradient(135deg, var(--mine-start), var(--mine-end));
+  --mine-ink: #fffafc;
+  --theirs: #fffafc;
+  --theirs-border: #e2d7e4;
+  --grad: linear-gradient(135deg, var(--mine-start), var(--mine-end));
+  --grad-soft: linear-gradient(135deg, #f2e8f5, #ece7f4);
+  --sticker-surface: rgba(118, 83, 160, 0.08);
+  --focus-ring: rgba(118, 83, 160, 0.28);
+  --success: #16765a;
+  --warning: #8a5300;
+  --warning-soft: #fff4df;
+  --danger: #b82d43;
+  --danger-ink: #b82d43;
+  --danger-soft: #fff0f2;
+  --shimmer-base: #e8dfe9;
+  --shimmer-highlight: #fffafc;
   --radius-lg: 18px;
   --radius-sm: 10px;
-  --shadow-soft: 0 2px 6px rgba(16, 26, 48, 0.06), 0 12px 28px -12px rgba(16, 26, 48, 0.18);
+  --shadow-soft: 0 2px 7px rgba(63, 43, 68, 0.08), 0 14px 30px -16px rgba(63, 43, 68, 0.24);
+  --shadow-raised: 0 12px 36px -16px rgba(49, 32, 55, 0.34);
   --topbar-h: 56px;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
     'Helvetica Neue', Arial, sans-serif;
 }
+/* theme:light:end */
+
+/* theme:dark:start */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b171d;
+    --bg-deep: #241d27;
+    --bg-glow: #33253a;
+    --panel: #262029;
+    --panel-alt: #302735;
+    --surface-raised: #2d2631;
+    --surface-hover: #392f3d;
+    --surface-glass: rgba(38, 32, 41, 0.86);
+    --ink: #f4edf5;
+    --ink-soft: #cec2d1;
+    --ink-faint: #817486;
+    --ink-meta: #b6a8ba;
+    --line: #493d4d;
+    --line-strong: #65566a;
+    --accent: #cdb0ee;
+    --accent-deep: #dec8f6;
+    --accent-ink: #fffafc;
+    --accent-tint: rgba(205, 176, 238, 0.14);
+    --accent-line: rgba(205, 176, 238, 0.38);
+    --mine-start: #68468f;
+    --mine-end: #7653a0;
+    --mine-ink: #fffafc;
+    --theirs: #2d2631;
+    --theirs-border: #4b3f4f;
+    --grad-soft: linear-gradient(135deg, #34283a, #302b3e);
+    --sticker-surface: rgba(205, 176, 238, 0.10);
+    --focus-ring: rgba(205, 176, 238, 0.28);
+    --success: #70d3ad;
+    --warning: #f0c276;
+    --warning-soft: #3a3022;
+    --danger: #df6679;
+    --danger-ink: #ffb5c0;
+    --danger-soft: #3a2229;
+    --shimmer-base: #302735;
+    --shimmer-highlight: #493b4e;
+    --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.22), 0 16px 34px -18px rgba(0, 0, 0, 0.72);
+    --shadow-raised: 0 18px 46px -18px rgba(0, 0, 0, 0.76);
+  }
+}
+/* theme:dark:end */
 
 * {
   box-sizing: border-box;
@@ -54,7 +108,9 @@ body,
 
 body {
   font-family: var(--font);
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 12% -12%, var(--bg-glow), transparent 34rem),
+    linear-gradient(180deg, var(--bg-deep), var(--bg));
   color: var(--ink);
   font-size: 15px;
   line-height: 1.5;
@@ -66,13 +122,18 @@ button {
   cursor: pointer;
 }
 
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .app {
   display: flex;
   flex-direction: column;
   height: 100dvh;
   max-width: 900px;
   margin: 0 auto;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
   position: relative;
 }
 
@@ -86,8 +147,8 @@ button {
   align-items: center;
   padding-left: 14px;
   padding-right: 14px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: saturate(180%) blur(12px);
+  background: var(--surface-glass);
+  backdrop-filter: saturate(140%) blur(16px);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
@@ -141,10 +202,10 @@ button {
 }
 
 .topbar-status.online .status-dot {
-  background: #34c759;
+  background: var(--success);
 }
 .topbar-status.connecting .status-dot {
-  background: #f5a623;
+  background: var(--warning);
   animation: pulse 1.2s ease-in-out infinite;
 }
 .topbar-status.offline .status-dot,
@@ -160,10 +221,10 @@ button {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  border: 1px solid #d5e0eb;
+  border: 1px solid var(--line-strong);
   border-radius: 50%;
-  background: #fff;
-  color: #4c6f91;
+  background: var(--surface-raised);
+  color: var(--accent-deep);
   text-decoration: none;
   box-shadow: none;
   transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
@@ -182,10 +243,10 @@ button {
 
 .topbar-admin-entry:hover,
 .topbar-admin-entry:focus-visible {
-  border-color: #b7cce0;
-  background: #f1f6fb;
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--accent-deep);
   transform: translateY(-1px);
-  outline: none;
 }
 
 .topbar-admin-entry:active {
@@ -349,22 +410,24 @@ button {
 }
 
 .bubble-text.theirs {
-  background: var(--panel);
+  background: var(--theirs);
   color: var(--ink);
-  border-top-left-radius: 6px;
+  border: 1px solid var(--theirs-border);
+  border-radius: 7px 18px 18px 18px;
 }
 
 .bubble-text.mine {
   background: var(--mine);
   color: var(--mine-ink);
-  border-top-right-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 18px 7px 18px 18px;
 }
 
 .bubble-note {
-  background: #fff4f4;
-  color: #92400e;
+  background: var(--warning-soft);
+  color: var(--warning);
   font-size: 13px;
-  border: 1px solid #fde3e3;
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
   box-shadow: none;
 }
 .bubble-note.pulsing {
@@ -381,7 +444,8 @@ button {
   padding: 4px 0;
 }
 .system-row span {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--surface-hover);
+  color: var(--ink-meta);
   padding: 3px 10px;
   border-radius: 10px;
 }
@@ -389,9 +453,12 @@ button {
 .sticker-part {
   width: 108px;
   height: 108px;
+  padding: 5px;
   object-fit: contain;
   display: block;
-  background: transparent;
+  border-radius: 20px;
+  background: var(--sticker-surface);
+  filter: drop-shadow(0 8px 14px color-mix(in srgb, var(--ink) 12%, transparent));
 }
 
 .image-part {
@@ -421,7 +488,14 @@ button {
 }
 
 .image-part-placeholder {
-  background: var(--panel-alt);
+  background: linear-gradient(
+    100deg,
+    var(--shimmer-base) 20%,
+    var(--shimmer-highlight) 42%,
+    var(--shimmer-base) 64%
+  );
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
 }
 
 .bubble-file {
@@ -562,8 +636,8 @@ button {
 }
 .bubble-audio.failed,
 .bubble-audio.pending {
-  background: #fff4f4;
-  border: 1px solid #fde3e3;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
   box-shadow: none;
 }
 .bubble-audio.pending {
@@ -574,7 +648,7 @@ button {
 .audio-play {
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   width: 30px;
   height: 30px;
   border-radius: 50%;
@@ -612,7 +686,7 @@ button {
 
 .audio-speed {
   border: none;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--surface-hover);
   color: var(--ink-soft);
   font-size: 11px;
   border-radius: 8px;
@@ -647,8 +721,8 @@ button {
 
 .composer {
   flex: 0 0 auto;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: saturate(180%) blur(12px);
+  background: var(--surface-glass);
+  backdrop-filter: saturate(140%) blur(16px);
   border-top: 1px solid var(--line);
   padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   position: relative;
@@ -689,7 +763,7 @@ button {
   transition: background 0.15s, color 0.15s;
 }
 .icon-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--surface-hover);
   color: var(--ink);
 }
 
@@ -711,7 +785,7 @@ button {
 }
 .composer-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-tint);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .send-btn {
@@ -731,7 +805,7 @@ button {
 }
 .send-btn.active {
   background: var(--grad);
-  color: #fff;
+  color: var(--accent-ink);
 }
 .send-btn.active:active {
   transform: scale(0.94);
@@ -768,7 +842,7 @@ button {
   transition: background 0.15s;
 }
 .sticker-choice:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--surface-hover);
 }
 .sticker-choice img {
   width: 100%;
@@ -838,8 +912,8 @@ button {
   height: 18px;
   border-radius: 50%;
   border: none;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  background: color-mix(in srgb, var(--ink) 72%, transparent);
+  color: var(--accent-ink);
   font-size: 13px;
   line-height: 1;
   display: flex;
@@ -856,12 +930,12 @@ button {
   left: 50%;
   transform: translateX(-50%);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   border: none;
   border-radius: 18px;
   padding: 7px 16px;
   font-size: 13px;
-  box-shadow: 0 4px 14px rgba(31, 141, 230, 0.35);
+  box-shadow: var(--shadow-raised);
   z-index: 15;
 }
 
@@ -870,8 +944,8 @@ button {
   top: calc(var(--topbar-h) + env(safe-area-inset-top) + 10px);
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(31, 35, 41, 0.9);
-  color: #fff;
+  background: color-mix(in srgb, var(--ink) 90%, transparent);
+  color: var(--accent-ink);
   font-size: 13px;
   padding: 8px 16px;
   border-radius: 12px;
@@ -928,7 +1002,7 @@ button {
   border-radius: 10px;
   padding: 10px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   font-size: 15px;
 }
 
@@ -964,13 +1038,17 @@ button {
   .app {
     border-left: 1px solid var(--line);
     border-right: 1px solid var(--line);
-    background: var(--bg);
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
 }
@@ -1062,7 +1140,7 @@ button {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #34c759;
+  background: var(--success);
 }
 
 .admin-summary,
@@ -1484,9 +1562,9 @@ button {
   max-width: min(100%, 260px);
   margin-bottom: 4px;
   padding: 5px 9px;
-  border-left: 2px solid rgba(99, 116, 148, 0.45);
+  border-left: 2px solid var(--accent-line);
   border-radius: 0 8px 8px 0;
-  background: rgba(120, 136, 166, 0.1);
+  background: var(--surface-raised);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -1494,8 +1572,8 @@ button {
 .composer-offline-hint { color: var(--danger); }
 
 .history-tool-button { border: 0; background: transparent; color: var(--ink-soft); font-size: 22px; width: 38px; height: 38px; border-radius: 10px; }
-.history-tool-button:hover { background: var(--accent-tint); color: var(--accent-deep); }
-.history-tools { position: absolute; z-index: 30; top: calc(var(--topbar-h, 58px) + 6px); right: 12px; width: min(92vw, 430px); padding: 10px; display: grid; gap: 8px; background: rgba(255,255,255,.98); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 10px 30px rgba(15,23,42,.14); }
+.history-tool-button:hover { background: var(--surface-hover); color: var(--accent-deep); }
+.history-tools { position: absolute; z-index: 30; top: calc(var(--topbar-h, 58px) + 6px); right: 12px; width: min(92vw, 430px); padding: 10px; display: grid; gap: 8px; background: var(--surface-glass); border: 1px solid var(--accent-line); border-radius: 14px; box-shadow: var(--shadow-raised); backdrop-filter: blur(16px); }
 .history-tools form, .history-date-row, .history-results { display: flex; align-items: center; gap: 7px; }
 .history-tools input { min-width: 0; flex: 1; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--panel); }
 .history-tools button { border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; background: var(--panel); color: var(--ink); white-space: nowrap; }
@@ -1504,7 +1582,7 @@ button {
 .history-snippet { flex: 1 1 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-error { color: var(--danger); font-size: 12px; }
 .history-clear { justify-self: end; font-size: 12px; }
-.history-tools mark { background: #fde68a; color: inherit; }
+.history-tools mark { background: var(--warning-soft); color: var(--ink); }
 
 .bootstrap-loading,
 .bootstrap-error {
@@ -1514,31 +1592,31 @@ button {
   gap: 14px;
 }
 .bootstrap-title { display: flex; align-items: center; gap: 10px; color: var(--ink-soft); font-size: 14px; }
-.avatar-skeleton { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(90deg, var(--line), var(--panel-alt), var(--line)); background-size: 200% 100%; animation: skeleton-shimmer 1.4s infinite; }
-.message-skeleton { display: grid; gap: 7px; width: 58%; padding: 14px; border-radius: 16px; background: linear-gradient(90deg, var(--line), var(--panel-alt), var(--line)); background-size: 200% 100%; animation: skeleton-shimmer 1.4s infinite; }
+.avatar-skeleton { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(90deg, var(--shimmer-base), var(--shimmer-highlight), var(--shimmer-base)); background-size: 200% 100%; animation: skeleton-shimmer 1.4s infinite; }
+.message-skeleton { display: grid; gap: 7px; width: 58%; padding: 14px; border-radius: 16px; background: linear-gradient(90deg, var(--shimmer-base), var(--shimmer-highlight), var(--shimmer-base)); background-size: 200% 100%; animation: skeleton-shimmer 1.4s infinite; }
 .message-skeleton.mine { justify-self: end; width: 44%; }
-.message-skeleton span { display: block; height: 10px; width: 80%; border-radius: 8px; background: rgba(255,255,255,.55); }
+.message-skeleton span { display: block; height: 10px; width: 80%; border-radius: 8px; background: var(--shimmer-highlight); }
 .message-skeleton span:last-child { width: 55%; }
 .bootstrap-error { align-items: center; justify-items: center; text-align: center; color: var(--ink-soft); }
 .bootstrap-error strong { color: var(--ink); font-size: 16px; }
 .bootstrap-error span { max-width: 100%; overflow-wrap: anywhere; font-size: 13px; }
-.bootstrap-error button { border: 0; border-radius: 10px; padding: 9px 16px; background: var(--grad); color: #fff; }
+.bootstrap-error button { border: 0; border-radius: 10px; padding: 9px 16px; background: var(--grad); color: var(--accent-ink); }
 @keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 .composer-file-hint { font-size: 11px; color: var(--ink-soft); padding: 4px 8px 0; line-height: 1.45; }
 
 .message-reply-preview.clickable { cursor: pointer; }
 .message-reply-preview.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .message-highlight { animation: message-highlight 1.8s ease-out; }
-@keyframes message-highlight { 0%, 65% { background: rgba(109, 94, 252, 0.18); } 100% { background: transparent; } }
+@keyframes message-highlight { 0%, 65% { background: var(--accent-tint); } 100% { background: transparent; } }
 
 .message-reply-preview .reply-author {
-  color: #4a5872;
+  color: var(--ink);
   font-weight: 600;
 }
 
 .message-reply-preview .reply-text {
   overflow: hidden;
-  color: #6a7690;
+  color: var(--ink-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1552,7 +1630,7 @@ button {
 .toast-close {
   flex: 0 0 auto;
   padding: 0 2px;
-  color: rgba(255, 255, 255, 0.7);
+  color: color-mix(in srgb, var(--accent-ink) 72%, transparent);
   background: none;
   border: 0;
   font-size: 15px;
@@ -1561,7 +1639,7 @@ button {
 }
 
 .toast-close:hover {
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 .audio-wave {
@@ -1594,13 +1672,13 @@ button {
 .bubble-audio.mine .audio-time,
 .bubble-audio.mine .audio-speed,
 .bubble-audio.mine .audio-transcript-toggle {
-  color: #fff;
+  color: var(--mine-ink);
 }
 
 .bubble-audio.mine .audio-play,
 .bubble-audio.mine .audio-speed {
-  color: #4c5fd7;
-  background: rgba(255, 255, 255, 0.92);
+  color: var(--accent-deep);
+  background: var(--surface-raised);
 }
 
 /* The waveform is the track now; a filled slab behind it just muddied the bars. */
@@ -1611,21 +1689,21 @@ button {
 /* The reply row sits on the page, not on the bubble, so it keeps ink text. */
 .msg-row.mine .message-reply-preview {
   justify-self: end;
-  background: rgba(109, 94, 252, 0.09);
+  background: var(--accent-tint);
   border-left: 0;
-  border-right: 2px solid rgba(109, 94, 252, 0.5);
+  border-right: 2px solid var(--accent-line);
   border-radius: 8px 0 0 8px;
   text-align: right;
 }
 
 .topbar-status.connected .status-dot {
-  background: #0fae7e;
+  background: var(--success);
 }
 
 .unread-pill {
   background: var(--grad);
   border-color: transparent;
-  box-shadow: 0 10px 22px -10px rgba(109, 94, 252, 0.8);
+  box-shadow: var(--shadow-raised);
 }
 
 /* Service-worker update prompt: only appears when a new build is parked and waiting. */
@@ -1633,8 +1711,9 @@ button {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--composer-h, 76px) + 18px);
   z-index: 90; display: flex; align-items: center; gap: 10px;
   padding: 10px 12px 10px 16px; border-radius: 999px;
-  background: var(--surface-raised); border: 1px solid var(--accent-line);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .45); color: var(--ink); font-size: 14px;
+  background: var(--surface-glass); border: 1px solid var(--accent-line);
+  box-shadow: var(--shadow-raised); color: var(--ink); font-size: 14px;
+  backdrop-filter: blur(16px);
 }
 .sw-update button {
   font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
@@ -1687,13 +1766,13 @@ button {
 .notification-bell {
   width: 30px; height: 30px; padding: 0; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid #d5e0eb; border-radius: 50%;
-  background: #fff; color: #4c6f91;
+  border: 1px solid var(--line-strong); border-radius: 50%;
+  background: var(--surface-raised); color: var(--accent-deep);
   transition: transform .16s ease, background .16s ease, border-color .16s ease;
 }
 .notification-bell:hover,
 .notification-bell:focus-visible {
-  border-color: #b7cce0; background: #f1f6fb; transform: translateY(-1px); outline: none;
+  border-color: var(--accent); background: var(--surface-hover); color: var(--accent-deep); transform: translateY(-1px);
 }
 .notification-bell:active { transform: scale(0.94); }
 .notification-bell.is-on { color: var(--accent); border-color: var(--accent-line); }
