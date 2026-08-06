@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 const read = (rel: string) => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const PANEL = read('./AdminPanel.tsx');
 const EDITORS = read('./FeatureAdminPage.tsx');
-const MAIN = read('../main.tsx');
+const SHELL = read('../AppShell.tsx');
+const NAVIGATION = read('../lib/navigation.ts');
 
 /**
  * The two admin pages are now one console. `e2e/features-1-9.e2e.ts` drives
@@ -16,8 +17,10 @@ const MAIN = read('../main.tsx');
 describe('merged admin console', () => {
   it('routes the console through canonical admin paths and keeps the legacy address recognizable', () => {
     expect(PANEL).toContain("if (normalized === '/admin/features') return 'avatar'");
-    expect(MAIN).toContain("window.location.pathname.startsWith('/admin/')");
-    expect(MAIN).not.toContain('FeatureAdminPage');
+    expect(NAVIGATION).toContain("normalized === '/admin'");
+    expect(NAVIGATION).toContain("normalized.startsWith('/admin/')");
+    expect(SHELL).toContain("route === 'admin'");
+    expect(SHELL).not.toContain('FeatureAdminPage');
   });
 
   it('lets the console be entered at a chosen tab', () => {
