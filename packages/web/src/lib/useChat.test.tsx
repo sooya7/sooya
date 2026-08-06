@@ -419,52 +419,99 @@ describe('useChat SSE 活动状态', () => {
 });
 
 describe('useChat 流式草稿', () => {
-  it('首个 delta 造出草稿气泡，后续 delta 就地覆盖同一条', async () => {
+  it('delta 只累积独立草稿，正式消息数组保持同一引用', async () => {
     const { chat, push } = await mountStreaming();
+    const finalizedBeforeDelta = chat().messages;
 
     await push('reply.text.delta', { messageId: 'm_9', delta: '你' });
-    const draft = chat().messages.find((m) => m.id === 'm_9');
-    expect(draft).toBeDefined();
-    expect(draft!.role).toBe('assistant');
-    expect(draft!.status).toBe('sending');
-    // 草稿的 seq 要压过所有真实消息，否则会插到历史中间而不是贴在最新一条后面。
-    expect(draft!.seq).toBe(Number.MAX_SAFE_INTEGER);
-    expect(chat().messages.at(-1)!.id).toBe('m_9');
-    expect(draft!.content.map((p) => [p.type, p.text])).toEqual([['text', '你']]);
+    expect(chat().messages).toBe(finalizedBeforeDelta);
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7']);
+    expect(chat().streamingDraft).toMatchObject({ id: 'm_9', text: '你' });
+    expect(chat().streamingDraft?.createdAt).toEqual(expect.any(String));
 
+    const createdAt = chat().streamingDraft!.createdAt;
     await push('reply.text.delta', { messageId: 'm_9', delta: '好呀' });
-    // delta 是增量片段：客户端按 messageId 就地累积，既不能起第二个气泡，也不能覆盖丢失。
-    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_9']);
-    expect(chat().messages.at(-1)!.content.map((p) => p.text)).toEqual(['你好呀']);
+
+    expect(chat().messages).toBe(finalizedBeforeDelta);
+    expect(chat().streamingDraft).toEqual({ id: 'm_9', text: '你好呀', createdAt });
   });
 
-  it('reply.completed 带 message 时用真消息替掉草稿', async () => {
+  it('reply.completed 带正式消息时只合并一次并清掉对应草稿', async () => {
     const { chat, push } = await mountStreaming();
     await push('reply.text.delta', { messageId: 'm_9', delta: '你' });
-    await push('reply.completed', { message: message({ id: 'm_9', seq: 9, content: [part({ id: 'p_9', text: '你好呀' })] }) });
+    await push('reply.completed', {
+      message: message({ id: 'm_9', seq: 9, content: [part({ id: 'p_9', text: '你好呀' })] })
+    });
 
+    expect(chat().streamingDraft).toBeNull();
     expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_9']);
-    const final = chat().messages.at(-1)!;
-    expect(final.seq).toBe(9);
-    expect(final.status).toBe('sent');
-    expect(final.content.map((p) => [p.id, p.text])).toEqual([['p_9', '你好呀']]);
-    // 草稿那条 MAX_SAFE_INTEGER 的占位不能残留在列表里。
-    expect(chat().messages.some((m) => m.seq === Number.MAX_SAFE_INTEGER)).toBe(false);
+    expect(chat().messages.at(-1)).toMatchObject({ id: 'm_9', seq: 9, status: 'sent' });
+    expect(chat().messages.at(-1)!.content.map((p) => [p.id, p.text])).toEqual([['p_9', '你好呀']]);
     expect(chat().activity).toEqual({ thinking: false, label: null });
   });
 
-  it('reply.completed 不带 message 时按已知 seq 拉增量补齐', async () => {
+  it('普通 resync 不误删草稿；同 id 正式消息到达时才收敛', async () => {
+    let page = 0;
     const { chat, push } = await mountStreaming({
-      messages: () => messagePage([message({ id: 'm_7', seq: 7 }), message({ id: 'm_8', seq: 8 })])
+      messages: () => {
+        page += 1;
+        return page === 1
+          ? messagePage([message({ id: 'm_8', seq: 8 })])
+          : messagePage([message({ id: 'm_9', seq: 9, content: [part({ id: 'p_9', text: '完成文本' })] })]);
+      }
     });
-    await push('reply.thinking', {});
+
+    await push('reply.text.delta', { messageId: 'm_9', delta: '草稿' });
+    await act(async () => { await chat().resync(); });
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
+    expect(chat().streamingDraft?.id).toBe('m_9');
+
+    await act(async () => { await chat().resync(); });
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8', 'm_9']);
+    expect(chat().streamingDraft).toBeNull();
+  });
+
+  it('reply.completed 不带 message 时拉增量，并由同 id 正式消息清草稿', async () => {
+    const { chat, push } = await mountStreaming({
+      messages: () => messagePage([
+        message({ id: 'm_7', seq: 7 }),
+        message({ id: 'm_9', seq: 9, content: [part({ id: 'p_9', text: '服务端完成文本' })] })
+      ])
+    });
+    await push('reply.text.delta', { messageId: 'm_9', delta: '临时文本' });
     await push('reply.completed', {});
 
-    // bootstrap 里最高 seq 是 7，续传就得从 7 往后要，不能从头重拉。
     expect(messageQueries()).toEqual(['/api/messages?limit=100&since=7']);
-    // 增量里重复回来的 m_7 要按 id 去重，不能变成两条一样的气泡。
-    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_8']);
-    expect(chat().activity).toEqual({ thinking: false, label: null });
+    expect(chat().streamingDraft).toBeNull();
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_7', 'm_9']);
+    expect(chat().messages.at(-1)!.content[0]?.text).toBe('服务端完成文本');
+  });
+
+  it('reply.failed 与完整 reload 都无条件清掉草稿', async () => {
+    let boots = 0;
+    const { chat, push } = await mountStreaming({
+      bootstrap: () => {
+        boots += 1;
+        return json(bootstrapInfo({
+          messages: {
+            messages: [message({ id: boots === 1 ? 'm_7' : 'm_10', seq: boots === 1 ? 7 : 10 })],
+            hasMore: false,
+            lastEventSeq: 60,
+            lastMessageSeq: boots === 1 ? 7 : 10,
+            oldestSeq: boots === 1 ? 7 : 10
+          }
+        }));
+      }
+    });
+
+    await push('reply.text.delta', { messageId: 'm_9', delta: '会失败' });
+    await push('reply.failed', { error: '上游超时' });
+    expect(chat().streamingDraft).toBeNull();
+
+    await push('reply.text.delta', { messageId: 'm_11', delta: '会重载' });
+    await push('system.notice', { action: 'reload' });
+    expect(chat().streamingDraft).toBeNull();
+    expect(chat().messages.map((m) => m.id)).toEqual(['m_10']);
   });
 });
 
@@ -472,9 +519,11 @@ describe('useChat 错误事件', () => {
   it('reply.failed 归零活动、合入服务端消息并暴露错误文案', async () => {
     const { chat, push } = await mountStreaming();
     await push('reply.thinking', {});
+    await push('reply.text.delta', { messageId: 'm_9', delta: '未完成' });
     await push('reply.failed', { error: '上游超时', message: message({ id: 'm_9', seq: 9, status: 'failed' }) });
 
     // 失败后必须停掉「正在思考」，否则界面会一直假装她还在写。
+    expect(chat().streamingDraft).toBeNull();
     expect(chat().activity).toEqual({ thinking: false, label: null });
     expect(chat().error).toBe('上游超时');
     expect(chat().messages.find((m) => m.id === 'm_9')!.status).toBe('failed');

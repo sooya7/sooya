@@ -40,6 +40,7 @@ export const MEDIA_CACHE_MAX_ENTRIES = 240;
 
 interface MediaCacheEntry {
   key: string;
+  scope: MediaAuthScope;
   url: string;
   blob: Blob;
   contentType: string;
@@ -50,6 +51,7 @@ interface MediaCacheEntry {
 
 const mediaCache = new Map<string, MediaCacheEntry>();
 const inflight = new Map<string, Promise<MediaCacheEntry>>();
+const scopeGeneration: Record<MediaAuthScope, number> = { user: 0, admin: 0 };
 let cachedBytes = 0;
 let clock = 0;
 
@@ -94,12 +96,19 @@ export async function acquireAuthenticatedMedia(
   const hit = takeCachedMedia(path, options);
   if (hit) return hit;
   const key = mediaCacheKey(path, options);
+  const generation = scopeGeneration[options.scope];
+  const inflightKey = `${key}|generation:${generation}`;
   // 同一路径的并发请求只发一次；每个等待者各自加一个引用。
-  const pending = inflight.get(key) ?? (async () => {
+  const pending = inflight.get(inflightKey) ?? (async () => {
     try {
       const result = await fetchAuthenticatedMediaWithRetry(path, { ...options, signal: undefined });
+      if (scopeGeneration[options.scope] !== generation) {
+        releaseMediaUrl(result.url);
+        throw new AuthenticatedMediaError('stale_auth', null, '媒体访问凭证已更新，请重试');
+      }
       const entry: MediaCacheEntry = {
         key,
+        scope: options.scope,
         url: result.url,
         blob: result.blob,
         contentType: result.contentType,
@@ -112,10 +121,10 @@ export async function acquireAuthenticatedMedia(
       evictIfNeeded();
       return entry;
     } finally {
-      inflight.delete(key);
+      inflight.delete(inflightKey);
     }
   })();
-  inflight.set(key, pending);
+  inflight.set(inflightKey, pending);
   const entry = await pending;
   if (options.signal?.aborted) throw new DOMException('aborted', 'AbortError');
   entry.refs += 1;
@@ -131,10 +140,14 @@ export function releaseCachedMedia(path: string, options: Pick<AuthenticatedMedi
   evictIfNeeded();
 }
 
-/** 退出登录或换令牌时清干净，别把上一位使用者的私有媒体留在内存里。 */
-export function clearMediaCache(): void {
-  for (const entry of [...mediaCache.values()]) drop(entry);
-  cachedBytes = 0;
+/** 退出登录或换令牌时清对应作用域，别把上一份凭证的私有媒体留在内存里。 */
+export function clearMediaCache(scope?: MediaAuthScope): void {
+  const scopes: MediaAuthScope[] = scope ? [scope] : ['user', 'admin'];
+  for (const current of scopes) scopeGeneration[current] += 1;
+  for (const entry of [...mediaCache.values()]) {
+    if (!scope || entry.scope === scope) drop(entry);
+  }
+  if (!scope) cachedBytes = 0;
 }
 
 export function mediaCacheStats(): { entries: number; bytes: number; held: number } {
@@ -196,7 +209,10 @@ export async function fetchAuthenticatedMedia(
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new AuthenticatedMediaError('network', null, '媒体加载失败，请检查网络连接');
   }
-  if (!response.ok) throw responseError(response.status);
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) clearMediaCache(options.scope);
+    throw responseError(response.status);
+  }
   const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
   if (!matchesExpectedType(contentType, options.expected)) {
     throw new AuthenticatedMediaError('content_type', response.status, '媒体类型不匹配');
@@ -226,7 +242,7 @@ export async function fetchAuthenticatedMedia(
  * are the same story seen from the body: a truncated or still-growing file aborts
  * the read, which used to surface as a dead "媒体内容读取失败" with no way back.
  */
-const RETRIABLE_CODES = new Set(['network', 'server', 'rate_limit', 'missing', 'blob', 'empty']);
+const RETRIABLE_CODES = new Set(['network', 'server', 'rate_limit', 'missing', 'blob', 'empty', 'stale_auth']);
 
 export function isRetriableMediaError(error: unknown): boolean {
   return error instanceof AuthenticatedMediaError && RETRIABLE_CODES.has(error.code);

@@ -1,6 +1,8 @@
-import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, Fragment, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../lib/api.js';
 import { useAutoNotice } from '../lib/autoNotice.js';
+import { navigate } from '../lib/navigation.js';
+import { AppLink } from './AppLink.js';
 import { AvatarEditor, LifePanel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
 import {
   interfaceOptions,
@@ -760,13 +762,13 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
     const routeTab = tabFromAdminPath(window.location.pathname, initialTab);
     const canonicalPath = adminPathForTab(routeTab);
     if (window.location.pathname !== canonicalPath) {
-      window.history.replaceState(null, '', canonicalPath);
+      navigate(canonicalPath, { replace: true });
     }
 
     const onPopState = () => {
       const next = tabFromAdminPath(window.location.pathname, initialTab);
       if (dirtyRef.current && !window.confirm('当前修改尚未保存，确定离开吗？')) {
-        window.history.pushState(null, '', adminPathForTab(tab));
+        navigate(adminPathForTab(tab));
         return;
       }
       setDirtyState(false);
@@ -789,7 +791,7 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
     if (next === tab) return;
     if (dirtyRef.current && !window.confirm('当前修改尚未保存，确定离开吗？')) return;
     setDirtyState(false);
-    window.history.pushState(null, '', adminPathForTab(next));
+    navigate(adminPathForTab(next));
     setTab(next);
   }, [setDirtyState, tab]);
 
@@ -833,6 +835,15 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
     setData(null);
     setNotice(null);
   };
+
+  const confirmRouteLeave = useCallback((event: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (!dirtyRef.current) return;
+    if (!window.confirm('当前修改尚未保存，确定离开吗？')) {
+      event.preventDefault();
+      return;
+    }
+    setDirtyState(false);
+  }, [setDirtyState]);
 
   const counts = useMemo(
     () => data ? capabilityCounts(data.capabilities.capabilities) : { available: 0, total: 0 },
@@ -881,12 +892,12 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
           <div className="admin-brand"><span className="admin-brand-mark">S</span><span className="admin-brand-copy"><strong>SOOYA</strong><small>管理中心</small></span></div>
           <TabButtons tab={tab} setTab={navigateTab} mobile={false} />
           <div className="admin-sidebar-footer">
-            <a className="admin-side-action" href="/" data-testid="admin-return-chat">返回对话</a>
+            <AppLink className="admin-side-action" href="/" data-testid="admin-return-chat" onClick={confirmRouteLeave}>返回对话</AppLink>
             <button type="button" className="admin-side-action subtle" onClick={logout}>退出管理</button>
           </div>
         </aside>}
 
-        {isMobile && <header className="admin-mobile-header"><div className="admin-mobile-brand"><span className="admin-mobile-icon"><Icon name={TABS.find((item) => item.id === tab)?.icon ?? 'overview'} /></span><div><strong>SOOYA 管理中心</strong><small>{page.title}</small></div></div><a className="admin-return" href="/" data-testid="admin-return-chat">返回对话</a></header>}
+        {isMobile && <header className="admin-mobile-header"><div className="admin-mobile-brand"><span className="admin-mobile-icon"><Icon name={TABS.find((item) => item.id === tab)?.icon ?? 'overview'} /></span><div><strong>SOOYA 管理中心</strong><small>{page.title}</small></div></div><AppLink className="admin-return" href="/" data-testid="admin-return-chat" onClick={confirmRouteLeave}>返回对话</AppLink></header>}
 
         <section className="admin-main">
           <div className="admin-main-inner">

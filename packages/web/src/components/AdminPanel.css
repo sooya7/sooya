@@ -1,31 +1,35 @@
 /* SOOYA admin panel v2 — compact, responsive, and visually separated from chat. */
 
 .admin-v2 {
-  --admin-bg: #f3f6fa;
-  --admin-surface: #ffffff;
-  --admin-surface-soft: #f7f9fc;
-  --admin-line: #e2e8f0;
-  --admin-line-strong: #d4dce7;
-  --admin-text: #172033;
-  /* #6c7689 measured 4.22:1 on --admin-bg, under the 4.5 AA floor. */
-  --admin-muted: #616c80;
-  /* Decorative tier; 2.38:1, so text must not use it -- .admin-empty now uses
-     --admin-muted instead. */
-  --admin-faint: #98a2b3;
-  --admin-primary: #398fe6;
-  --admin-primary-deep: #2377ca;
-  --admin-primary-deeper: #1b5fa5;
-  --admin-primary-soft: #eaf4ff;
-  --admin-success: #28a269;
-  --admin-danger: #d7474d;
-  --admin-danger-soft: #fff1f2;
-  --admin-ink: #0d1220;
-  --admin-ink-2: #18213a;
-  --admin-grad: linear-gradient(135deg, #6d5efc, #2f80ed);
-  --admin-grad-soft: linear-gradient(135deg, #f0edff, #e8f2ff);
+  --admin-bg: var(--bg);
+  --admin-surface: var(--surface-raised);
+  --admin-surface-soft: var(--panel-alt);
+  --admin-line: var(--line);
+  --admin-line-strong: var(--line-strong);
+  --admin-text: var(--ink);
+  --admin-muted: var(--ink-soft);
+  --admin-faint: var(--ink-faint);
+  --admin-primary: var(--mine-end);
+  --admin-primary-deep: var(--mine-start);
+  --admin-primary-deeper: var(--accent-deep);
+  --admin-primary-soft: var(--accent-tint);
+  --admin-success: var(--success);
+  --admin-warning: var(--warning);
+  --admin-warning-soft: var(--warning-soft);
+  --admin-danger: var(--danger-ink);
+  --admin-danger-soft: var(--danger-soft);
+  --admin-on-primary: var(--accent-ink);
+  --admin-focus-ring: var(--focus-ring);
+  --admin-grad: var(--grad);
+  --admin-grad-soft: var(--grad-soft);
+  --admin-sidebar-start: #2a2030;
+  --admin-sidebar-end: #392946;
+  --admin-sidebar-text: #f5edf6;
+  --admin-sidebar-muted: #cbbcd0;
+  --admin-sidebar-faint: #9c8ea2;
   --admin-radius: 16px;
-  --admin-sh-1: 0 1px 2px rgba(16, 26, 48, 0.05);
-  --admin-sh-2: 0 2px 6px rgba(16, 26, 48, 0.06), 0 12px 28px -12px rgba(16, 26, 48, 0.18);
+  --admin-sh-1: var(--shadow-soft);
+  --admin-sh-2: var(--shadow-raised);
   width: 100%;
   max-width: none;
   min-height: 100dvh;
@@ -55,7 +59,7 @@
   flex-direction: column;
   height: 100dvh;
   padding: 18px 12px 14px;
-  background: linear-gradient(180deg, var(--admin-ink), var(--admin-ink-2));
+  background: linear-gradient(180deg, var(--admin-sidebar-start), var(--admin-sidebar-end));
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   z-index: 10;
 }
@@ -75,9 +79,9 @@
   height: 34px;
   flex: 0 0 34px;
   border-radius: 11px;
-  color: #fff;
+  color: var(--admin-on-primary);
   background: var(--admin-grad);
-  box-shadow: 0 6px 18px rgba(109, 94, 252, 0.34);
+  box-shadow: color-mix(in srgb, var(--admin-primary) 32%, transparent) 0 6px 18px;
   font-size: 15px;
   font-weight: 800;
 }
@@ -111,25 +115,25 @@
   width: 100%;
   min-height: 44px;
   padding: 5px 8px;
-  color: #536074;
+  color: var(--admin-sidebar-muted);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 11px;
   text-align: left;
   transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
-  color: rgba(226, 232, 245, 0.62);
+  color: var(--admin-sidebar-muted);
 }
 
 .admin-side-nav button:hover {
-  color: #f4f7fd;
+  color: var(--admin-sidebar-text);
   background: rgba(255, 255, 255, 0.07);
 }
 
 .admin-side-nav button.active {
-  color: #fff;
+  color: var(--admin-on-primary);
   background: var(--admin-grad);
   border-color: transparent;
-  box-shadow: 0 8px 20px -8px rgba(109, 94, 252, 0.7);
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--admin-primary) 70%, transparent);
 }
 
 .admin-nav-icon {
@@ -189,7 +193,7 @@
   justify-content: center;
   min-height: 38px;
   padding: 0 10px;
-  color: #526174;
+  color: var(--admin-muted);
   background: var(--admin-surface-soft);
   border: 1px solid var(--admin-line);
   border-radius: 10px;
@@ -200,8 +204,8 @@
 
 .admin-side-action:hover {
   color: var(--admin-primary-deep);
-  border-color: #c7d8e9;
-  background: #fff;
+  border-color: var(--admin-primary);
+  background: var(--admin-surface);
 }
 
 .admin-side-action.subtle {
@@ -275,7 +279,7 @@
   justify-content: center;
   min-height: 36px;
   padding: 0 12px;
-  color: #526174;
+  color: var(--admin-muted);
   background: var(--admin-surface);
   border: 1px solid var(--admin-line);
   border-radius: 10px;
@@ -287,7 +291,7 @@
 .admin-header-button:hover,
 .admin-v2 .admin-return:hover {
   color: var(--admin-primary-deep);
-  border-color: #c5d8ea;
+  border-color: var(--admin-primary);
 }
 
 .admin-v2 .admin-inline-error {
@@ -296,9 +300,9 @@
   min-height: 38px;
   margin: 0 0 12px;
   padding: 8px 12px;
-  color: #7a4e08;
-  background: #fff9e9;
-  border: 1px solid #f0dda7;
+  color: var(--admin-warning);
+  background: var(--admin-warning-soft);
+  border: 1px solid color-mix(in srgb, var(--admin-warning) 32%, transparent);
   border-radius: 10px;
   box-shadow: none;
   font-size: 13px;
@@ -315,7 +319,7 @@
   background: var(--admin-surface);
   border: 1px solid var(--admin-line);
   border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+  box-shadow: var(--admin-sh-1);
   font-size: 12px;
 }
 
@@ -335,7 +339,7 @@
   height: 8px;
   border-radius: 50%;
   background: var(--admin-success);
-  box-shadow: 0 0 0 4px rgba(40, 162, 105, 0.1);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--admin-success) 14%, transparent);
 }
 
 .admin-status-card button {
@@ -359,7 +363,7 @@
   background: var(--admin-surface);
   border: 1px solid var(--admin-line);
   border-radius: 13px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+  box-shadow: var(--admin-sh-1);
 }
 
 .admin-summary-top {
@@ -436,7 +440,7 @@
   background: var(--admin-surface);
   border: 1px solid var(--admin-line);
   border-radius: 13px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+  box-shadow: var(--admin-sh-1);
 }
 
 .admin-v2 .admin-form-card {
@@ -459,14 +463,14 @@
 
 /* Inline warning under a field the operator is about to get wrong. */
 .admin-v2 .admin-field-warning {
-  color: #b42318;
+  color: var(--admin-danger);
   font-weight: 600;
 }
 
 .admin-v2 .admin-form-card label {
   display: grid;
   gap: 5px;
-  color: #5e6a7d;
+  color: var(--admin-muted);
   font-size: 11px;
   font-weight: 650;
 }
@@ -479,7 +483,7 @@
   min-height: 38px;
   padding: 8px 10px;
   color: var(--admin-text);
-  background: #fff;
+  background: var(--admin-surface);
   border: 1px solid var(--admin-line-strong);
   border-radius: 9px;
   outline: none;
@@ -497,8 +501,8 @@
 .admin-v2 .admin-form-card textarea:focus,
 .admin-v2 .admin-form-card select:focus,
 .admin-v2 .admin-lock-card input:focus {
-  border-color: #75afe8;
-  box-shadow: 0 0 0 3px rgba(57, 143, 230, 0.1);
+  border-color: var(--admin-primary);
+  box-shadow: 0 0 0 3px var(--admin-focus-ring);
 }
 
 .admin-v2 .admin-muted {
@@ -542,7 +546,7 @@
   min-height: 34px;
   padding: 6px 11px;
   color: var(--admin-primary-deep);
-  background: #fff;
+  background: var(--admin-surface);
   border: 1px solid var(--admin-line-strong);
   border-radius: 9px;
   font-size: 12px;
@@ -551,9 +555,9 @@
 
 .admin-v2 .admin-actions button:not(.admin-danger),
 .admin-v2 .admin-card-heading > button {
-  color: #fff;
-  background: var(--admin-primary);
-  border-color: var(--admin-primary);
+  color: var(--admin-on-primary);
+  background: var(--admin-grad);
+  border-color: transparent;
 }
 
 .admin-v2 button:hover:not(:disabled) {
@@ -568,7 +572,7 @@
 .admin-v2 .admin-danger {
   color: var(--admin-danger) !important;
   background: var(--admin-danger-soft) !important;
-  border-color: #f0c4c7 !important;
+  border-color: var(--admin-danger) !important;
 }
 
 .admin-model-layout {
@@ -595,7 +599,7 @@
   width: 100%;
   min-height: 44px;
   padding: 7px 9px;
-  color: #536074;
+  color: var(--admin-muted);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 9px;
@@ -618,7 +622,7 @@
 .admin-v2 .admin-model-item.active {
   color: var(--admin-primary-deep);
   background: var(--admin-primary-soft);
-  border-color: #d6eaff;
+  border-color: var(--admin-primary);
 }
 
 .admin-content,
@@ -669,7 +673,7 @@
   gap: 9px;
   min-height: 42px;
   padding: 7px 0;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--admin-line);
 }
 
 .admin-v2 .admin-list-row:last-of-type {
@@ -678,7 +682,7 @@
 
 .admin-v2 .admin-list-row > span {
   min-width: 0;
-  color: #475467;
+  color: var(--admin-text);
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -719,7 +723,7 @@
   gap: 7px;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #edf0f4;
+  border-top: 1px solid var(--admin-line);
 }
 
 .admin-v2 .admin-upload input {
@@ -753,10 +757,11 @@
 .admin-v2 .admin-lock-card {
   width: min(100%, 360px);
   padding: 22px;
-  background: rgba(255, 255, 255, 0.97);
+  background: var(--surface-glass);
   border: 1px solid var(--admin-line);
   border-radius: 16px;
-  box-shadow: 0 18px 50px rgba(26, 45, 75, 0.1);
+  box-shadow: var(--admin-sh-2);
+  backdrop-filter: blur(16px);
 }
 
 .admin-lock-icon {
@@ -784,7 +789,7 @@
 .admin-v2 .admin-lock-card label {
   display: block;
   margin-bottom: 5px;
-  color: #596579;
+  color: var(--admin-muted);
   font-size: 11px;
   font-weight: 650;
 }
@@ -794,9 +799,9 @@
   width: 100%;
   min-height: 38px;
   margin-top: 10px;
-  color: #fff;
-  background: var(--admin-primary);
-  border: 0;
+  color: var(--admin-on-primary);
+  background: var(--admin-grad);
+  border: 1px solid transparent;
   border-radius: 9px;
   font-size: 13px;
   font-weight: 650;
@@ -807,18 +812,18 @@
   width: min(100%, 340px);
   padding: 20px;
   color: var(--admin-muted);
-  background: #fff;
+  background: var(--admin-surface);
   border: 1px solid var(--admin-line);
   border-radius: 14px;
   text-align: center;
-  box-shadow: 0 12px 40px rgba(26, 45, 75, 0.08);
+  box-shadow: var(--admin-sh-2);
 }
 
 .admin-spinner {
   width: 24px;
   height: 24px;
   margin: 0 auto 10px;
-  border: 2px solid #d9e4ef;
+  border: 2px solid var(--admin-line-strong);
   border-top-color: var(--admin-primary);
   border-radius: 50%;
   animation: admin-spin 0.75s linear infinite;
@@ -876,9 +881,10 @@
     gap: 10px;
     min-height: calc(54px + env(safe-area-inset-top));
     padding: env(safe-area-inset-top) 12px 0;
-    background: rgba(255, 255, 255, 0.94);
+    background: var(--surface-glass);
     border-bottom: 1px solid var(--admin-line);
     backdrop-filter: blur(16px);
+    box-shadow: var(--admin-sh-1);
   }
 
   .admin-mobile-brand {
@@ -937,8 +943,8 @@
     flex: 0 0 auto;
     min-height: 32px;
     padding: 0 11px;
-    color: #5c687a;
-    background: #fff;
+    color: var(--admin-muted);
+    background: var(--admin-surface);
     border: 1px solid var(--admin-line);
     border-radius: 9px;
     font-size: 11px;
@@ -946,9 +952,9 @@
   }
 
   .admin-mobile-tabs button.active {
-    color: #fff;
-    background: var(--admin-primary);
-    border-color: var(--admin-primary);
+    color: var(--admin-on-primary);
+    background: var(--admin-grad);
+    border-color: transparent;
   }
 
   .admin-mobile-content {
@@ -1077,7 +1083,7 @@
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #6b7688;
+  color: var(--admin-muted);
 }
 
 .admin-preset-row {
@@ -1086,14 +1092,14 @@
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
-  background: #fff;
-  border: 1px solid #e6e9f0;
+  background: var(--admin-surface);
+  border: 1px solid var(--admin-line);
   border-radius: 12px;
 }
 
 .admin-preset-row.active {
-  border-color: #7a8cff;
-  box-shadow: 0 0 0 2px rgba(122, 140, 255, 0.14);
+  border-color: var(--admin-primary);
+  box-shadow: 0 0 0 2px var(--admin-focus-ring);
 }
 
 .admin-preset-copy strong {
@@ -1103,7 +1109,7 @@
 
 .admin-preset-copy small {
   display: block;
-  color: #78839a;
+  color: var(--admin-muted);
   font-size: 12px;
   word-break: break-all;
 }
@@ -1116,20 +1122,20 @@
 .admin-preset-actions button {
   padding: 6px 10px;
   font-size: 12px;
-  border: 1px solid #dfe3ec;
+  border: 1px solid var(--admin-line-strong);
   border-radius: 9px;
-  background: #f7f8fc;
+  background: var(--admin-surface-soft);
   cursor: pointer;
 }
 
 .admin-preset-actions button.primary {
-  color: #fff;
-  background: #4c5fd7;
-  border-color: #4c5fd7;
+  color: var(--admin-on-primary);
+  background: var(--admin-grad);
+  border-color: transparent;
 }
 
 .admin-preset-actions button.danger {
-  color: #b4342c;
+  color: var(--admin-danger);
 }
 
 .admin-preset-form {
@@ -1137,8 +1143,8 @@
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 10px;
   padding: 14px;
-  background: #f8f9fd;
-  border: 1px solid #e6e9f0;
+  background: var(--admin-surface-soft);
+  border: 1px solid var(--admin-line);
   border-radius: 12px;
 }
 
@@ -1146,7 +1152,7 @@
   display: grid;
   gap: 4px;
   font-size: 12px;
-  color: #57617a;
+  color: var(--admin-muted);
 }
 
 .admin-preset-form-actions {
@@ -1158,22 +1164,22 @@
 /* ---- Visual pass: ink sidebar, grouped nav, layered surfaces ----------- */
 
 .admin-sidebar .admin-brand-copy strong {
-  color: #f5f7fc;
+  color: var(--admin-sidebar-text);
 }
 
 .admin-sidebar .admin-brand-copy small {
-  color: rgba(214, 222, 238, 0.55);
+  color: var(--admin-sidebar-faint);
 }
 
 /* The base pill is a light surface, which is invisible on the ink sidebar. */
 .admin-sidebar .admin-side-action {
-  color: rgba(214, 222, 238, 0.62);
+  color: var(--admin-sidebar-muted);
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.1);
 }
 
 .admin-sidebar .admin-side-action:hover {
-  color: #fff;
+  color: var(--admin-sidebar-text);
   background: rgba(255, 255, 255, 0.07);
 }
 
@@ -1187,7 +1193,7 @@
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.2em;
-  color: rgba(232, 236, 246, 0.32);
+  color: var(--admin-sidebar-faint);
   text-transform: uppercase;
 }
 
@@ -1196,11 +1202,11 @@
 }
 
 .admin-side-nav button .admin-nav-copy small {
-  color: rgba(214, 222, 238, 0.42);
+  color: var(--admin-sidebar-faint);
 }
 
 .admin-side-nav button.active .admin-nav-copy small {
-  color: rgba(255, 255, 255, 0.72);
+  color: color-mix(in srgb, var(--admin-on-primary) 76%, transparent);
 }
 
 .admin-side-nav button .admin-nav-icon {
@@ -1227,7 +1233,7 @@
 }
 
 .admin-summary-tile .admin-summary-icon {
-  color: #4c5fd7;
+  color: var(--admin-primary-deep);
   background: var(--admin-grad-soft);
   border-radius: 10px;
 }
@@ -1237,38 +1243,33 @@
   padding: 3px 9px;
   border-radius: 99px;
   background: var(--admin-grad-soft);
-  color: #4a49b8;
+  color: var(--admin-primary-deep);
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
-/* Primary action ("添加模型" and friends). Two earlier problems: it inherited the
-   default dark grey text, and then it was given a saturated violet gradient with a
-   heavy violet glow — louder than anything else in the panel, which builds on the
-   calm blue of --admin-primary. It now uses that same blue, deepened, so white text
-   clears WCAG AA across the whole gradient (4.6:1 at the light end, 6.5:1 at the
-   dark end) instead of the 3.4:1 the old light violet-blue end gave. */
+/* Primary actions reuse the shared companion gradient and focus treatment. */
 .admin-primary {
-  background: linear-gradient(135deg, var(--admin-primary-deep), var(--admin-primary-deeper));
+  background: var(--admin-grad);
   border-color: transparent;
-  color: #fff;
+  color: var(--admin-on-primary);
   font-weight: 650;
   letter-spacing: 0.01em;
-  box-shadow: 0 4px 12px -8px rgba(27, 95, 165, 0.5);
+  box-shadow: 0 4px 12px -8px color-mix(in srgb, var(--admin-primary) 50%, transparent);
   transition: filter 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
 }
 
 .admin-primary:hover:not(:disabled) {
   filter: brightness(1.08);
-  box-shadow: 0 6px 16px -8px rgba(27, 95, 165, 0.62);
+  box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--admin-primary) 62%, transparent);
 }
 
 .admin-primary:active:not(:disabled) {
   transform: translateY(1px);
   filter: brightness(0.96);
-  box-shadow: 0 2px 8px -8px rgba(27, 95, 165, 0.55);
+  box-shadow: 0 2px 8px -8px color-mix(in srgb, var(--admin-primary) 55%, transparent);
 }
 
 /* A white ring was invisible: the button sits on white cards, not on the dark rail. */
@@ -1284,8 +1285,8 @@
 
 /* 她的生活：状态、主动开口诊断与生活日志 */
 .life-now .life-activity { font-size: 17px; margin: 6px 0 10px; }
-.life-now .life-activity strong { color: var(--accent, #8ea2ff); }
-.life-progress { height: 6px; border-radius: 4px; background: rgba(255, 255, 255, 0.08); overflow: hidden; margin-bottom: 6px; }
-.life-progress i { display: block; height: 100%; background: linear-gradient(90deg, #4d63d6, #7ce2b0); }
-.admin-count-badge.life-ok { background: rgba(124, 226, 176, 0.18); color: #7ce2b0; }
-[data-testid='life-reach-out'] small { display: block; color: var(--muted, #8d97b2); margin-top: 4px; }
+.life-now .life-activity strong { color: var(--admin-primary); }
+.life-progress { height: 6px; border-radius: 4px; background: var(--admin-line); overflow: hidden; margin-bottom: 6px; }
+.life-progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--admin-primary), var(--admin-success)); }
+.admin-count-badge.life-ok { background: color-mix(in srgb, var(--admin-success) 18%, transparent); color: var(--admin-success); }
+[data-testid='life-reach-out'] small { display: block; color: var(--admin-muted); margin-top: 4px; }

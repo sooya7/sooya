@@ -3,6 +3,7 @@ import { getAdminToken, setAdminToken } from '../lib/admin.js';
 import { adminMediaUrl, featureApi, type FeatureMedia } from '../lib/features.js';
 import { fetchAuthenticatedMedia, mediaThumbnailPath, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
+import { AppLink } from './AppLink.js';
 import { ImageViewer, type ViewerImage } from './ImageViewer.js';
 
 const PAGE_SIZE = 60;
@@ -212,13 +213,13 @@ export default function GalleryPage() {
   };
 
   if (!getAdminToken()) {
-    return <main className="gallery-page gallery-gate"><section className="gallery-login"><h1>SOOYA 图库</h1><p>输入管理令牌后查看普通图库与回收站。</p><input type="password" value={token} placeholder="ADMIN_API_TOKEN" onChange={(event) => setTokenState(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') login(); }} /><button type="button" onClick={login}>进入图库</button><a href="/">返回聊天</a></section></main>;
+    return <main className="gallery-page gallery-gate"><section className="gallery-login"><h1>SOOYA 图库</h1><p>输入管理令牌后查看普通图库与回收站。</p><input type="password" value={token} placeholder="ADMIN_API_TOKEN" onChange={(event) => setTokenState(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') login(); }} /><button type="button" onClick={login}>进入图库</button><AppLink href="/">返回聊天</AppLink></section></main>;
   }
 
   return (
     <main className="gallery-page">
       <header className="gallery-header">
-        <div><a href="/admin/features" className="gallery-back">‹ 返回功能中心</a><h1>{trash ? '回收站' : '图库'}</h1><p>{stats.count} 张 · {formatBytes(stats.bytes)} · 数据库共 {total} 个媒体记录</p></div>
+        <div><AppLink href="/admin/features" className="gallery-back">‹ 返回功能中心</AppLink><h1>{trash ? '回收站' : '图库'}</h1><p>{stats.count} 张 · {formatBytes(stats.bytes)} · 数据库共 {total} 个媒体记录</p></div>
         <div className="gallery-header-actions"><button type="button" onClick={() => setTrash((value) => !value)}>{trash ? '返回普通图库' : '打开回收站'}</button><button type="button" onClick={() => void load(false)} disabled={loading}>刷新</button></div>
       </header>
 

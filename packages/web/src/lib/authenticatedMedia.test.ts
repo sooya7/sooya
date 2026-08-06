@@ -154,8 +154,6 @@ describe('authenticated media', () => {
   });
 
   it.each([
-    [401, 'auth'],
-    [403, 'auth'],
     [404, 'missing'],
     [410, 'gone'],
     [503, 'server']
@@ -263,6 +261,7 @@ describe('media retry', () => {
     expect(isRetriableMediaError(new AuthenticatedMediaError('missing', 404, ''))).toBe(true);
     expect(isRetriableMediaError(new AuthenticatedMediaError('network', null, ''))).toBe(true);
     expect(isRetriableMediaError(new AuthenticatedMediaError('server', 503, ''))).toBe(true);
+    expect(isRetriableMediaError(new AuthenticatedMediaError('stale_auth', null, ''))).toBe(true);
     expect(isRetriableMediaError(new AuthenticatedMediaError('auth', 401, ''))).toBe(false);
     expect(isRetriableMediaError(new AuthenticatedMediaError('gone', 410, ''))).toBe(false);
     expect(isRetriableMediaError(new DOMException('aborted', 'AbortError'))).toBe(false);
@@ -412,6 +411,69 @@ describe('媒体缓存', () => {
     await acquireAuthenticatedMedia('/api/media/m1', opts);
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
     expect(init?.cache).not.toBe('no-store');
+  });
+
+  it('只清指定鉴权作用域，不撤销另一作用域的 URL', async () => {
+    stubMedia();
+    const user = await acquireAuthenticatedMedia('/api/media/shared', opts);
+    const adminOptions = { ...opts, scope: 'admin' as const, token: 'admin-secret' };
+    const admin = await acquireAuthenticatedMedia('/api/media/shared', adminOptions);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+
+    clearMediaCache('user');
+
+    expect(takeCachedMedia('/api/media/shared', key)).toBeNull();
+    expect(takeCachedMedia('/api/media/shared', { scope: 'admin', expected: 'image' })?.url).toBe(admin.url);
+    expect(revoke).toHaveBeenCalledWith(user.url);
+    expect(revoke).not.toHaveBeenCalledWith(admin.url);
+  });
+
+  it('令牌切换后丢弃旧作用域的在途响应，新请求不与它合并', async () => {
+    let resolveOld!: (response: Response) => void;
+    const oldResponse = new Promise<Response>((resolve) => { resolveOld = resolve; });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => oldResponse)
+      .mockResolvedValueOnce(new Response(new Blob(['new-value'], { type: 'image/png' }), {
+        status: 200,
+        headers: { 'content-type': 'image/png' }
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((source) =>
+      source instanceof Blob && source.size === 3 ? 'blob:old-generation' : 'blob:new-generation');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+
+    const oldRequest = acquireAuthenticatedMedia('/api/media/race', opts);
+    clearMediaCache('user');
+    const newRequest = acquireAuthenticatedMedia('/api/media/race', { ...opts, token: 'new-secret' });
+    resolveOld(new Response(new Blob(['old'], { type: 'image/png' }), {
+      status: 200,
+      headers: { 'content-type': 'image/png' }
+    }));
+
+    await expect(oldRequest).rejects.toMatchObject({ code: 'stale_auth' });
+    await expect(newRequest).resolves.toMatchObject({ url: 'blob:new-generation' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(revoke).toHaveBeenCalledWith('blob:old-generation');
+    expect(takeCachedMedia('/api/media/race', key)?.url).toBe('blob:new-generation');
+  });
+
+  it.each([401, 403])('HTTP %i 清理请求所属作用域的缓存', async (status) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(new Blob(['user'], { type: 'image/png' }), { status: 200, headers: { 'content-type': 'image/png' } }))
+      .mockResolvedValueOnce(new Response(new Blob(['admin'], { type: 'image/png' }), { status: 200, headers: { 'content-type': 'image/png' } }))
+      .mockResolvedValueOnce(new Response('', { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce('blob:user').mockReturnValueOnce('blob:admin');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+
+    await acquireAuthenticatedMedia('/api/media/user-cached', { scope: 'user', token: 'user-secret', expected: 'image' });
+    await acquireAuthenticatedMedia('/api/media/admin-cached', { scope: 'admin', token: 'admin-secret', expected: 'image' });
+    await expect(fetchAuthenticatedMedia('/api/media/denied', {
+      scope: 'user', token: 'expired', expected: 'image'
+    })).rejects.toMatchObject({ code: 'auth', status });
+
+    expect(takeCachedMedia('/api/media/user-cached', { scope: 'user', expected: 'image' })).toBeNull();
+    expect(takeCachedMedia('/api/media/admin-cached', { scope: 'admin', expected: 'image' })).not.toBeNull();
   });
 });
 

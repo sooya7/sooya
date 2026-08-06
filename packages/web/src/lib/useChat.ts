@@ -8,6 +8,11 @@ const PAGE_SIZE = 30;
 /** Matches the server's `?since=` cap; catch-up walks pages of this size. */
 const CATCHUP_PAGE_SIZE = 100;
 export type QuotedMessageState = { status: 'loading' | 'ready' | 'missing' | 'error'; message?: ChatMessage };
+export interface StreamingDraft {
+  id: string;
+  text: string;
+  createdAt: string;
+}
 function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   if (!incoming.length) return existing;
   const byId = new Map(existing.map((m) => [m.id, m]));
@@ -20,6 +25,7 @@ function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMe
 
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [streamingDraft, setStreamingDraft] = useState<StreamingDraft | null>(null);
   const [persona, setPersona] = useState<PersonaInfo | null>(null);
   const [connection, setConnection] = useState<ConnectionState>('connecting');
   const [activity, setActivity] = useState<ActivityState>({ thinking: false, label: null });
@@ -32,13 +38,29 @@ export function useChat() {
   const [quotedStates, setQuotedStates] = useState<Record<string, QuotedMessageState>>({});
   const streamRef = useRef<ChatStream | null>(null);
   const maxSeqRef = useRef(0);
-  const draftRef = useRef(new Map<string, string>());
+  const streamingDraftRef = useRef<StreamingDraft | null>(null);
   const quotedStatesRef = useRef(new Map<string, QuotedMessageState>());
   const quotedRequestsRef = useRef(new Map<string, Promise<ChatMessage | null>>());
   const reloadRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
+  const updateActivity = useCallback((next: ActivityState) => {
+    setActivity((current) => current.thinking === next.thinking && current.label === next.label ? current : next);
+  }, []);
+
+  const clearStreamingDraft = useCallback((messageId?: string) => {
+    const current = streamingDraftRef.current;
+    if (!current || (messageId && current.id !== messageId)) return;
+    streamingDraftRef.current = null;
+    setStreamingDraft(null);
+  }, []);
+
   const trackSeq = useCallback((list: ChatMessage[]) => { for (const m of list) if (m.seq > maxSeqRef.current) maxSeqRef.current = m.seq; }, []);
-  const applyMessages = useCallback((incoming: ChatMessage[]) => { trackSeq(incoming); setMessages((prev) => mergeMessages(prev, incoming)); }, [trackSeq]);
+  const applyMessages = useCallback((incoming: ChatMessage[]) => {
+    trackSeq(incoming);
+    const draft = streamingDraftRef.current;
+    if (draft && incoming.some((message) => message.id === draft.id)) clearStreamingDraft(draft.id);
+    setMessages((previous) => mergeMessages(previous, incoming));
+  }, [clearStreamingDraft, trackSeq]);
 
   const resync = useCallback(async () => {
     try {
@@ -84,16 +106,42 @@ export function useChat() {
             break;
           }
           case 'persona.updated': if (data.persona) setPersona((old) => ({ ...(old ?? { name: 'SOOYA', avatar: '/avatars/sooya.svg', userAvatar: '/avatars/user.svg', tagline: '' }), ...(data.persona as PersonaInfo) })); break;
-          case 'reply.queued': setActivity({ thinking: true, label: `正在看你刚发的 ${Number(data.count ?? 1)} 条消息` }); break;
-          case 'reply.thinking': setActivity({ thinking: true, label: '正在思考' }); break;
-          case 'reply.text.delta': { const id = String(data.messageId ?? ''); const delta = String(data.delta ?? ''); setActivity({ thinking: true, label: '正在输入' }); if (id) { const accumulated = (draftRef.current.get(id) ?? '') + delta; draftRef.current.set(id, accumulated); setMessages((prev) => applyDraft(prev, id, accumulated)); } break; }
-          case 'reply.sticker.selecting': setActivity({ thinking: true, label: '正在挑表情' }); break;
-          case 'reply.image.generating': setActivity({ thinking: true, label: '正在生成图片' }); break;
-          case 'reply.audio.generating': setActivity({ thinking: true, label: '正在生成语音' }); break;
+          case 'reply.queued': updateActivity({ thinking: true, label: `正在看你刚发的 ${Number(data.count ?? 1)} 条消息` }); break;
+          case 'reply.thinking': updateActivity({ thinking: true, label: '正在思考' }); break;
+          case 'reply.text.delta': {
+            const id = String(data.messageId ?? '');
+            const delta = String(data.delta ?? '');
+            updateActivity({ thinking: true, label: '正在输入' });
+            if (id && delta) {
+              const previous = streamingDraftRef.current;
+              const next: StreamingDraft = previous?.id === id
+                ? { ...previous, text: previous.text + delta }
+                : { id, text: delta, createdAt: new Date().toISOString() };
+              streamingDraftRef.current = next;
+              setStreamingDraft(next);
+            }
+            break;
+          }
+          case 'reply.sticker.selecting': updateActivity({ thinking: true, label: '正在挑表情' }); break;
+          case 'reply.image.generating': updateActivity({ thinking: true, label: '正在生成图片' }); break;
+          case 'reply.audio.generating': updateActivity({ thinking: true, label: '正在生成语音' }); break;
           case 'reply.text.done':
-          case 'reply.content.done': setActivity({ thinking: true, label: '正在整理' }); break;
-          case 'reply.completed': { setActivity({ thinking: false, label: null }); const msg = data.message as ChatMessage | undefined; if (msg) { draftRef.current.delete(msg.id); applyMessages([msg]); } else void resync(); break; }
-          case 'reply.failed': { setActivity({ thinking: false, label: null }); const msg = data.message as ChatMessage | undefined; if (msg) applyMessages([msg]); setError(typeof data.error === 'string' ? data.error : '回复失败'); break; }
+          case 'reply.content.done': updateActivity({ thinking: true, label: '正在整理' }); break;
+          case 'reply.completed': {
+            updateActivity({ thinking: false, label: null });
+            const message = data.message as ChatMessage | undefined;
+            if (message) applyMessages([message]);
+            else void resync();
+            break;
+          }
+          case 'reply.failed': {
+            updateActivity({ thinking: false, label: null });
+            clearStreamingDraft();
+            const message = data.message as ChatMessage | undefined;
+            if (message) applyMessages([message]);
+            setError(typeof data.error === 'string' ? data.error : '回复失败');
+            break;
+          }
           case 'life.updated': void refreshLife(); break;
           case 'system.notice': if (data.action === 'reload') void reloadRef.current(); else void resync(); break;
           default: break;
@@ -103,20 +151,20 @@ export function useChat() {
     stream.setLastEventId(lastEventSeq);
     stream.start();
     streamRef.current = stream;
-  }, [applyMessages, refreshLife, resync]);
+  }, [applyMessages, clearStreamingDraft, refreshLife, resync, updateActivity]);
 
   const reload = useCallback(async () => {
     setReady(false); setConnection('connecting'); setError(null);
     try {
-      maxSeqRef.current = 0; draftRef.current.clear(); quotedStatesRef.current.clear(); quotedRequestsRef.current.clear(); setQuotedStates({});
+      maxSeqRef.current = 0; clearStreamingDraft(); quotedStatesRef.current.clear(); quotedRequestsRef.current.clear(); setQuotedStates({});
       const boot = await api.bootstrap();
-      setPersona(boot.conversation.persona); trackSeq(boot.messages.messages); setMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); streamRef.current?.setLastEventId(boot.messages.lastEventSeq); setActivity({ thinking: false, label: null }); setError(null); setReady(true);
+      setPersona(boot.conversation.persona); trackSeq(boot.messages.messages); setMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); streamRef.current?.setLastEventId(boot.messages.lastEventSeq); updateActivity({ thinking: false, label: null }); setError(null); setReady(true);
       startStream(boot.messages.lastEventSeq);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else { setConnection('offline'); setError((err as Error).message); }
       setReady(true);
     }
-  }, [startStream, trackSeq]);
+  }, [clearStreamingDraft, startStream, trackSeq, updateActivity]);
   reloadRef.current = reload;
 
   useEffect(() => {
@@ -223,7 +271,7 @@ export function useChat() {
 
   useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') void resync(); }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [resync]);
 
-  return { messages, persona, connection, activity, life, stickers, quotedStates, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, loadOlder, ensureQuotedMessage, addMessages: applyMessages, resync, reload, clearError: () => setError(null) };
+  return { messages, streamingDraft, persona, connection, activity, life, stickers, quotedStates, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, loadOlder, ensureQuotedMessage, addMessages: applyMessages, resync, reload, clearError: () => setError(null) };
 }
 
 export function isReplayableUserMessage(message: ChatMessage): boolean {
@@ -246,10 +294,4 @@ function optimisticPartsFor(message: ChatMessage): ChatMessage['content'] {
   return message.content
     .filter((part) => part.type !== 'system' && part.type !== 'audio')
     .map((part, index) => ({ ...part, id: `localpart_${index}`, status: 'pending' as const }));
-}
-
-function applyDraft(messages: ChatMessage[], messageId: string, text: string): ChatMessage[] {
-  const existing = messages.find((m) => m.id === messageId);
-  if (existing) { const content = existing.content.some((p) => p.type === 'text') ? existing.content.map((p) => p.type === 'text' ? { ...p, text } : p) : [{ id: 'draft', type: 'text' as const, text, status: 'pending' as const }, ...existing.content]; return messages.map((m) => m.id === messageId ? { ...m, content, status: 'sending' as const } : m); }
-  return [...messages, { id: messageId, conversationId: 'main', role: 'assistant', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), seq: Number.MAX_SAFE_INTEGER, status: 'sending', content: [{ id: 'draft', type: 'text', text, status: 'pending' }] }];
 }

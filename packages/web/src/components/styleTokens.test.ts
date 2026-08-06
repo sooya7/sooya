@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 const read = (rel: string) => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const CHAT = read('../styles.css');
 const OVERLAYS = read('./overlays.css');
+const FEATURE = read('./FeatureEnhancements.css');
+const ADMIN = read('./AdminPanel.css');
 
 /**
  * The chat page, the overlays and the admin console are one product, so colour
@@ -51,5 +53,19 @@ describe('shared colour tokens', () => {
     // --ink-faint on --line measured about 1.7:1 in the static preview and the
     // glyph simply was not there; --ink-soft is the floor for this chip.
     expect(CHAT).toMatch(/\.send-btn \{[^}]*color: var\(--ink-soft\);/);
+  });
+
+  it('keeps enhanced chat/gallery surfaces free of literal colours', () => {
+    expect(FEATURE).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
+  });
+
+  it('themes gallery and notification surfaces while preserving fixed viewer chrome', () => {
+    const themedOverlays = OVERLAYS.slice(OVERLAYS.indexOf('.gallery-page'));
+    expect(themedOverlays).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
+  });
+
+  it('does not leave hard-coded light cards or the retired admin blue palette', () => {
+    expect(ADMIN).not.toMatch(/background:\s*(?:#fff(?:fff)?\b|rgba\(255,\s*255,\s*255,\s*0\.9[47]\))/i);
+    expect(ADMIN).not.toMatch(/#398fe6|#2377ca|#1b5fa5|#eaf4ff|#4c5fd7|#7a8cff/i);
   });
 });

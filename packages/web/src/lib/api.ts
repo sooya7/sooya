@@ -1,9 +1,21 @@
 import type { ChatMessage, LifeState, MediaRef, PersonaInfo, StickerInfo } from './types.js';
-import { credentialFreeMediaPath } from './authenticatedMedia.js';
+import { clearMediaCache, credentialFreeMediaPath } from './authenticatedMedia.js';
 
 const TOKEN_KEY = 'sooya.token';
-export function getToken(): string | null { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } }
-export function setToken(token: string): void { try { localStorage.setItem(TOKEN_KEY, token); } catch { /* private mode */ } }
+export function getToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+export function setToken(token: string): void {
+  const changed = getToken() !== token;
+  try { localStorage.setItem(TOKEN_KEY, token); } catch { /* private mode */ }
+  if (changed) clearMediaCache('user');
+}
+
+export function clearToken(): void {
+  try { localStorage.removeItem(TOKEN_KEY); } catch { /* private mode */ }
+  clearMediaCache('user');
+}
 export class ApiError extends Error { constructor(message: string, readonly status: number, readonly body?: unknown) { super(message); this.name = 'ApiError'; } }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

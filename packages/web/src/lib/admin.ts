@@ -1,4 +1,5 @@
 import { ApiError } from './api.js';
+import { clearMediaCache } from './authenticatedMedia.js';
 import type { ModelPreset, ModelSlot } from './modelPresets.js';
 
 const ADMIN_TOKEN_KEY = 'sooya.admin-token';
@@ -12,11 +13,13 @@ export function getAdminToken(): string | null {
 }
 
 export function setAdminToken(token: string): void {
+  const changed = getAdminToken() !== token;
   try {
     localStorage.setItem(ADMIN_TOKEN_KEY, token);
   } catch {
     /* private mode */
   }
+  if (changed) clearMediaCache('admin');
 }
 
 export function clearAdminToken(): void {
@@ -25,6 +28,7 @@ export function clearAdminToken(): void {
   } catch {
     /* private mode */
   }
+  clearMediaCache('admin');
 }
 
 async function adminRequest<T>(
