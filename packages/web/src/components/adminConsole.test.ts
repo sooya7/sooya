@@ -76,4 +76,11 @@ describe('merged admin console', () => {
     expect(PANEL).toContain('const [notice, setNotice] = useAutoNotice()');
     expect(PANEL).not.toContain('const [notice, setNotice] = useState');
   });
+
+  it('routes top-level links without losing the unsaved-change guard', () => {
+    expect(PANEL).toContain("import { AppLink } from './AppLink.js'");
+    expect(PANEL).toContain('confirmRouteLeave');
+    expect(PANEL).toContain("navigate(adminPathForTab(tab))");
+    expect(PANEL).not.toContain("<a className=\"admin-side-action\" href=\"/\"");
+  });
 });
