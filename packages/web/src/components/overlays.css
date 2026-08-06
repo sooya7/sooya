@@ -1,8 +1,11 @@
 .image-part {
   padding: 0;
   border: 0;
-  text-align: left;
-  appearance: none;
+  cursor: pointer;
+}
+
+.image-part:disabled {
+  cursor: wait;
 }
 
 .image-viewer {

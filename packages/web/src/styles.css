@@ -397,18 +397,31 @@ button {
 .image-part {
   position: relative;
   display: block;
-  max-width: 260px;
+  max-width: min(260px, 62vw);
+  max-height: 320px;
   border-radius: 14px;
   overflow: hidden;
   box-shadow: var(--shadow-soft);
   background: var(--panel);
 }
-.image-part img {
+
+.image-part:disabled {
+  cursor: wait;
+}
+
+.image-part img,
+.image-part-placeholder {
   display: block;
   width: 100%;
-  height: auto;
-  max-height: 320px;
+  height: 100%;
+}
+
+.image-part img {
   object-fit: cover;
+}
+
+.image-part-placeholder {
+  background: var(--panel-alt);
 }
 
 .bubble-file {

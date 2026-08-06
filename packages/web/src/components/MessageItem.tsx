@@ -66,11 +66,36 @@ function ImagePart({ part, mine, onOpen }: { part: MessagePart; mine: boolean; o
   if (part.status === 'failed') return <div className="bubble bubble-note">图片没有发出去{part.error ? `：${part.error}` : ''}</div>;
   if (!part.media) return <div className="bubble bubble-note pulsing">{mine ? '图片发送中…' : '图片生成中…'}</div>;
   if (failed) return <div className="bubble bubble-note">图片加载失败</div>;
-  const ratio = part.media.width && part.media.height ? part.media.width / part.media.height : undefined;
+  const rawRatio = part.media.width && part.media.height ? part.media.width / part.media.height : Number.NaN;
+  const ratio = Number.isFinite(rawRatio) && rawRatio > 0 ? rawRatio : 4 / 3;
+  const displayWidth = Math.min(BUBBLE_IMAGE_CSS_WIDTH, Math.max(1, Math.round(320 * ratio)));
   const { url, error } = media;
   const alt = part.media.name ?? '图片';
   if (error) return <div className="bubble bubble-note">{error}</div>;
-  return <button className={`image-part ${part.status === 'pending' ? 'pending-media' : ''}`} type="button" onClick={() => onOpen ? onOpen(part.media!.id) : window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id: part.media!.id } }))} aria-label="查看大图" data-media-id={part.media.id} data-src={url ?? ''} data-alt={alt}>{url && <img src={url} alt={alt} loading="lazy" style={ratio ? { aspectRatio: String(ratio) } : undefined} onError={() => setFailed(true)} />}{part.status === 'pending' && <span className="media-sending" role="status">发送中</span>}</button>;
+  const open = () => {
+    if (!url) return;
+    if (onOpen) onOpen(part.media!.id);
+    else window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id: part.media!.id } }));
+  };
+  return (
+    <button
+      className={`image-part ${part.status === 'pending' ? 'pending-media' : ''}`}
+      type="button"
+      onClick={open}
+      disabled={!url}
+      aria-busy={!url || undefined}
+      aria-label={url ? '查看大图' : '图片加载中'}
+      data-media-id={part.media.id}
+      data-src={url ?? ''}
+      data-alt={alt}
+      style={{ aspectRatio: String(ratio), width: `${displayWidth}px` }}
+    >
+      {url
+        ? <img src={url} alt={alt} loading="lazy" onError={() => setFailed(true)} />
+        : <span className="image-part-placeholder" aria-hidden="true" />}
+      {part.status === 'pending' && <span className="media-sending" role="status">发送中</span>}
+    </button>
+  );
 }
 function StickerPart({ part }: { part: MessagePart }) { const [failed, setFailed] = useState(false); if (!part.media || failed) return null; return <AuthenticatedImage className="sticker-part" path={part.media.url} scope="user" alt={String(part.meta?.stickerName ?? '表情')} loading="lazy" onError={() => setFailed(true)} />; }
 function FilePart({ part, mine }: { part: MessagePart; mine: boolean }) {

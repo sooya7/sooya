@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageItem } from './MessageItem.js';
 import type { ChatMessage } from '../lib/types.js';
+import { clearMediaCache } from '../lib/authenticatedMedia.js';
 
 /**
  * Every assistant reply is stored with `replyTo` pointing at the message that
@@ -47,6 +48,9 @@ beforeEach(() => {
 afterEach(async () => {
   if (root) { const current = root; await act(async () => { current.unmount(); }); root = null; }
   container?.remove();
+  clearMediaCache();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const common = {
@@ -141,5 +145,78 @@ describe('MessageItem 搜索高亮', () => {
     expect(container.querySelector('mark')?.textContent).toBe('北京');
     expect(container.querySelector('script')).toBeNull();
     expect(container.textContent).toContain('<script>alert(1)</script>');
+  });
+});
+
+function imageMessage(width?: number | null, height?: number | null): ChatMessage {
+  return message({
+    id: 'm_image',
+    content: [{
+      id: 'p_image',
+      type: 'image',
+      status: 'sent',
+      mediaId: 'media_1',
+      media: {
+        id: 'media_1',
+        kind: 'image',
+        mime: 'image/png',
+        bytes: 123,
+        width,
+        height,
+        url: '/api/media/media_1',
+        name: '照片.png'
+      }
+    }]
+  });
+}
+
+describe('MessageItem 图片占位', () => {
+  it('下载完成前预留真实比例且禁止打开，完成后不改变盒子几何', async () => {
+    let resolveFetch!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { resolveFetch = resolve; })));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-ready');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const open = vi.fn();
+
+    await render(<MessageItem {...common} showAvatar={false} message={imageMessage(800, 1200)} onOpenImage={open} />);
+    const button = container.querySelector<HTMLButtonElement>('.image-part')!;
+
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(Number.parseFloat(button.style.aspectRatio)).toBeCloseTo(800 / 1200);
+    expect(button.style.width).toBe('213px');
+    expect(button.querySelector('.image-part-placeholder')).not.toBeNull();
+    button.click();
+    expect(open).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveFetch(new Response(new Blob(['image'], { type: 'image/png' }), {
+        status: 200,
+        headers: { 'content-type': 'image/png' }
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(button.disabled).toBe(false);
+    expect(button.hasAttribute('aria-busy')).toBe(false);
+    expect(Number.parseFloat(button.style.aspectRatio)).toBeCloseTo(800 / 1200);
+    expect(button.style.width).toBe('213px');
+    expect(button.querySelector('img')?.getAttribute('src')).toBe('blob:image-ready');
+    expect(button.querySelector('.image-part-placeholder')).toBeNull();
+  });
+
+  it('缺失或非法尺寸元数据时使用 4:3 默认占位', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['image'], { type: 'image/png' }), {
+      status: 200,
+      headers: { 'content-type': 'image/png' }
+    })));
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:default-ratio');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    await render(<MessageItem {...common} showAvatar={false} message={imageMessage(null, 0)} />);
+
+    const button = container.querySelector<HTMLElement>('.image-part')!;
+    expect(Number.parseFloat(button.style.aspectRatio)).toBeCloseTo(4 / 3);
+    expect(button.style.width).toBe('260px');
   });
 });
