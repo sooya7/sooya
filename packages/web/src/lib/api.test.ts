@@ -101,7 +101,7 @@ describe('用户令牌存取', () => {
     let created = 0;
     vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:token-${++created}`);
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['image'], { type: 'image/png' }), {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([137, 80, 78, 71]), {
       status: 200,
       headers: { 'content-type': 'image/png' }
     })));
