@@ -194,8 +194,7 @@ describe('MessageItem 图片占位', () => {
         status: 200,
         headers: { 'content-type': 'image/png' }
       }));
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     });
 
     expect(button.disabled).toBe(false);
