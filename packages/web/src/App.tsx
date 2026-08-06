@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useChat } from './lib/useChat.js';
-import AdminPanel from './components/AdminPanel.js';
+import { captureChatViewState, INITIAL_CHAT_VIEW_STATE, restoredScrollTop, type ChatViewState } from './lib/chatViewState.js';
 import { NotificationBridge } from './components/NotificationBridge.js';
 import { MessageItem } from './components/MessageItem.js';
 import { Composer } from './components/Composer.js';
@@ -16,7 +16,14 @@ import { DateSeparator } from './components/DateSeparator.js';
 import { api, type MessageSearchHit } from './lib/api.js';
 
 const NEAR_BOTTOM_PX = 120;
-export default function App() { return window.location.pathname === '/admin' || window.location.pathname === '/admin/' ? <AdminPanel /> : <ChatApp />; }
+export type ChatController = ReturnType<typeof useChat>;
+export type ChatViewStateRef = { current: ChatViewState };
+
+export default function ChatSessionHost({ active = true }: { active?: boolean }) {
+  const chat = useChat();
+  const viewStateRef = useRef<ChatViewState>({ ...INITIAL_CHAT_VIEW_STATE });
+  return active ? <ChatView chat={chat} viewStateRef={viewStateRef} /> : null;
+}
 
 /** Who the quoted message belongs to, for the reply row above a bubble. */
 function quotedLabel(message: ChatMessage | null, personaName: string): string {
@@ -29,14 +36,14 @@ function preview(message: ChatMessage): string {
   return text.slice(0, 90) || (message.content.some((part) => part.type === 'image') ? '[图片]' : message.content.some((part) => part.type === 'audio') ? '[语音]' : '[消息]');
 }
 
-function ChatApp() {
-  const chat = useChat();
+export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewStateRef: ChatViewStateRef }) {
   // 头像只显示几十像素，不需要原图。
   const personaAvatar = useAuthenticatedMedia(chat.persona?.avatar ? mediaThumbnailPath(chat.persona.avatar, AVATAR_IMAGE_CSS_WIDTH) : chat.persona?.avatar, 'user', 'image');
   const userAvatar = useAuthenticatedMedia(chat.persona?.userAvatar ? mediaThumbnailPath(chat.persona.userAvatar, AVATAR_IMAGE_CSS_WIDTH) : chat.persona?.userAvatar, 'user', 'image');
   const scrollerRef = useRef<HTMLDivElement | null>(null); const bottomRef = useRef<HTMLDivElement | null>(null); const sentinelRef = useRef<HTMLDivElement | null>(null); const messagesRef = useRef<HTMLDivElement | null>(null);
-  const [stickToBottom, setStickToBottom] = useState(true); const [unread, setUnread] = useState(0); const [notice, setNotice] = useState<string | null>(null); const [tokenInput, setTokenInput] = useState(''); const [quote, setQuote] = useState<ChatMessage | null>(null); const [swUpdate, setSwUpdate] = useState<ServiceWorkerUpdateController | null>(null); const [historyOpen, setHistoryOpen] = useState(false); const [searchQuery, setSearchQuery] = useState(''); const [searchHits, setSearchHits] = useState<MessageSearchHit[]>([]); const [searchIndex, setSearchIndex] = useState(0); const [historyBusy, setHistoryBusy] = useState(false); const [historyError, setHistoryError] = useState<string | null>(null); const [dateQuery, setDateQuery] = useState(''); const [highlightedId, setHighlightedId] = useState<string | null>(null); const [highlightNonce, setHighlightNonce] = useState(0);
-  const stickToBottomRef = useRef(true); const prevTotalSizeRef = useRef(0); const prevLastIdRef = useRef<string | null>(null); const loadingOlderRef = useRef(false); const didInitialScrollRef = useRef(false);
+  const initialViewState = useRef(viewStateRef.current).current;
+  const [stickToBottom, setStickToBottom] = useState(initialViewState.stickToBottom); const [unread, setUnread] = useState(0); const [notice, setNotice] = useState<string | null>(null); const [tokenInput, setTokenInput] = useState(''); const [quote, setQuote] = useState<ChatMessage | null>(null); const [swUpdate, setSwUpdate] = useState<ServiceWorkerUpdateController | null>(null); const [historyOpen, setHistoryOpen] = useState(false); const [searchQuery, setSearchQuery] = useState(''); const [searchHits, setSearchHits] = useState<MessageSearchHit[]>([]); const [searchIndex, setSearchIndex] = useState(0); const [historyBusy, setHistoryBusy] = useState(false); const [historyError, setHistoryError] = useState<string | null>(null); const [dateQuery, setDateQuery] = useState(''); const [highlightedId, setHighlightedId] = useState<string | null>(null); const [highlightNonce, setHighlightNonce] = useState(0);
+  const stickToBottomRef = useRef(initialViewState.stickToBottom); const prevTotalSizeRef = useRef(0); const prevLastIdRef = useRef<string | null>(null); const loadingOlderRef = useRef(false); const didInitialScrollRef = useRef(false);
   const historyScrollTopRef = useRef(0);
   // 渲染期镜像 chat.messages：跳转的 setTimeout 回调里读它，避免拿到陈旧的数组闭包。
   const latestMessagesRef = useRef(chat.messages);
@@ -57,9 +64,19 @@ function ChatApp() {
     const el = scrollerRef.current; if (!el) return; const messages = chat.messages; const count = messages.length; const lastId = messages[count - 1]?.id ?? null;
     if (!didInitialScrollRef.current && count > 0) {
       didInitialScrollRef.current = true; prevLastIdRef.current = lastId;
-      // 首屏贴底：先按估算滚一次，等 measureElement 提交后 rAF 再校正到真实底部。
-      virtualizer.scrollToIndex(count - 1, { align: 'end' });
-      window.requestAnimationFrame(() => { if (scrollerRef.current) virtualizer.scrollToIndex(count - 1, { align: 'end' }); });
+      if (initialViewState.stickToBottom) {
+        virtualizer.scrollToIndex(count - 1, { align: 'end' });
+        window.requestAnimationFrame(() => {
+          if (scrollerRef.current) virtualizer.scrollToIndex(count - 1, { align: 'end' });
+        });
+      } else {
+        const restore = () => {
+          const current = scrollerRef.current;
+          if (current) current.scrollTop = restoredScrollTop(current, initialViewState);
+        };
+        restore();
+        window.requestAnimationFrame(restore);
+      }
       return;
     }
     const appended = countAppended(messages, prevLastIdRef.current);
@@ -69,6 +86,9 @@ function ChatApp() {
     prevLastIdRef.current = lastId;
   }, [chat.messages]);
 
+  useEffect(() => () => {
+    viewStateRef.current = captureChatViewState(scrollerRef.current, stickToBottomRef.current);
+  }, [viewStateRef]);
   useEffect(() => { const scroller = scrollerRef.current; const content = messagesRef.current; if (!scroller || !content || typeof ResizeObserver === 'undefined') return; const observer = new ResizeObserver(() => { if (!loadingOlderRef.current && stickToBottomRef.current) scroller.scrollTop = scroller.scrollHeight; }); observer.observe(content); return () => observer.disconnect(); }, []);
   useEffect(() => { const sentinel = sentinelRef.current; const scroller = scrollerRef.current; if (!sentinel || !scroller) return; const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting && chat.hasMore && !chat.loadingOlder) { loadingOlderRef.current = true; prevTotalSizeRef.current = virtualizer.getTotalSize(); void chat.loadOlder().then((added) => { if (!added) { loadingOlderRef.current = false; prevTotalSizeRef.current = virtualizer.getTotalSize(); } }); } }, { root: scroller, rootMargin: '120px 0px 0px 0px' }); observer.observe(sentinel); return () => observer.disconnect(); }, [chat.hasMore, chat.loadOlder, chat.loadingOlder]);
   useEffect(() => {
@@ -172,4 +192,3 @@ function BootstrapSkeleton() {
 
 function countAppended(messages: ChatMessage[], prevLastId: string | null): number { if (!messages.length) return 0; if (!prevLastId) return messages.length; const index = messages.findIndex((message) => message.id === prevLastId); return index < 0 ? 0 : messages.length - 1 - index; }
 function hasStreamingBubble(messages: ChatMessage[]): boolean { const last = messages[messages.length - 1]; return !!last && last.role === 'assistant' && last.status === 'sending'; }
-
