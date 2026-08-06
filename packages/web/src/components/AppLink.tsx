@@ -1,5 +1,5 @@
 import type { ComponentPropsWithoutRef, MouseEvent } from 'react';
-import { navigate } from '../lib/navigation.js';
+import { isAppNavigationUrl, navigate } from '../lib/navigation.js';
 export type AppLinkProps = Omit<ComponentPropsWithoutRef<'a'>, 'href'> & { href: string; replace?: boolean };
 export function AppLink({ href, replace = false, onClick, target, download, ...rest }: AppLinkProps) {
   const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -9,7 +9,7 @@ export function AppLink({ href, replace = false, onClick, target, download, ...r
     if (download !== undefined && download !== false) return;
     if (target && target !== '_self') return;
     const destination = new URL(href, window.location.href);
-    if (destination.origin !== window.location.origin) return;
+    if (!isAppNavigationUrl(destination)) return;
     event.preventDefault();
     navigate(destination.href, { replace });
   };

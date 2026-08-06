@@ -23,6 +23,16 @@ function RouteProbe() {
   return <output data-testid="route">{route}</output>;
 }
 
+function dispatchNativeClick(link: HTMLAnchorElement, init: MouseEventInit): boolean {
+  let defaultPreventedByApp = true;
+  document.addEventListener('click', (event) => {
+    defaultPreventedByApp = event.defaultPrevented;
+    event.preventDefault();
+  }, { once: true });
+  link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...init }));
+  return defaultPreventedByApp;
+}
+
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   container?.remove();
@@ -59,24 +69,43 @@ describe('AppLink', () => {
 
   it.each([
     [{ href: 'https://example.com/x' }, { button: 0 }],
+    [{ href: `blob:${window.location.origin}/app-link-test` }, { button: 0 }],
     [{ href: '/gallery', target: '_blank' }, { button: 0 }],
     [{ href: '/gallery', download: true }, { button: 0 }],
     [{ href: '/gallery' }, { button: 0, ctrlKey: true }],
+    [{ href: '/gallery' }, { button: 0, metaKey: true }],
+    [{ href: '/gallery' }, { button: 0, shiftKey: true }],
+    [{ href: '/gallery' }, { button: 0, altKey: true }],
     [{ href: '/gallery' }, { button: 1 }]
   ] as const)('不接管浏览器原生点击 %#', async (props, init) => {
     const host = await render(<AppLink {...props}>目标</AppLink>);
     const push = vi.spyOn(window.history, 'pushState');
-    const event = new MouseEvent('click', { bubbles: true, cancelable: true, ...init });
-    host.querySelector('a')!.dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(false);
+    const defaultPreventedByApp = dispatchNativeClick(host.querySelector('a')!, init);
+    expect(defaultPreventedByApp).toBe(false);
     expect(push).not.toHaveBeenCalled();
   });
 });
 
 describe('navigate 与浏览器历史', () => {
-  it('支持 replaceState 和 popstate', async () => {
+  it.each([
+    'https://example.com/x',
+    `blob:${window.location.origin}/navigation-test`
+  ])('拒绝跨域或非 HTTP(S) 目标 %s', (href) => {
+    const push = vi.spyOn(window.history, 'pushState');
+    const replace = vi.spyOn(window.history, 'replaceState');
+    expect(() => navigate(href)).toThrow(TypeError);
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('支持 replaceState、history state 和 popstate', async () => {
     const host = await render(<RouteProbe />);
-    await act(async () => { navigate('/gallery', { replace: true }); });
+    const replace = vi.spyOn(window.history, 'replaceState');
+    const push = vi.spyOn(window.history, 'pushState');
+    const state = { source: 'navigation-test' };
+    await act(async () => { navigate('/gallery', { replace: true, state }); });
+    expect(replace).toHaveBeenCalledWith(state, '', '/gallery');
+    expect(push).not.toHaveBeenCalled();
     expect(host.textContent).toBe('gallery');
     window.history.pushState(null, '', '/admin/models');
     await act(async () => { window.dispatchEvent(new PopStateEvent('popstate')); });
