@@ -86,7 +86,7 @@ export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewSta
     prevLastIdRef.current = lastId;
   }, [chat.messages]);
 
-  useEffect(() => () => {
+  useLayoutEffect(() => () => {
     viewStateRef.current = captureChatViewState(scrollerRef.current, stickToBottomRef.current);
   }, [viewStateRef]);
   useEffect(() => { const scroller = scrollerRef.current; const content = messagesRef.current; if (!scroller || !content || typeof ResizeObserver === 'undefined') return; const observer = new ResizeObserver(() => { if (!loadingOlderRef.current && stickToBottomRef.current) scroller.scrollTop = scroller.scrollHeight; }); observer.observe(content); return () => observer.disconnect(); }, []);
