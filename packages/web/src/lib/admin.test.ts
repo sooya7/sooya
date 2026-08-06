@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './admin.js';
 import { ApiError, getToken, setToken } from './api.js';
+import { acquireAuthenticatedMedia, clearMediaCache, takeCachedMedia } from './authenticatedMedia.js';
 import type { ModelPreset } from './modelPresets.js';
 
 interface Call {
@@ -48,9 +49,10 @@ function denyStorage(method: 'getItem' | 'setItem' | 'removeItem') {
 }
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  clearMediaCache();
   clearAdminToken();
   localStorage.clear();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -100,6 +102,31 @@ describe('admin 令牌存取', () => {
 
     expect(() => clearAdminToken()).not.toThrow();
     expect(spy).toHaveBeenCalledWith('sooya.admin-token');
+  });
+
+  it('管理令牌只在值变化或清除时失效 admin 媒体缓存', async () => {
+    let created = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:admin-token-${++created}`);
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['image'], { type: 'image/png' }), {
+      status: 200,
+      headers: { 'content-type': 'image/png' }
+    })));
+    setToken('user-secret');
+    setAdminToken('admin-secret');
+    await acquireAuthenticatedMedia('/api/media/user-admin-test', { scope: 'user', token: 'user-secret', expected: 'image' });
+    await acquireAuthenticatedMedia('/api/media/admin-admin-test', { scope: 'admin', token: 'admin-secret', expected: 'image' });
+
+    setAdminToken('admin-secret');
+    expect(takeCachedMedia('/api/media/admin-admin-test', { scope: 'admin', expected: 'image' })).not.toBeNull();
+
+    setAdminToken('next-secret');
+    expect(takeCachedMedia('/api/media/admin-admin-test', { scope: 'admin', expected: 'image' })).toBeNull();
+    expect(takeCachedMedia('/api/media/user-admin-test', { scope: 'user', expected: 'image' })).not.toBeNull();
+
+    await acquireAuthenticatedMedia('/api/media/admin-after-replace', { scope: 'admin', token: 'next-secret', expected: 'image' });
+    clearAdminToken();
+    expect(takeCachedMedia('/api/media/admin-after-replace', { scope: 'admin', expected: 'image' })).toBeNull();
   });
 
   it('读令牌抛异常时请求照常发出，只是不带鉴权头', async () => {

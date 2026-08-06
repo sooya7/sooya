@@ -1,13 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { requestPushApi } from './pushApi.js';
-import { setToken } from './api.js';
-
-// `setToken` only takes a string — there is no clear() — so drop the key directly.
-const clearToken = () => window.localStorage.removeItem('sooya.token');
+import { clearToken, setToken } from './api.js';
 
 afterEach(() => {
   clearToken();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 

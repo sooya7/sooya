@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError, getToken, mediaUrl, setToken } from './api.js';
-import * as apiModule from './api.js';
+import { api, ApiError, clearToken, getToken, mediaUrl, setToken } from './api.js';
 import { clearAdminToken, getAdminToken, setAdminToken } from './admin.js';
+import { acquireAuthenticatedMedia, clearMediaCache, takeCachedMedia } from './authenticatedMedia.js';
 
 interface Call {
   url: string;
@@ -53,9 +53,10 @@ function formEntries(body: BodyInit | null | undefined): Array<[string, string]>
 }
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  clearMediaCache();
   clearAdminToken();
   localStorage.clear();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -96,10 +97,30 @@ describe('用户令牌存取', () => {
     expect(spy).toHaveBeenCalledWith('sooya.token', 'user-secret');
   });
 
-  it('api.ts 不提供清除令牌的函数（与 admin.ts 的 clearAdminToken 不同）', () => {
-    expect(typeof apiModule.getToken).toBe('function');
-    expect(typeof apiModule.setToken).toBe('function');
-    expect(Object.keys(apiModule).some((name) => /^clear/.test(name))).toBe(false);
+  it('用户令牌只在值变化或清除时失效 user 媒体缓存', async () => {
+    let created = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:token-${++created}`);
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['image'], { type: 'image/png' }), {
+      status: 200,
+      headers: { 'content-type': 'image/png' }
+    })));
+    setToken('user-secret');
+    setAdminToken('admin-secret');
+    await acquireAuthenticatedMedia('/api/media/user-token-test', { scope: 'user', token: 'user-secret', expected: 'image' });
+    await acquireAuthenticatedMedia('/api/media/admin-token-test', { scope: 'admin', token: 'admin-secret', expected: 'image' });
+
+    setToken('user-secret');
+    expect(takeCachedMedia('/api/media/user-token-test', { scope: 'user', expected: 'image' })).not.toBeNull();
+
+    setToken('next-secret');
+    expect(takeCachedMedia('/api/media/user-token-test', { scope: 'user', expected: 'image' })).toBeNull();
+    expect(takeCachedMedia('/api/media/admin-token-test', { scope: 'admin', expected: 'image' })).not.toBeNull();
+
+    await acquireAuthenticatedMedia('/api/media/user-after-replace', { scope: 'user', token: 'next-secret', expected: 'image' });
+    clearToken();
+    expect(getToken()).toBeNull();
+    expect(takeCachedMedia('/api/media/user-after-replace', { scope: 'user', expected: 'image' })).toBeNull();
   });
 });
 
