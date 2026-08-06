@@ -260,6 +260,16 @@ button {
   opacity: 0.9;
 }
 
+.messages-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+[data-testid='streaming-draft'] {
+  min-width: 0;
+}
+
 .messages {
   display: flex;
   flex-direction: column;

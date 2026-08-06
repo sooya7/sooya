@@ -87,27 +87,28 @@ test('sends text and receives a streamed reply', async ({ page }) => {
   expect(await page.textContent('body')).not.toContain('[[');
 });
 
-test('shows incremental streaming before the reply completes', async ({ page }) => {
+test('shows an isolated streaming draft before committing the final reply', async ({ page }) => {
   await control({ queue: ['一二三四五六七八九十，这是一段比较长的流式回复内容。'], chunkDelayMs: 200 });
   await page.goto('/');
   await send(page, '慢慢说');
 
-  // A partial bubble must appear while the message is still "sending".
-  await expect
-    .poll(
-      async () => {
-        const rows = page.locator('[data-testid="message"][data-role="assistant"]');
-        if ((await rows.count()) === 0) return false;
-        const last = rows.last();
-        const status = await last.getAttribute('data-status');
-        const text = (await last.textContent()) ?? '';
-        return status === 'sending' && text.includes('一二三');
-      },
-      { timeout: 15_000 }
-    )
-    .toBe(true);
+  const finalized = page.locator('.messages.virtualized [data-testid="message"][data-role="assistant"]');
+  const finalizedBefore = await finalized.count();
+  const draft = page.getByTestId('streaming-draft');
+  await expect.poll(async () => ({
+    draft: await draft.textContent().catch(() => null),
+    finalized: await finalized.count(),
+    typing: await page.getByTestId('typing-indicator').count()
+  }), { timeout: 15_000 }).toEqual({
+    draft: expect.stringContaining('一二三'),
+    finalized: finalizedBefore,
+    typing: 0
+  });
 
   await waitForReply(page);
+  await expect(draft).toHaveCount(0);
+  await expect(page.locator('[data-testid="message"][data-role="assistant"]').last())
+    .toContainText('一二三四五六七八九十，这是一段比较长的流式回复内容。');
 });
 
 test('SOOYA sends a sticker', async ({ page }) => {

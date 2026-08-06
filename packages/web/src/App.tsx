@@ -168,6 +168,22 @@ export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewSta
   }, [chat.ensureQuotedMessage, chat.messages]);
   const action = async (work: () => Promise<unknown>, success?: string) => { try { await work(); if (success) setNotice(success); } catch (error) { setNotice((error as Error).message); } };
   const statusLabel = chat.connection === 'online' ? chat.activity.thinking ? chat.activity.label ?? '正在输入' : '在线' : chat.connection === 'connecting' ? '连接中…' : chat.connection === 'unauthorized' ? '需要访问令牌' : '连接已断开，正在重试';
+  const streamingMessage = useMemo<ChatMessage | null>(() => chat.streamingDraft ? {
+    id: chat.streamingDraft.id,
+    conversationId: 'main',
+    role: 'assistant',
+    createdAt: chat.streamingDraft.createdAt,
+    updatedAt: chat.streamingDraft.createdAt,
+    seq: Number.MAX_SAFE_INTEGER,
+    status: 'sending',
+    replyTo: null,
+    content: [{
+      id: `draft_${chat.streamingDraft.id}`,
+      type: 'text',
+      text: chat.streamingDraft.text,
+      status: 'pending'
+    }]
+  } : null, [chat.streamingDraft]);
 
   if (chat.connection === 'unauthorized') return <div className="gate"><div className="gate-card"><h1>SOOYA</h1><p>这台服务器需要访问令牌。</p><input type="password" value={tokenInput} placeholder="WEB_CHAT_TOKEN" onChange={(e) => setTokenInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && tokenInput.trim()) { setToken(tokenInput.trim()); location.reload(); } }} /><button type="button" onClick={() => { if (tokenInput.trim()) { setToken(tokenInput.trim()); location.reload(); } }}>进入</button></div></div>;
 
@@ -178,7 +194,67 @@ export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewSta
     <header className="topbar"><div className="topbar-identity"><img className="topbar-avatar" src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /><div className="topbar-text"><span className="topbar-name">{persona?.name ?? 'SOOYA'}</span><span className={`topbar-status ${chat.connection}`} data-testid="connection-status"><span className="status-dot" />{statusLabel}</span>{chat.connection === 'online' && chat.life && <span className="topbar-life" data-testid="life-activity" title={`心情${chat.life.mood}`}>{chat.life.activity}</span>}</div></div><NotificationBridge /><button type="button" className="history-tool-button" aria-label="搜索和日期跳转" onClick={() => { historyScrollTopRef.current = scrollerRef.current?.scrollTop ?? 0; setHistoryOpen((value) => !value); }} data-testid="history-tools">⌕</button><AppLink className="topbar-admin-entry" href="/admin/features" aria-label="进入功能管理中心" data-testid="admin-entry"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-testid="admin-entry-icon" data-icon-style="six-tooth"><circle cx="12" cy="12" r="3.35" /><path d="M12 2.8v2.1" /><path d="m19.97 7.4-1.82 1.05" /><path d="m19.97 16.6-1.82-1.05" /><path d="M12 21.2v-2.1" /><path d="m4.03 16.6 1.82 1.05" /><path d="m19.97 7.4 1.82 1.05" /></svg></AppLink></header>
     {historyOpen && <section className="history-tools" aria-label="聊天历史工具" data-testid="history-tools-panel"><form onSubmit={(event) => { event.preventDefault(); void runSearch(); }}><input aria-label="搜索消息" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="搜索聊天内容" /><button type="submit" disabled={historyBusy}>搜索</button></form><div className="history-date-row"><input type="date" aria-label="按日期跳转" value={dateQuery} onChange={(event) => setDateQuery(event.target.value)} /><button type="button" disabled={historyBusy || !dateQuery} onClick={() => void runDateJump()}>跳转</button></div>{searchHits.length > 0 && <div className="history-results"><span>找到 {searchHits.length} 条 · {searchIndex + 1}/{searchHits.length}</span><button type="button" onClick={() => void jumpSearch(searchIndex - 1)}>上一个</button><button type="button" onClick={() => void jumpSearch(searchIndex + 1)}>下一个</button><span className="history-snippet">{searchHits[searchIndex]?.snippet}</span></div>}{historyError && <div className="history-error" role="alert">{historyError}</div>}<button type="button" className="history-clear" onClick={clearHistoryTools}>清除并返回原位置</button></section>}
     <div className="scroller" ref={scrollerRef} onScroll={handleScroll} data-testid="scroller"><div ref={sentinelRef} className="load-sentinel" />{!chat.ready && <BootstrapSkeleton />}{chat.ready && chat.connection === 'offline' && chat.messages.length === 0 && chat.error && <div className="bootstrap-error" role="alert"><strong>聊天暂时无法打开</strong><span>{chat.error}</span><button type="button" onClick={() => void chat.reload()}>重新连接</button></div>}{chat.loadingOlder && <div className="history-hint">正在加载更早的消息…</div>}{!chat.hasMore && chat.ready && chat.messages.length > 0 && <div className="history-hint muted">这是你们聊天的开始</div>}{chat.ready && chat.messages.length === 0 && chat.connection !== 'offline' && <div className="empty-state"><img src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /><p>和 {persona?.name ?? 'SOOYA'} 说点什么吧</p></div>}
-      <div className="messages virtualized" ref={messagesRef} style={{ height: virtualizer.getTotalSize() }}>{virtualizer.getVirtualItems().map((vi) => { const message = chat.messages[vi.index]; if (!message) return null; const prev = chat.messages[vi.index - 1] ?? null; const showAvatar = shouldStartMessageGroup(prev, message, timeZone); const showDate = shouldStartDateSeparator(prev, message, timeZone); const quoted = message.replyTo ? byId.get(message.replyTo) ?? chat.quotedStates[message.replyTo]?.message ?? null : null; const quotedStatus = message.replyTo ? chat.quotedStates[message.replyTo]?.status : undefined; return <div key={vi.key} data-index={vi.index} ref={virtualizer.measureElement} style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)`, paddingBottom: 10 }}>{showDate && <DateSeparator iso={message.createdAt} timeZone={timeZone} />}<MessageItem message={message} previousId={prev?.id ?? null} highlightQuery={searchQuery} highlighted={message.id === highlightedId} highlightNonce={highlightNonce} quoted={quoted} quotedStatus={quotedStatus} onQuotedClick={jumpToMessage} quotedLabel={message.replyTo ? quotedLabel(quoted, persona?.name ?? 'SOOYA') : ''} personaName={persona?.name ?? 'SOOYA'} avatar={persona?.avatar ?? '/avatars/sooya.svg'} userAvatar={persona?.userAvatar ?? '/avatars/user.svg'} showAvatar={showAvatar} timeZone={timeZone} onRetry={(m) => void action(() => { setNotice('正在重试'); return chat.retryFailed(m); })} onResend={(m) => void action(() => chat.sendAgain(m), '已再次发送')} onQuote={setQuote} onWithdraw={(m) => void action(() => chat.withdraw(m), '消息已撤回并保留上下文占位')} onNotice={setNotice} onOpenImage={(id) => window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id } }))} /></div>; })}</div>{chat.activity.thinking && !hasStreamingBubble(chat.messages) && <div className="msg-row theirs" data-testid="typing-indicator"><div className="avatar-slot"><img className="avatar" src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /></div><div className="msg-body"><div className="bubble bubble-text theirs typing"><span className="typing-dots"><i /><i /><i /></span></div></div></div>}<div ref={bottomRef} className="bottom-anchor" /></div>
+      <div className="messages-stack" ref={messagesRef}>
+        <div className="messages virtualized" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualizer.getVirtualItems().map((vi) => {
+            const message = chat.messages[vi.index];
+            if (!message) return null;
+            const prev = chat.messages[vi.index - 1] ?? null;
+            const showAvatar = shouldStartMessageGroup(prev, message, timeZone);
+            const showDate = shouldStartDateSeparator(prev, message, timeZone);
+            const quoted = message.replyTo ? byId.get(message.replyTo) ?? chat.quotedStates[message.replyTo]?.message ?? null : null;
+            const quotedStatus = message.replyTo ? chat.quotedStates[message.replyTo]?.status : undefined;
+            return (
+              <div key={vi.key} data-index={vi.index} ref={virtualizer.measureElement} style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${vi.start}px)`, paddingBottom: 10 }}>
+                {showDate && <DateSeparator iso={message.createdAt} timeZone={timeZone} />}
+                <MessageItem
+                  message={message}
+                  previousId={prev?.id ?? null}
+                  highlightQuery={searchQuery}
+                  highlighted={message.id === highlightedId}
+                  highlightNonce={highlightNonce}
+                  quoted={quoted}
+                  quotedStatus={quotedStatus}
+                  onQuotedClick={jumpToMessage}
+                  quotedLabel={message.replyTo ? quotedLabel(quoted, persona?.name ?? 'SOOYA') : ''}
+                  personaName={persona?.name ?? 'SOOYA'}
+                  avatar={persona?.avatar ?? '/avatars/sooya.svg'}
+                  userAvatar={persona?.userAvatar ?? '/avatars/user.svg'}
+                  showAvatar={showAvatar}
+                  timeZone={timeZone}
+                  onRetry={(m) => void action(() => { setNotice('正在重试'); return chat.retryFailed(m); })}
+                  onResend={(m) => void action(() => chat.sendAgain(m), '已再次发送')}
+                  onQuote={setQuote}
+                  onWithdraw={(m) => void action(() => chat.withdraw(m), '消息已撤回并保留上下文占位')}
+                  onNotice={setNotice}
+                  onOpenImage={(id) => window.dispatchEvent(new CustomEvent('sooya:open-image', { detail: { id } }))}
+                />
+              </div>
+            );
+          })}
+        </div>
+        {streamingMessage && (
+          <div data-testid="streaming-draft">
+            <MessageItem
+              message={streamingMessage}
+              previousId={chat.messages.at(-1)?.id ?? null}
+              personaName={persona?.name ?? 'SOOYA'}
+              avatar={persona?.avatar ?? '/avatars/sooya.svg'}
+              userAvatar={persona?.userAvatar ?? '/avatars/user.svg'}
+              showAvatar={shouldStartMessageGroup(chat.messages.at(-1) ?? null, streamingMessage, timeZone)}
+              timeZone={timeZone}
+            />
+          </div>
+        )}
+        {chat.activity.thinking && !streamingMessage && (
+          <div className="msg-row theirs" data-testid="typing-indicator">
+            <div className="avatar-slot"><img className="avatar" src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" /></div>
+            <div className="msg-body"><div className="bubble bubble-text theirs typing"><span className="typing-dots"><i /><i /><i /></span></div></div>
+          </div>
+        )}
+      </div>
+      <div ref={bottomRef} className="bottom-anchor" />
+    </div>
     {unread > 0 && !stickToBottom && <button type="button" className="unread-pill" data-testid="unread-pill" onClick={jumpToBottom}>{unread} 条新消息 ↓</button>}
     {swUpdate && <div className="sw-update" role="status" data-testid="sw-update"><span>有新版本可用</span><button type="button" className="sw-update-accept" onClick={() => { swUpdate.accept(); setSwUpdate(null); }}>立即更新</button><button type="button" className="sw-update-later" onClick={() => { swUpdate.dismiss(); setSwUpdate(null); }}>稍后</button></div>}
     {notice && <div className="toast" role="status"><span>{notice}</span><button type="button" className="toast-close" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button></div>}
@@ -192,4 +268,3 @@ function BootstrapSkeleton() {
 }
 
 function countAppended(messages: ChatMessage[], prevLastId: string | null): number { if (!messages.length) return 0; if (!prevLastId) return messages.length; const index = messages.findIndex((message) => message.id === prevLastId); return index < 0 ? 0 : messages.length - 1 - index; }
-function hasStreamingBubble(messages: ChatMessage[]): boolean { const last = messages[messages.length - 1]; return !!last && last.role === 'assistant' && last.status === 'sending'; }
