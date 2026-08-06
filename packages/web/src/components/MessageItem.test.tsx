@@ -190,7 +190,7 @@ describe('MessageItem 图片占位', () => {
     expect(open).not.toHaveBeenCalled();
 
     await act(async () => {
-      resolveFetch(new Response(new Blob(['image'], { type: 'image/png' }), {
+      resolveFetch(new Response(new Uint8Array([137, 80, 78, 71]), {
         status: 200,
         headers: { 'content-type': 'image/png' }
       }));
@@ -206,7 +206,7 @@ describe('MessageItem 图片占位', () => {
   });
 
   it('缺失或非法尺寸元数据时使用 4:3 默认占位', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['image'], { type: 'image/png' }), {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([137, 80, 78, 71]), {
       status: 200,
       headers: { 'content-type': 'image/png' }
     })));
