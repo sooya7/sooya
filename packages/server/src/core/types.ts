@@ -31,6 +31,18 @@ export const SendMessageSchema = z.object({
 });
 export type SendMessageInput = z.infer<typeof SendMessageSchema>;
 
-export type StreamEventType = 'message.received' | 'reply.queued' | 'reply.thinking' | 'reply.text.delta' | 'reply.text.done' | 'reply.sticker.selecting' | 'reply.image.generating' | 'reply.audio.generating' | 'reply.content.done' | 'reply.media.saved' | 'reply.completed' | 'reply.failed' | 'message.updated' | 'media.updated' | 'memory.updated' | 'persona.updated' | 'life.updated' | 'push.updated' | 'storage.updated' | 'system.notice' | 'ping';
+/** Structured, non-character failure surfaced as a system card (never as her words). */
+export type ReplyFailureCode = 'model_timeout' | 'provider_unavailable' | 'rate_limited' | 'internal_error';
+export interface ReplyFailure {
+  batchId: string;
+  revision: number;
+  code: ReplyFailureCode;
+  retryable: boolean;
+  message: string;
+}
+
+export type StreamEventType = 'message.received' | 'reply.queued' | 'reply.thinking' | 'reply.text.delta' | 'reply.text.done' | 'reply.sticker.selecting' | 'reply.image.generating' | 'reply.audio.generating' | 'reply.content.done' | 'reply.media.saved' | 'reply.completed' | 'reply.failed' | 'message.updated' | 'media.updated' | 'memory.updated' | 'persona.updated' | 'life.updated' | 'push.updated' | 'storage.updated' | 'system.notice' | 'ping'
+  | 'reply.batch.collecting' | 'reply.batch.queued' | 'reply.generation.started' | 'reply.generation.interrupted' | 'reply.generation.retrying' | 'reply.publishing.started' | 'reply.publishing.partial' | 'reply.superseded'
+  | 'voice.plan.created' | 'voice.script.completed' | 'voice.synthesis.started' | 'voice.synthesis.completed' | 'voice.synthesis.failed' | 'voice.generation.superseded' | 'voice.published' | 'voice.cancelled';
 export interface StreamEvent { id: string; seq: number; type: StreamEventType; createdAt: string; payload: Record<string, unknown>; }
 export interface MemoryRecord { id: string; kind: 'profile' | 'preference' | 'relationship' | 'project' | 'event' | 'summary'; content: string; importance: number; confidence: number; createdAt: string; updatedAt: string; expiresAt?: string | null; hits: number; sources: string[]; hasEmbedding: boolean; supersedesId: string | null; supersededById: string | null; archivedAt: string | null; }

@@ -255,6 +255,12 @@ export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewSta
       </div>
       <div ref={bottomRef} className="bottom-anchor" />
     </div>
+    {Object.values(chat.replyFailures).map((failure) => (
+      <div className={`reply-failure-card${failure.partial ? ' partial' : ''}`} key={`${failure.batchId}:${failure.revision}`} role="status" data-testid="reply-failure-card">
+        <span>{failure.message}</span>
+        {failure.retryable && <button type="button" onClick={() => void action(() => chat.retryReply(failure.batchId))}>重新生成</button>}
+      </div>
+    ))}
     {unread > 0 && !stickToBottom && <button type="button" className="unread-pill" data-testid="unread-pill" onClick={jumpToBottom}>{unread} 条新消息 ↓</button>}
     {swUpdate && <div className="sw-update" role="status" data-testid="sw-update"><span>有新版本可用</span><button type="button" className="sw-update-accept" onClick={() => { swUpdate.accept(); setSwUpdate(null); }}>立即更新</button><button type="button" className="sw-update-later" onClick={() => { swUpdate.dismiss(); setSwUpdate(null); }}>稍后</button></div>}
     {notice && <div className="toast" role="status"><span>{notice}</span><button type="button" className="toast-close" aria-label="关闭提示" onClick={() => setNotice(null)}>×</button></div>}

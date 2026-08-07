@@ -1,5 +1,6 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { combineAbortSignals } from './abort.js';
 
 export class SsrfError extends Error {
   override name = 'SsrfError';
@@ -47,6 +48,8 @@ export interface SafeFetchOptions extends RequestInit {
   allowPrivateNetwork?: boolean;
   /** When true, resolves DNS and rejects private addresses (default true). */
   ssrfGuard?: boolean;
+  /** External cancellation. The abort reason is preserved through the fetch. */
+  signal?: AbortSignal;
 }
 
 /** Validate an outbound URL against SSRF rules. Throws SsrfError. */
@@ -82,81 +85,47 @@ export async function assertSafeUrl(rawUrl: string, allowPrivateNetwork = false)
   return url;
 }
 
-/** fetch with timeout, size cap and SSRF guard. */
-export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Promise<{ response: Response; body: Buffer }> {
-  const { timeoutMs = 20_000, maxBytes = 15 * 1024 * 1024, allowPrivateNetwork = false, ssrfGuard = true, ...init } = opts;
-  if (ssrfGuard) await assertSafeUrl(rawUrl, allowPrivateNetwork);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new HttpTimeoutError(`request timed out after ${timeoutMs}ms`)), timeoutMs);
-  let response: Response;
-  try {
-    response = await fetch(rawUrl, { ...init, signal: controller.signal, redirect: 'manual' });
-  } catch (err) {
-    clearTimeout(timer);
-    if ((err as Error).name === 'AbortError' || err instanceof HttpTimeoutError) {
-      throw new HttpTimeoutError(`request timed out after ${timeoutMs}ms`);
-    }
-    throw err;
-  }
-  try {
-    // Manual redirect handling so every hop is SSRF-checked.
-    let hops = 0;
-    while (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
-      if (++hops > 3) throw new SsrfError('too many redirects');
-      const next = new URL(response.headers.get('location')!, rawUrl).toString();
-      if (ssrfGuard) await assertSafeUrl(next, allowPrivateNetwork);
-      response = await fetch(next, { ...init, signal: controller.signal, redirect: 'manual' });
-    }
-    const declared = Number(response.headers.get('content-length') ?? '0');
-    if (declared && declared > maxBytes) throw new HttpSizeError(`response too large: ${declared} > ${maxBytes}`);
-    const body = await readCapped(response, maxBytes);
-    return { response, body };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function readCapped(response: Response, maxBytes: number): Promise<Buffer> {
-  if (!response.body) return Buffer.alloc(0);
-  const reader = response.body.getReader();
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        throw new HttpSizeError(`response exceeded ${maxBytes} bytes`);
-      }
-      chunks.push(Buffer.from(value));
-    }
-  }
-  return Buffer.concat(chunks);
-}
-
 export interface RetryOptions {
-  retries: number;
+  retries?: number;
   baseDelayMs?: number;
+  /** Retry only these statuses; `null`/undefined falls back to defaultRetryable. */
+  retryStatuses?: number[] | null;
+  signal?: AbortSignal;
   onRetry?: (attempt: number, error: Error) => void;
   isRetryable?: (error: Error) => boolean;
-  signal?: AbortSignal;
 }
 
+/** Retry with exponential backoff + jitter. Cancellable mid-delay. */
 export async function withRetry<T>(fn: (attempt: number) => Promise<T>, opts: RetryOptions): Promise<T> {
-  const { retries, baseDelayMs = 400, onRetry, isRetryable = defaultRetryable } = opts;
-  let lastError: Error | undefined;
+  const retries = opts.retries ?? 0;
+  const baseDelayMs = opts.baseDelayMs ?? 300;
+  const isRetryable = opts.isRetryable ?? ((err: Error) => {
+    if (opts.retryStatuses) {
+      const status = (err as { status?: number }).status;
+      return typeof status === 'number' && opts.retryStatuses.includes(status);
+    }
+    return defaultRetryable(err);
+  });
+  let lastError: Error | null = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await fn(attempt);
     } catch (err) {
       lastError = err as Error;
       if (attempt === retries || !isRetryable(lastError)) throw lastError;
-      onRetry?.(attempt + 1, lastError);
+      opts.onRetry?.(attempt + 1, lastError);
       const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 100;
-      await new Promise((r) => setTimeout(r, delay));
-      if (opts.signal?.aborted) throw lastError;
+      await new Promise<void>((resolve, reject) => {
+        if (opts.signal?.aborted) {
+          reject(opts.signal.reason ?? new Error('aborted'));
+          return;
+        }
+        const timer = setTimeout(resolve, delay);
+        opts.signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(opts.signal?.reason ?? new Error('aborted'));
+        }, { once: true });
+      });
     }
   }
   throw lastError ?? new Error('retry failed');
@@ -171,4 +140,78 @@ export function defaultRetryable(err: Error): boolean {
   if (msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('socket hang up') || msg.includes('fetch failed'))
     return true;
   return false;
+}
+
+const TIMEOUT_RE = /timed out after \d+ms/;
+
+export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Promise<{ response: Response; body: Buffer }> {
+  const { timeoutMs = 20_000, maxBytes = 15 * 1024 * 1024, allowPrivateNetwork = false, ssrfGuard = true, signal: external, ...init } = opts;
+  if (ssrfGuard) await assertSafeUrl(rawUrl, allowPrivateNetwork);
+  const timeoutController = new AbortController();
+  const timer = setTimeout(
+    () => timeoutController.abort(new HttpTimeoutError(`request timed out after ${timeoutMs}ms`)),
+    timeoutMs
+  );
+  const signal = combineAbortSignals([external, timeoutController.signal]);
+  const isExternalAbort = () => Boolean(external?.aborted);
+  let response: Response;
+  try {
+    response = await fetch(rawUrl, { ...init, signal, redirect: 'manual' });
+  } catch (err) {
+    clearTimeout(timer);
+    if (isExternalAbort() && external?.reason instanceof Error) throw external.reason;
+    if (err instanceof HttpTimeoutError) throw err;
+    if (err instanceof Error && err.name === 'AbortError') {
+      // The timeout fired (or the combined signal was aborted without a reason).
+      throw new HttpTimeoutError(`request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  }
+  try {
+    // Manual redirect handling so every hop is SSRF-checked.
+    let hops = 0;
+    while (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
+      if (++hops > 3) throw new SsrfError('too many redirects');
+      const next = new URL(response.headers.get('location')!, rawUrl).toString();
+      if (ssrfGuard) await assertSafeUrl(next, allowPrivateNetwork);
+      response = await fetch(next, { ...init, signal, redirect: 'manual' });
+    }
+    const declared = Number(response.headers.get('content-length') ?? '0');
+    if (declared && declared > maxBytes) throw new HttpSizeError(`response too large: ${declared} > ${maxBytes}`);
+    const body = await readCapped(response, maxBytes, signal, external);
+    return { response, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readCapped(
+  response: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+  external?: AbortSignal
+): Promise<Buffer> {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) throw new HttpSizeError(`response too large: exceeded ${maxBytes} bytes`);
+      chunks.push(Buffer.from(value));
+    }
+  } catch (err) {
+    if (external?.aborted && external.reason instanceof Error) throw external.reason;
+    if (signal.aborted && err instanceof Error && err.name === 'AbortError' && !TIMEOUT_RE.test(String(signal.reason))) {
+      if (external?.aborted) throw external.reason ?? new Error('aborted');
+      throw new HttpTimeoutError('request aborted while reading body');
+    }
+    throw err;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks);
 }

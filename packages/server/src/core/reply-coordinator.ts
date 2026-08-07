@@ -1,21 +1,42 @@
 import type { EventBus } from '../events/bus.js';
 import type { MessageRepo } from '../db/repos/message.repo.js';
-import type { ReplyBatchRepo, ReplyBatchRow } from '../db/repos/reply-batch.repo.js';
-import type { ChatMessage } from './types.js';
+import type { ReplyBatchRepo, ReplyBatchRow, AppendAction } from '../db/repos/reply-batch.repo.js';
+import type { ChatMessage, ReplyFailure } from './types.js';
 import type { ReplyOptions, ReplyOutcome, Replier } from './replier.js';
 import { sortableId } from '../util/ids.js';
+import { abortableDelay, isBenignAbort, StaleGenerationError, UserInterruptedError } from '../util/abort.js';
+import { HttpTimeoutError } from '../util/http.js';
 
 const LEASE_MS = 120_000;
 const LEASE_HEARTBEAT_MS = 30_000;
 const MAX_COMPLETION_ATTEMPTS = 3;
 
+export interface AcceptUserMessageResult {
+  batchId: string;
+  revision: number;
+  action: AppendAction;
+}
+
 export interface ReplyCoordinatorOptions {
-  debounceMs?: number;
+  initialDebounceMs?: number;
+  interruptDebounceMs?: number;
+  maxCollectionMs?: number;
+  publishGraceMs?: number;
+  requestTimeoutMs?: number;
+  timeoutRetries?: number;
+  retryBaseDelayMs?: number;
+  interruptible?: boolean;
   messages: MessageRepo;
   batches: ReplyBatchRepo;
   replier: Replier;
   bus: EventBus;
-  onCompleted?: (batchId: string, userMessages: ChatMessage[], outcome: ReplyOutcome, owner: string) => void | Promise<void>;
+  onCompleted?: (
+    batchId: string,
+    userMessages: ChatMessage[],
+    outcome: ReplyOutcome,
+    owner: string,
+    revision: number
+  ) => void | Promise<void>;
 }
 
 interface BatchRuntime {
@@ -23,24 +44,93 @@ interface BatchRuntime {
   waiters: Array<{ resolve: (outcome: ReplyOutcome) => void; reject: (error: unknown) => void }>;
 }
 
-/** Serializes durable reply batches while keeping the collection debounce restart-safe. */
+interface ActiveGeneration {
+  batchId: string;
+  revision: number;
+  controller: AbortController;
+  startedAt: number;
+  attempt: number;
+  published: boolean;
+  firstTokenAt: number | null;
+}
+
+/**
+ * Serializes durable reply batches and owns the interruptible generation
+ * lifecycle:
+ *
+ *   collecting → queued → generating → publishing → completed
+ *                                ↘ superseded (benign, no failure UI)
+ *
+ * The publish barrier (`visible_at`) is the single line between "a newer
+ * message may silently replace this" and "this reply is out for good".
+ * Revision fencing in the database decides every race — aborting the HTTP
+ * request is only an optimization.
+ */
 export class ReplyCoordinator {
-  private readonly debounceMs: number;
+  private readonly initialDebounceMs: number;
+  private readonly interruptDebounceMs: number;
+  private readonly maxCollectionMs: number;
+  private readonly publishGraceMs: number;
+  private readonly requestTimeoutMs: number;
+  private readonly timeoutRetries: number;
+  private readonly retryBaseDelayMs: number;
+  private readonly interruptible: boolean;
+
   private readonly runtime = new Map<string, BatchRuntime>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly ready: string[] = [];
   private readonly readySet = new Set<string>();
+  private readonly activeGenerations = new Map<string, ActiveGeneration>();
   private running = false;
   private stopped = false;
   private readonly owner = sortableId('reply-worker');
 
   constructor(private readonly deps: ReplyCoordinatorOptions) {
-    const requested = deps.debounceMs ?? 900;
-    this.debounceMs = requested === 0 ? 0 : Math.max(500, Math.min(requested, 1500));
+    this.initialDebounceMs = deps.initialDebounceMs ?? 200;
+    this.interruptDebounceMs = deps.interruptDebounceMs ?? 300;
+    this.maxCollectionMs = deps.maxCollectionMs ?? 4000;
+    this.publishGraceMs = deps.publishGraceMs ?? 600;
+    this.requestTimeoutMs = deps.requestTimeoutMs ?? 45_000;
+    this.timeoutRetries = deps.timeoutRetries ?? 1;
+    this.retryBaseDelayMs = deps.retryBaseDelayMs ?? 600;
+    this.interruptible = deps.interruptible ?? true;
   }
 
-  dueAt(now = Date.now()): string {
-    return new Date(now + this.debounceMs).toISOString();
+  dueAt(now = Date.now(), interrupt = false): string {
+    const delay = interrupt ? this.interruptDebounceMs : this.initialDebounceMs;
+    return new Date(now + delay).toISOString();
+  }
+
+  /**
+   * Route-side admission hook. The transaction already appended the message to
+   * a batch (see ReplyBatchRepo.appendOrCreateMessage); this reacts to the
+   * action: abort hidden generations, reschedule with the right debounce.
+   */
+  async onMessageAccepted(action: AppendAction, batchId: string, options: ReplyOptions): Promise<void> {
+    const batch = this.deps.batches.get(batchId);
+    if (!batch) return;
+    const runtime = this.runtime.get(batchId) ?? { options, waiters: [] };
+    runtime.options = options;
+    this.runtime.set(batchId, runtime);
+
+    if (action === 'interrupt') {
+      this.interruptGeneration(batchId, 'new_user_message');
+      this.deps.bus.publish('reply.generation.interrupted', {
+        batchId,
+        revision: batch.revision,
+        reason: 'new_user_message'
+      });
+      this.schedule(batch, true);
+      return;
+    }
+    if (action === 'next_batch') {
+      this.deps.bus.publish('reply.batch.collecting', {
+        batchId,
+        revision: batch.revision,
+        messageCount: this.deps.batches.messageIds(batchId).length
+      });
+    }
+    this.schedule(batch, false);
   }
 
   enqueue(batchId: string, options: ReplyOptions): Promise<ReplyOutcome> {
@@ -52,63 +142,83 @@ export class ReplyCoordinator {
       current.options = options;
       current.waiters.push({ resolve, reject });
       this.runtime.set(batchId, current);
-      this.activate(batch);
-      const messageIds = this.deps.batches.messageIds(batchId);
-      this.deps.bus.publish('reply.queued', { count: messageIds.length, latestMessageId: messageIds.at(-1), batchId });
+      this.schedule(batch, false);
     });
   }
 
-  /** Re-queues persisted collecting/queued/running work after a process restart. */
+  /** Re-queues persisted open work after a process restart. */
   recover(options: ReplyOptions): void {
     for (const batch of this.deps.batches.recoverOpen()) {
       if (!this.runtime.has(batch.id)) this.runtime.set(batch.id, { options, waiters: [] });
-      this.activate(batch);
+      this.schedule(batch, false);
     }
+  }
+
+  /** Explicit user retry (failed / partial batches). */
+  async retryBatch(batchId: string): Promise<ReplyBatchRow | undefined> {
+    const batch = this.deps.batches.retry(batchId);
+    if (!batch) return undefined;
+    const options = this.runtime.get(batchId)?.options ?? { recentMessages: 24, memoryLimit: 8 };
+    const runtime = this.runtime.get(batchId) ?? { options, waiters: [] };
+    runtime.options = options;
+    this.runtime.set(batchId, runtime);
+    this.deps.bus.publish('reply.batch.queued', { batchId, revision: batch.revision });
+    this.schedule(batch, false);
+    return batch;
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+    for (const batchId of [...this.activeGenerations.keys()]) {
+      this.interruptGeneration(batchId, 'shutdown');
+    }
     const error = new Error('reply coordinator stopped');
-    for (const batch of this.runtime.values()) for (const waiter of batch.waiters) waiter.reject(error);
-    this.runtime.clear();
-    while (this.running) await new Promise((resolve) => setTimeout(resolve, 20));
+    for (const [batchId, runtime] of this.runtime) {
+      for (const waiter of runtime.waiters) waiter.reject(error);
+      this.runtime.delete(batchId);
+    }
   }
 
-  private activate(batch: ReplyBatchRow): void {
-    const previous = this.timers.get(batch.id);
-    if (previous) clearTimeout(previous);
-    this.timers.delete(batch.id);
-    if (batch.status === 'queued') {
-      this.makeReady(batch.id);
-      return;
+  private schedule(batch: ReplyBatchRow, interrupted: boolean): void {
+    if (this.stopped) return;
+    const existing = this.timers.get(batch.id);
+    if (existing) {
+      clearTimeout(existing);
+      this.timers.delete(batch.id);
     }
-    if (batch.status === 'running') {
-      const delay = Math.max(0, Date.parse(batch.lease_expires_at ?? new Date().toISOString()) - Date.now());
+    if (batch.status === 'collecting') {
+      const due = Date.parse(batch.due_at);
+      const now = Date.now();
+      // Max collection caps the TOTAL time this batch has been collecting,
+      // not just the current debounce window.
+      const sinceOpen = now - Date.parse(batch.opened_at);
+      const capLeft = Math.max(0, this.maxCollectionMs - sinceOpen);
+      const delay = Math.max(0, Math.min(due - now, capLeft));
       const timer = setTimeout(() => {
         this.timers.delete(batch.id);
-        if (this.deps.batches.recoverExpired(batch.id)) {
-          this.deps.messages.failInterruptedBatchShell(batch.id);
-          this.makeReady(batch.id);
-        } else {
-          const current = this.deps.batches.get(batch.id);
-          if (current) this.activate(current);
+        if (this.deps.batches.markQueued(batch.id)) {
+          const row = this.deps.batches.get(batch.id);
+          if (row) this.deps.bus.publish('reply.batch.queued', { batchId: row.id, revision: row.revision });
         }
+        this.makeReady(batch.id);
       }, delay);
       timer.unref?.();
       this.timers.set(batch.id, timer);
       return;
     }
-    if (batch.status !== 'collecting') return;
-    const delay = Math.max(0, Date.parse(batch.due_at) - Date.now());
-    const timer = setTimeout(() => {
-      this.timers.delete(batch.id);
-      this.deps.batches.markQueued(batch.id);
+    if (batch.status === 'queued') {
       this.makeReady(batch.id);
-    }, delay);
-    timer.unref?.();
-    this.timers.set(batch.id, timer);
+      return;
+    }
+    if (batch.status === 'generating') {
+      return;
+    }
+    if (batch.status === 'publishing') {
+      this.observeActive(batch.id);
+      return;
+    }
   }
 
   private makeReady(batchId: string): void {
@@ -127,80 +237,15 @@ export class ReplyCoordinator {
         const batchId = this.ready.shift();
         if (!batchId) break;
         this.readySet.delete(batchId);
-        const claimed = this.deps.batches.claim(batchId, this.owner, LEASE_MS);
-        if (!claimed) {
-          this.observeCompetingWorker(batchId);
+        const batch = this.deps.batches.get(batchId);
+        if (!batch || batch.status !== 'queued') continue;
+        if (!this.interruptible) {
+          const claimed = this.deps.batches.beginGenerating(batchId, batch.revision, this.owner, LEASE_MS);
+          if (!claimed) continue;
+          void this.runLegacyGeneration(batchId, claimed.revision);
           continue;
         }
-        const runtime = this.runtime.get(batchId);
-        const options = runtime?.options;
-        if (!options) {
-          if (!this.deps.batches.requeue(batchId, 'reply options unavailable', this.owner)) {
-            this.observeCompetingWorker(batchId);
-          }
-          continue;
-        }
-        const messages = this.deps.batches.messageIds(batchId)
-          .map((id) => this.deps.messages.get(id))
-          .filter((message): message is ChatMessage => Boolean(message));
-        try {
-          let leaseLost = false;
-          const heartbeat = setInterval(() => {
-            try {
-              if (!this.deps.batches.renewLease(batchId, this.owner, LEASE_MS)) leaseLost = true;
-            } catch {
-              leaseLost = true;
-            }
-          }, LEASE_HEARTBEAT_MS);
-          heartbeat.unref?.();
-          const existing = this.deps.messages.findAssistantByBatchId(batchId);
-          let outcome: ReplyOutcome;
-          try {
-            outcome = existing?.status === 'sent'
-              ? outcomeFromMessage(existing)
-              : await this.deps.replier.replyBatch(messages, options, batchId);
-          } finally {
-            clearInterval(heartbeat);
-          }
-          if (leaseLost) {
-            this.observeCompetingWorker(batchId);
-            continue;
-          }
-          if (!outcome.ok) {
-            this.deps.batches.fail(batchId, outcome.error?.message ?? 'reply failed', this.owner);
-            for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
-            this.runtime.delete(batchId);
-            continue;
-          }
-          try {
-            await this.deps.onCompleted?.(batchId, messages, outcome, this.owner);
-          } catch (error) {
-            if (claimed.attempts >= MAX_COMPLETION_ATTEMPTS) {
-              this.deps.batches.fail(batchId, (error as Error).message, this.owner);
-              for (const waiter of runtime?.waiters ?? []) waiter.reject(error);
-              this.runtime.delete(batchId);
-              continue;
-            }
-            if (!this.deps.batches.requeue(batchId, (error as Error).message, this.owner)) {
-              this.observeCompetingWorker(batchId);
-              continue;
-            }
-            const delay = Math.min(5000, 500 * Math.pow(2, claimed.attempts - 1));
-            const timer = setTimeout(() => {
-              this.timers.delete(batchId);
-              this.makeReady(batchId);
-            }, delay);
-            timer.unref?.();
-            this.timers.set(batchId, timer);
-            continue;
-          }
-          for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
-          this.runtime.delete(batchId);
-        } catch (error) {
-          this.deps.batches.fail(batchId, (error as Error).message, this.owner);
-          for (const waiter of runtime?.waiters ?? []) waiter.reject(error);
-          this.runtime.delete(batchId);
-        }
+        await this.startGeneration(batchId, batch.revision, false);
       }
     } finally {
       this.running = false;
@@ -208,7 +253,229 @@ export class ReplyCoordinator {
     }
   }
 
-  private observeCompetingWorker(batchId: string): void {
+  private async startGeneration(batchId: string, revision: number, isRetry: boolean): Promise<void> {
+    const batch = this.deps.batches.beginGenerating(batchId, revision, this.owner, LEASE_MS);
+    if (!batch) return;
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const active: ActiveGeneration = {
+      batchId,
+      revision,
+      controller,
+      startedAt,
+      attempt: batch.attempts,
+      published: false,
+      firstTokenAt: null
+    };
+    this.activeGenerations.set(batchId, active);
+
+    if (isRetry) {
+      this.deps.bus.publish('reply.generation.retrying', { batchId, revision, attempt: batch.attempts });
+    } else {
+      this.deps.bus.publish('reply.generation.started', { batchId, revision, attempt: batch.attempts });
+    }
+    this.deps.batches.recordGeneration({
+      batchId,
+      revision,
+      attempt: batch.attempts,
+      status: 'started',
+      startedAt: new Date(startedAt).toISOString()
+    });
+
+    const runtime = this.runtime.get(batchId);
+    const options = runtime?.options ?? { recentMessages: 24, memoryLimit: 8 };
+    const userMessages = this.deps.batches.messageIds(batchId)
+      .map((id) => this.deps.messages.get(id))
+      .filter((message): message is ChatMessage => Boolean(message));
+
+    const heartbeat = setInterval(() => {
+      try {
+        if (!this.deps.batches.renewLease(batchId, this.owner, LEASE_MS)) controller.abort(new StaleGenerationError('lease lost'));
+      } catch {
+        controller.abort(new StaleGenerationError('lease heartbeat failed'));
+      }
+    }, LEASE_HEARTBEAT_MS);
+    heartbeat.unref?.();
+
+    try {
+      const generated = await this.deps.replier.generateText(userMessages, {
+        recentMessages: options.recentMessages,
+        memoryLimit: options.memoryLimit,
+        signal: controller.signal,
+        batchId,
+        revision,
+        owner: this.owner,
+        publishGraceMs: this.publishGraceMs,
+        requestTimeoutMs: this.requestTimeoutMs,
+        beginPublish: async () => {
+          const won = this.deps.batches.beginPublishing(batchId, revision, this.owner);
+          if (won) active.published = true;
+          return won;
+        }
+      });
+
+      const outcome = await this.deps.replier.publishGeneratedReply(batch, userMessages, generated, {
+        signal: controller.signal,
+        owner: this.owner,
+        beginPublish: async () => {
+          const won = this.deps.batches.beginPublishing(batchId, revision, this.owner);
+          if (won) active.published = true;
+          return won;
+        }
+      });
+
+      clearInterval(heartbeat);
+      this.activeGenerations.delete(batchId);
+      this.deps.batches.recordGeneration({
+        batchId,
+        revision,
+        attempt: batch.attempts,
+        status: 'completed',
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        firstTokenMs: generated.firstTokenAt !== null ? generated.firstTokenAt - startedAt : null,
+        visibleMs: active.published ? Math.max(0, Date.now() - startedAt) : null
+      });
+
+      if (!outcome.ok) {
+        this.deps.batches.fail(batchId, revision, outcome.error?.code ?? 'internal_error', outcome.error?.message ?? 'reply failed', this.owner);
+        this.publishFailure(batchId, revision, outcome.error ?? { batchId, revision, code: 'internal_error', retryable: false, message: 'reply failed' });
+        for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+        this.runtime.delete(batchId);
+        return;
+      }
+      const partial = generated.interrupted !== undefined;
+      if (!this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner, partial)) {
+        this.deps.bus.publish('reply.superseded', { batchId, revision });
+        for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError('batch completed by competing worker'));
+        this.runtime.delete(batchId);
+        return;
+      }
+      try {
+        await this.deps.onCompleted?.(batchId, userMessages, outcome, this.owner, revision);
+      } catch (error) {
+        if (batch.attempts >= MAX_COMPLETION_ATTEMPTS) {
+          this.deps.batches.fail(batchId, revision, 'internal_error', (error as Error).message, this.owner);
+        } else if (this.deps.batches.requeue(batchId, revision, (error as Error).message, this.owner)) {
+          const delay = Math.min(5000, 500 * Math.pow(2, batch.attempts - 1));
+          const timer = setTimeout(() => {
+            this.timers.delete(batchId);
+            this.makeReady(batchId);
+          }, delay);
+          timer.unref?.();
+          this.timers.set(batchId, timer);
+        }
+      }
+      this.deps.bus.publish('reply.completed', {
+        batchId,
+        revision,
+        messageId: outcome.messageId,
+        message: this.deps.messages.get(outcome.messageId),
+        partial
+      });
+      for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+      this.runtime.delete(batchId);
+    } catch (error) {
+      clearInterval(heartbeat);
+      this.activeGenerations.delete(batchId);
+      await this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, error, userMessages);
+    }
+  }
+
+  private async handleGenerationFailure(
+    batchId: string,
+    revision: number,
+    active: ActiveGeneration,
+    runtime: BatchRuntime | undefined,
+    startedAt: number,
+    error: unknown,
+    userMessages: ChatMessage[]
+  ): Promise<void> {
+    const batch = this.deps.batches.get(batchId);
+    if (isBenignAbort(error)) {
+      this.deps.batches.recordGeneration({
+        batchId, revision, attempt: active.attempt, status: 'superseded',
+        startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
+        interruptionReason: (error as Error).name, durationMs: Date.now() - startedAt
+      });
+      if (batch && batch.revision === revision && batch.status === 'generating') {
+        this.deps.batches.requeue(batchId, revision, 'interrupted', this.owner);
+        if (!this.stopped) {
+          const timer = setTimeout(() => {
+            this.timers.delete(batchId);
+            this.makeReady(batchId);
+          }, this.interruptDebounceMs);
+          timer.unref?.();
+          this.timers.set(batchId, timer);
+        }
+      }
+      return;
+    }
+
+    const isTimeout = error instanceof HttpTimeoutError;
+    const retryable = !active.published && batch?.retry_count !== undefined && batch.retry_count < this.timeoutRetries;
+    if (isTimeout && retryable) {
+      this.deps.batches.recordGeneration({
+        batchId, revision, attempt: active.attempt, status: 'retrying',
+        startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
+        errorCode: 'model_timeout', durationMs: Date.now() - startedAt
+      });
+      this.deps.bus.publish('reply.generation.retrying', { batchId, revision, attempt: active.attempt + 1 });
+      try {
+        await abortableDelay(this.retryBaseDelayMs, this.activeGenerations.get(batchId)?.controller?.signal);
+      } catch (abortErr) {
+        return this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, abortErr, userMessages);
+      }
+      if (this.stopped) return;
+      const current = this.deps.batches.get(batchId);
+      if (!current || current.revision !== revision || current.visible_at !== null) {
+        return this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, new StaleGenerationError(), userMessages);
+      }
+      this.deps.batches.incrementRetry(batchId, revision);
+      await this.startGeneration(batchId, revision, true);
+      return;
+    }
+
+    const failure: ReplyFailure = toReplyFailure(error, isTimeout, active.published);
+    const outcome: ReplyOutcome = {
+      messageId: '',
+      ok: false,
+      parts: [],
+      degraded: [],
+      error: { code: failure.code, message: failure.message, incidentId: '' }
+    };
+    this.deps.batches.fail(batchId, revision, failure.code, failure.message, this.owner);
+    this.deps.batches.recordGeneration({
+      batchId, revision, attempt: active.attempt, status: 'failed',
+      startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
+      errorCode: failure.code, durationMs: Date.now() - startedAt
+    });
+    if (active.published) {
+      const shell = this.deps.messages.findAssistantByBatchId(batchId);
+      if (shell) {
+        this.deps.messages.setStatus(shell.id, 'sent', 'partial:interrupted');
+        this.deps.batches.complete(batchId, revision, shell.id, this.owner, true);
+        this.deps.bus.publish('reply.publishing.partial', { batchId, revision, messageId: shell.id });
+      }
+    }
+    this.publishFailure(batchId, revision, failure);
+    for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+    this.runtime.delete(batchId);
+  }
+
+  private publishFailure(batchId: string, revision: number, failure: ReplyFailure): void {
+    this.deps.bus.publish('reply.failed', { batchId, revision, failure });
+  }
+
+  private interruptGeneration(batchId: string, reason: 'new_user_message' | 'shutdown'): void {
+    const active = this.activeGenerations.get(batchId);
+    if (!active) return;
+    active.controller.abort(new UserInterruptedError(reason === 'new_user_message' ? 'superseded by newer user message' : 'coordinator shutdown'));
+    this.activeGenerations.delete(batchId);
+  }
+
+  private observeActive(batchId: string): void {
     const batch = this.deps.batches.get(batchId);
     const runtime = this.runtime.get(batchId);
     if (!runtime) return;
@@ -221,7 +488,7 @@ export class ReplyCoordinator {
         return;
       }
     }
-    if (!batch || batch.status === 'failed' || batch.status === 'cancelled') {
+    if (!batch || batch.status === 'failed' || batch.status === 'cancelled' || batch.status === 'superseded') {
       const error = new Error(batch?.last_error ?? `reply batch ${batch?.status ?? 'missing'}`);
       for (const waiter of runtime.waiters) waiter.reject(error);
       this.runtime.delete(batchId);
@@ -229,11 +496,62 @@ export class ReplyCoordinator {
     }
     const timer = setTimeout(() => {
       this.timers.delete(batchId);
-      this.observeCompetingWorker(batchId);
+      this.observeActive(batchId);
     }, 500);
     timer.unref?.();
     this.timers.set(batchId, timer);
   }
+
+  private async runLegacyGeneration(batchId: string, revision: number): Promise<void> {
+    try {
+      const batch = this.deps.batches.get(batchId);
+      if (!batch || batch.status !== 'generating') return;
+      const runtime = this.runtime.get(batchId);
+      const options = runtime?.options ?? { recentMessages: 24, memoryLimit: 8 };
+      const userMessages = this.deps.batches.messageIds(batchId)
+        .map((id) => this.deps.messages.get(id))
+        .filter((message): message is ChatMessage => Boolean(message));
+      const outcome = await this.deps.replier.replyBatch(userMessages, options, batchId);
+      if (!outcome.ok) {
+        this.deps.batches.fail(batchId, revision, outcome.error?.code ?? 'internal_error', outcome.error?.message ?? 'reply failed', this.owner);
+        for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+        this.runtime.delete(batchId);
+        return;
+      }
+      if (this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner)) {
+        await this.deps.onCompleted?.(batchId, userMessages, outcome, this.owner, revision);
+        this.deps.bus.publish('reply.completed', { batchId, revision, messageId: outcome.messageId, message: this.deps.messages.get(outcome.messageId) });
+      }
+      for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+      this.runtime.delete(batchId);
+    } catch (error) {
+      this.deps.batches.fail(batchId, revision, 'internal_error', (error as Error).message, this.owner);
+    }
+  }
+}
+
+function toReplyFailure(error: unknown, isTimeout: boolean, published: boolean): ReplyFailure {
+  if (isTimeout) {
+    return {
+      batchId: '',
+      revision: 0,
+      code: published ? 'provider_unavailable' : 'model_timeout',
+      retryable: !published,
+      message: published ? '回复中断了。' : '这次回复没有生成成功。'
+    };
+  }
+  const err = error as Error;
+  const status = (err as { status?: number }).status;
+  if (typeof status === 'number' && status === 429) {
+    return { batchId: '', revision: 0, code: 'rate_limited', retryable: true, message: '请求太频繁了，稍后再试一次吧。' };
+  }
+  return {
+    batchId: '',
+    revision: 0,
+    code: 'provider_unavailable',
+    retryable: false,
+    message: '这次回复没有生成成功。'
+  };
 }
 
 function outcomeFromMessage(message: ChatMessage): ReplyOutcome {
@@ -243,4 +561,9 @@ function outcomeFromMessage(message: ChatMessage): ReplyOutcome {
     parts: message.content.filter((part) => part.status === 'sent').map((part) => part.type),
     degraded: []
   };
+}
+
+/** Exported for tests: shape of the structured failure events. */
+export function failureCodeFor(error: unknown): ReplyFailure['code'] {
+  return toReplyFailure(error, error instanceof HttpTimeoutError, false).code;
 }

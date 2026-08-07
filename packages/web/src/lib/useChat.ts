@@ -8,6 +8,7 @@ const PAGE_SIZE = 30;
 /** Matches the server's `?since=` cap; catch-up walks pages of this size. */
 const CATCHUP_PAGE_SIZE = 100;
 export type QuotedMessageState = { status: 'loading' | 'ready' | 'missing' | 'error'; message?: ChatMessage };
+export interface ReplyFailureCard { batchId: string; revision: number; code: string; retryable: boolean; message: string; partial?: boolean; }
 export interface StreamingDraft {
   id: string;
   text: string;
@@ -36,7 +37,9 @@ export function useChat() {
   const [life, setLife] = useState<LifeState | null>(null);
   const [stickers, setStickers] = useState<StickerInfo[]>([]);
   const [quotedStates, setQuotedStates] = useState<Record<string, QuotedMessageState>>({});
+  const [replyFailures, setReplyFailures] = useState<Record<string, ReplyFailureCard>>({});
   const streamRef = useRef<ChatStream | null>(null);
+  const batchRevisionsRef = useRef(new Map<string, number>());
   const maxSeqRef = useRef(0);
   const streamingDraftRef = useRef<StreamingDraft | null>(null);
   const quotedStatesRef = useRef(new Map<string, QuotedMessageState>());
@@ -94,6 +97,17 @@ export function useChat() {
       onStateChange: setConnection,
       onGap: () => void resync(),
       onEvent: (type, data) => {
+        // Drop events from an old revision of a batch (stale generation must
+        // never overwrite the newer one's state).
+        const acceptBatchEvent = (payload: Record<string, any>): boolean => {
+          const batchId = String(payload.batchId ?? '');
+          if (!batchId) return true;
+          const revision = Number(payload.revision ?? 0);
+          const seen = batchRevisionsRef.current.get(batchId) ?? 0;
+          if (revision < seen) return false;
+          batchRevisionsRef.current.set(batchId, revision);
+          return true;
+        };
         switch (type) {
           case 'message.received':
           case 'message.updated': if (data.message) applyMessages([data.message as ChatMessage]); break;
@@ -108,6 +122,47 @@ export function useChat() {
           case 'persona.updated': if (data.persona) setPersona((old) => ({ ...(old ?? { name: 'SOOYA', avatar: '/avatars/sooya.svg', userAvatar: '/avatars/user.svg', tagline: '' }), ...(data.persona as PersonaInfo) })); break;
           case 'reply.queued': updateActivity({ thinking: true, label: `正在看你刚发的 ${Number(data.count ?? 1)} 条消息` }); break;
           case 'reply.thinking': updateActivity({ thinking: true, label: '正在思考' }); break;
+          // Interruptible pipeline events (batchId + revision fenced).
+          case 'reply.batch.collecting': if (acceptBatchEvent(data)) updateActivity({ thinking: true, label: '正在听你说' }); break;
+          case 'reply.batch.queued': if (acceptBatchEvent(data)) updateActivity({ thinking: true, label: '正在整理' }); break;
+          case 'reply.generation.started': if (acceptBatchEvent(data)) updateActivity({ thinking: true, label: '正在思考' }); break;
+          case 'reply.generation.interrupted': break; // keep current state, no flicker
+          case 'reply.generation.retrying': if (acceptBatchEvent(data)) updateActivity({ thinking: true, label: '回复有点慢，正在重试' }); break;
+          case 'reply.publishing.started': if (acceptBatchEvent(data)) updateActivity({ thinking: true, label: '正在回复' }); break;
+          case 'reply.publishing.partial': {
+            updateActivity({ thinking: false, label: null });
+            const batchId = String(data.batchId ?? '');
+            const revision = Number(data.revision ?? 0);
+            if (batchId) setReplyFailures((previous) => ({ ...previous, [`${batchId}:${revision}`]: { batchId, revision, code: 'partial', retryable: true, message: '回复中断了。', partial: true } }));
+            if (data.messageId) void resync();
+            break;
+          }
+          case 'reply.completed': {
+            updateActivity({ thinking: false, label: null });
+            const batchId = String(data.batchId ?? '');
+            const revision = Number(data.revision ?? 0);
+            if (batchId) setReplyFailures((previous) => { const next = { ...previous }; delete next[`${batchId}:${revision}`]; return next; });
+            const message = data.message as ChatMessage | undefined;
+            if (message) applyMessages([message]);
+            else void resync();
+            break;
+          }
+          case 'reply.superseded': break; // a newer revision owns the batch now
+          case 'reply.failed': {
+            updateActivity({ thinking: false, label: null });
+            clearStreamingDraft();
+            const failure = data.failure as { batchId?: string; revision?: number; code?: string; retryable?: boolean; message?: string } | undefined;
+            const batchId = String(data.batchId ?? failure?.batchId ?? '');
+            const revision = Number(data.revision ?? failure?.revision ?? 0);
+            if (batchId) {
+              setReplyFailures((previous) => ({ ...previous, [`${batchId}:${revision}`]: { batchId, revision, code: failure?.code ?? 'internal_error', retryable: failure?.retryable ?? false, message: failure?.message ?? '这次回复没有生成成功。', partial: false } }));
+            } else {
+              setError(failure?.message ?? '回复失败');
+            }
+            const message = data.message as ChatMessage | undefined;
+            if (message) applyMessages([message]);
+            break;
+          }
           case 'reply.text.delta': {
             const id = String(data.messageId ?? '');
             const delta = String(data.delta ?? '');
@@ -127,21 +182,8 @@ export function useChat() {
           case 'reply.audio.generating': updateActivity({ thinking: true, label: '正在生成语音' }); break;
           case 'reply.text.done':
           case 'reply.content.done': updateActivity({ thinking: true, label: '正在整理' }); break;
-          case 'reply.completed': {
-            updateActivity({ thinking: false, label: null });
-            const message = data.message as ChatMessage | undefined;
-            if (message) applyMessages([message]);
-            else void resync();
-            break;
-          }
-          case 'reply.failed': {
-            updateActivity({ thinking: false, label: null });
-            clearStreamingDraft();
-            const message = data.message as ChatMessage | undefined;
-            if (message) applyMessages([message]);
-            setError(typeof data.error === 'string' ? data.error : '回复失败');
-            break;
-          }
+          case 'voice.published':
+          case 'voice.synthesis.failed': void resync(); break;
           case 'life.updated': void refreshLife(); break;
           case 'system.notice': if (data.action === 'reload') void reloadRef.current(); else void resync(); break;
           default: break;
@@ -271,7 +313,16 @@ export function useChat() {
 
   useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') void resync(); }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [resync]);
 
-  return { messages, streamingDraft, persona, connection, activity, life, stickers, quotedStates, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, loadOlder, ensureQuotedMessage, addMessages: applyMessages, resync, reload, clearError: () => setError(null) };
+  const retryReply = useCallback(async (batchId: string) => {
+    try {
+      const result = await api.retryBatch(batchId);
+      setReplyFailures((previous) => { const next = { ...previous }; for (const key of Object.keys(next)) if (next[key]?.batchId === batchId) delete next[key]; return next; });
+      updateActivity({ thinking: true, label: '正在重新生成' });
+      return result;
+    } catch (err) { setError((err as Error).message); throw err; }
+  }, [updateActivity]);
+
+  return { messages, streamingDraft, persona, connection, activity, life, stickers, quotedStates, replyFailures, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, retryReply, loadOlder, ensureQuotedMessage, addMessages: applyMessages, resync, reload, clearError: () => setError(null) };
 }
 
 export function isReplayableUserMessage(message: ChatMessage): boolean {

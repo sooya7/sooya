@@ -115,8 +115,11 @@ export function AudioBubble({ part, mine }: Props) {
     setCurrent(audio.currentTime);
   };
 
+  const mode = part.meta?.voiceMode as string | undefined;
   return (
     <div className="audio-wrap">
+      {mode === 'summary' && <span className="voice-mode-label" data-testid="voice-mode-summary">语音摘要</span>}
+      {mode === 'replace' && <span className="voice-mode-label">语音</span>}
       <div className={`bubble bubble-audio ${mine ? 'mine' : 'theirs'}`} style={{ width }}>
         <button
           type="button"

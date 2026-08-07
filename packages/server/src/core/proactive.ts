@@ -1,6 +1,7 @@
 import type { MessageRepo, CreatePartInput } from '../db/repos/message.repo.js';
 import type { ProactiveAttemptRepo, ProactiveMode } from '../db/repos/proactive.repo.js';
 import type { JobRepo } from '../db/repos/misc.repo.js';
+import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
 import type { LifeLogRow } from '../db/repos/life.repo.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ConfigStore } from '../config/store.js';
@@ -57,6 +58,7 @@ export class ProactiveComposer {
       jobs: JobRepo;
       messages: MessageRepo;
       life: LifeEngine;
+      replyBatches: ReplyBatchRepo;
       capabilities: CapabilityRegistry;
       config: ConfigStore;
       media: MediaStore;
@@ -79,6 +81,10 @@ export class ProactiveComposer {
       lastAssistantAt: lastAssistant?.createdAt ?? null
     };
     if (!decision.reach || !decision.candidate) return { reach: false, reason: decision.reason, ...base };
+    // §50.4: never reach out while a reply batch is open — the user is mid-
+    // conversation and an unprompted message would stack on her reply.
+    const openBatch = this.deps.replyBatches.openBatch();
+    if (openBatch) return { reach: false, reason: 'reply_in_progress', ...base };
     if (this.recentlyDiscussed(decision.candidate, recent)) {
       return { reach: false, reason: 'recent_topic', ...base };
     }

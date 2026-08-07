@@ -675,6 +675,230 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   }
+  {
+    version: 15,
+    name: 'interruptible_reply_batches',
+    up: (db) => {
+      /*
+       * Interruptible reply pipeline (Part 1 of the core upgrade):
+       *  - new statuses: generating / publishing / superseded (running is kept
+       *    in the CHECK for legacy rows, but nothing new writes it);
+       *  - revision fencing: every key transition is conditioned on the batch
+       *    revision, so an aborted-but-late generation can never publish;
+       *  - visible_at is set the moment the barrier opens, which is the line
+       *    between "can still be silently replaced" and "published for good".
+       * SQLite cannot ALTER a CHECK constraint, so reply_batches is rebuilt
+       * with the wider CHECK and the new columns. Children are dropped first
+       * so the rebuild works with foreign_keys = ON (migrations run inside a
+       * transaction where PRAGMA foreign_keys is a no-op).
+       */
+      db.exec(`
+        CREATE TABLE reply_batches_new (
+          id                   TEXT PRIMARY KEY,
+          conversation_id      TEXT NOT NULL DEFAULT 'main',
+          status               TEXT NOT NULL CHECK (status IN ('collecting','queued','generating','publishing','running','completed','superseded','failed','cancelled')),
+          trigger_message_id   TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          assistant_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+          opened_at            TEXT NOT NULL,
+          due_at               TEXT NOT NULL,
+          started_at           TEXT,
+          completed_at         TEXT,
+          last_error           TEXT,
+          attempts             INTEGER NOT NULL DEFAULT 0,
+          lease_owner          TEXT,
+          lease_expires_at     TEXT,
+          meta_json            TEXT NOT NULL DEFAULT '{}',
+          revision             INTEGER NOT NULL DEFAULT 1,
+          last_message_at      TEXT,
+          generation_started_at TEXT,
+          publish_started_at   TEXT,
+          visible_at           TEXT,
+          retry_count          INTEGER NOT NULL DEFAULT 0,
+          interrupted_count    INTEGER NOT NULL DEFAULT 0,
+          superseded_at        TEXT,
+          failure_code         TEXT
+        );
+        INSERT INTO reply_batches_new (
+          id, conversation_id, status, trigger_message_id, assistant_message_id,
+          opened_at, due_at, started_at, completed_at, last_error, attempts,
+          lease_owner, lease_expires_at, meta_json
+        )
+        SELECT id, conversation_id,
+               CASE status WHEN 'running' THEN 'generating' ELSE status END,
+               trigger_message_id, assistant_message_id, opened_at, due_at,
+               started_at, completed_at, last_error, attempts, lease_owner,
+               lease_expires_at, meta_json
+        FROM reply_batches;
+
+        CREATE TABLE reply_batch_messages_new (
+          batch_id   TEXT NOT NULL REFERENCES reply_batches(id) ON DELETE CASCADE,
+          message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          position   INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (batch_id, message_id),
+          UNIQUE (message_id),
+          UNIQUE (batch_id, position)
+        );
+        INSERT INTO reply_batch_messages_new (batch_id, message_id, position, created_at)
+        SELECT batch_id, message_id, position, created_at FROM reply_batch_messages;
+
+        DROP TABLE reply_batch_messages;
+        DROP TABLE reply_batches;
+        ALTER TABLE reply_batches_new RENAME TO reply_batches;
+        ALTER TABLE reply_batch_messages_new RENAME TO reply_batch_messages;
+
+        CREATE INDEX idx_reply_batches_status_due ON reply_batches(status, due_at);
+        CREATE INDEX idx_reply_batch_messages_order ON reply_batch_messages(batch_id, position);
+
+        CREATE TABLE reply_generations (
+          id                  TEXT PRIMARY KEY,
+          batch_id            TEXT NOT NULL REFERENCES reply_batches(id) ON DELETE CASCADE,
+          revision            INTEGER NOT NULL,
+          attempt             INTEGER NOT NULL,
+          status              TEXT NOT NULL,
+          started_at          TEXT NOT NULL,
+          finished_at         TEXT,
+          interruption_reason TEXT,
+          error_code          TEXT,
+          duration_ms         INTEGER,
+          first_token_ms      INTEGER,
+          visible_ms          INTEGER
+        );
+        CREATE INDEX idx_reply_generations_batch ON reply_generations(batch_id, revision);
+      `);
+    }
+  }
+
+  {
+    version: 16,
+    name: 'voice_generations',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE voice_generations (
+          id               TEXT PRIMARY KEY,
+          batch_id         TEXT,
+          revision         INTEGER NOT NULL DEFAULT 0,
+          message_id       TEXT REFERENCES messages(id) ON DELETE SET NULL,
+          text_part_id     TEXT,
+          mode             TEXT NOT NULL,
+          requested_by     TEXT NOT NULL,
+          status           TEXT NOT NULL,
+          spoken_text      TEXT NOT NULL,
+          synthesis_text   TEXT NOT NULL,
+          delivery_json    TEXT NOT NULL DEFAULT '{}',
+          naturalness_json TEXT NOT NULL DEFAULT '{}',
+          provider         TEXT,
+          retry_count      INTEGER NOT NULL DEFAULT 0,
+          started_at       TEXT,
+          completed_at     TEXT,
+          failed_at        TEXT,
+          failure_code     TEXT,
+          media_id         TEXT,
+          created_at       TEXT NOT NULL,
+          updated_at       TEXT NOT NULL
+        );
+        CREATE INDEX idx_voice_generations_batch_revision ON voice_generations(batch_id, revision);
+        CREATE INDEX idx_voice_generations_message ON voice_generations(message_id);
+      `);
+    }
+  }
+
+  {
+    version: 17,
+    name: 'life_system_v2',
+    up: (db) => {
+      /*
+       * Life system upgrade (Part 2): continuous vitals, day themes, activity
+       * usage tracking (anti-repeat), long-term threads, structured events
+       * with magnitudes, and share candidates for proactive reach-outs.
+       */
+      db.exec(`
+        CREATE TABLE life_vitals (
+          id           INTEGER PRIMARY KEY CHECK (id = 1),
+          energy       REAL NOT NULL,
+          hunger       REAL NOT NULL,
+          stress       REAL NOT NULL,
+          social_need  REAL NOT NULL,
+          loneliness   REAL NOT NULL,
+          curiosity    REAL NOT NULL,
+          comfort      REAL NOT NULL,
+          focus        REAL NOT NULL,
+          sleep_debt   REAL NOT NULL,
+          updated_at   TEXT NOT NULL,
+          meta_json    TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE TABLE life_day_themes (
+          id                TEXT PRIMARY KEY,
+          local_date        TEXT NOT NULL UNIQUE,
+          theme             TEXT NOT NULL,
+          tone_tags_json    TEXT NOT NULL DEFAULT '[]',
+          source_factors_json TEXT NOT NULL DEFAULT '[]',
+          created_at        TEXT NOT NULL
+        );
+
+        CREATE TABLE life_threads (
+          id               TEXT PRIMARY KEY,
+          title            TEXT NOT NULL,
+          category         TEXT NOT NULL,
+          status           TEXT NOT NULL,
+          progress         REAL NOT NULL DEFAULT 0,
+          importance       REAL NOT NULL DEFAULT 0,
+          heat             REAL NOT NULL DEFAULT 0,
+          started_at       TEXT NOT NULL,
+          updated_at       TEXT NOT NULL,
+          last_advanced_at TEXT,
+          next_actions_json TEXT NOT NULL DEFAULT '[]',
+          meta_json        TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE TABLE life_activity_usage (
+          activity_id       TEXT PRIMARY KEY,
+          last_used_at      TEXT,
+          use_count_7d      INTEGER NOT NULL DEFAULT 0,
+          use_count_30d     INTEGER NOT NULL DEFAULT 0,
+          consecutive_days  INTEGER NOT NULL DEFAULT 0,
+          semantic_tags_json TEXT NOT NULL DEFAULT '[]',
+          recent_outcomes_json TEXT NOT NULL DEFAULT '[]',
+          updated_at        TEXT NOT NULL
+        );
+
+        CREATE TABLE life_share_candidates (
+          id               TEXT PRIMARY KEY,
+          source_type      TEXT NOT NULL,
+          source_id        TEXT NOT NULL,
+          novelty          REAL NOT NULL DEFAULT 0,
+          relevance_to_user REAL NOT NULL DEFAULT 0,
+          emotional_value  REAL NOT NULL DEFAULT 0,
+          urgency          REAL NOT NULL DEFAULT 0,
+          repetition_penalty REAL NOT NULL DEFAULT 0,
+          status           TEXT NOT NULL,
+          created_at       TEXT NOT NULL,
+          expires_at       TEXT NOT NULL,
+          shared_at        TEXT,
+          meta_json        TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX idx_life_share_candidates_status ON life_share_candidates(status, created_at);
+
+        ALTER TABLE life_plans ADD COLUMN day_theme_id TEXT;
+        ALTER TABLE life_plans ADD COLUMN flexible_start_minutes INTEGER NOT NULL DEFAULT 60;
+        ALTER TABLE life_plans ADD COLUMN estimated_duration_minutes INTEGER;
+        ALTER TABLE life_plans ADD COLUMN optional INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE life_plans ADD COLUMN thread_id TEXT;
+        ALTER TABLE life_plans ADD COLUMN related_message_id TEXT;
+        ALTER TABLE life_plans ADD COLUMN started_at TEXT;
+        ALTER TABLE life_plans ADD COLUMN completed_at TEXT;
+        ALTER TABLE life_plans ADD COLUMN outcome_id TEXT;
+
+        ALTER TABLE life_events ADD COLUMN magnitude TEXT NOT NULL DEFAULT 'tiny';
+        ALTER TABLE life_events ADD COLUMN result_type TEXT;
+        ALTER TABLE life_events ADD COLUMN novelty_score REAL NOT NULL DEFAULT 0;
+        ALTER TABLE life_events ADD COLUMN relevance_score REAL NOT NULL DEFAULT 0;
+        ALTER TABLE life_events ADD COLUMN narrative_fingerprint TEXT;
+      `);
+    }
+  }
+
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
