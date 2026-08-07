@@ -566,8 +566,13 @@ export class Replier {
     // spoken script → naturalness guard → delivery → TTS → publication.
     if (this.deps.voice && this.deps.voiceV2Enabled !== false) {
       const userIntent = parseVoiceIntent(userText);
+      // P0-3: replace/voice-only is reserved for EXPLICIT user intent. A model
+      // that emits [[voice-only]] on its own is downgraded to complement — the
+      // user never asked for the text to be replaced, and a visible text that
+      // suddenly vanishes is a broken experience.
+      const userWantsReplace = userIntent === 'voice_only' || userIntent === 'voice_reply';
       const modelMarker = generated.directives.voiceOnly
-        ? 'replace'
+        ? (userWantsReplace ? 'replace' : 'complement')
         : generated.directives.voice
           ? 'complement'
           : null;
