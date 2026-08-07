@@ -17,6 +17,21 @@ const LocationWriteSchema = z.object({
   indoor: z.boolean().optional(),
   visitWeight: z.number().min(0).max(10).optional()
 });
+const VitalsAdjustSchema = z.object({
+  field: z.enum(['energy','hunger','stress','social_need','loneliness','curiosity','comfort','focus']),
+  delta: z.number().min(-50).max(50)
+});
+const PlanPatchSchema = z.object({
+  title: z.string().trim().min(1).max(120).optional(),
+  kind: z.string().trim().min(1).max(40).optional(),
+  status: z.enum(['planned','active','paused','cancelled','skipped']).optional(),
+  plannedStart: z.string().datetime().nullable().optional(),
+  plannedEnd: z.string().datetime().nullable().optional(),
+  priority: z.number().min(0).max(1).optional()
+});
+const ThreadPatchSchema = z.object({
+  status: z.enum(['open','paused','resolved','abandoned'])
+});
 const LocationOverrideSchema = z.object({
   locationId: z.string().min(1).max(80),
   reason: z.string().trim().max(200).optional()
@@ -50,6 +65,76 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
   });
 
   server.get('/api/admin/life/threads', { preHandler: guard }, async () => ({ threads: repos.lifeV2.threads() }));
+
+  // ---- P1: Life Admin management APIs ----
+
+  /** Aggregated overview: where she is, what she is doing, and why. */
+  server.get('/api/admin/life/overview', { preHandler: guard }, async () => {
+    const snapshot = app.services.life.snapshot();
+    const world = app.services.world.snapshot();
+    const vitals = repos.lifeV2.getVitals() ?? null;
+    const activePlan = repos.life.listPlans().find((p) => p.status === 'active') ?? null;
+    const openThreads = repos.lifeV2.threads('open').slice(0, 3);
+    const recentEvents = repos.life.events(8);
+    const location = world.location;
+    const weather = world.weatherCondition;
+    return {
+      snapshot,
+      location: location ? { id: location.id, name: location.name, kind: location.kind } : null,
+      weather,
+      vitals,
+      activePlan: activePlan ? { id: activePlan.id, title: activePlan.title, kind: activePlan.kind, status: activePlan.status } : null,
+      openThreads: openThreads.map((t) => ({ id: t.id, title: t.title, progress: Math.round(t.progress * 100) })),
+      recentEvents: recentEvents.map((e) => ({ id: e.id, eventType: e.event_type, description: e.description, happenedAt: e.happened_at }))
+    };
+  });
+
+  server.get('/api/admin/life/proactive', { preHandler: guard }, async () => ({ attempts: repos.proactive.list(100) }));
+
+  /** Small vitals adjustment — audited, clamped to 0..100. */
+  server.post('/api/admin/life/vitals/adjust', { preHandler: guard }, async (req, reply) => {
+    const parsed = VitalsAdjustSchema.safeParse(req.body);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const { field, delta } = parsed.data;
+    let current = repos.lifeV2.getVitals();
+    if (!current) {
+      repos.lifeV2.upsertVitals({ energy: 72, hunger: 40, stress: 30, social_need: 35, loneliness: 30, curiosity: 55, comfort: 60, focus: 55, sleep_debt: 1.5, updated_at: new Date().toISOString(), meta_json: '{}' });
+      current = repos.lifeV2.getVitals()!;
+    }
+    const next = { ...current, [field]: Math.max(0, Math.min(100, current[field] + delta)), updated_at: new Date().toISOString() };
+    repos.lifeV2.upsertVitals(next);
+    repos.audit.add('life.vitals', 'adjust', null, { field, delta });
+    return { vitals: next };
+  });
+
+  server.post('/api/admin/life/vitals/reset', { preHandler: guard }, async () => {
+    const defaults = { energy: 72, hunger: 40, stress: 30, social_need: 35, loneliness: 30, curiosity: 55, comfort: 60, focus: 55, sleep_debt: 1.5 };
+    repos.lifeV2.upsertVitals({ ...defaults, updated_at: new Date().toISOString(), meta_json: '{}' });
+    repos.audit.add('life.vitals', 'reset', null, {});
+    return { ok: true };
+  });
+
+  /** Threads: pause / resolve / archive (keeps the active-thread cap). */
+  server.patch('/api/admin/life/threads/:id', { preHandler: guard }, async (req, reply) => {
+    const params = IdParams.safeParse(req.params);
+    if (!params.success) { reply.code(400); return { error: 'bad_request', issues: params.error.issues }; }
+    const parsed = ThreadPatchSchema.safeParse(req.body);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const thread = repos.lifeV2.getThread(params.data.id);
+    if (!thread) { reply.code(404); return { error: 'not_found' }; }
+    const status = parsed.data.status;
+    const next = repos.lifeV2.saveThread({
+      id: thread.id,
+      title: thread.title,
+      category: thread.category,
+      status,
+      progress: thread.progress,
+      heat: thread.heat,
+      nextActions: JSON.parse(thread.next_actions_json)
+    });
+    repos.audit.add('life.thread', 'update', thread.id, { status });
+    return { thread: next };
+  });
 
   // ---- locations (next phase) ----
 

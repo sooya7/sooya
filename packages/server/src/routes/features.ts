@@ -372,6 +372,15 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'invalid_life_plan', message: parsed.error.message.slice(0, 300) };
     }
+    const existing = repos.life.getPlan(id);
+    if (!existing) {
+      reply.code(404);
+      return { error: 'life_plan_not_found' };
+    }
+    if (existing.status === 'completed') {
+      reply.code(409);
+      return { error: 'immutable', message: '已完成计划的历史不允许直接篡改' };
+    }
     const plan = repos.life.updatePlan(id, {
       ...parsed.data,
       planned_start: parsed.data.plannedStart,
