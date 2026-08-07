@@ -3,7 +3,7 @@ import { ApiError } from '../lib/api.js';
 import { useAutoNotice } from '../lib/autoNotice.js';
 import { navigate } from '../lib/navigation.js';
 import { AppLink } from './AppLink.js';
-import { AvatarEditor, LifePanel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
+import { AvatarEditor, LifeAdminLink, LifePanel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
 import {
   interfaceOptions,
   MODEL_SLOTS,
@@ -872,7 +872,7 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
         : tab === 'voice'
           ? <VoiceEditor onNotice={setNotice} />
           : tab === 'life'
-            ? <LifePanel onNotice={setNotice} />
+            ? <><LifeAdminLink /><LifePanel onNotice={setNotice} /></>
             : tab === 'models'
                 ? <ModelsPanel onNotice={setNotice} />
                 : tab === 'content'

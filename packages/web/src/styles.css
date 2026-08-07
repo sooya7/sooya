@@ -1919,3 +1919,36 @@ button {
     height: 100%;
   }
 }
+
+/* ---- next-phase Life Admin / Voice Preferences pages ---- */
+.admin-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.5rem 0; }
+.admin-tab { padding: 0.3rem 0.7rem; border-radius: 8px; border: 1px solid var(--border, #ddd); background: transparent; cursor: pointer; }
+.admin-tab.active { background: var(--accent, #f97316); color: #fff; border-color: transparent; }
+.admin-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+.admin-table th, .admin-table td { padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border, #eee); text-align: left; font-size: 0.85rem; }
+.admin-table button { margin-right: 0.3rem; }
+.life-overview { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.overview-card { border: 1px solid var(--border, #eee); border-radius: 10px; padding: 0.8rem; }
+.overview-card dl { margin: 0.4rem 0; }
+.overview-card dt { font-weight: 600; margin-top: 0.35rem; }
+.overview-card dd { margin: 0; color: #555; }
+.vitals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.6rem; }
+.vital-card { border: 1px solid var(--border, #eee); border-radius: 10px; padding: 0.6rem; text-align: center; }
+.vital-label { display: block; font-size: 0.8rem; color: #777; }
+.vital-actions { margin-top: 0.4rem; }
+.vitals-footer { grid-column: 1 / -1; text-align: right; }
+.event-list { list-style: none; padding: 0; }
+.event-list li { padding: 0.35rem 0; border-bottom: 1px solid var(--border, #eee); display: flex; gap: 0.6rem; font-size: 0.85rem; }
+.event-type { color: #a16207; background: #fef9c3; border-radius: 999px; padding: 0.05rem 0.5rem; white-space: nowrap; }
+.muted { color: #999; font-size: 0.8rem; }
+.admin-form { display: flex; gap: 0.5rem; margin: 0.5rem 0; }
+.admin-form input, .admin-form select { padding: 0.3rem 0.5rem; border-radius: 8px; border: 1px solid var(--border, #ddd); }
+.admin-error { color: #b91c1c; }
+.voice-prefs { max-width: 42rem; display: flex; flex-direction: column; gap: 0.6rem; }
+.pref-row { display: flex; align-items: center; gap: 0.8rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border, #eee); }
+.pref-row > span:first-child { min-width: 10rem; font-weight: 600; }
+.mode-checkboxes { display: flex; flex-wrap: wrap; gap: 0.8rem; }
+.preview-block { margin-top: 1rem; }
+.preview-block textarea { width: 100%; border-radius: 8px; border: 1px solid var(--border, #ddd); padding: 0.4rem; }
+.preview-actions { display: flex; gap: 0.5rem; margin: 0.5rem 0; }
+.preview-audio { width: 100%; }

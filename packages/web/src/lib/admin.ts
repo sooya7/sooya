@@ -194,6 +194,21 @@ export interface AdminJob {
   updated_at: string;
 }
 
+export interface AdminLifePlan { id: string; title: string; kind: string; status: string; source: string; priority: number; planned_start: string | null; planned_end: string | null; meta_json: string; }
+export interface AdminLifeThread { id: string; title: string; category: string; status: string; progress: number; heat: number; next_actions_json: string; meta_json: string; }
+export interface AdminLifeVitals { energy: number; hunger: number; stress: number; social_need: number; loneliness: number; curiosity: number; comfort: number; focus: number; sleep_debt: number; }
+export interface AdminLifeOverview {
+  snapshot: { activity: string; kind: string; mood: string; theme?: string; vitals?: string[] };
+  location: { id: string; name: string; kind: string } | null;
+  weather: string | null;
+  vitals: AdminLifeVitals | null;
+  activePlan: { id: string; title: string; kind: string; status: string } | null;
+  openThreads: Array<{ id: string; title: string; progress: number }>;
+  recentEvents: Array<{ id: string; eventType: string; description: string; happenedAt: string }>;
+}
+export interface AdminLifeLocation { id: string; name: string; kind: string; tags: string[]; indoor: boolean; visitWeight: number; source: string; active: boolean; }
+export interface AdminProactiveAttempt { id: string; candidateId: string | null; status: string; blockedReason: string | null; messageId: string | null; requestedMode: string | null; createdAt: string; }
+
 export const adminApi = {
   system: () => adminRequest<AdminSystemStatus>('/api/admin/system'),
   capabilities: () => adminRequest<AdminCapabilities>('/api/admin/capabilities'),
@@ -203,6 +218,25 @@ export const adminApi = {
   models: () => adminRequest<{ models: AdminModels }>('/api/admin/models'),
   updateModels: (patch: AdminModels) =>
     adminRequest<{ models: AdminModels }>('/api/admin/models', { method: 'PUT', body: patch }),
+  lifeOverview: () => adminRequest<AdminLifeOverview>('/api/admin/life/overview'),
+  lifeVitals: () => adminRequest<{ vitals: AdminLifeVitals | null }>('/api/admin/life/vitals'),
+  adjustVitals: (field: string, delta: number) =>
+    adminRequest<{ vitals: AdminLifeVitals }>('/api/admin/life/vitals/adjust', { method: 'POST', body: { field, delta } }),
+  resetVitals: () => adminRequest<{ ok: true }>('/api/admin/life/vitals/reset', { method: 'POST' }),
+  lifePlans: () => adminRequest<{ plans: AdminLifePlan[] }>('/api/admin/life/plans'),
+  updatePlan: (id: string, patch: Partial<Pick<AdminLifePlan, 'title' | 'status' | 'priority'>> & { plannedStart?: string | null; plannedEnd?: string | null }) =>
+    adminRequest<{ plan: AdminLifePlan }>(`/api/admin/life/plans/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
+  lifeThreads: () => adminRequest<{ threads: AdminLifeThread[] }>('/api/admin/life/threads'),
+  updateThread: (id: string, status: string) =>
+    adminRequest<{ thread: AdminLifeThread }>(`/api/admin/life/threads/${encodeURIComponent(id)}`, { method: 'PATCH', body: { status } }),
+  lifeEvents: (limit = 50) => adminRequest<{ events: Array<{ id: string; eventType: string; description: string; happenedAt: string; meta_json?: string }> }>(`/api/admin/life/events?limit=${limit}`),
+  lifeLocations: () => adminRequest<{ locations: AdminLifeLocation[] }>('/api/admin/life/locations'),
+  createLocation: (input: { name: string; kind: string; tags?: string[]; indoor?: boolean; visitWeight?: number }) =>
+    adminRequest<{ location: AdminLifeLocation }>('/api/admin/life/locations', { method: 'POST', body: input }),
+  deleteLocation: (id: string) => adminRequest<{ ok: true }>(`/api/admin/life/locations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  overrideLocation: (locationId: string, reason: string) =>
+    adminRequest<{ location: AdminLifeLocation }>('/api/admin/life/location/override', { method: 'POST', body: { locationId, reason } }),
+  proactiveAttempts: () => adminRequest<{ attempts: AdminProactiveAttempt[] }>('/api/admin/life/proactive'),
   stickers: () => adminRequest<{ stickers: AdminSticker[] }>('/api/admin/stickers'),
   uploadSticker: (body: FormData) =>
     adminRequest<{ created: AdminSticker[]; failed: Array<{ filename: string; error: string }> }>('/api/admin/stickers', {
