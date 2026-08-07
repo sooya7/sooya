@@ -413,6 +413,38 @@ test('chat model failure is shown to the user instead of hanging', async ({ page
   await expect(card).toContainText(/失败|超时|不可用|无法处理|没有生成成功/);
 });
 
+test('连续发三条消息只收到一条回复（可打断合并）', async ({ page }) => {
+  await control({ queue: ['第一条', '第二条', '第三条'] });
+  await page.goto('/');
+  await send(page, '第一条消息');
+  await send(page, '第二条消息');
+  await send(page, '第三条消息');
+  await waitForReply(page);
+  const rows = page.locator('[data-testid="message"][data-role="assistant"]');
+  // The three messages merge into ONE reply (the mock serves the first item).
+  await expect(rows).toHaveCount(1);
+  await expect(rows.last()).toContainText('第一条');
+});
+
+test('用户建议的活动进入 Life 计划并可执行', async ({ page, baseURL }) => {
+  await control({ queue: ['好的，去试试看[[voice]]'] });
+  await page.goto('/');
+  await send(page, '建议我们明天去试试公园散步');
+  await waitForReply(page);
+  // The life bridge job turns the suggestion into a conversation plan.
+  await expect
+    .poll(
+      async () => {
+        const res = await fetch(`${baseURL}/api/life`, { headers: { authorization: `Bearer ${CHAT_TOKEN}` } });
+        if (!res.ok) return 'api_error';
+        const body = (await res.json()) as { plans?: Array<{ title: string; status: string }> };
+        return JSON.stringify(body.plans ?? []);
+      },
+      { timeout: 15_000 }
+    )
+    .toContain('散步');
+});
+
 test('PWA: manifest, icons and service worker are served correctly', async ({ page, request }) => {
   await page.goto('/');
 

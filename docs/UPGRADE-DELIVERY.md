@@ -180,3 +180,32 @@ dac1e46 docs: add core upgrade stabilization plan          ← 分支起点（�
    - 故意把模型 endpoint 配错 → 出现失败卡片 +「重新生成」；
    - `用语音回我` → 语音不是正文复读；`只发语音` → TTS 失败回退完整文字；`读出来` → 附原文朗读；
    - 对她说"试试去公园散步" → 后续 Life 日程真实执行并可回访。
+
+---
+
+## 11. 观测指标（P1-6）
+
+指标由现有审计表提供，日志不记录完整私人文本（错误路径经 `redactDiagnostic` 脱敏）：
+
+| 指标 | 数据来源 |
+|---|---|
+| `reply_interrupt_count` / `reply_superseded_count` | `reply_generations.interruption_reason` / `superseded` 状态行 |
+| `reply_auto_retry_count` / `reply_partial_count` / `reply_failure_count` | `reply_generations.status`（retrying/completed+partial/failed）与 `reply_batches.meta_json.partial` |
+| `reply_first_visible_ms` | `reply_generations.first_token_ms/visible_ms` |
+| `voice_mode_count` / `voice_cancel_count` / `voice_tts_failure_count` / `voice_fallback_text_count` | `voice_generations.mode/requested_by/status/failure_code`（cancelled/failed/published-as-text） |
+| `voice_script_rewrite_count` / `voice_naturalness_reject_count` | 语音 generation 的 naturalness 记录（语义守卫原因可经 `voice.semantic-risk` 计数） |
+| `life_plan_created/completed/skipped`、`life_thread_created/resolved` | `life_plans.status` 与 `life_threads.status` 行 |
+| `proactive_sent_count` / `user_appeared_cancel_count` / `reply_in_progress_block_count` / `duplicate_block_count` | `proactive_attempts.status/blocked_reason` |
+
+仪表盘 UI 属 P2 范围，本轮不实施。
+
+## 12. 灰度上线（P1-7）
+
+| 阶段 | 开关 | 观察 |
+|---|---|---|
+| Phase 1 | `REPLY_INTERRUPTIBLE_GENERATION=true`、Voice V2 仅明确用户请求（`VOICE_AUTO_COMPLEMENT_ENABLED=false`）、`ENABLE_LIFE_V2=true`、`ENABLE_LIFE_REACH_OUT=false` | 回复合并/失败卡片/生活系统基础行为 |
+| Phase 2 | 开启 `VOICE_AUTO_COMPLEMENT_ENABLED`（complement）+ summary 自动语音 | 语音自然度与成本 |
+| Phase 3 | 开启 `ENABLE_LIFE_REACH_OUT=true`（主动文字消息） | 主动消息与用户回复的冲突率 |
+| Phase 4 | 开启 proactive voice（`VOICE_V2_ENABLED` 默认开） | 语音主动消息 |
+
+每阶段稳定观察后再扩大；任一阶段异常可单独关闭对应开关回退。
