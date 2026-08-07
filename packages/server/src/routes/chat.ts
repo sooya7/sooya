@@ -104,7 +104,13 @@ export function registerChatRoutes(app: SooyaApp): void {
       return { ...created, event, admission };
     });
     const { message, created, event, admission } = tx();
-    if (!created) return { message, duplicate: true, reply: findReply(app, message.id) };
+    if (!created) {
+      const batch = repos.replyBatches.findByMessage(message.id);
+      const pending = batch !== undefined
+        && (batch.status === 'collecting' || batch.status === 'queued'
+          || batch.status === 'generating' || batch.status === 'publishing');
+      return { message, duplicate: true, replyPending: pending, ...(pending ? { batchId: batch.id } : {}) };
+    }
     services.bus.fanout(event!);
     const options = { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT };
     if (admission) {
@@ -113,14 +119,7 @@ export function registerChatRoutes(app: SooyaApp): void {
         repos.errors.add('reply-coordinator', error instanceof Error ? error.message : String(error));
       });
     }
-    return {
-      message,
-      duplicate: false,
-      reply: findReply(app, message.id),
-      batch: admission
-        ? { id: admission.batch.id, revision: admission.revision, action: admission.action, status: admission.batch.status }
-        : null
-    };
+    return { message, duplicate: false, replyPending: true };
   });
 
   server.post('/api/messages/sync', { preHandler: auth }, async (req, reply) => {
@@ -154,19 +153,16 @@ export function registerChatRoutes(app: SooyaApp): void {
     if (!created) return { message, duplicate: true, reply: findReply(app, message.id) };
     services.bus.fanout(event!);
     const options = { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT };
-    if (admission) {
-      // Never block the HTTP response on coordination; errors are logged.
-      void services.replyCoordinator.onMessageAccepted(admission.action, admission.batch.id, options).catch((error) => {
-        repos.errors.add('reply-coordinator', error instanceof Error ? error.message : String(error));
-      });
-    }
+    // The sync endpoint waits for the reply: tests and the API contract
+    // expect the finished assistant message (with its outcome) in the body.
+    const outcome = admission
+      ? await services.replyCoordinator.enqueue(admission.batch.id, options)
+      : null;
     return {
       message,
       duplicate: false,
-      reply: findReply(app, message.id),
-      batch: admission
-        ? { id: admission.batch.id, revision: admission.revision, action: admission.action, status: admission.batch.status }
-        : null
+      reply: outcome?.messageId ? repos.messages.get(outcome.messageId) : null,
+      outcome
     };
   });
 

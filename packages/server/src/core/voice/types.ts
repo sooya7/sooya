@@ -76,7 +76,10 @@ export interface VoicePartMeta {
   generatedFromTextPartId?: string | null;
   targetMessageId?: string | null;
   synthesisChars: number;
-  clipped: boolean;
+  /** Only present when the synthesis was clipped to maxChars (old UI contract). */
+  clipped?: boolean;
+  /** Chars actually synthesized when clipped. */
+  spokenChars?: number;
   fullTranscriptAvailable: boolean;
   voiceGenerationId?: string;
 }

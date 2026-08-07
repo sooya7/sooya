@@ -75,6 +75,9 @@ const THEME_POOL: Array<{ theme: string; toneTags: string[]; planIds: string[] }
   { theme: '阴雨慢节奏日', toneTags: ['home', 'slow', 'rest'], planIds: ['reading', 'cook', 'gaming'] }
 ];
 
+/** Kinds whose completion is traditionally worth mentioning unprompted. */
+const SHAREABLE_KINDS = new Set(['out', 'play', 'meal', 'chore']);
+
 const MOOD_BY_KIND: Record<string, string[]> = {
   sleep: ['安静', '睡着'],
   wake: ['迷糊', '慢慢清醒'],
@@ -211,11 +214,9 @@ export class LifeSimEngine {
       return { changed: false, activity: current.activity, kind: current.kind, mood: current.mood, endedPrevious };
     }
 
-    // Leaving an activity: roll an outcome, record usage, maybe advance threads.
-    if (current && current.kind !== 'sleep' && current.kind !== 'wake') {
-      this.finishActivity(current, parts);
-    }
-
+    // Leaving an activity: advance first so the filed log row exists, then
+    // roll the outcome event linked to that log (markShared relies on the
+    // event → log linkage to mark both shared).
     const advanced = this.repo.advance({
       activity: resolved.activity,
       kind: resolved.kind,
@@ -223,7 +224,10 @@ export class LifeSimEngine {
       startedAt: resolved.startedAt.toISOString(),
       endsAt: resolved.endsAt.toISOString(),
       meta: { source: resolved.source, activityId: resolved.activityId ?? null, planId: (resolved as { planId?: string }).planId ?? null }
-    });
+    }, { recordCompletionEvent: false });
+    if (current && current.kind !== 'sleep' && current.kind !== 'wake') {
+      this.finishActivity(current, parts, advanced.previous?.id ?? null);
+    }
     this.rollIncident(resolved, parts, theme);
     this.v2.expireShareCandidates();
     this.decayThreads();
@@ -359,7 +363,7 @@ export class LifeSimEngine {
     return best?.id ?? null;
   }
 
-  private finishActivity(current: LifeRepoCurrent, parts: { dayIndex: number; hour: number }): void {
+  private finishActivity(current: LifeRepoCurrent, parts: { dayIndex: number; hour: number }, logId: string | null = null): void {
     const meta = safeMeta(current.meta_json);
     const activityId = (meta.activityId as string | undefined) ?? '';
     const planId = (meta.planId as string | undefined) ?? null;
@@ -367,7 +371,10 @@ export class LifeSimEngine {
     const outcomeTag = def ? seededPick(def.possibleOutcomes, parts.dayIndex * 7 + parts.hour) : 'normal';
     const summary = outcomeFor(outcomeTag);
     const kind = current.kind;
-    // Record the outcome as an event, linked to its plan when one drove it.
+    // Record the outcome as the single boundary event (the legacy
+    // activity.completed is suppressed for V2), linked to its plan when one
+    // drove it. Shareable when the outcome deserves it OR the kind is
+    // traditionally share-worthy — the legacy heuristic stays a floor.
     const event = this.repo.recordEvent({
       eventType: 'activity.finished',
       activity: current.activity,
@@ -376,7 +383,8 @@ export class LifeSimEngine {
       moodBefore: current.mood,
       moodAfter: outcomeTag === 'disappointing' || outcomeTag === 'stuck' || outcomeTag === 'frustrating' ? '有点失落' : outcomeTag === 'pleasant' || outcomeTag === 'progress' || outcomeTag === 'fun_session' ? '心情不错' : null,
       happenedAt: this.clock().toISOString(),
-      shareable: (def?.shareability ?? 0) >= 0.45 && outcomeTag !== 'normal',
+      shareable: ((def?.shareability ?? 0) >= 0.45 && outcomeTag !== 'normal') || SHAREABLE_KINDS.has(kind),
+      logId,
       planId,
       meta: { resultType: outcomeTag, magnitude: 'small', tags: def ? outcomeDetailTags(def, outcomeTag) : [kind] }
     });
@@ -411,7 +419,7 @@ export class LifeSimEngine {
         const nowIso = this.clock().toISOString();
         this.v2.addShareCandidate({
           sourceType: 'event',
-          sourceId: current.started_at,
+          sourceId: event.id,
           novelty: outcomeTag === 'surprising' || outcomeTag === 'new_sprout' || outcomeTag === 'plot_twist' ? 0.7 : 0.45,
           relevanceToUser: def.shareability,
           emotionalValue: outcomeTag === 'pleasant' || outcomeTag === 'progress' ? 0.55 : 0.35,

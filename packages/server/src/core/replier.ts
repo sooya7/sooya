@@ -323,10 +323,11 @@ export class Replier {
           this.deps.messages.deletePart(textPartId);
           textPartId = null;
         }
-      } else if (finalText) {
+      } else if (finalText && !hiddenDraft) {
         // The barrier only opens when there is visible text to show; text that
         // materialised later (e.g. stripped directives resolving into content)
         // still needs a shell to attach to, created fenced behind the barrier.
+        // A hidden-draft replace never publishes here — phase 2 owns the text.
         const currentShell = shell as ChatMessage | null;
         const created = published ? currentShell : await openBarrier();
         if (created) {
@@ -760,7 +761,7 @@ export class Replier {
     return this.deps.messages.createInTransaction({
       role: 'assistant',
       status: 'sending',
-      replyTo: explicitReplyTo ?? (autoBatch ? null : latestUserMessage.id),
+      replyTo: explicitReplyTo ?? latestUserMessage.id,
       batchId,
       parts: [],
       meta: {
@@ -830,7 +831,10 @@ export class Replier {
     let forceDifferent = false;
     if (persona.stickerPolicy.enabled && stickersAvailable && !user.noSticker) {
       sticker = user.wantSticker === true || user.stickerOnly === true || model.sticker !== undefined;
-      stickerRequired = user.stickerOnly === true || model.stickerOnly === true;
+      // A user asking for a sticker must get one: requireMatch is disabled so
+      // the library can fall back to any sticker when the hint matches nothing
+      // (e.g. the previous one is excluded by the repeat window).
+      stickerRequired = user.wantSticker === true || user.stickerOnly === true || model.stickerOnly === true;
       forceDifferent = user.anotherSticker === true;
       if (sticker) {
         const hint = model.sticker;

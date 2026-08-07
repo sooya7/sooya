@@ -87,13 +87,20 @@ export function planDelivery(
 export function deliveryToTTSOptions(
   plan: VoiceDeliveryPlan,
   savedEmotions: VoiceEmotionMap,
-  opts: { advanced?: boolean } = {}
+  opts: { advanced?: boolean; customPresets?: boolean } = {}
 ): Required<Pick<TTSOptions, 'emotion' | 'instructions' | 'speed'>> {
   const preset = savedEmotions[plan.primaryEmotion] ?? savedEmotions.neutral;
   const speed = Math.round(plan.pace * 100) / 100;
   if (opts.advanced === false) {
     if (preset) return { emotion: plan.primaryEmotion, instructions: preset.instructions, speed: 1 };
     return { emotion: plan.primaryEmotion, instructions: plan.instructions, speed };
+  }
+  // A user-saved emotion mapping is an explicit override: it drives the
+  // request exactly as configured (old contract). Otherwise the delivery
+  // plan is consumed — pace → speed, compiled instructions reach the provider
+  // and the preset only supplies the vendor emotion wording (D3).
+  if (opts.customPresets && preset) {
+    return { emotion: plan.primaryEmotion, instructions: preset.instructions, speed: preset.speed };
   }
   const planInstructions = [
     plan.instructions,

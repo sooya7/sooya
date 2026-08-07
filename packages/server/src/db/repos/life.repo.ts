@@ -105,7 +105,7 @@ export class LifeRepo {
    * One transaction, so a crash can never leave a gap in the history or two
    * rows claiming to be "now".
    */
-  advance(input: LifeStateInput): { previous: LifeLogRow | null } {
+  advance(input: LifeStateInput, opts: { recordCompletionEvent?: boolean } = {}): { previous: LifeLogRow | null } {
     return this.db.transaction(() => {
       const ts = nowIso();
       const existing = this.current();
@@ -126,7 +126,7 @@ export class LifeRepo {
         this.db.prepare(
           'INSERT INTO life_log(id,activity,kind,mood,started_at,ended_at,shared,created_at) VALUES(?,?,?,?,?,?,0,?)'
         ).run(row.id, row.activity, row.kind, row.mood, row.started_at, row.ended_at, row.created_at);
-        if (existing.kind !== 'sleep') {
+        if (existing.kind !== 'sleep' && opts.recordCompletionEvent !== false) {
           this.recordEvent({
             logId: row.id,
             eventType: 'activity.completed',

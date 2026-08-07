@@ -10,7 +10,7 @@ import type { ChatMessage, StreamEventType } from '../types.js';
 import { HttpTimeoutError } from '../../util/http.js';
 import { abortableDelay, StaleGenerationError } from '../../util/abort.js';
 import { redactDiagnostic } from '../public-error.js';
-import { DEFAULT_VOICE_EMOTIONS, type VoiceEmotionMap } from '../voice.js';
+import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from '../voice.js';
 import { planDelivery, deliveryToTTSOptions } from './delivery.js';
 import { parseVoiceIntent, mergeVoiceDirectives } from './intent.js';
 import { assessNaturalness, estimateSpeechSeconds, voiceTextSimilarity, splitSentences } from './naturalness.js';
@@ -209,12 +209,21 @@ export class VoiceService {
     // 2. Normalize: transcript stays human, synthesis gets cleaned (D1).
     const { spokenText, synthesisText } = normalizeVoiceText(script.spokenText);
     if (!spokenText.trim()) return { ok: false, degraded: [...degraded, 'voice:empty-script'], partId: null, mediaId: null, generationId: null, shellId: null };
+    // Only the first maxChars characters are synthesized (cost and clip-length
+    // control); the transcript always keeps the COMPLETE script so nothing the
+    // user could have heard is ever lost from the stored copy.
+    const clippedSynthesis = synthesisText.length > maxChars ? synthesisText.slice(0, maxChars) : synthesisText;
+    const wasClipped = clippedSynthesis.length < synthesisText.length;
 
-    // 3. Delivery.
-    const emotion = decision.emotion ?? args.modelEmotion ?? null;
-    const delivery = planDelivery(emotion);
+    // 3. Delivery. Explicit emotion wins; otherwise detect it from the reply
+    // text through the saved mapping, like the legacy read-back path did.
     const emotions = this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
-    const ttsOptions = deliveryToTTSOptions(delivery, emotions, { advanced: this.flags.advancedDelivery });
+    const emotion = decision.emotion ?? args.modelEmotion ?? resolveVoiceDelivery(args.finalText, null, emotions).emotion;
+    const delivery = planDelivery(emotion);
+    const ttsOptions = deliveryToTTSOptions(delivery, emotions, {
+      advanced: this.flags.advancedDelivery,
+      customPresets: this.deps.settings.has('voice.emotions')
+    });
 
     // 4. Generation record. For a hidden-draft replace the shell does not
     // exist yet; message_id/text_part_id are filled in once published.
@@ -227,7 +236,7 @@ export class VoiceService {
       requestedBy: decision.requestedBy,
       status: 'scripted',
       spokenText,
-      synthesisText,
+      synthesisText: clippedSynthesis,
       delivery: delivery as unknown as Record<string, unknown>,
       naturalness: { accepted: true },
       provider: this.deps.capabilities.ttsProvider()?.name ?? null
@@ -252,7 +261,7 @@ export class VoiceService {
       for (let attempt = 0; attempt <= this.flags.ttsRetries; attempt++) {
         if (attempt > 0) this.deps.voice.update(generation.id, { retry_count: attempt });
         try {
-          audio = await provider.synthesize(synthesisText, { ...ttsOptions, signal: combined.signal });
+          audio = await provider.synthesize(clippedSynthesis, { ...ttsOptions, signal: combined.signal });
           break;
         } catch (err) {
           if (signal.aborted || combined.signal.aborted) throw err;
@@ -286,7 +295,7 @@ export class VoiceService {
       }
 
       // 6. Publish per mode.
-      const clipped = synthesisText.length > maxChars;
+      const clipped = wasClipped;
       const meta: VoicePartMeta = {
         voiceMode: mode,
         requestedBy: decision.requestedBy,
@@ -294,10 +303,10 @@ export class VoiceService {
         pace: delivery.pace,
         generatedFromTextPartId: args.textPartId,
         targetMessageId: null,
-        synthesisChars: synthesisText.length,
-        clipped,
+        synthesisChars: clippedSynthesis.length,
         fullTranscriptAvailable: true,
-        voiceGenerationId: generation.id
+        voiceGenerationId: generation.id,
+        ...(clipped ? { clipped: true, spokenChars: clippedSynthesis.length } : {})
       };
       let partId: string | null = null;
       let targetShell = args.shell;
@@ -338,6 +347,7 @@ export class VoiceService {
         });
         throw err;
       }
+      console.error('PROBE synthesis err:', (err as Error)?.name, (err as Error)?.message, 'combined.aborted=', combined.signal.aborted, 'signal.aborted=', signal.aborted);
       return this.handleSynthesisFailure(generation.id, mode, args, spokenText, maxChars, err, degraded);
     } finally {
       this.active.delete(generation.id);
@@ -352,7 +362,12 @@ export class VoiceService {
 
   /** Degrades an unacceptable script: rules-based collapse for replace, rules summary for others. */
   private degradeScript(script: VoiceScript, text: string, mode: VoiceMode, maxChars: number): VoiceScript | null {
-    const candidate = ruleBasedColloquial(mode === 'summary' ? text : script.spokenText, maxChars);
+    // Replace carries the whole answer: the transcript is the user's only copy,
+    // so it must never be trimmed to fit a clip — the synthesis clip handles
+    // TTS length, the stored script stays complete.
+    const candidate = mode === 'replace'
+      ? text.trim()
+      : ruleBasedColloquial(mode === 'summary' ? text : script.spokenText, maxChars);
     if (!candidate.trim()) return null;
     return {
       spokenText: candidate,
@@ -452,7 +467,11 @@ export class VoiceService {
       // Fall back to publishing the spoken script as plain text (C5): for a
       // hidden draft this is the first time the shell appears, carrying text
       // instead of audio — no empty bubble, no visible-then-vanished text.
-      const fallbackText = spokenText.trim() || args.finalText;
+      // Never lose content: when the script was clipped/degraded shorter than
+      // the actual reply, restore the full reply text instead.
+      const script = spokenText.trim();
+      const final = (args.finalText ?? '').trim();
+      const fallbackText = script.length >= final.length ? script : final || script;
       let targetShell = args.shell;
       if (!targetShell && args.openShell) targetShell = await args.openShell();
       if (!targetShell) return { ok: false, degraded: [...degraded, 'audio:provider_unavailable'], partId: null, mediaId: null, generationId, shellId: null };
@@ -502,7 +521,10 @@ export class VoiceService {
     if (!synthesisText.trim()) return { generationId: null, ok: false, error: 'empty_text' };
     const delivery = planDelivery(null);
     const emotions = this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
-    const ttsOptions = deliveryToTTSOptions(delivery, emotions, { advanced: this.flags.advancedDelivery });
+    const ttsOptions = deliveryToTTSOptions(delivery, emotions, {
+      advanced: this.flags.advancedDelivery,
+      customPresets: this.deps.settings.has('voice.emotions')
+    });
     const generation = this.deps.voice.create({
       messageId,
       textPartId: partId,

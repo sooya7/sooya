@@ -39,6 +39,8 @@ export interface ReplyFailure {
   code: ReplyFailureCode;
   retryable: boolean;
   message: string;
+  /** Reference for the failure card; surfaced on ReplyOutcome.error too. */
+  incidentId?: string;
 }
 
 export type StreamEventType = 'message.received' | 'reply.queued' | 'reply.thinking' | 'reply.text.delta' | 'reply.text.done' | 'reply.sticker.selecting' | 'reply.image.generating' | 'reply.audio.generating' | 'reply.content.done' | 'reply.media.saved' | 'reply.completed' | 'reply.failed' | 'message.updated' | 'media.updated' | 'memory.updated' | 'persona.updated' | 'life.updated' | 'push.updated' | 'storage.updated' | 'system.notice' | 'ping'

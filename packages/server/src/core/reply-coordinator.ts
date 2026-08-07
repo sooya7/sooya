@@ -4,7 +4,7 @@ import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { ReplyBatchRepo, ReplyBatchRow, AppendAction } from '../db/repos/reply-batch.repo.js';
 import type { ChatMessage, ReplyFailure } from './types.js';
 import type { ReplyOptions, ReplyOutcome, Replier } from './replier.js';
-import type { PublicFailure } from './public-error.js';
+import { redactDiagnostic, type PublicFailure } from './public-error.js';
 import { sortableId } from '../util/ids.js';
 import { abortableDelay, isBenignAbort, StaleGenerationError, UserInterruptedError } from '../util/abort.js';
 import { HttpTimeoutError } from '../util/http.js';
@@ -376,7 +376,8 @@ export class ReplyCoordinator {
         revision,
         messageId: outcome.messageId,
         message: this.deps.messages.get(outcome.messageId),
-        partial
+        partial,
+        degraded: outcome.degraded
       });
       for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
       this.runtime.delete(batchId);
@@ -413,6 +414,15 @@ export class ReplyCoordinator {
           timer.unref?.();
           this.timers.set(batchId, timer);
         }
+        // The retry will resolve the waiters when it completes.
+        return;
+      }
+      // Interrupted into an open batch: the batch will regenerate on its own
+      // and resolve the waiters then. Only terminal batches leave waiters
+      // with no future — reject those so callers do not hang forever.
+      if (batch && (batch.status === 'failed' || batch.status === 'cancelled' || batch.status === 'superseded')) {
+        for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError(`generation ${batch.status}`));
+        this.runtime.delete(batchId);
       }
       return;
     }
@@ -486,11 +496,21 @@ export class ReplyCoordinator {
     }
     this.deps.batches.fail(batchId, revision, failure.code, failure.message, this.owner);
     this.publishFailure(batchId, revision, failure);
+    // The provider error lands in the error log (redacted) with the same
+    // incident id the failure card carries, so support can correlate them.
+    this.deps.errorLog?.add('reply', failure.code, {
+      batchId,
+      revision,
+      incidentId: failure.incidentId,
+      diagnostic: redactDiagnostic(error)
+    });
     const outcome: ReplyOutcome = {
       messageId: '',
       ok: false,
       parts: [],
-      degraded: [],
+      // Keep the stable degradation vocabulary the UI keys on (old replier
+      // contract): a hidden failure still reports chat:provider_unavailable.
+      degraded: [failure.code === 'model_timeout' ? 'chat:model_timeout' : failure.code === 'rate_limited' ? 'chat:rate_limited' : 'chat:provider_unavailable'],
       error: publicFailureFromReply(failure)
     };
     for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
@@ -568,45 +588,49 @@ export class ReplyCoordinator {
 }
 
 function toReplyFailure(error: unknown, isTimeout: boolean, published: boolean): ReplyFailure {
+  const incidentId = sortableId('inc');
   if (isTimeout) {
     return {
       batchId: '',
       revision: 0,
       code: published ? 'provider_unavailable' : 'model_timeout',
       retryable: !published,
-      message: published ? '回复中断了。' : '这次回复没有生成成功。'
+      message: published ? '回复中断了。' : '这次回复没有生成成功。',
+      incidentId
     };
   }
   const err = error as Error;
   const status = (err as { status?: number }).status;
   if (typeof status === 'number' && status === 429) {
-    return { batchId: '', revision: 0, code: 'rate_limited', retryable: true, message: '请求太频繁了，稍后再试一次吧。' };
+    return { batchId: '', revision: 0, code: 'rate_limited', retryable: true, message: '请求太频繁了，稍后再试一次吧。', incidentId };
   }
   return {
     batchId: '',
     revision: 0,
     code: 'provider_unavailable',
     retryable: false,
-    message: '这次回复没有生成成功。'
+    message: '这次回复没有生成成功。',
+    incidentId
   };
 }
 
 /** PublicFailure (from the replier) → the richer ReplyFailure shape for events. */
 function toReplyFailureFromPublic(failure: PublicFailure | undefined, batchId: string, revision: number): ReplyFailure {
-  if (!failure) return { batchId, revision, code: 'internal_error', retryable: false, message: 'reply failed' };
+  if (!failure) return { batchId, revision, code: 'internal_error', retryable: false, message: 'reply failed', incidentId: sortableId('inc') };
   return {
     batchId,
     revision,
     code: failure.code === 'internal_error' ? 'internal_error' : 'provider_unavailable',
     retryable: failure.code === 'provider_unavailable',
-    message: failure.message
+    message: failure.message,
+    incidentId: failure.incidentId
   };
 }
 
 /** ReplyFailure → the public failure shape carried on ReplyOutcome.error. */
 function publicFailureFromReply(failure: ReplyFailure): PublicFailure {
   return {
-    incidentId: '',
+    incidentId: failure.incidentId ?? '',
     code: failure.code === 'internal_error' ? 'internal_error' : 'provider_unavailable',
     message: failure.message
   };

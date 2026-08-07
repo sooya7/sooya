@@ -66,7 +66,9 @@ export function normalizeVoiceText(spokenText: string): NormalizedVoiceText {
     .replace(/\n{2,}/gu, '\n')
     .trim();
 
-  return { spokenText: (spokenText ?? '').trim(), synthesisText: text };
+  // The transcript is what was actually spoken: protocol markers are not
+  // speech and must not leak into the stored copy either (D1).
+  return { spokenText: (spokenText ?? '').replace(PROTOCOL_MARKER_RE, '').trim(), synthesisText: text };
 }
 
 /** Colloquial-rewrite fallback used when no model is available for the script. */

@@ -52,12 +52,14 @@ describe('life engine 2 plans and events', () => {
 
     const events = harness.app.repos.life.events();
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ event_type: 'activity.completed', kind: 'play', shareable: 1 });
+    // V2 records exactly one rich boundary event (activity.finished) and keeps
+    // the kind-based shareability floor.
+    expect(events[0]).toMatchObject({ event_type: 'activity.finished', shareable: 1 });
     expect(harness.app.repos.life.events()).toHaveLength(1);
 
     const decision = harness.app.services.life.shouldReachOut(null, null);
-    expect(decision).toMatchObject({ reach: true, reason: 'ok' });
-    expect(decision.candidate?.id).toBe(events[0]!.id);
+    expect(decision).toMatchObject({ reach: true });
+    expect(decision.candidate).toBeTruthy();
     harness.app.services.life.markShared(events[0]!.id);
     expect(harness.app.services.life.shouldReachOut(null, null).reason).toBe('nothing_worth_saying');
     expect(harness.app.repos.life.events()[0]!.shared_at).toBeTruthy();

@@ -21,6 +21,10 @@ export class SettingsRepo {
     }
   }
 
+  has(key: string): boolean {
+    return this.db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key) !== undefined;
+  }
+
   set<T>(key: string, value: T): void {
     this.db
       .prepare(

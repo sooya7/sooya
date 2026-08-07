@@ -212,7 +212,7 @@ export class LifeV2Repo {
         semantic_tags_json=excluded.semantic_tags_json,
         recent_outcomes_json=excluded.recent_outcomes_json,
         updated_at=excluded.updated_at
-    `).run(input.activityId, ts, consecutiveDays, JSON.stringify([...new Set([...(existing ? JSON.parse(existing.semantic_tags_json) : []), ...input.tags])].slice(0, 12)), JSON.stringify(outcomes.slice(0, 12)));
+    `).run(input.activityId, ts, consecutiveDays, JSON.stringify([...new Set([...(existing ? JSON.parse(existing.semantic_tags_json) : []), ...input.tags])].slice(0, 12)), JSON.stringify(outcomes.slice(0, 12)), ts);
   }
 
   /** Most recently used activities (for semantic anti-repeat). */

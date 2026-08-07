@@ -332,6 +332,18 @@ export class ReplyBatchRepo {
              lease_owner = NULL, lease_expires_at = NULL
          WHERE status = 'publishing' AND visible_at IS NOT NULL`
       ).run(nowIso());
+      // Re-link the published assistant message onto the recovered batch so
+      // findReply / retry / UI can still reach it.
+      const published = this.db.prepare(
+        `SELECT b.id AS batch_id, m.id AS message_id
+         FROM reply_batches b
+         JOIN messages m ON m.batch_id = b.id AND m.role = 'assistant'
+         WHERE b.assistant_message_id IS NULL AND b.status = 'completed'
+           AND json_extract(b.meta_json, '$.partial') = 1 AND m.status IN ('sending','sent')`
+      ).all() as Array<{ batch_id: string; message_id: string }>;
+      for (const row of published) {
+        this.db.prepare('UPDATE reply_batches SET assistant_message_id = ? WHERE id = ?').run(row.message_id, row.batch_id);
+      }
       // Legacy 'running' rows from before migration 15 behave like generating.
       this.db.prepare(
         `UPDATE reply_batches SET status = 'generating'
