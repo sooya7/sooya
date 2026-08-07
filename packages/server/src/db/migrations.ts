@@ -895,8 +895,27 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE life_events ADD COLUMN narrative_fingerprint TEXT;
       `);
     }
-  }
+  },
 
+  {
+    version: 18,
+    name: 'proactive_candidate_sent_once',
+    up: (db) => {
+      /*
+       * P1-4: hard once-only guarantee for proactive deliveries. The
+       * coordinator serializes in-process, but a concurrent worker (or a
+       * future multi-instance deploy) must not publish the same share
+       * candidate twice. The attempt row is marked 'sent' in the same
+       * transaction as the assistant message, so a second sender's insert
+       * violates this index and rolls the duplicate message back.
+       */
+      db.exec(`
+        CREATE UNIQUE INDEX idx_proactive_candidate_sent_once
+          ON proactive_attempts(candidate_id)
+          WHERE status = 'sent' AND candidate_id IS NOT NULL;
+      `);
+    }
+  }
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
