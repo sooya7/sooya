@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useChat } from './lib/useChat.js';
-import { captureChatViewState, INITIAL_CHAT_VIEW_STATE, restoredScrollTop, type ChatViewState } from './lib/chatViewState.js';
+import { anchorScrollCorrection, captureChatViewState, INITIAL_CHAT_VIEW_STATE, isAnchorSettled, type ChatScrollAnchor, type ChatViewState } from './lib/chatViewState.js';
 import { NotificationBridge } from './components/NotificationBridge.js';
 import { MessageItem } from './components/MessageItem.js';
 import { Composer } from './components/Composer.js';
@@ -37,6 +37,14 @@ function preview(message: ChatMessage): string {
   return text.slice(0, 90) || (message.content.some((part) => part.type === 'image') ? '[图片]' : message.content.some((part) => part.type === 'audio') ? '[语音]' : '[消息]');
 }
 
+/** 锚点消息顶边相对滚动容器视口顶部的实测位置；未渲染或消息已不存在时返回 null。 */
+function anchorTopInViewport(scroller: HTMLElement, anchor: ChatScrollAnchor, messages: ChatMessage[]): number | null {
+  const index = messages.findIndex((message) => message.id === anchor.messageId);
+  const element = index >= 0 ? scroller.querySelector<HTMLElement>(`[data-index="${index}"]`) : null;
+  if (!element) return null;
+  return element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+}
+
 export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewStateRef: ChatViewStateRef }) {
   // 头像只显示几十像素，不需要原图。
   const personaAvatar = useAuthenticatedMedia(chat.persona?.avatar ? mediaThumbnailPath(chat.persona.avatar, AVATAR_IMAGE_CSS_WIDTH) : chat.persona?.avatar, 'user', 'image');
@@ -45,6 +53,9 @@ export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewSta
   const initialViewState = useRef(viewStateRef.current).current;
   const [stickToBottom, setStickToBottom] = useState(initialViewState.stickToBottom); const [unread, setUnread] = useState(0); const [notice, setNotice] = useState<string | null>(null); const [tokenInput, setTokenInput] = useState(''); const [quote, setQuote] = useState<ChatMessage | null>(null); const [swUpdate, setSwUpdate] = useState<ServiceWorkerUpdateController | null>(null); const [historyOpen, setHistoryOpen] = useState(false); const [searchQuery, setSearchQuery] = useState(''); const [searchHits, setSearchHits] = useState<MessageSearchHit[]>([]); const [searchIndex, setSearchIndex] = useState(0); const [historyBusy, setHistoryBusy] = useState(false); const [historyError, setHistoryError] = useState<string | null>(null); const [dateQuery, setDateQuery] = useState(''); const [highlightedId, setHighlightedId] = useState<string | null>(null); const [highlightNonce, setHighlightNonce] = useState(0);
   const stickToBottomRef = useRef(initialViewState.stickToBottom); const prevTotalSizeRef = useRef(0); const prevLastIdRef = useRef<string | null>(null); const loadingOlderRef = useRef(false); const didInitialScrollRef = useRef(false);
+  // 锚定保持期：锚点恢复后到用户接管滚动前，每次提交都按 DOM 实测位置修正，
+  // 让「估算 → 实测」级联与动态高度（图片加载等）都追不上锚点消息。
+  const anchorLockRef = useRef(false);
   const historyScrollTopRef = useRef(0);
   // 渲染期镜像 chat.messages：跳转的 setTimeout 回调里读它，避免拿到陈旧的数组闭包。
   const latestMessagesRef = useRef(chat.messages);
@@ -60,7 +71,13 @@ export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewSta
     overscan: 8
   });
 
-  const handleScroll = useCallback(() => { const el = scrollerRef.current; if (!el) return; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX; stickToBottomRef.current = atBottom; setStickToBottom(atBottom); if (atBottom) setUnread(0); }, []);
+  const handleScroll = useCallback(() => { const el = scrollerRef.current; if (!el) return; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX; stickToBottomRef.current = atBottom; setStickToBottom(atBottom); if (atBottom) { setUnread(0); anchorLockRef.current = false; } else if (anchorLockRef.current && initialViewState.anchor) {
+    // 锚定保持期：只有「锚点已偏离保存偏移」的滚动才视为用户接管（锚点修正引发
+    // 的滚动总是让锚点停在目标偏移，不会解除锚定）。
+    const anchor = initialViewState.anchor;
+    const top = anchorTopInViewport(el, anchor, latestMessagesRef.current);
+    if (top !== null && !isAnchorSettled(top, anchor.offsetFromViewportTop)) anchorLockRef.current = false;
+  } }, []);
   useLayoutEffect(() => {
     const el = scrollerRef.current; if (!el) return; const messages = chat.messages; const count = messages.length; const lastId = messages[count - 1]?.id ?? null;
     if (!didInitialScrollRef.current && count > 0) {
@@ -70,13 +87,19 @@ export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewSta
         window.requestAnimationFrame(() => {
           if (scrollerRef.current) virtualizer.scrollToIndex(count - 1, { align: 'end' });
         });
+      } else if (initialViewState.anchor) {
+        const anchor = initialViewState.anchor;
+        const index = messages.findIndex((message) => message.id === anchor.messageId);
+        if (index >= 0) {
+          // 锚点恢复：先按（估算的）位置跳到锚点，锚定保持期随后按 DOM 实测位置
+          // 修正，直到「估算 → 实测」级联收敛——不用绝对 scrollTop、不用固定等待。
+          anchorLockRef.current = true;
+          virtualizer.scrollToIndex(index, { align: 'start' });
+        } else {
+          el.scrollTop = 0; // 锚点消息已不存在（如被撤回），回到顶部
+        }
       } else {
-        const restore = () => {
-          const current = scrollerRef.current;
-          if (current) current.scrollTop = restoredScrollTop(current, initialViewState);
-        };
-        restore();
-        window.requestAnimationFrame(restore);
+        el.scrollTop = 0; // 无锚点（空会话离开）→ 顶部
       }
       return;
     }
@@ -87,9 +110,38 @@ export function ChatView({ chat, viewStateRef }: { chat: ChatController; viewSta
     prevLastIdRef.current = lastId;
   }, [chat.messages]);
 
+  // 锚定修正：锚定保持期内每次提交都核对锚点消息的实测位置，按偏移差值滚动，
+  // 让动态高度（图片加载、语音气泡、SSE 追加、ResizeObserver 测高校正）都追不上
+  // 锚点；修正引发的滚动会让锚点停在目标偏移，触发一次额外的渲染后即收敛。
+  useLayoutEffect(() => {
+    if (!anchorLockRef.current || stickToBottomRef.current) return;
+    const scroller = scrollerRef.current;
+    const anchor = initialViewState.anchor;
+    if (!scroller || !anchor) return;
+    const messages = latestMessagesRef.current;
+    if (!messages.some((message) => message.id === anchor.messageId)) { anchorLockRef.current = false; return; }
+    const top = anchorTopInViewport(scroller, anchor, messages);
+    if (top === null) return; // 锚点消息尚未渲染，等下一次提交
+    const delta = anchorScrollCorrection(top, anchor.offsetFromViewportTop);
+    if (Math.abs(delta) < 0.5) return;
+    scroller.scrollTop += delta;
+  });
+
   useLayoutEffect(() => () => {
-    viewStateRef.current = captureChatViewState(scrollerRef.current, stickToBottomRef.current);
-  }, [viewStateRef]);
+    const scroller = scrollerRef.current;
+    const stack = messagesRef.current;
+    const stick = stickToBottomRef.current;
+    if (!scroller || !stack) { viewStateRef.current = { anchor: null, stickToBottom: stick }; return; }
+    // 锚点 = 视口顶部第一条可见消息；偏移为该消息顶边到视口顶部的距离。
+    const contentOffsetTop = stack.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    viewStateRef.current = captureChatViewState({
+      scrollTop: scroller.scrollTop,
+      contentOffsetTop,
+      virtualItems: virtualizer.getVirtualItems(),
+      stickToBottom: stick,
+      getMessageId: (index) => chat.messages[index]?.id ?? null
+    });
+  }, [chat.messages, viewStateRef, virtualizer]);
   useEffect(() => { const scroller = scrollerRef.current; const content = messagesRef.current; if (!scroller || !content || typeof ResizeObserver === 'undefined') return; const observer = new ResizeObserver(() => { if (!loadingOlderRef.current && stickToBottomRef.current) scroller.scrollTop = scroller.scrollHeight; }); observer.observe(content); return () => observer.disconnect(); }, []);
   useEffect(() => { const sentinel = sentinelRef.current; const scroller = scrollerRef.current; if (!sentinel || !scroller) return; const observer = new IntersectionObserver((entries) => { if (entries[0]?.isIntersecting && chat.hasMore && !chat.loadingOlder) { loadingOlderRef.current = true; prevTotalSizeRef.current = virtualizer.getTotalSize(); void chat.loadOlder().then((added) => { if (!added) { loadingOlderRef.current = false; prevTotalSizeRef.current = virtualizer.getTotalSize(); } }); } }, { root: scroller, rootMargin: '120px 0px 0px 0px' }); observer.observe(sentinel); return () => observer.disconnect(); }, [chat.hasMore, chat.loadOlder, chat.loadingOlder]);
   useEffect(() => {
