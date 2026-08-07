@@ -112,13 +112,15 @@ export function scoreLocationCandidates(
       breakdown.repeat = -40;
     }
 
-    // Thread relevance.
+    // Thread relevance: open threads with matching location tags pull SOOYA
+    // toward the related spot. 命中越多越相关：首个 +10，每个额外标签 +4，封顶 30。
     let tags: string[] = [];
     try { tags = JSON.parse(row.tags_json) as string[]; } catch { /* ignore */ }
     const threadOverlap = input.threadTags.filter((t) => tags.includes(t) || row.kind === t).length;
     if (threadOverlap > 0) {
-      score += 10;
-      breakdown.thread = 10;
+      const bonus = Math.min(30, 10 + (threadOverlap - 1) * 4);
+      score += bonus;
+      breakdown.thread = bonus;
     }
 
     // Weather modifier.
