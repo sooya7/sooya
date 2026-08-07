@@ -32,6 +32,7 @@ export default function MetricsDashboardPage() {
   const [data, setData] = useState<MetricAggregate[] | null>(null);
   const [distributions, setDistributions] = useState<MetricsDistribution[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<'unauthorized' | 'flag-disabled' | 'provider-unconfigured' | 'error'>('error');
   const [nonce, setNonce] = useState(0);
   const [compare, setCompare] = useState<ReleaseMetricsComparison | null>(null);
   const [compareError, setCompareError] = useState<string | null>(null);
@@ -43,11 +44,17 @@ export default function MetricsDashboardPage() {
     let alive = true;
     if (!getAdminToken()) { setError('缺少管理令牌'); return; }
     setError(null);
+    setErrorKind('error');
     setData(null);
     setDistributions(null);
     setCompare(null);
     setCompareError(null);
-    void adminApi.metrics(days).then((body) => { if (alive) setData(body.aggregates); }).catch((err: unknown) => { if (alive) setError(err instanceof Error ? err.message : String(err)); });
+    void adminApi.metrics(days).then((body) => { if (alive) setData(body.aggregates); }).catch((err: unknown) => {
+      if (!alive) return;
+      const state = adminStateFromError(err);
+      setErrorKind(state.kind);
+      setError(state.message);
+    });
     void adminApi.metricsDistributions(days).then((body) => { if (alive) setDistributions(body.distributions); }).catch(() => undefined);
     void adminApi.metricsReleaseCompare(localDateKey(new Date(Date.now() - days * 86_400_000)), localDateKey(new Date())).then((body) => { if (alive) setCompare(body); }).catch((err: unknown) => { if (alive) setCompareError(err instanceof Error ? err.message : String(err)); });
     return () => { alive = false; };
@@ -68,7 +75,7 @@ export default function MetricsDashboardPage() {
     }
   };
 
-  const failure = error ? adminStateFromError(error) : null;
+  const failure = error ? { kind: errorKind, message: error } : null;
 
   return (
     <div className="admin-page" data-testid="metrics-page">

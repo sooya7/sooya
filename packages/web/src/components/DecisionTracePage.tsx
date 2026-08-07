@@ -21,17 +21,24 @@ export default function DecisionTracePage() {
   const [traces, setTraces] = useState<DecisionTrace[] | null>(null);
   const [selected, setSelected] = useState<DecisionTrace | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<'unauthorized' | 'flag-disabled' | 'provider-unconfigured' | 'error'>('error');
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailErrorKind, setDetailErrorKind] = useState<'unauthorized' | 'flag-disabled' | 'provider-unconfigured' | 'error'>('error');
   const [nonce, setNonce] = useState(0);
 
   const load = useCallback(() => {
     setError(null);
+    setErrorKind('error');
     adminApi.decisionTraces(50)
       .then((body) => {
         setTraces(body.traces);
         setSelected((previous) => previous ?? body.traces[0] ?? null);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => {
+        const state = adminStateFromError(err);
+        setErrorKind(state.kind);
+        setError(state.message);
+      });
   }, []);
 
   useEffect(() => { load(); }, [load, nonce]);
@@ -41,11 +48,12 @@ export default function DecisionTracePage() {
     setDetailError(null);
     adminApi.decisionTrace(trace.batchId, trace.revision)
       .then((body) => setSelected(body.trace))
-      .catch((err: unknown) => setDetailError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => {
+        const state = adminStateFromError(err);
+        setDetailErrorKind(state.kind);
+        setDetailError(state.message);
+      });
   };
-
-  const failure = error ? adminStateFromError(error) : null;
-  const detailFailure = detailError ? adminStateFromError(detailError) : null;
 
   return (
     <div className="admin-page" data-testid="decision-trace-page">
@@ -56,12 +64,12 @@ export default function DecisionTracePage() {
         </div>
         <p className="admin-eyebrow">仅管理员可见（X-Admin-Token）· 决策溯源，不含提示词与内部安全规则</p>
       </header>
-      {failure && <AdminState kind={failure.kind} message={error!} onRetry={() => setNonce((n) => n + 1)} />}
-      {!failure && !traces && <AdminState kind="loading" />}
-      {!failure && traces && traces.length === 0 && (
+      {error && <AdminState kind={errorKind} message={error} onRetry={() => setNonce((n) => n + 1)} />}
+      {!error && !traces && <AdminState kind="loading" />}
+      {!error && traces && traces.length === 0 && (
         <AdminState kind="empty" message="暂无决策记录。开启 ADMIN_DECISION_TRACE_ENABLED 后，每条回复会留下可追溯的决策摘要。" />
       )}
-      {!failure && traces && traces.length > 0 && (
+      {!error && traces && traces.length > 0 && (
         <div className="trace-layout">
           <section aria-labelledby="trace-list-title">
             <h2 id="trace-list-title" className="admin-eyebrow">时间线</h2>
@@ -84,7 +92,7 @@ export default function DecisionTracePage() {
             <h2 id="trace-detail-title" className="admin-eyebrow">详情</h2>
             {!selected ? <AdminState kind="empty" message="选择一条记录查看详情" /> : (
               <div className="trace-meta-card" data-testid="trace-detail">
-                {detailFailure && <AdminState kind={detailFailure.kind} message={detailError!} />}
+                {detailError && <AdminState kind={detailErrorKind} message={detailError} />}
                 <dl className="trace-meta">
                   <dt>Batch</dt><dd>{selected.batchId}</dd>
                   <dt>Revision</dt><dd>{selected.revision}</dd>
