@@ -136,7 +136,9 @@ export class ExperimentService {
   /** Variant for the first active experiment of a subsystem, or null. */
   variantForSubsystem(subsystem: string): string | null {
     if (!this.enabled) return null;
-    const experiment = this.repo.list().find((e) => e.subsystem === subsystem && (e.status === 'running' || e.status === 'shadow'));
+    // A paused experiment keeps subsystem ownership (returning 'control',
+    // i.e. canonical behavior) until it is completed/cancelled.
+    const experiment = this.repo.list().find((e) => e.subsystem === subsystem && (e.status === 'running' || e.status === 'shadow' || e.status === 'paused'));
     if (!experiment) return null;
     return this.variantFor(experiment.id);
   }
