@@ -3,7 +3,7 @@
 > 交付分支：`upgrade/core-systems-stabilization`
 > 代码交付版本：`7962eb3`（2026-08-08）
 > 交付文档版本：`6e3bc69`
-> 最终验收版本：待最终 HEAD 与 GitHub CI 确认后填写（见文末 READY TO MERGE 记录）
+> 最终验收版本：`dfe206c`（2026-08-08）
 > 依据：《SOOYA 核心升级稳定化修复方案》（`docs/UPGRADE-STABILIZATION-PLAN.md`）+ 实施稿 `sooya-upgraded-src.zip`
 > 基线：`main`（`319a36c`）
 
@@ -134,7 +134,10 @@ dac1e46 docs: add core upgrade stabilization plan          ← 分支起点（�
 | 构建 | `npm run build` | ✅ server + web |
 | E2E | `npm run test:e2e` | ✅ 本地全量通过 |
 | **本地门禁** | 上述全部 | ✅ **PASS** |
-| **GitHub CI** | push 后 Actions | ⏳ **PENDING**（最终 HEAD 验证后更新） |
+| **GitHub CI**（PR #82，run 31208966167） | `Independent code validation` | ✅ **PASS**（typecheck 0 / server / web / build） |
+| **GitHub CI** | `Browser end-to-end tests` | ✅ **PASS** |
+| **GitHub CI** | `Dependency vulnerability audit` | ✅ **PASS** |
+| **GitHub CI** | `Release package and container validation` | ✅ **PASS** |
 
 ---
 
@@ -209,3 +212,21 @@ dac1e46 docs: add core upgrade stabilization plan          ← 分支起点（�
 | Phase 4 | 开启 proactive voice（`VOICE_V2_ENABLED` 默认开） | 语音主动消息 |
 
 每阶段稳定观察后再扩大；任一阶段异常可单独关闭对应开关回退。
+
+
+---
+
+## 13. 最终合并记录 — READY TO MERGE
+
+```text
+Local verification: PASS
+GitHub CI:          PASS（4/4 checks，PR #82）
+Final SHA:          dfe206c
+CI Run:             31208966167
+Migration version:  18（v15-v18 为一次迁移，含 proactive 幂等索引）
+Rollback:           npm run rollback:preflight / rollback:normalize（见 §8）
+Feature flags:      8 个回退开关，feature-flags.test.ts 逐项验证（见 §9 与测试）
+Known limitations:  §9（P2 暂缓项不在本轮）
+```
+
+该版本已从"本地全量验证通过"升级为**可安全合并 main 的正式交付版本**。
