@@ -1086,6 +1086,49 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX idx_experiment_events ON experiment_events(experiment_id, created_at DESC);
       `);
     }
+  },
+  /*
+   * TMP_LOCAL（Agent A / location 模块，本地测试专用）：
+   * 临时追加 migration，供 location 完整实现的自测使用。
+   * 最终 DDL 见 INTEGRATION-NOTES-location.md 的 MIGRATION_NEEDS，
+   * 由 Integration 统一并入 v25（life_cities + city_id + travel_state），
+   * 本条目在合并时删除。
+   */
+  {
+    version: 901,
+    name: 'tmp_location_full',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE life_cities (
+          id         TEXT PRIMARY KEY,
+          key        TEXT UNIQUE,
+          name       TEXT NOT NULL,
+          region     TEXT,
+          country    TEXT,
+          time_zone  TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+          active     INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_life_cities_active ON life_cities(active);
+
+        CREATE TABLE travel_state (
+          id                 INTEGER PRIMARY KEY CHECK (id = 1),
+          from_location_id   TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          to_location_id     TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          mode               TEXT NOT NULL DEFAULT 'walk' CHECK (mode IN ('walk','bike','transit','car','unknown')),
+          started_at         TEXT NOT NULL,
+          expected_arrive_at TEXT NOT NULL,
+          source_plan_id     TEXT,
+          source_activity_id TEXT,
+          created_at         TEXT NOT NULL
+        );
+
+        ALTER TABLE life_locations ADD COLUMN city_id TEXT REFERENCES life_cities(id) ON DELETE SET NULL;
+        ALTER TABLE life_locations ADD COLUMN key TEXT;
+        CREATE UNIQUE INDEX idx_life_locations_key ON life_locations(key) WHERE key IS NOT NULL;
+      `);
+    }
   }
 ];
 
