@@ -731,7 +731,10 @@ export const MIGRATIONS: Migration[] = [
         FROM reply_batches;
 
         CREATE TABLE reply_batch_messages_new (
-          batch_id   TEXT NOT NULL REFERENCES reply_batches(id) ON DELETE CASCADE,
+          -- Must reference the NEW table: dropping the legacy reply_batches
+          -- implicitly deletes its rows, and an ON DELETE CASCADE from the
+          -- old table would wipe the freshly copied membership (P1-2).
+          batch_id   TEXT NOT NULL REFERENCES reply_batches_new(id) ON DELETE CASCADE,
           message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
           position   INTEGER NOT NULL,
           created_at TEXT NOT NULL,
