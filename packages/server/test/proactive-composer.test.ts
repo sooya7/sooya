@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
 
 let harness: Harness | null = null;
@@ -71,6 +71,13 @@ describe('ProactiveComposer — coordinator scheduling (P0-1)', () => {
     expect(result.messageId).toBeNull();
     const assistants = harness.app.repos.messages.recent(50).filter((m) => m.role === 'assistant' && m.meta?.proactive);
     expect(assistants).toHaveLength(0);
+    // The user message started a reply generation; let it settle before the
+    // harness closes the database, or the late completion rejects on a closed
+    // connection after the test.
+    await vi.waitFor(
+      () => expect(harness!.app.repos.replyBatches.openBatch()).toBeUndefined(),
+      { timeout: 10_000 }
+    );
   });
 
   it('blocks a proactive delivery while a reply batch is open', async () => {
