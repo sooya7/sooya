@@ -19,6 +19,29 @@ export interface AcceptUserMessageResult {
   action: AppendAction;
 }
 
+/** Outcome of a proactive delivery task run (produced by the task itself). */
+export type ProactiveRunOutcome =
+  | { kind: 'sent'; messageId: string }
+  | { kind: 'blocked'; blockedReason: string }
+  | { kind: 'discarded' };
+
+/**
+ * P0-1: a proactive reach-out delivered through the coordinator. The task
+ * owns composition/persistence; the coordinator owns priority (user replies
+ * always win), abort-on-user-activity and once-only scheduling.
+ */
+export interface ProactiveDeliveryTask {
+  candidateId: string;
+  requestedMode: string;
+  run(signal: AbortSignal): Promise<ProactiveRunOutcome>;
+}
+
+export interface ProactiveDeliveryResult {
+  status: 'blocked' | 'sent' | 'failed' | 'cancelled';
+  blockedReason: string | null;
+  messageId: string | null;
+}
+
 export interface ReplyCoordinatorOptions {
   initialDebounceMs?: number;
   interruptDebounceMs?: number;
@@ -88,6 +111,11 @@ export class ReplyCoordinator {
   private readonly activeGenerations = new Map<string, ActiveGeneration>();
   /** Abort handles for timeout-retry backoffs, which outlive their active generation entry. */
   private readonly retryControllers = new Map<string, AbortController>();
+  /** Proactive deliveries wait for an idle reply slot and yield to user messages. */
+  private readonly proactiveQueue: ProactiveDeliveryTask[] = [];
+  private proactiveActive: { task: ProactiveDeliveryTask; controller: AbortController } | null = null;
+  private readonly proactiveWaiters = new Map<string, (result: ProactiveDeliveryResult) => void>();
+  private proactiveRunning = false;
   private running = false;
   private stopped = false;
   private readonly owner = sortableId('reply-worker');
@@ -114,6 +142,8 @@ export class ReplyCoordinator {
    * action: abort hidden generations, reschedule with the right debounce.
    */
   async onMessageAccepted(action: AppendAction, batchId: string, options: ReplyOptions): Promise<void> {
+    // P0-1: a user message always preempts proactive deliveries.
+    this.cancelProactive();
     const batch = this.deps.batches.get(batchId);
     if (!batch) return;
     const runtime = this.runtime.get(batchId) ?? { options, waiters: [] };
@@ -142,6 +172,7 @@ export class ReplyCoordinator {
 
   enqueue(batchId: string, options: ReplyOptions): Promise<ReplyOutcome> {
     if (this.stopped) return Promise.reject(new Error('reply coordinator is stopped'));
+    this.cancelProactive();
     const batch = this.deps.batches.get(batchId);
     if (!batch) return Promise.reject(new Error(`reply batch not found: ${batchId}`));
     return new Promise<ReplyOutcome>((resolve, reject) => {
@@ -174,6 +205,82 @@ export class ReplyCoordinator {
     return batch;
   }
 
+  /**
+   * P0-1: deliver a proactive reach-out through the coordinator. Priority is
+   * user replies > proactive: the task is refused while a reply batch is open,
+   * waits in the queue for an idle slot, and is aborted (chat/TTS/image
+   * providers included) the moment a user message arrives.
+   */
+  async enqueueProactive(task: ProactiveDeliveryTask): Promise<ProactiveDeliveryResult> {
+    if (this.stopped) return { status: 'blocked', blockedReason: 'stopped', messageId: null };
+    if (this.deps.batches.openBatch()) return { status: 'blocked', blockedReason: 'reply_in_progress', messageId: null };
+    if (this.proactiveActive?.task.candidateId === task.candidateId
+      || this.proactiveQueue.some((queued) => queued.candidateId === task.candidateId)) {
+      return { status: 'blocked', blockedReason: 'candidate_already_queued', messageId: null };
+    }
+    this.proactiveQueue.push(task);
+    void this.drainProactive();
+    return new Promise<ProactiveDeliveryResult>((resolve) => {
+      this.proactiveWaiters.set(task.candidateId, resolve);
+    });
+  }
+
+  /** Cancels queued proactive tasks and aborts the running one (P0-1). */
+  private cancelProactive(): void {
+    for (const task of this.proactiveQueue.splice(0)) {
+      this.resolveProactive(task.candidateId, { status: 'cancelled', blockedReason: 'user_appeared', messageId: null });
+    }
+    const active = this.proactiveActive;
+    if (active) {
+      // The task's run() observes the abort and settles; drainProactive then
+      // resolves the waiter as cancelled.
+      active.controller.abort(new UserInterruptedError('user appeared'));
+    }
+  }
+
+  private resolveProactive(candidateId: string, result: ProactiveDeliveryResult): void {
+    const waiter = this.proactiveWaiters.get(candidateId);
+    if (waiter) {
+      this.proactiveWaiters.delete(candidateId);
+      waiter(result);
+    }
+  }
+
+  private async drainProactive(): Promise<void> {
+    if (this.proactiveRunning || this.stopped) return;
+    this.proactiveRunning = true;
+    try {
+      while (!this.stopped) {
+        const task = this.proactiveQueue.shift();
+        if (!task) break;
+        // Re-check priority: a reply batch may have opened while the task
+        // waited in the queue.
+        if (this.deps.batches.openBatch()) {
+          this.resolveProactive(task.candidateId, { status: 'blocked', blockedReason: 'reply_in_progress', messageId: null });
+          continue;
+        }
+        const controller = new AbortController();
+        this.proactiveActive = { task, controller };
+        let result: ProactiveDeliveryResult;
+        try {
+          const outcome = await task.run(controller.signal);
+          if (outcome.kind === 'sent') result = { status: 'sent', blockedReason: null, messageId: outcome.messageId };
+          else if (outcome.kind === 'blocked') result = { status: 'blocked', blockedReason: outcome.blockedReason, messageId: null };
+          else result = { status: 'cancelled', blockedReason: controller.signal.aborted ? 'user_appeared' : 'discarded', messageId: null };
+        } catch (error) {
+          result = controller.signal.aborted
+            ? { status: 'cancelled', blockedReason: 'user_appeared', messageId: null }
+            : { status: 'failed', blockedReason: (error as Error).message.slice(0, 300), messageId: null };
+        }
+        this.proactiveActive = null;
+        this.resolveProactive(task.candidateId, result);
+      }
+    } finally {
+      this.proactiveRunning = false;
+      if (this.proactiveQueue.length > 0 && !this.stopped) void this.drainProactive();
+    }
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
@@ -183,6 +290,10 @@ export class ReplyCoordinator {
     }
     for (const controller of this.retryControllers.values()) controller.abort(new UserInterruptedError('coordinator shutdown'));
     this.retryControllers.clear();
+    for (const task of this.proactiveQueue.splice(0)) {
+      this.resolveProactive(task.candidateId, { status: 'cancelled', blockedReason: 'stopped', messageId: null });
+    }
+    if (this.proactiveActive) this.proactiveActive.controller.abort(new UserInterruptedError('coordinator shutdown'));
     const error = new Error('reply coordinator stopped');
     for (const [batchId, runtime] of this.runtime) {
       for (const waiter of runtime.waiters) waiter.reject(error);

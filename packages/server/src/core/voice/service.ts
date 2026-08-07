@@ -414,14 +414,22 @@ export class VoiceService {
    */
   async synthesizeProactive(
     text: string,
-    context: { candidateId: string; activity: string }
+    context: { candidateId: string; activity: string },
+    externalSignal?: AbortSignal
   ): Promise<{ ok: boolean; mediaId: string | null; transcript: string; degraded: string[]; generationId: string | null; fallbackReason: string | null }> {
     const degraded: string[] = [];
     const persona = this.deps.config.getPersona();
     const maxSeconds = this.speechStyle.maxVoiceSeconds || persona.voicePolicy.maxCharsPerClip / 8;
     const maxChars = persona.voicePolicy.maxCharsPerClip;
+    // P0-1: proactive voice honors the coordinator's abort signal so a user
+    // message stops the TTS request like it stops a reply generation.
     const controller = new AbortController();
-    const signal = controller.signal;
+    const signal = externalSignal ?? controller.signal;
+    if (externalSignal) {
+      const forward = () => controller.abort(externalSignal.reason);
+      if (externalSignal.aborted) controller.abort(externalSignal.reason);
+      else externalSignal.addEventListener('abort', forward, { once: true });
+    }
 
     // 1. Script (independent voice script, naturalness guarded).
     let script: VoiceScript | null = null;

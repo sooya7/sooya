@@ -245,19 +245,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   voiceService.dailyAutoCap = env.VOICE_DAILY_AUTO_CAP;
 
-  const proactive = new ProactiveComposer({
-    attempts: repos.proactive,
-    replyBatches: repos.replyBatches,
-    jobs: repos.jobs,
-    messages: repos.messages,
-    life,
-    capabilities,
-    config,
-    media: mediaStore,
-    stickers: stickerLibrary,
-    bus,
-    voice: voiceService
-  });
   const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, repos.mediaText, env.ENABLE_LIFE_ENGINE ? life : undefined, env.LIFE_TIME_ZONE);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
@@ -303,6 +290,21 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       });
       tx();
     }
+  });
+
+  const proactive = new ProactiveComposer({
+    attempts: repos.proactive,
+    replyBatches: repos.replyBatches,
+    jobs: repos.jobs,
+    messages: repos.messages,
+    life,
+    capabilities,
+    config,
+    media: mediaStore,
+    stickers: stickerLibrary,
+    bus,
+    voice: voiceService,
+    coordinator: replyCoordinator
   });
   const backups = new BackupService({
     db: () => dbHandle,
