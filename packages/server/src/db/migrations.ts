@@ -981,6 +981,28 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX idx_life_location_visits ON life_location_visits(location_id, entered_at DESC);
       `);
     }
+  },
+  {
+    version: 20,
+    name: 'weather_snapshots',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE weather_snapshots (
+          location_key     TEXT NOT NULL,
+          observed_at      TEXT NOT NULL,
+          condition        TEXT NOT NULL DEFAULT 'unknown' CHECK (condition IN ('clear','cloudy','rain','snow','storm','fog','wind','unknown')),
+          temperature_c    REAL,
+          feels_like_c     REAL,
+          humidity         REAL,
+          precipitation_mm REAL,
+          wind_kph         REAL,
+          provider         TEXT NOT NULL,
+          created_at       TEXT NOT NULL,
+          PRIMARY KEY (location_key, observed_at)
+        );
+        CREATE INDEX idx_weather_snapshots_key ON weather_snapshots(location_key, observed_at DESC);
+      `);
+    }
   }
 ];
 
