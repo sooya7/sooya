@@ -1952,3 +1952,7 @@ button {
 .preview-block textarea { width: 100%; border-radius: 8px; border: 1px solid var(--border, #ddd); padding: 0.4rem; }
 .preview-actions { display: flex; gap: 0.5rem; margin: 0.5rem 0; }
 .preview-audio { width: 100%; }
+.admin-inline-links { display: flex; gap: 1rem; padding: 0.4rem 0; }
+.metrics-range { display: flex; gap: 0.4rem; align-items: center; padding: 0.4rem 0; }
+.metrics-category { margin-top: 1rem; }
+.metrics-category h2 { font-size: 1rem; }

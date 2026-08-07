@@ -554,6 +554,11 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { deleted: true, trashed: true };
   });
 
+  server.get('/api/admin/metrics', guard, async (req) => {
+    const days = Math.max(1, Math.min(90, Number((req.query as { days?: string }).days ?? 7)));
+    return { aggregates: app.services.metrics.aggregates(days), daily: app.services.metrics.daily(days) };
+  });
+
   server.get('/api/admin/system', guard, async () => ({
     version: app.state.version,
     startedAt: app.state.startedAt,

@@ -199,9 +199,10 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
 /** Entry into the full Life Admin console (next phase). */
 export function LifeAdminLink() {
   return (
-    <a className="admin-inline-link" href="/admin/life" data-testid="life-admin-entry">
-      打开 Life 管理中心 ›
-    </a>
+    <span className="admin-inline-links">
+      <a className="admin-inline-link" href="/admin/life" data-testid="life-admin-entry">Life 管理中心 ›</a>
+      <a className="admin-inline-link" href="/admin/metrics" data-testid="metrics-entry">Metrics 仪表盘 ›</a>
+    </span>
   );
 }
 
