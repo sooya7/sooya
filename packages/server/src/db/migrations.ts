@@ -1086,6 +1086,41 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX idx_experiment_events ON experiment_events(experiment_id, created_at DESC);
       `);
     }
+  },
+  {
+    /*
+     * 临时 migration（Agent B 本地测试用，最终 DDL 见 INTEGRATION-NOTES：
+     * MIGRATION_NEEDS，由 Integration 统一编号 v28 重写）。追加内容：
+     *   - weather_snapshots 增加 visibility_km / pressure_hpa 列
+     *   - weather_forecasts 表（forecast 持久化）
+     *   - weather_daylight 表（sunrise/sunset 持久化）
+     */
+    version: 902,
+    name: 'tmp_weather_full',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE weather_snapshots ADD COLUMN visibility_km REAL;
+        ALTER TABLE weather_snapshots ADD COLUMN pressure_hpa REAL;
+        CREATE TABLE weather_forecasts (
+          location_key TEXT NOT NULL,
+          generated_at TEXT NOT NULL,
+          provider     TEXT NOT NULL,
+          periods_json TEXT NOT NULL,
+          created_at   TEXT NOT NULL,
+          PRIMARY KEY (location_key, generated_at)
+        );
+        CREATE INDEX idx_weather_forecasts_key ON weather_forecasts(location_key, generated_at DESC);
+        CREATE TABLE weather_daylight (
+          location_key TEXT NOT NULL,
+          local_date   TEXT NOT NULL,
+          sunrise      TEXT NOT NULL,
+          sunset       TEXT NOT NULL,
+          provider     TEXT NOT NULL,
+          created_at   TEXT NOT NULL,
+          PRIMARY KEY (location_key, local_date)
+        );
+      `);
+    }
   }
 ];
 
