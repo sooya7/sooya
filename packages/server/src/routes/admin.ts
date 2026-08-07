@@ -637,4 +637,49 @@ export function registerAdminRoutes(app: SooyaApp): void {
     const { subsystem, limit } = req.query as { subsystem?: string; limit?: string };
     return { runs: services.shadow.list(subsystem, Math.max(1, Math.min(500, Number(limit ?? 100)))) };
   });
+
+  server.get('/api/admin/experiments', guard, async () => ({
+    experiments: services.experiments.list().map((e) => ({
+      ...e,
+      variants: JSON.parse(e.variants_json) as string[],
+      currentVariant: services.experiments.variantFor(e.id)
+    }))
+  }));
+
+  server.post('/api/admin/experiments', guard, async (req, reply) => {
+    const body = (req.body ?? {}) as { name?: string; subsystem?: string; variants?: string[]; assignmentScope?: string };
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    const subsystem = typeof body.subsystem === 'string' ? body.subsystem.trim() : '';
+    const variants = Array.isArray(body.variants) ? body.variants.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter(Boolean) : [];
+    const assignmentScope = body.assignmentScope === 'session' || body.assignmentScope === 'conversation' ? body.assignmentScope : 'day';
+    if (!name || !subsystem || variants.length < 2) {
+      reply.code(400);
+      return { error: 'bad_request', message: 'name, subsystem and at least 2 variants are required' };
+    }
+    const experiment = services.experiments.create(name, subsystem, variants, assignmentScope);
+    repos.audit.add('experiment', 'created', experiment.id, { name, subsystem });
+    return { experiment: { ...experiment, variants } };
+  });
+
+  server.patch('/api/admin/experiments/:id', guard, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const { status } = (req.body ?? {}) as { status?: string };
+    const allowed = ['draft', 'shadow', 'running', 'paused', 'completed', 'cancelled'];
+    if (!status || !allowed.includes(status)) {
+      reply.code(400);
+      return { error: 'bad_request', message: 'status must be one of draft|shadow|running|paused|completed|cancelled' };
+    }
+    const result = services.experiments.setStatus(id, status);
+    if (!result.ok) {
+      reply.code(result.error === 'not_found' ? 404 : 409);
+      return { error: result.error };
+    }
+    repos.audit.add('experiment', status, id);
+    return { experiment: result.experiment };
+  });
+
+  server.get('/api/admin/experiments/:id/events', guard, async (req) => {
+    const id = (req.params as { id: string }).id;
+    return { events: services.experiments.events(id) };
+  });
 }

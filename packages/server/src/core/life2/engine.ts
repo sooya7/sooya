@@ -122,6 +122,8 @@ export class LifeSimEngine {
     private readonly metrics?: import('../metrics.js').MetricsService,
     /** Next-phase shadow runtime (SHADOW_MODE_ENABLED). */
     private readonly shadow?: import('../shadow.js').ShadowService,
+    /** Next-phase single-user experiments (EXPERIMENTS_ENABLED). */
+    private readonly experiments?: import('../shadow.js').ExperimentService
   ) {
     this.resolve = typeof config === 'function' ? config : () => config;
     this.vitals = new LifeVitalsEngine(v2, clock, repo);
@@ -359,6 +361,9 @@ export class LifeSimEngine {
       if (prevEvents[0]) continuityFrom.push(...(outcomeDetailTagsFor(prevEvents[0], prevDef) ?? []));
     }
     for (const id of threadFitIds) continuityFrom.push(id);
+    // Single-user experiment knobs (day-sticky; 'control' when paused).
+    const continuityWeight = this.experiments?.variantForSubsystem('life.continuity_weight') === 'x1.5' ? 1.5 : 1;
+    const tighterRepeat = this.experiments?.variantForSubsystem('life.anti_repeat_window') === 'tighter-48';
     const ctx = {
       vitals: v,
       hour: parts.hour,
@@ -368,7 +373,9 @@ export class LifeSimEngine {
       themeTags,
       threadFitIds,
       continuityFrom: [...new Set(continuityFrom)],
-      ...(weatherCondition ? { weatherCondition } : {})
+      ...(weatherCondition ? { weatherCondition } : {}),
+      continuityWeight,
+      ...(tighterRepeat ? { antiRepeatTiers: [48, 96, 168] as [number, number, number] } : {})
     };
     let best: LifeActivityDefinition | null = null;
     let bestScore = -Infinity;

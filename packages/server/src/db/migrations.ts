@@ -1052,6 +1052,41 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 23,
+    name: 'experiments',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE experiments (
+          id               TEXT PRIMARY KEY,
+          name             TEXT NOT NULL,
+          subsystem        TEXT NOT NULL,
+          variants_json    TEXT NOT NULL DEFAULT '[]',
+          status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','shadow','running','paused','completed','cancelled')),
+          assignment_scope TEXT NOT NULL DEFAULT 'day' CHECK (assignment_scope IN ('day','session','conversation')),
+          created_at       TEXT NOT NULL,
+          updated_at       TEXT NOT NULL
+        );
+
+        CREATE TABLE experiment_assignments (
+          experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+          scope_key     TEXT NOT NULL,
+          variant       TEXT NOT NULL,
+          assigned_at   TEXT NOT NULL,
+          PRIMARY KEY (experiment_id, scope_key)
+        );
+
+        CREATE TABLE experiment_events (
+          id            TEXT PRIMARY KEY,
+          experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+          variant       TEXT NOT NULL,
+          event         TEXT NOT NULL,
+          created_at    TEXT NOT NULL
+        );
+        CREATE INDEX idx_experiment_events ON experiment_events(experiment_id, created_at DESC);
+      `);
+    }
+  }
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
