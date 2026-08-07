@@ -5,7 +5,7 @@ import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
 import type { LifeLogRow } from '../db/repos/life.repo.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ConfigStore } from '../config/store.js';
-import type { LifeEngine } from './life.js';
+import type { LifeRuntime } from './life.js';
 import type { MediaStore } from '../media/store.js';
 import type { StickerLibrary } from '../media/stickers.js';
 import type { EventBus } from '../events/bus.js';
@@ -57,7 +57,7 @@ export class ProactiveComposer {
       attempts: ProactiveAttemptRepo;
       jobs: JobRepo;
       messages: MessageRepo;
-      life: LifeEngine;
+      life: LifeRuntime;
       replyBatches: ReplyBatchRepo;
       capabilities: CapabilityRegistry;
       config: ConfigStore;

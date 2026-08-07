@@ -1,15 +1,16 @@
 import type { EventBus } from '../events/bus.js';
 import type { MessageRepo } from '../db/repos/message.repo.js';
+import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { ReplyBatchRepo, ReplyBatchRow, AppendAction } from '../db/repos/reply-batch.repo.js';
 import type { ChatMessage, ReplyFailure } from './types.js';
 import type { ReplyOptions, ReplyOutcome, Replier } from './replier.js';
+import type { PublicFailure } from './public-error.js';
 import { sortableId } from '../util/ids.js';
 import { abortableDelay, isBenignAbort, StaleGenerationError, UserInterruptedError } from '../util/abort.js';
 import { HttpTimeoutError } from '../util/http.js';
 
 const LEASE_MS = 120_000;
 const LEASE_HEARTBEAT_MS = 30_000;
-const MAX_COMPLETION_ATTEMPTS = 3;
 
 export interface AcceptUserMessageResult {
   batchId: string;
@@ -30,6 +31,7 @@ export interface ReplyCoordinatorOptions {
   batches: ReplyBatchRepo;
   replier: Replier;
   bus: EventBus;
+  errorLog?: ErrorLogRepo;
   onCompleted?: (
     batchId: string,
     userMessages: ChatMessage[],
@@ -81,6 +83,8 @@ export class ReplyCoordinator {
   private readonly ready: string[] = [];
   private readonly readySet = new Set<string>();
   private readonly activeGenerations = new Map<string, ActiveGeneration>();
+  /** Abort handles for timeout-retry backoffs, which outlive their active generation entry. */
+  private readonly retryControllers = new Map<string, AbortController>();
   private running = false;
   private stopped = false;
   private readonly owner = sortableId('reply-worker');
@@ -174,6 +178,8 @@ export class ReplyCoordinator {
     for (const batchId of [...this.activeGenerations.keys()]) {
       this.interruptGeneration(batchId, 'shutdown');
     }
+    for (const controller of this.retryControllers.values()) controller.abort(new UserInterruptedError('coordinator shutdown'));
+    this.retryControllers.clear();
     const error = new Error('reply coordinator stopped');
     for (const [batchId, runtime] of this.runtime) {
       for (const waiter of runtime.waiters) waiter.reject(error);
@@ -340,7 +346,7 @@ export class ReplyCoordinator {
 
       if (!outcome.ok) {
         this.deps.batches.fail(batchId, revision, outcome.error?.code ?? 'internal_error', outcome.error?.message ?? 'reply failed', this.owner);
-        this.publishFailure(batchId, revision, outcome.error ?? { batchId, revision, code: 'internal_error', retryable: false, message: 'reply failed' });
+        this.publishFailure(batchId, revision, toReplyFailureFromPublic(outcome.error, batchId, revision));
         for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
         this.runtime.delete(batchId);
         return;
@@ -355,17 +361,15 @@ export class ReplyCoordinator {
       try {
         await this.deps.onCompleted?.(batchId, userMessages, outcome, this.owner, revision);
       } catch (error) {
-        if (batch.attempts >= MAX_COMPLETION_ATTEMPTS) {
-          this.deps.batches.fail(batchId, revision, 'internal_error', (error as Error).message, this.owner);
-        } else if (this.deps.batches.requeue(batchId, revision, (error as Error).message, this.owner)) {
-          const delay = Math.min(5000, 500 * Math.pow(2, batch.attempts - 1));
-          const timer = setTimeout(() => {
-            this.timers.delete(batchId);
-            this.makeReady(batchId);
-          }, delay);
-          timer.unref?.();
-          this.timers.set(batchId, timer);
-        }
+        // The batch is already completed. Post-processing (memory/push/summary/
+        // life bridge) runs as durable jobs with their own retries, so a hook
+        // failure must never requeue the batch — that would re-run the model
+        // and could publish a second reply.
+        this.deps.errorLog?.add('reply.completion', 'post_processing_failed', {
+          batchId,
+          revision,
+          message: (error as Error).message ?? String(error)
+        });
       }
       this.deps.bus.publish('reply.completed', {
         batchId,
@@ -422,44 +426,73 @@ export class ReplyCoordinator {
         errorCode: 'model_timeout', durationMs: Date.now() - startedAt
       });
       this.deps.bus.publish('reply.generation.retrying', { batchId, revision, attempt: active.attempt + 1 });
+      // The active generation entry was already removed by the catch in
+      // startGeneration, so the backoff gets its own cancellable controller:
+      // a newer user message or shutdown aborts it instead of waiting it out.
+      const retryController = new AbortController();
+      this.retryControllers.set(batchId, retryController);
       try {
-        await abortableDelay(this.retryBaseDelayMs, this.activeGenerations.get(batchId)?.controller?.signal);
+        await abortableDelay(this.retryBaseDelayMs, retryController.signal);
       } catch (abortErr) {
+        this.retryControllers.delete(batchId);
+        if (isBenignAbort(abortErr)) return;
         return this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, abortErr, userMessages);
       }
+      this.retryControllers.delete(batchId);
       if (this.stopped) return;
       const current = this.deps.batches.get(batchId);
       if (!current || current.revision !== revision || current.visible_at !== null) {
         return this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, new StaleGenerationError(), userMessages);
       }
-      this.deps.batches.incrementRetry(batchId, revision);
+      // Atomic generating → queued (+retry_count) with the lease cleared;
+      // startGeneration only claims queued batches, so without this the
+      // retry would never actually restart the provider call.
+      if (!this.deps.batches.prepareRetry(batchId, revision, this.owner)) {
+        return this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, new StaleGenerationError('retry fence lost'), userMessages);
+      }
       await this.startGeneration(batchId, revision, true);
       return;
     }
 
     const failure: ReplyFailure = toReplyFailure(error, isTimeout, active.published);
-    const outcome: ReplyOutcome = {
-      messageId: '',
-      ok: false,
-      parts: [],
-      degraded: [],
-      error: { code: failure.code, message: failure.message, incidentId: '' }
-    };
-    this.deps.batches.fail(batchId, revision, failure.code, failure.message, this.owner);
     this.deps.batches.recordGeneration({
       batchId, revision, attempt: active.attempt, status: 'failed',
       startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
       errorCode: failure.code, durationMs: Date.now() - startedAt
     });
     if (active.published) {
+      // Published content stays: complete the batch as partial (fenced on
+      // publishing) instead of failing it, and record the provider error only
+      // in the generation audit. Order matters — fail() would make the
+      // publishing-fenced complete() lose the race.
       const shell = this.deps.messages.findAssistantByBatchId(batchId);
-      if (shell) {
+      if (shell && this.deps.batches.complete(batchId, revision, shell.id, this.owner, true)) {
         this.deps.messages.setStatus(shell.id, 'sent', 'partial:interrupted');
-        this.deps.batches.complete(batchId, revision, shell.id, this.owner, true);
         this.deps.bus.publish('reply.publishing.partial', { batchId, revision, messageId: shell.id });
+        const outcome: ReplyOutcome = {
+          messageId: shell.id,
+          ok: true,
+          parts: shell.content.filter((part) => part.status === 'sent').map((part) => part.type),
+          degraded: ['partial:interrupted']
+        };
+        for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+        this.runtime.delete(batchId);
+        return;
       }
+      // Fence lost (e.g. the user retried): a competing worker owns the batch.
+      for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError('batch owned by competing worker'));
+      this.runtime.delete(batchId);
+      return;
     }
+    this.deps.batches.fail(batchId, revision, failure.code, failure.message, this.owner);
     this.publishFailure(batchId, revision, failure);
+    const outcome: ReplyOutcome = {
+      messageId: '',
+      ok: false,
+      parts: [],
+      degraded: [],
+      error: publicFailureFromReply(failure)
+    };
     for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
     this.runtime.delete(batchId);
   }
@@ -470,9 +503,13 @@ export class ReplyCoordinator {
 
   private interruptGeneration(batchId: string, reason: 'new_user_message' | 'shutdown'): void {
     const active = this.activeGenerations.get(batchId);
-    if (!active) return;
-    active.controller.abort(new UserInterruptedError(reason === 'new_user_message' ? 'superseded by newer user message' : 'coordinator shutdown'));
-    this.activeGenerations.delete(batchId);
+    if (active) {
+      active.controller.abort(new UserInterruptedError(reason === 'new_user_message' ? 'superseded by newer user message' : 'coordinator shutdown'));
+      this.activeGenerations.delete(batchId);
+    }
+    // A timeout retry still in its backoff must also stop when a newer
+    // message lands or the coordinator shuts down.
+    this.retryControllers.get(batchId)?.abort(new UserInterruptedError(reason === 'new_user_message' ? 'superseded by newer user message' : 'coordinator shutdown'));
   }
 
   private observeActive(batchId: string): void {
@@ -551,6 +588,27 @@ function toReplyFailure(error: unknown, isTimeout: boolean, published: boolean):
     code: 'provider_unavailable',
     retryable: false,
     message: '这次回复没有生成成功。'
+  };
+}
+
+/** PublicFailure (from the replier) → the richer ReplyFailure shape for events. */
+function toReplyFailureFromPublic(failure: PublicFailure | undefined, batchId: string, revision: number): ReplyFailure {
+  if (!failure) return { batchId, revision, code: 'internal_error', retryable: false, message: 'reply failed' };
+  return {
+    batchId,
+    revision,
+    code: failure.code === 'internal_error' ? 'internal_error' : 'provider_unavailable',
+    retryable: failure.code === 'provider_unavailable',
+    message: failure.message
+  };
+}
+
+/** ReplyFailure → the public failure shape carried on ReplyOutcome.error. */
+function publicFailureFromReply(failure: ReplyFailure): PublicFailure {
+  return {
+    incidentId: '',
+    code: failure.code === 'internal_error' ? 'internal_error' : 'provider_unavailable',
+    message: failure.message
   };
 }
 

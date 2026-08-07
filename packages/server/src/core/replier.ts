@@ -192,19 +192,20 @@ export class Replier {
       let interrupted: Error | undefined;
       const publishDeadline = Date.now() + options.publishGraceMs;
 
-      const openBarrier = async (): Promise<boolean> => {
-        if (published) return true;
+      const openBarrier = async (): Promise<ChatMessage | null> => {
+        if (published) return shell;
         if (signal.aborted) throw signal.reason;
         const won = await options.beginPublish();
         if (!won) throw new StaleGenerationError('publish barrier lost');
         published = true;
-        shell = this.createShell(userMessages, latestUserMessage, batchId);
-        this.deps.bus.publish('reply.publishing.started', { batchId, revision, messageId: shell.id });
+        const created = this.createShell(userMessages, latestUserMessage, batchId);
+        shell = created;
+        this.deps.bus.publish('reply.publishing.started', { batchId, revision, messageId: created.id });
         if (visibleText) {
-          textPartId = this.deps.messages.appendPart(shell.id, { type: 'text', text: visibleText, status: 'pending' });
-          this.deps.bus.publish('reply.text.delta', { messageId: shell.id, delta: visibleText });
+          textPartId = this.deps.messages.appendPart(created.id, { type: 'text', text: visibleText, status: 'pending' });
+          this.deps.bus.publish('reply.text.delta', { messageId: created.id, delta: visibleText });
         }
-        return true;
+        return created;
       };
 
       const persistDelta = (delta: string): void => {
@@ -307,10 +308,20 @@ export class Replier {
           this.deps.messages.deletePart(textPartId);
           textPartId = null;
         }
-      } else if (finalText && shell) {
-        textPartId = this.deps.messages.appendPart(shell.id, { type: 'text', text: finalText, status: 'sent' });
+      } else if (finalText) {
+        // The barrier only opens when there is visible text to show; text that
+        // materialised later (e.g. stripped directives resolving into content)
+        // still needs a shell to attach to, created fenced behind the barrier.
+        const currentShell = shell as ChatMessage | null;
+        const created = published ? currentShell : await openBarrier();
+        if (created) {
+          textPartId = this.deps.messages.appendPart(created.id, { type: 'text', text: finalText, status: 'sent' });
+        }
       }
-      if (shell && textPartId) this.deps.bus.publish('reply.text.done', { messageId: shell.id, text: finalText });
+      if (textPartId) {
+        const currentShell = shell as ChatMessage | null;
+        if (currentShell) this.deps.bus.publish('reply.text.done', { messageId: currentShell.id, text: finalText });
+      }
 
       return {
         text: finalText,
@@ -760,9 +771,9 @@ export class Replier {
       stickerRequired = user.stickerOnly === true || model.stickerOnly === true;
       forceDifferent = user.anotherSticker === true;
       if (sticker) {
-        if (typeof model.sticker === 'string') stickerHint = model.sticker;
-        else if (user.wantSticker && !model.sticker) stickerHint = 'auto';
-        else if (model.sticker === 'auto') stickerHint = guessEmotion(text);
+        const hint = model.sticker;
+        if (typeof hint === 'string' && hint !== 'auto') stickerHint = hint;
+        else stickerHint = guessEmotion(text);
       }
     }
     const stickerOnly = sticker && (user.stickerOnly === true || model.stickerOnly === true);

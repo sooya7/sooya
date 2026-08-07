@@ -162,6 +162,20 @@ export class ReplyBatchRepo {
     ).get() as ReplyBatchRow | undefined;
   }
 
+  /**
+   * collecting → queued, opening the batch for claiming. Fenced on the publish
+   * barrier so a batch with visible content can never be pulled back; the
+   * optional revision fence guards callers that already hold one. Idempotent:
+   * a batch that is no longer collecting simply stays where it is.
+   */
+  markQueued(batchId: string, revision?: number): boolean {
+    const sql = revision === undefined
+      ? "UPDATE reply_batches SET status = 'queued' WHERE id = ? AND status = 'collecting' AND visible_at IS NULL"
+      : "UPDATE reply_batches SET status = 'queued' WHERE id = ? AND revision = ? AND status = 'collecting' AND visible_at IS NULL";
+    const params = revision === undefined ? [batchId] : [batchId, revision];
+    return this.db.prepare(sql).run(...params).changes === 1;
+  }
+
   get(id: string): ReplyBatchRow | undefined {
     return this.db.prepare('SELECT * FROM reply_batches WHERE id = ?').get(id) as ReplyBatchRow | undefined;
   }
@@ -269,6 +283,22 @@ export class ReplyBatchRepo {
     return this.db.prepare(
       "UPDATE reply_batches SET retry_count = retry_count + 1 WHERE id = ? AND revision = ? AND status = 'generating'"
     ).run(id, revision).changes === 1;
+  }
+
+  /**
+   * One atomic automatic-retry transition: generating → queued with the retry
+   * counter bumped and the lease cleared, so a fresh beginGenerating can claim
+   * the batch again. Fenced on revision + owner; refuses once anything is
+   * visible (published content must never be regenerated).
+   */
+  prepareRetry(batchId: string, revision: number, owner: string): ReplyBatchRow | undefined {
+    const changed = this.db.prepare(
+      `UPDATE reply_batches
+       SET status = 'queued', retry_count = retry_count + 1,
+           last_error = 'model timeout, retrying', lease_owner = NULL, lease_expires_at = NULL
+       WHERE id = ? AND revision = ? AND status = 'generating' AND lease_owner = ? AND visible_at IS NULL`
+    ).run(batchId, revision, owner).changes;
+    return changed === 1 ? this.get(batchId) : undefined;
   }
 
   requeue(id: string, revision: number, error: string, owner: string): boolean {

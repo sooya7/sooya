@@ -28,7 +28,7 @@ import { ContextBuilder } from './core/context.js';
 import { Summarizer } from './core/summarizer.js';
 import { Replier } from './core/replier.js';
 import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
-import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig } from './core/life.js';
+import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig, type LifeRuntime } from './core/life.js';
 import { LifeRepo } from './db/repos/life.repo.js';
 import { LifeV2Repo } from './db/repos/life-v2.repo.js';
 import { LifeSimEngine } from './core/life2/engine.js';
@@ -104,7 +104,7 @@ export interface SooyaApp {
     stickerLibrary: StickerLibrary;
     capabilities: CapabilityRegistry;
     memory: MemoryService;
-    life: LifeEngine;
+    life: LifeRuntime;
     proactive: ProactiveComposer;
     voice: VoiceService;
     push: PushService;
@@ -260,7 +260,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     batches: repos.replyBatches,
     replier,
     bus,
-    initialDebounceMs: env.REPLY_INITIAL_DEBOUNCE_MS,
+    initialDebounceMs: opts.replyDebounceMs ?? env.REPLY_INITIAL_DEBOUNCE_MS,
     interruptDebounceMs: env.REPLY_INTERRUPT_DEBOUNCE_MS,
     maxCollectionMs: env.REPLY_MAX_COLLECTION_MS,
     publishGraceMs: env.REPLY_PUBLISH_GRACE_MS,
@@ -268,7 +268,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     timeoutRetries: env.CHAT_TIMEOUT_RETRIES,
     retryBaseDelayMs: env.CHAT_RETRY_BASE_DELAY_MS,
     interruptible: env.REPLY_INTERRUPTIBLE_GENERATION,
-    debounceMs: opts.replyDebounceMs,
+    errorLog: repos.errors,
     onCompleted: (batchId, userMessages, outcome, owner, revision) => {
       // The batch is already marked completed by the coordinator (revision-
       // fenced); this hook only enqueues the downstream jobs atomically.
@@ -276,17 +276,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
         if (!env.DISABLE_MEMORY_PIPELINE) repos.jobs.enqueue('memory.extract', { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId });
         repos.jobs.enqueue('push.reply', { batchId, messageId: outcome.messageId }, { maxAttempts: 3 });
         if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
-        // Life conversation bridge (§49-50): only the completed revision may
-        // write user suggestions into the life system.
+        // Life conversation bridge (§49-50): extracted as a durable job; the
+        // handler re-checks the revision so only the final one applies.
         if (env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_V2) {
-          try {
-            const lastUser = userMessages[userMessages.length - 1];
-            const userText = userMessages
-              .map((m) => m.content.filter((p) => p.type === 'text').map((p) => p.text ?? '').join(' '))
-              .join('\n');
-            if (lastUser) life.extractConversationIntent(userText, lastUser.id);
-            life.applyConversationEffect(outcome.ok ? 'warm' : 'neutral');
-          } catch { /* never break the reply pipeline over life bookkeeping */ }
+          repos.jobs.enqueue('life.conversation', {
+            batchId,
+            revision,
+            userMessageIds: userMessages.map((message) => message.id),
+            lastUserMessageId: userMessages.at(-1)?.id ?? null,
+            warmth: outcome.ok ? 'warm' : 'neutral'
+          });
         }
       });
       tx();
@@ -314,6 +313,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const worker = new JobWorker(repos.jobs, repos.errors, { intervalMs: 800 });
   registerDefaultJobs(worker, {
     jobs: repos.jobs,
+    batches: repos.replyBatches,
     media: mediaStore,
     memory,
     summarizer,
