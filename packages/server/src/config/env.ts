@@ -93,7 +93,6 @@ const EnvSchema = z.object({
   VOICE_NATURALNESS_GUARD_ENABLED: boolish(true),
   VOICE_ADVANCED_DELIVERY_ENABLED: boolish(true),
   VOICE_AUTO_COMPLEMENT_ENABLED: boolish(true),
-  VOICE_LIFE_SHARE_ENABLED: boolish(false),
   VOICE_READ_ALOUD_ENABLED: boolish(true),
   VOICE_DAILY_AUTO_CAP: intish(20),
   VOICE_TTS_RETRIES: intish(0),

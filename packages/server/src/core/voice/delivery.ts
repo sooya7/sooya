@@ -79,26 +79,30 @@ export function planDelivery(
 
 /**
  * Maps a delivery plan onto the existing TTSOptions surface. The preset
- * catalogue (voice.emotions setting) still wins for the vendor emotion word;
- * advanced fields degrade into instructions text.
+ * catalogue (voice.emotions setting) supplies the vendor emotion wording but
+ * never replaces the delivery plan: `pace` → speed, the plan's compiled
+ * instructions always reach the provider (D3). `advanced: false` keeps the
+ * legacy preset-only mapping for VOICE_ADVANCED_DELIVERY_ENABLED=false.
  */
 export function deliveryToTTSOptions(
   plan: VoiceDeliveryPlan,
-  savedEmotions: VoiceEmotionMap
+  savedEmotions: VoiceEmotionMap,
+  opts: { advanced?: boolean } = {}
 ): Required<Pick<TTSOptions, 'emotion' | 'instructions' | 'speed'>> {
   const preset = savedEmotions[plan.primaryEmotion] ?? savedEmotions.neutral;
   const speed = Math.round(plan.pace * 100) / 100;
-  if (preset) {
-    return {
-      emotion: plan.primaryEmotion,
-      instructions: preset.instructions,
-      speed
-    };
+  if (opts.advanced === false) {
+    if (preset) return { emotion: plan.primaryEmotion, instructions: preset.instructions, speed: 1 };
+    return { emotion: plan.primaryEmotion, instructions: plan.instructions, speed };
   }
-  const instructions = [
+  const planInstructions = [
     plan.instructions,
     plan.emphasis.length ? `重点强调：${plan.emphasis.join('、')}。` : '',
     plan.pauseStyle === 'thoughtful' ? '句与句之间留一点自然的停顿。' : ''
   ].filter(Boolean).join('');
-  return { emotion: plan.primaryEmotion, instructions, speed };
+  return {
+    emotion: plan.primaryEmotion,
+    instructions: preset ? [preset.instructions, planInstructions].filter(Boolean).join(' ') : planInstructions,
+    speed
+  };
 }

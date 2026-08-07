@@ -30,6 +30,10 @@ export interface VoiceDecisionInput {
   dailyAutoCap: number;
   inSilentHours: boolean;
   style?: PersonaSpeechStyle | null;
+  /** VOICE_AUTO_COMPLEMENT_ENABLED: when false the auto path never picks complement. */
+  autoComplementEnabled?: boolean;
+  /** VOICE_READ_ALOUD_ENABLED: when false read-aloud intents/markers are ignored. */
+  readAloudEnabled?: boolean;
 }
 
 /** Emotional contexts worth an auto voice, and the emotion to use. */
@@ -55,6 +59,7 @@ export function decideVoiceMode(input: VoiceDecisionInput): VoiceDecision {
     return { mode: 'replace', requestedBy: 'user', emotion: null, reason: userIntent };
   }
   if (userIntent === 'read_aloud') {
+    if (input.readAloudEnabled === false) return { mode: null, requestedBy: 'user', emotion: null, reason: 'read_aloud_disabled' };
     return { mode: 'read_aloud', requestedBy: 'user', emotion: null, reason: 'read_aloud' };
   }
 
@@ -63,7 +68,10 @@ export function decideVoiceMode(input: VoiceDecisionInput): VoiceDecision {
   if (mv === 'replace') return { mode: 'replace', requestedBy: 'model', emotion: null, reason: 'model:replace' };
   if (mv === 'summary') return { mode: 'summary', requestedBy: 'model', emotion: null, reason: 'model:summary' };
   if (mv === 'complement' || mv === true) return { mode: 'complement', requestedBy: 'model', emotion: null, reason: 'model:complement' };
-  if (mv === 'read_aloud') return { mode: 'read_aloud', requestedBy: 'model', emotion: null, reason: 'model:read_aloud' };
+  if (mv === 'read_aloud') {
+    if (input.readAloudEnabled === false) return { mode: null, requestedBy: 'model', emotion: null, reason: 'read_aloud_disabled' };
+    return { mode: 'read_aloud', requestedBy: 'model', emotion: null, reason: 'model:read_aloud' };
+  }
   if (typeof mv === 'string' && mv !== 'false' && mv !== 'none') {
     return { mode: 'complement', requestedBy: 'model', emotion: null, reason: `model:${mv}` };
   }
@@ -72,12 +80,14 @@ export function decideVoiceMode(input: VoiceDecisionInput): VoiceDecision {
   if (input.inSilentHours) return { mode: null, requestedBy: 'auto', emotion: null, reason: 'silent_hours' };
   if (input.preferences.autoVoiceFrequency === 'never') return { mode: null, requestedBy: 'auto', emotion: null, reason: 'auto_never' };
   if (input.recentAutoCount >= input.dailyAutoCap) return { mode: null, requestedBy: 'auto', emotion: null, reason: 'daily_cap' };
+  const autoComplement = input.autoComplementEnabled !== false;
   if (input.preferences.autoVoiceFrequency === 'sometimes' && EMOJI_OR_AFFECTION.test(input.text)) {
+    if (!autoComplement) return { mode: null, requestedBy: 'auto', emotion: null, reason: 'auto_complement_disabled' };
     return { mode: 'complement', requestedBy: 'auto', emotion: 'happy', reason: 'auto:affection' };
   }
   for (const [re, emotion] of AUTO_EMOTION_CUES) {
     if (re.test(input.text)) {
-      const mode = input.preferences.preferredModes.includes('complement') ? 'complement' : 'replace';
+      const mode = autoComplement && input.preferences.preferredModes.includes('complement') ? 'complement' : 'replace';
       return { mode, requestedBy: 'auto', emotion, reason: `auto:${emotion}` };
     }
   }

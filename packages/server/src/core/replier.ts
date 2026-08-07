@@ -74,6 +74,13 @@ export interface TextGenerationResult {
   published: boolean;
   /** Set when the provider died AFTER something became visible. */
   interrupted?: Error;
+  /**
+   * C5: the user asked for a voice reply ("用语音回我"/"只发语音") and voice
+   * is available, so phase 1 kept the whole reply hidden — no text was ever
+   * streamed or persisted. Phase 2 publishes audio (or its text fallback)
+   * only after TTS finishes.
+   */
+  hiddenDraft?: boolean;
 }
 
 const NO_MODEL_FALLBACK =
@@ -145,6 +152,12 @@ export class Replier {
       if (!caps.has('image')) capabilityNotes.push('图片生成不可用');
       if (!caps.has('tts')) capabilityNotes.push('语音合成不可用');
       if (this.deps.stickers.count() === 0) capabilityNotes.push('没有可用表情包');
+      // C5: user-requested voice replies stay hidden until the voice (or its
+      // text fallback) is ready. Only when voice V2 is actually available.
+      const userVoiceIntent = parseVoiceIntent(userText);
+      const hiddenDraft = this.deps.voiceV2Enabled !== false && this.deps.voice != null
+        && caps.has('tts') && persona.voicePolicy.enabled
+        && (userVoiceIntent === 'voice_only' || userVoiceIntent === 'voice_reply');
 
       const allowVision = caps.visionProvider() !== null;
       const chatModel = this.deps.config.chatModelFor('chat');
@@ -223,7 +236,7 @@ export class Replier {
         if (!visible) return;
         if (!published) {
           visibleText += visible;
-          if (Date.now() >= publishDeadline) void openBarrier().catch(() => undefined);
+          if (!hiddenDraft && Date.now() >= publishDeadline) void openBarrier().catch(() => undefined);
           return;
         }
         persistDelta(visible);
@@ -292,8 +305,10 @@ export class Replier {
       }
 
       // Model finished inside the grace window: hold the buffered text until
-      // the deadline, then open the barrier once (still cancellable).
-      if (!published && (visibleText || noModel)) {
+      // the deadline, then open the barrier once (still cancellable). A
+      // hidden-draft replace never opens the barrier here — phase 2 publishes
+      // the audio (or its text fallback) instead.
+      if (!hiddenDraft && !published && (visibleText || noModel)) {
         const wait = Math.max(0, publishDeadline - Date.now());
         if (wait > 0) await abortableDelay(wait, signal);
         await openBarrier();
@@ -331,7 +346,8 @@ export class Replier {
         contextBudget,
         firstTokenAt,
         published,
-        interrupted
+        interrupted,
+        hiddenDraft
       };
     } finally {
       this.active = false;
@@ -365,9 +381,14 @@ export class Replier {
       parseUserDirectives(userText)
     );
 
+    // C5: a hidden-draft replace published nothing in phase 1 — the shell is
+    // created by the voice phase only once audio (or its text fallback) is
+    // ready, so no empty bubble and no visible-then-vanished text.
+    const userVoiceIntent = parseVoiceIntent(userText);
+    const hiddenReplace = generated.hiddenDraft === true;
     let shell: ChatMessage | null = null;
     let textPartId: string | null = null;
-    if (!generated.published) {
+    if (!hiddenReplace && !generated.published) {
       const won = await beginPublish();
       if (!won) throw new StaleGenerationError('publish barrier lost before media');
       shell = this.createShell(userMessages, latestUserMessage, batch.id);
@@ -380,7 +401,7 @@ export class Replier {
         textPartId = this.deps.messages.appendPart(shell.id, { type: 'text', text: generated.text, status: 'sent' });
         producedParts.push('text');
       }
-    } else {
+    } else if (!hiddenReplace) {
       shell = this.deps.messages.findAssistantByBatchId(batch.id) ?? null;
       if (!shell) throw new Error(`assistant shell missing for batch ${batch.id}`);
       const textPart = shell.content.find((part) => part.type === 'text' && part.status === 'sent');
@@ -393,8 +414,10 @@ export class Replier {
     const finalText = generated.text;
     const plan = this.planMedia(persona, userDirectives, generated.directives, finalText);
 
-    // 3a. Sticker
-    if (plan.sticker) {
+    // 3a. Sticker (deferred for hidden-draft replace: the shell does not
+    // exist until the voice is ready).
+    if (plan.sticker && !shell) degraded.push('sticker:deferred');
+    if (shell && plan.sticker) {
       this.deps.bus.publish('reply.sticker.selecting', { messageId: shell.id, hint: plan.stickerHint ?? null });
       const window = plan.forceDifferent
         ? Math.max(persona.stickerPolicy.avoidRepeatWindow, 1)
@@ -429,9 +452,10 @@ export class Replier {
       }
     }
 
-    // 3b. Image
+    // 3b. Image (deferred for hidden-draft replace, same reason).
     const imagePrompt = plan.selfImagePrompt ?? plan.imagePrompt;
-    if (imagePrompt) {
+    if (imagePrompt && !shell) degraded.push('image:deferred');
+    if (shell && imagePrompt) {
       this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: imagePrompt.slice(0, 200) });
       const referenceMediaIds = userMessages.flatMap((message) =>
         message.content.filter((part) => part.type === 'image' && part.mediaId).map((part) => part.mediaId!)
@@ -553,27 +577,62 @@ export class Replier {
         this.deps.bus.publish('voice.plan.created', {
           batchId: batch.id, revision: batch.revision, mode: decision.mode, requestedBy: decision.requestedBy, reason: decision.reason
         });
+        const voiceDraft = hiddenReplace && decision.mode === 'replace';
         const voiceResult = await this.deps.voice.synthesizeInlineVoice({
           batchId: batch.id,
           revision: batch.revision,
-          shell,
-          textPartId,
+          shell: voiceDraft ? null : shell,
+          textPartId: voiceDraft ? null : textPartId,
           finalText: finalText || '',
           userText,
           decision,
           modelEmotion: generated.directives.voiceEmotion ?? null,
           signal,
-          persona
+          persona,
+          ...(voiceDraft
+            ? {
+                // C5: open the publish barrier and create the shell only now
+                // that the audio is ready — fenced on the batch revision.
+                openShell: async () => {
+                  const won = await beginPublish();
+                  if (!won) throw new StaleGenerationError('publish barrier lost before voice');
+                  const created = this.createShell(userMessages, latestUserMessage, batch.id);
+                  this.deps.bus.publish('reply.publishing.started', {
+                    batchId: batch.id,
+                    revision: batch.revision,
+                    messageId: created.id
+                  });
+                  return created;
+                }
+              }
+            : {})
         });
         degraded.push(...voiceResult.degraded);
+        if (voiceResult.shellId) shell = this.deps.messages.get(voiceResult.shellId) ?? null;
         if (voiceResult.partId && !producedParts.includes('audio')) producedParts.push('audio');
         if (decision.mode === 'replace' && voiceResult.ok && voiceResult.mediaId) {
           const textIdx = producedParts.indexOf('text');
           if (textIdx >= 0) producedParts.splice(textIdx, 1);
         }
+      } else if (hiddenReplace) {
+        // Voice was requested but is unavailable (disabled / not configured):
+        // publish the buffered text as a normal reply.
+        const won = await beginPublish();
+        if (!won) throw new StaleGenerationError('publish barrier lost before text fallback');
+        shell = this.createShell(userMessages, latestUserMessage, batch.id);
+        this.deps.bus.publish('reply.publishing.started', {
+          batchId: batch.id,
+          revision: batch.revision,
+          messageId: shell.id
+        });
+        if (generated.text) {
+          textPartId = this.deps.messages.appendPart(shell.id, { type: 'text', text: generated.text, status: 'sent' });
+          producedParts.push('text');
+        }
       }
     } else {
       // Legacy read-back path (VOICE_V2_ENABLED=false).
+      if (!shell) throw new StaleGenerationError('reply shell missing before legacy voice');
       const voiceText = (finalText || '').trim();
       if (plan.voice && voiceText) {
       const clipped = voiceText.slice(0, persona.voicePolicy.maxCharsPerClip);
@@ -632,6 +691,9 @@ export class Replier {
       }
       }
     }
+    // Every path above (hidden-draft voice, text fallback, legacy voice) ends
+    // with a shell; a missing one means the publish barrier was lost.
+    if (!shell) throw new StaleGenerationError('reply shell missing after voice publication');
 
     // sticker-only: drop the text part if the model asked for it and we do have a sticker.
     if (plan.stickerOnly && textPartId && producedParts.includes('sticker')) {

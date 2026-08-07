@@ -80,7 +80,12 @@ export function registerVoiceRoutes(app: SooyaApp): void {
     const parsed = VoicePreferencesSchema.safeParse(req.body);
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
     const current: UserVoicePreferences = services.voice.preferences;
-    const next: UserVoicePreferences = { ...current, ...parsed.data };
+    const next: UserVoicePreferences = {
+      ...current,
+      ...parsed.data,
+      // quietHours accepts explicit null to clear; the stored shape never holds null.
+      quietHours: parsed.data.quietHours === null ? undefined : parsed.data.quietHours
+    };
     repos.settings.set('voice.preferences', next);
     services.bus.publish('push.updated', { scope: 'voice.preferences' });
     return { preferences: next };

@@ -247,11 +247,20 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     messages: repos.messages,
     media: mediaStore,
     voice: repos.voice,
+    batches: repos.replyBatches,
     capabilities,
     config,
     settings: repos.settings,
     bus,
-    errorLog: repos.errors
+    errorLog: repos.errors,
+    flags: {
+      independentScript: env.VOICE_INDEPENDENT_SCRIPT_ENABLED,
+      naturalnessGuard: env.VOICE_NATURALNESS_GUARD_ENABLED,
+      advancedDelivery: env.VOICE_ADVANCED_DELIVERY_ENABLED,
+      autoComplement: env.VOICE_AUTO_COMPLEMENT_ENABLED,
+      readAloud: env.VOICE_READ_ALOUD_ENABLED,
+      ttsRetries: env.VOICE_TTS_RETRIES
+    }
   });
   voiceService.dailyAutoCap = env.VOICE_DAILY_AUTO_CAP;
   const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED });
