@@ -169,7 +169,8 @@ test('SOOYA sends a playable voice message with a real duration', async ({ page 
       mediaRequests.push({ url: request.url(), authorization: request.headers().authorization });
     }
   });
-  await control({ queue: ['晚安，好好睡一觉[[voice]]'] });
+  // Second queued response feeds the independent voice-script generation.
+  await control({ queue: ['晚安，好好睡一觉[[voice]]', '晚安，好好睡一觉'] });
   await page.goto('/');
   await send(page, '用语音说晚安');
   await waitForReply(page);
@@ -209,8 +210,10 @@ test('TTS failure falls back to a text bubble', async ({ page }) => {
   await waitForReply(page);
 
   const last = page.locator('[data-testid="message"][data-role="assistant"]').last();
+  // The hidden draft publishes the full reply as a text fallback; no failed
+  // audio bubble is left behind.
   await expect(last.getByTestId('text-bubble')).toContainText('这段内容本来要用语音');
-  await expect(last.locator('.bubble-audio.failed')).toBeVisible();
+  await expect(last.locator('.bubble-audio')).toHaveCount(0);
 });
 
 test('a combined reply renders text, sticker, image and audio together', async ({ page }) => {
@@ -400,15 +403,14 @@ test('chat model failure is shown to the user instead of hanging', async ({ page
   await control({ failChat: true });
   await page.goto('/');
   await send(page, '你好');
-  await waitForReply(page);
-  // A failing chat provider is reported with the `provider_unavailable` copy from
-  // core/public-error.ts ('模型服务暂时不可用，请稍后重试。'), not the `reply_failed`
-  // one this assertion was originally written against, so the old /失败|超时/
-  // pattern could never match even though the user was told. Accept any of the
-  // public failure messages: what matters is that the bubble explains itself.
-  await expect(page.locator('[data-testid="message"][data-role="assistant"]').last()).toContainText(
-    /失败|超时|不可用|无法处理/
-  );
+  // A hidden generation failure renders the structured failure card (with a
+  // retry handle) instead of fake character text — no assistant bubble, so
+  // waitForReply (which requires a sent message) does not apply.
+  await expect(page.locator('.reply-failure-card')).toBeVisible({ timeout: 25_000 });
+  await expect(page.locator('[data-testid="message"][data-role="assistant"]')).toHaveCount(0);
+  const card = page.locator('.reply-failure-card');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText(/失败|超时|不可用|无法处理|没有生成成功/);
 });
 
 test('PWA: manifest, icons and service worker are served correctly', async ({ page, request }) => {
