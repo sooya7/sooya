@@ -5,6 +5,7 @@ import GalleryPage from './components/GalleryPage.js';
 import LifeAdminPage from './components/LifeAdminPage.js';
 import MetricsDashboardPage from './components/MetricsDashboardPage.js';
 import ShadowRunsPage from './components/ShadowRunsPage.js';
+import ExperimentsPage from './components/ExperimentsPage.js';
 import VoicePreferencesPage from './components/VoicePreferencesPage.js';
 import { ImageViewerHost } from './components/ImageViewerHost.js';
 import { useAppRoute } from './lib/navigation.js';
@@ -20,6 +21,7 @@ export default function AppShell() {
   const isVoicePrefs = path === '/settings/voice';
   const isMetrics = path === '/admin/metrics';
   const isShadow = path === '/admin/shadow';
+  const isExperiments = path === '/admin/experiments';
 
   useEffect(() => {
     if (route === 'chat') setChatStarted(true);
@@ -29,10 +31,11 @@ export default function AppShell() {
     {shouldMountChat && <ChatSessionHost active={route === 'chat'} />}
     {route === 'chat' && <ImageViewerHost />}
     {route === 'gallery' && <GalleryPage />}
-    {route === 'admin' && !isLifeAdmin && !isMetrics && !isShadow && <AdminPanel />}
+    {route === 'admin' && !isLifeAdmin && !isMetrics && !isShadow && !isExperiments && <AdminPanel />}
     {route === 'admin' && isLifeAdmin && <LifeAdminPage />}
     {isVoicePrefs && <VoicePreferencesPage />}
     {route === 'admin' && isMetrics && <MetricsDashboardPage />}
     {route === 'admin' && isShadow && <ShadowRunsPage />}
+    {route === 'admin' && isExperiments && <ExperimentsPage />}
   </>;
 }
