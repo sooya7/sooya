@@ -113,7 +113,9 @@ export class LifeSimEngine {
     private readonly repo: LifeRepo,
     private readonly v2: LifeV2Repo,
     config: LifeConfig | (() => LifeConfig) = DEFAULT_LIFE_CONFIG,
-    private readonly clock: () => Date = () => new Date()
+    private readonly clock: () => Date = () => new Date(),
+    /** Optional next-phase location service (LOCATION_MODEL_ENABLED). */
+    private readonly location?: import('../location/service.js').LocationService
   ) {
     this.resolve = typeof config === 'function' ? config : () => config;
     this.vitals = new LifeVitalsEngine(v2, clock, repo);
@@ -233,6 +235,12 @@ export class LifeSimEngine {
     this.decayThreads();
     this.settlePlanWindows(parts);
     this.ensureSeedThreads();
+    // Next phase: the resolved activity may move SOOYA to a matching location.
+    const activityId = (resolved as { activityId?: string | null }).activityId ?? null;
+    const planId = (resolved as { planId?: string | null }).planId ?? null;
+    if (activityId || resolved.source === 'routine') {
+      this.location?.onActivityResolved(activityId ? defById(activityId) : null, resolved.kind, planId, activityId);
+    }
     return { changed: true, activity: resolved.activity, kind: resolved.kind, mood: resolved.mood, endedPrevious: advanced.previous };
   }
 
@@ -647,6 +655,10 @@ export class LifeSimEngine {
     if (userPlans.length) {
       lines.push(`你之前建议的「${userPlans[0]!.title}」还只是计划，还没有发生。`);
     }
+    // Next phase: known location facts only (never invented addresses).
+    if (this.location?.isEnabled) {
+      lines.push(...(this.location.contextLines() ?? []));
+    }
     lines.push('这些是你真实的近况，被问起就照实说，不要临时编造别的活动。');
     return lines;
   }
@@ -724,6 +736,7 @@ export class LifeSimEngine {
     const theme = this.dayTheme();
     const parts = localParts(this.clock(), this.tzOffset, this.settings.timeZone);
     const todayPlans = this.repo.listPlans().filter((p) => isLocalDate(p.planned_start, parts.localDate, this.tzOffset, this.settings.timeZone));
+    const location = this.location?.isEnabled ? this.location.current() : null;
     return {
       activity: current?.activity ?? resolved.activity,
       kind: current?.kind ?? resolved.kind,
@@ -734,7 +747,8 @@ export class LifeSimEngine {
       theme: theme.theme,
       vitals: this.vitals.summary(v),
       plans: todayPlans.slice(0, 5).map((p) => ({ title: p.title, status: p.status })),
-      threads: this.v2.threads('open').slice(0, 3).map((t) => ({ title: t.title, progress: Math.round(t.progress * 100) }))
+      threads: this.v2.threads('open').slice(0, 3).map((t) => ({ title: t.title, progress: Math.round(t.progress * 100) })),
+      ...(location ? { location: { id: location.id, name: location.name, kind: location.kind } } : {})
     };
   }
 }
