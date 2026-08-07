@@ -24,6 +24,8 @@ export interface LifeActivityDefinition {
   effects: Partial<LifeVitals>;
   possibleOutcomes: string[];
   followUpHooks: string[];
+  /** Preferred location kinds for this activity (next-phase location model). */
+  locationAffinity?: string[];
   shareability: number;
 }
 
@@ -87,6 +89,10 @@ export interface ScoreContext {
   themeTags: string[];
   threadFitIds: Set<string>;
   continuityFrom: string[];
+  /** Next phase: cached weather condition (rain/snow/...) modifier. */
+  weatherCondition?: string | null;
+  /** Next phase: very hot (>=33C) suppresses midday outdoor activities. */
+  weatherHot?: boolean;
 }
 
 /** Tags overlap penalty (§44.3) against the last few used activities. */
@@ -135,6 +141,21 @@ export function scoreActivity(def: LifeActivityDefinition, ctx: ScoreContext, no
   if (def.kind === 'out') score += mapRange(v.social_need + v.loneliness, 50, 160, 0, 24);
   if (def.kind === 'play') score += mapRange(v.curiosity, 45, 100, 0, 16);
   if (def.kind === 'work' || def.kind === 'study') score += mapRange(v.focus, 45, 100, 0, 12) - Math.max(0, 60 - v.energy) / 4;
+
+  // Weather modifier (next phase): rain/snow/storm suppress outdoor and
+  // favour cozy/library; clear favours parks and walks; heat suppresses
+  // midday outdoor. Modifiers only — vitals + plan + thread still decide.
+  const w = ctx.weatherCondition;
+  if (w === 'rain' || w === 'storm') {
+    if (def.kind === 'out') score -= 30;
+    if (def.tags.some((t) => t === 'cafe' || t === 'library' || t === 'home' || t === 'cozy')) score += 12;
+  } else if (w === 'snow') {
+    if (def.kind === 'out') score -= 25;
+    if (def.tags.some((t) => t === 'home' || t === 'cozy')) score += 8;
+  } else if (w === 'clear') {
+    if (def.tags.some((t) => t === 'park' || t === 'walk' || t === 'out')) score += 15;
+  }
+  if (ctx.weatherHot && def.kind === 'out' && ctx.hour >= 11 && ctx.hour <= 15) score -= 25;
 
   // Continuity bonus (§43.3 / E6): the previous activity's follow-up hooks
   // (买菜 → 做饭), its tags, its outcome tags, or an open thread's related

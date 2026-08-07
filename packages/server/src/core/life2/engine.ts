@@ -115,7 +115,9 @@ export class LifeSimEngine {
     config: LifeConfig | (() => LifeConfig) = DEFAULT_LIFE_CONFIG,
     private readonly clock: () => Date = () => new Date(),
     /** Optional next-phase location service (LOCATION_MODEL_ENABLED). */
-    private readonly location?: import('../location/service.js').LocationService
+    private readonly location?: import('../location/service.js').LocationService,
+    /** Optional next-phase weather service (WEATHER_ENABLED). */
+    private readonly weather?: import('../weather/service.js').WeatherService
   ) {
     this.resolve = typeof config === 'function' ? config : () => config;
     this.vitals = new LifeVitalsEngine(v2, clock, repo);
@@ -334,6 +336,11 @@ export class LifeSimEngine {
       for (const id of meta.relatedActivityIds ?? []) threadFitIds.add(id);
     }
     const themeTags = JSON.parse(theme.tone_tags_json) as string[];
+    // Next phase: cached weather condition modifiers (never blocks on fetch).
+    const weatherLocation = this.location?.isEnabled ? this.location.current() : null;
+    const weatherCondition = weatherLocation && this.weather?.isEnabled
+      ? this.weather.cachedCondition({ key: weatherLocation.id, city: weatherLocation.city, region: weatherLocation.region, lat: weatherLocation.lat, lng: weatherLocation.lng })
+      : null;
     // E6: real causal context — previous activity's follow-up hooks and tags,
     // its outcome tags, and the open threads' related activities. 买菜 → 做饭
     // gets its bonus because shopping's follow-up hook ('cook') is a def id.
@@ -355,7 +362,8 @@ export class LifeSimEngine {
       usage: this.v2,
       themeTags,
       threadFitIds,
-      continuityFrom: [...new Set(continuityFrom)]
+      continuityFrom: [...new Set(continuityFrom)],
+      ...(weatherCondition ? { weatherCondition } : {})
     };
     let best: LifeActivityDefinition | null = null;
     let bestScore = -Infinity;

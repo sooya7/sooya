@@ -47,7 +47,9 @@ export class LocationService {
   constructor(
     private readonly repo: LifeLocationRepo,
     private readonly audit: AuditRepo,
-    private readonly clock: () => Date = () => new Date()
+    private readonly clock: () => Date = () => new Date(),
+    /** Optional next-phase weather condition getter (cached, never blocks). */
+    private readonly weatherConditionFor?: (location: LifeLocation | null) => string | null
   ) {}
 
   /** Flag wiring: LOCATION_MODEL_ENABLED (master WORLD_CONTEXT_ENABLED too). */
@@ -97,6 +99,12 @@ export class LocationService {
     return this.repo.currentState() ?? null;
   }
 
+  /** Home is the implicit baseline before any location state exists. */
+  private homeLocation(): LifeLocation | null {
+    const row = this.repo.list(true).find((l) => l.kind === 'home');
+    return row ? toLifeLocation(row) : null;
+  }
+
   /** Thread location tags, so the selector can keep threads moving. */
   threadLocationTags(threads: Array<{ meta_json: string; title: string }>): string[] {
     const tags: string[] = [];
@@ -127,7 +135,8 @@ export class LocationService {
         recentVisitIds: this.repo.recentlyVisitedLocationIds(24),
         repeatWindowHours: 24,
         threadTags: [],
-        hour: now.getUTCHours() + 8 % 24 // local-hour approximation for selection
+        hour: now.getUTCHours() + 8 % 24, // local-hour approximation for selection
+        weatherCondition: this.weatherConditionFor?.(this.current() ?? this.homeLocation()) ?? null
       },
       (from, to) => {
         const edge = this.repo.edge(from, to);
