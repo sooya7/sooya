@@ -183,7 +183,7 @@ function ReadAloudButton({ mediaId }: { mediaId: string }) {
   );
 }
 
-export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, timeZone, highlightQuery, highlighted, highlightNonce, quoted, quotedLabel, quotedStatus, onQuotedClick, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
+export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, timeZone, highlightQuery, highlighted, highlightNonce, quoted, quotedLabel, quotedStatus, onQuotedClick, previousId, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
   const mine = message.role === 'user';
   // Every assistant turn carries `replyTo` for stream recovery, so a preview is only
   // worth showing when it says something the bubble order does not: not the message
@@ -197,7 +197,13 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   // structural replyTo is only a stream-recovery link. Only an explicitly
   // user-chosen target (replyMode === 'explicit') forces the preview.
   const replyMode = message.meta?.replyMode as string | undefined;
-  const showReplyPreview = Boolean(message.replyTo) && (mine || replyMode === 'explicit') && (Boolean(quoted) || Boolean(quotedStatus) || mine);
+  // Structural replyTo (stream recovery / auto batches) shows a preview only
+  // when it says something the bubble order does not — i.e. NOT the message
+  // right above. A user-chosen quote (mine or replyMode 'explicit') is
+  // deliberate and always shows when the target is available.
+  const showReplyPreview = Boolean(message.replyTo)
+    && (Boolean(quoted) || Boolean(quotedStatus) || mine)
+    && (mine || replyMode === 'explicit' || previousId === null || message.replyTo !== previousId);
   const visible = message.content.filter((part) => part.type !== 'system');
   const failedMessage = message.status === 'failed';
   const replayable = isReplayableUserMessage(message);
