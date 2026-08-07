@@ -31,6 +31,7 @@ function chatController(): ChatController {
     life: null,
     stickers: [],
     quotedStates: {},
+    replyFailures: {},
     hasMore: false,
     loadingOlder: false,
     error: null,

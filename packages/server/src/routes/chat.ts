@@ -94,19 +94,31 @@ export function registerChatRoutes(app: SooyaApp): void {
       });
       if (created.created) repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
-      const batch = created.created ? repos.replyBatches.addMessage(created.message.id, services.replyCoordinator.dueAt()) : null;
-      return { ...created, event, batch };
+      const admission = created.created
+        ? repos.replyBatches.appendOrCreateMessage(
+            created.message.id,
+            services.replyCoordinator.dueAt(Date.now(), false),
+            services.replyCoordinator.dueAt(Date.now(), true)
+          )
+        : null;
+      return { ...created, event, admission };
     });
-    const { message, created, event, batch } = tx();
+    const { message, created, event, admission } = tx();
     if (!created) {
       const batch = repos.replyBatches.findByMessage(message.id);
-      const pending = batch !== undefined && (batch.status === 'collecting' || batch.status === 'queued' || batch.status === 'running');
+      const pending = batch !== undefined
+        && (batch.status === 'collecting' || batch.status === 'queued'
+          || batch.status === 'generating' || batch.status === 'publishing');
       return { message, duplicate: true, replyPending: pending, ...(pending ? { batchId: batch.id } : {}) };
     }
     services.bus.fanout(event!);
-    void services.replyCoordinator.enqueue(batch!.id, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }).catch((error) => {
-      repos.errors.add('reply-coordinator', (error as Error).message);
-    });
+    const options = { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT };
+    if (admission) {
+      // Never block the HTTP response on coordination; errors are logged.
+      void services.replyCoordinator.onMessageAccepted(admission.action, admission.batch.id, options).catch((error) => {
+        repos.errors.add('reply-coordinator', error instanceof Error ? error.message : String(error));
+      });
+    }
     return { message, duplicate: false, replyPending: true };
   });
 
@@ -128,14 +140,43 @@ export function registerChatRoutes(app: SooyaApp): void {
       });
       if (created.created) repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
-      const batch = created.created ? repos.replyBatches.addMessage(created.message.id, services.replyCoordinator.dueAt()) : null;
-      return { ...created, event, batch };
+      const admission = created.created
+        ? repos.replyBatches.appendOrCreateMessage(
+            created.message.id,
+            services.replyCoordinator.dueAt(Date.now(), false),
+            services.replyCoordinator.dueAt(Date.now(), true)
+          )
+        : null;
+      return { ...created, event, admission };
     });
-    const { message, created, event, batch } = tx();
+    const { message, created, event, admission } = tx();
     if (!created) return { message, duplicate: true, reply: findReply(app, message.id) };
     services.bus.fanout(event!);
-    const outcome = await services.replyCoordinator.enqueue(batch!.id, { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
-    return { message, duplicate: false, reply: repos.messages.get(outcome.messageId), outcome };
+    const options = { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT };
+    // The sync endpoint waits for the reply: tests and the API contract
+    // expect the finished assistant message (with its outcome) in the body.
+    const outcome = admission
+      ? await services.replyCoordinator.enqueue(admission.batch.id, options)
+      : null;
+    return {
+      message,
+      duplicate: false,
+      reply: outcome?.messageId ? repos.messages.get(outcome.messageId) : null,
+      outcome
+    };
+  });
+
+  server.post('/api/reply-batches/:id/retry', { preHandler: auth }, async (req, reply) => {
+    const blocked = rejectBlockedWrite(reply);
+    if (blocked) return blocked;
+    const params = MessageIdParamsSchema.safeParse(req.params);
+    if (!params.success) { reply.code(400); return { error: 'bad_request', issues: params.error.issues }; }
+    const batch = await services.replyCoordinator.retryBatch(params.data.id);
+    if (!batch) {
+      reply.code(409);
+      return { error: 'not_retryable', message: '只有失败或部分完成的回复可以重新生成' };
+    }
+    return { batchId: batch.id, revision: batch.revision, status: batch.status };
   });
 
   server.post('/api/messages/:id/withdraw', { preHandler: auth }, async (req, reply) => {

@@ -119,7 +119,10 @@ describe('vision input rejection fallback', () => {
     expect(h.state.chatCalls.filter((c) => !carriesImage(c.body))).toHaveLength(1);
     expect(body.outcome.degraded).toContain('chat:provider_unavailable');
     expect(body.outcome.degraded).not.toContain('chat:vision_unsupported');
-    expect(JSON.stringify(body.reply.content)).toContain('模型服务暂时不可用');
+    // A hidden failure publishes no fake character text: the structured
+    // failure card (reply.failed + outcome.error) is the visible surface.
+    expect(body.reply).toBeNull();
+    expect(body.outcome.error).toMatchObject({ code: 'provider_unavailable' });
   });
 
   it('does not retry a text-only turn even if the error mentions images', async () => {

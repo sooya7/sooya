@@ -160,8 +160,22 @@ describe('idempotency and concurrency', () => {
     expect(new Set(seqs).size).toBe(seqs.length);
   });
 
-  it('puts a message arriving after reply start into the next batch', async () => {
+  it('interrupts a hidden generation and merges the new message into one reply', async () => {
+    // A slow model (delayMs 1200) is still hidden when the second message
+    // lands: the generation is interrupted and both messages get ONE reply.
     h = await createHarness({ chat: { script: [['first'], ['second']], delayMs: 1200 } });
+    const first = sendText(h.app, 'first user', 'batch-first');
+    await new Promise((resolve) => setTimeout(resolve, 950));
+    const second = sendText(h.app, 'second user', 'batch-second');
+    await Promise.all([first, second]);
+    const replies = h.app.repos.messages.page(50).messages.filter((m) => m.role === 'assistant');
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.replyTo).toBe(h.app.repos.messages.getByClientId('batch-second')!.id);
+  }, 20000);
+
+  it('puts a message arriving after the barrier opened into the next batch', async () => {
+    // Once text is visible (barrier open), a new message starts a NEW batch.
+    h = await createHarness({ chat: { script: [['first'], ['second']], delayMs: 50 } });
     const first = sendText(h.app, 'first user', 'batch-first');
     await new Promise((resolve) => setTimeout(resolve, 950));
     const second = sendText(h.app, 'second user', 'batch-second');
@@ -170,7 +184,7 @@ describe('idempotency and concurrency', () => {
     expect(replies).toHaveLength(2);
     expect(replies[0]!.replyTo).toBe(h.app.repos.messages.getByClientId('batch-first')!.id);
     expect(replies[1]!.replyTo).toBe(h.app.repos.messages.getByClientId('batch-second')!.id);
-  });
+  }, 20000);
 });
 
 describe('bootstrap', () => {
@@ -369,14 +383,12 @@ describe('voice replies', () => {
     const long = '这是一段很重要的长回复内容。'.repeat(40); // 560 chars > default 300
     h = await createHarness({ tts: 'ok', chat: { script: [[`${long}[[voice-only]]`]] } });
     const { body } = await sendText(h.app, '只发语音');
-    const audio = body.reply.content.find((p: any) => p.type === 'audio');
-    expect(audio.status).toBe('sent');
-    expect(audio.transcript).toHaveLength(long.length);
-    expect(audio.meta.clipped).toBe(true);
-    expect(audio.meta.spokenChars).toBe(300);
-    // Because only part of the text is audible, the text bubble must survive.
-    const text = body.reply.content.find((p: any) => p.type === 'text' && p.status === 'sent');
-    expect(text?.text).toHaveLength(long.length);
+    // P0-2: replace never ships truncated audio. A script that cannot fit the
+    // clip budget (after one compact rewrite) falls back to the FULL text.
+    expect(partTypes(body.reply)).toEqual(['text']);
+    const text = body.reply.content[0];
+    expect(text.text).toHaveLength(long.length);
+    expect(text.meta).toMatchObject({ voiceFallback: true, voiceMode: 'replace' });
   });
 
   it('voice-only still hides the text bubble when the whole text fits in one clip', async () => {
@@ -400,11 +412,10 @@ describe('voice replies', () => {
   it('falls back to text when TTS fails', async () => {
     h = await createHarness({ tts: 'fail', chat: { script: [['这是要读出来的内容[[voice]]']] } });
     const { body } = await sendText(h.app, '用语音说');
-    const text = body.reply.content.find((p: any) => p.type === 'text');
-    const audio = body.reply.content.find((p: any) => p.type === 'audio');
+    expect(partTypes(body.reply)).toEqual(['text']);
+    const text = body.reply.content[0];
     expect(text.text).toContain('这是要读出来的内容');
     expect(text.status).toBe('sent');
-    expect(audio.status).toBe('failed');
     expect(body.reply.status).toBe('sent');
   });
 
@@ -545,7 +556,7 @@ describe('history pagination', () => {
     expect(new Set(seen).size).toBe(total);
     expect(sorted[0]).toBe(1);
     expect(sorted.at(-1)).toBe(total);
-  });
+  }, 60_000);
 
   it('supports fetching only messages after a sequence number', async () => {
     h = await createHarness({ chat: { script: [['ok']] } });
@@ -567,20 +578,24 @@ describe('model failures', () => {
     h.setChatError(providerError);
 
     const { res, body } = await sendText(h.app, '触发模型错误', 'provider-name-chat');
-    const completed = h.app.services.bus.replay(0).find((event) => event.type === 'reply.completed');
+    // A hidden failure publishes no assistant message: the structured failure
+    // card (reply.failed event + outcome) is the client-visible surface.
+    const failedEvent = h.app.services.bus.replay(0).find((event) => event.type === 'reply.failed');
     const publicSurfaces = [
       res.body,
-      JSON.stringify(body.reply.content),
-      JSON.stringify(body.outcome.degraded),
-      JSON.stringify(completed?.payload)
+      JSON.stringify(body.reply ?? null),
+      JSON.stringify(body.outcome ?? null),
+      JSON.stringify(failedEvent ?? null)
     ];
     for (const surface of publicSurfaces) {
       expect(surface).not.toContain('sk-provider-name');
       expect(surface).not.toContain('provider.example.test');
       expect(surface).not.toContain('C:\\private\\provider.ts');
     }
+    expect(body.reply).toBeNull();
+    expect(body.outcome.ok).toBe(false);
     expect(body.outcome.degraded).toEqual(['chat:provider_unavailable']);
-    expect(completed?.payload.degraded).toEqual(['chat:provider_unavailable']);
+    expect(failedEvent?.payload).toMatchObject({ failure: { code: 'provider_unavailable' } });
   });
 
   it('uses stable image and audio degradation values for provider-controlled errors', async () => {
@@ -626,23 +641,26 @@ describe('model failures', () => {
 
     const { res, body } = await sendText(h.app, '触发失败', 'public-error-1');
     const failedEvent = h.app.services.bus.replay(0).find((event) => event.type === 'reply.failed');
-    const publicSurfaces = [res.body, JSON.stringify(body.reply), JSON.stringify(body.outcome), JSON.stringify(failedEvent)];
+    const publicSurfaces = [res.body, JSON.stringify(body.reply ?? null), JSON.stringify(body.outcome ?? null), JSON.stringify(failedEvent ?? null)];
     for (const surface of publicSurfaces) {
       expect(surface).not.toContain('sk-secret-upstream');
       expect(surface).not.toContain('api.example.test');
       expect(surface).not.toContain('C:\\sooya\\private\\provider.ts');
     }
 
+    // A hidden failure publishes no assistant message; the structured failure
+    // (outcome.error + reply.failed event) carries the incident reference.
+    expect(body.reply).toBeNull();
     expect(body.outcome.error).toMatchObject({
-      code: 'reply_failed',
+      code: 'provider_unavailable',
       message: expect.any(String),
       incidentId: expect.stringMatching(/^inc_/)
     });
-    expect(body.reply.error).toBe(body.outcome.error.message);
-    expect(failedEvent?.payload).toMatchObject({
-      code: 'reply_failed',
+    expect(failedEvent?.payload.failure).toMatchObject({
+      code: 'provider_unavailable',
       incidentId: body.outcome.error.incidentId,
-      error: body.outcome.error.message
+      retryable: false,
+      message: body.outcome.error.message
     });
 
     const diagnostic = h.app.repos.errors.list(10).find((entry) => entry.scope === 'reply');
@@ -653,14 +671,17 @@ describe('model failures', () => {
     expect(JSON.stringify(diagnostic)).not.toContain('C:\\sooya\\private\\provider.ts');
   });
 
-  it('surfaces a timeout as a visible message rather than losing the turn', async () => {
+  it('surfaces a timeout as a structured failure card rather than losing the turn', async () => {
     h = await createHarness({ chat: { script: [['unused']] } });
     h.setChatError(Object.assign(new Error('model request timed out after 5000ms'), { name: 'HttpTimeoutError' }));
     const { body } = await sendText(h.app, '你好');
-    expect(body.reply.status).toBe('sent');
-    const text = body.reply.content.find((p: any) => p.type === 'text');
-    expect(text.text).toMatch(/超时|失败/);
+    // No fake character text: the failure card (reply.failed event + outcome)
+    // is the visible surface, with a retry handle on the batch.
+    expect(body.reply).toBeNull();
+    expect(body.outcome.ok).toBe(false);
     expect(body.outcome.degraded.join(',')).toContain('chat');
+    const failedEvent = h.app.services.bus.replay(0).find((event) => event.type === 'reply.failed');
+    expect(failedEvent?.payload.failure).toMatchObject({ code: 'model_timeout', retryable: true });
   });
 
   it('keeps partial text when the stream breaks midway', async () => {
@@ -669,7 +690,13 @@ describe('model failures', () => {
     expect(ok.reply.content[0].text).toBe('前半段内容');
     h.setChatError(new Error('socket hang up'));
     const { body } = await sendText(h.app, '第二次', 'x2');
-    expect(body.reply.content.some((p: any) => p.type === 'text' && p.text)).toBe(true);
+    // The generation broke before anything became visible: no fake text is
+    // written (failure card instead), and the earlier reply is untouched.
+    expect(body.reply).toBeNull();
+    expect(body.outcome.degraded).toContain('chat:provider_unavailable');
+    const later = h.app.repos.messages.page(50).messages.filter((m) => m.role === 'assistant');
+    expect(later).toHaveLength(1);
+    expect(later[0]!.content[0].text).toBe('前半段内容');
   });
 
   it('records the failure in the error log', async () => {

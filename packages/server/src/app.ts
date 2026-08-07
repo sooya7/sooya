@@ -28,10 +28,14 @@ import { ContextBuilder } from './core/context.js';
 import { Summarizer } from './core/summarizer.js';
 import { Replier } from './core/replier.js';
 import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
-import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig } from './core/life.js';
+import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig, type LifeRuntime } from './core/life.js';
 import { LifeRepo } from './db/repos/life.repo.js';
+import { LifeV2Repo } from './db/repos/life-v2.repo.js';
+import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
+import { VoiceGenerationRepo } from './db/repos/voice.repo.js';
+import { VoiceService } from './core/voice/service.js';
 import { ReplyCoordinator } from './core/reply-coordinator.js';
 import { PushService } from './core/push.js';
 import { ProactiveComposer } from './core/proactive.js';
@@ -47,6 +51,8 @@ import { registerStreamRoutes } from './routes/stream.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerFeatureRoutes } from './routes/features.js';
+import { registerVoiceRoutes } from './routes/voice.js';
+import { registerLifeAdminRoutes } from './routes/life-admin.js';
 import { ensureDirSync, cleanupTempFiles } from './util/fsx.js';
 
 export interface BuildAppOptions {
@@ -86,6 +92,8 @@ export interface SooyaApp {
     pushSubscriptions: PushSubscriptionRepo;
     life: LifeRepo;
     proactive: ProactiveAttemptRepo;
+    voice: VoiceGenerationRepo;
+    lifeV2: LifeV2Repo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
     replyBatches: ReplyBatchRepo;
@@ -96,8 +104,9 @@ export interface SooyaApp {
     stickerLibrary: StickerLibrary;
     capabilities: CapabilityRegistry;
     memory: MemoryService;
-    life: LifeEngine;
+    life: LifeRuntime;
     proactive: ProactiveComposer;
+    voice: VoiceService;
     push: PushService;
     storage: StorageService;
     context: ContextBuilder;
@@ -175,6 +184,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     pushSubscriptions: new PushSubscriptionRepo(dbHandle),
     life: new LifeRepo(dbHandle),
     proactive: new ProactiveAttemptRepo(dbHandle),
+    voice: new VoiceGenerationRepo(dbHandle),
+    lifeV2: new LifeV2Repo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle),
     replyBatches: new ReplyBatchRepo(dbHandle)
@@ -210,18 +221,30 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       proactiveMode: policy.proactiveMode ?? DEFAULT_LIFE_CONFIG.proactiveMode
     };
   };
-  const life = new LifeEngine(repos.life, lifeSettings, opts.clock);
-  const proactive = new ProactiveComposer({
-    attempts: repos.proactive,
-    jobs: repos.jobs,
+  const life = env.ENABLE_LIFE_V2
+    ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock)
+    : new LifeEngine(repos.life, lifeSettings, opts.clock);
+  const voiceService = new VoiceService({
     messages: repos.messages,
-    life,
+    media: mediaStore,
+    voice: repos.voice,
+    batches: repos.replyBatches,
     capabilities,
     config,
-    media: mediaStore,
-    stickers: stickerLibrary,
-    bus
+    settings: repos.settings,
+    bus,
+    errorLog: repos.errors,
+    flags: {
+      independentScript: env.VOICE_INDEPENDENT_SCRIPT_ENABLED,
+      naturalnessGuard: env.VOICE_NATURALNESS_GUARD_ENABLED,
+      advancedDelivery: env.VOICE_ADVANCED_DELIVERY_ENABLED,
+      autoComplement: env.VOICE_AUTO_COMPLEMENT_ENABLED,
+      readAloud: env.VOICE_READ_ALOUD_ENABLED,
+      ttsRetries: env.VOICE_TTS_RETRIES
+    }
   });
+  voiceService.dailyAutoCap = env.VOICE_DAILY_AUTO_CAP;
+
   const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, repos.mediaText, env.ENABLE_LIFE_ENGINE ? life : undefined, env.LIFE_TIME_ZONE);
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
@@ -229,24 +252,59 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     keepRecent: env.CONTEXT_RECENT_MESSAGES
   });
   const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
-  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences });
+
+  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED });
   const replyCoordinator = new ReplyCoordinator({
     messages: repos.messages,
     batches: repos.replyBatches,
     replier,
     bus,
-    debounceMs: opts.replyDebounceMs,
-    onCompleted: (batchId, userMessages, outcome, owner) => {
+    db: dbHandle,
+    initialDebounceMs: opts.replyDebounceMs ?? env.REPLY_INITIAL_DEBOUNCE_MS,
+    interruptDebounceMs: env.REPLY_INTERRUPT_DEBOUNCE_MS,
+    maxCollectionMs: env.REPLY_MAX_COLLECTION_MS,
+    publishGraceMs: env.REPLY_PUBLISH_GRACE_MS,
+    requestTimeoutMs: env.CHAT_REQUEST_TIMEOUT_MS,
+    timeoutRetries: env.CHAT_TIMEOUT_RETRIES,
+    retryBaseDelayMs: env.CHAT_RETRY_BASE_DELAY_MS,
+    interruptible: env.REPLY_INTERRUPTIBLE_GENERATION,
+    errorLog: repos.errors,
+    onCompleted: (batchId, userMessages, outcome, owner, revision) => {
+      // The batch is already marked completed by the coordinator (revision-
+      // fenced); this hook only enqueues the downstream jobs atomically.
       const tx = dbHandle.transaction(() => {
-        if (!repos.replyBatches.completeInTransaction(batchId, outcome.messageId, owner)) {
-          throw new Error(`lost reply batch lease: ${batchId}`);
-        }
-        if (!env.DISABLE_MEMORY_PIPELINE) repos.jobs.enqueue('memory.extract', { batchId, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId });
+        if (!env.DISABLE_MEMORY_PIPELINE) repos.jobs.enqueue('memory.extract', { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId });
         repos.jobs.enqueue('push.reply', { batchId, messageId: outcome.messageId }, { maxAttempts: 3 });
         if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
+        // Life conversation bridge (§49-50): extracted as a durable job; the
+        // handler re-checks the revision so only the final one applies.
+        if (env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_V2) {
+          repos.jobs.enqueue('life.conversation', {
+            batchId,
+            revision,
+            userMessageIds: userMessages.map((message) => message.id),
+            lastUserMessageId: userMessages.at(-1)?.id ?? null,
+            warmth: outcome.ok ? 'warm' : 'neutral'
+          });
+        }
       });
       tx();
     }
+  });
+
+  const proactive = new ProactiveComposer({
+    attempts: repos.proactive,
+    replyBatches: repos.replyBatches,
+    jobs: repos.jobs,
+    messages: repos.messages,
+    life,
+    capabilities,
+    config,
+    media: mediaStore,
+    stickers: stickerLibrary,
+    bus,
+    voice: voiceService,
+    coordinator: replyCoordinator
   });
   const backups = new BackupService({
     db: () => dbHandle,
@@ -270,6 +328,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const worker = new JobWorker(repos.jobs, repos.errors, { intervalMs: 800 });
   registerDefaultJobs(worker, {
     jobs: repos.jobs,
+    batches: repos.replyBatches,
     media: mediaStore,
     memory,
     summarizer,
@@ -398,7 +457,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     recurringTimers: [],
@@ -417,12 +476,15 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     }
   };
 
+  repos.voice.recoverInFlight();
   replyCoordinator.recover({ recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
 
   registerHealthRoutes(app);
   registerChatRoutes(app);
   registerMediaRoutes(app);
   registerStreamRoutes(app);
+  registerVoiceRoutes(app);
+  registerLifeAdminRoutes(app);
   registerAdminRoutes(app);
   registerFeatureRoutes(app);
 

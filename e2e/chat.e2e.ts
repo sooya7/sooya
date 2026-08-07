@@ -87,6 +87,44 @@ test('sends text and receives a streamed reply', async ({ page }) => {
   expect(await page.textContent('body')).not.toContain('[[');
 });
 
+test('连续发三条消息只收到一条回复（可打断合并）', async ({ page }) => {
+  await control({ queue: ['第一条', '第二条', '第三条'] });
+  await page.goto('/');
+  await send(page, '第一条消息');
+  await send(page, '第二条消息');
+  await send(page, '第三条消息');
+  await waitForReply(page);
+  const rows = page.locator('[data-testid="message"][data-role="assistant"]');
+  // The three messages merge into ONE reply (the mock serves the first item).
+  await expect(rows).toHaveCount(1);
+  await expect(rows.last()).toContainText('第一条');
+});
+
+test('用户建议的活动进入 Life 计划并可执行', async ({ page, baseURL }) => {
+  await control({ queue: ['好的，去试试看[[voice]]'], delayMs: 0 });
+  await page.goto('/');
+  await send(page, '建议我们明天去试试公园散步');
+  await waitForReply(page);
+  // The life bridge job turns the suggestion into a conversation plan. The
+  // snapshot only lists today's plans, so also probe the admin view (all
+  // plans) for a plan from the conversation source.
+  await expect
+    .poll(
+      async () => {
+        const life = await fetch(`${baseURL}/api/life`, { headers: { authorization: `Bearer ${CHAT_TOKEN}` } });
+        const lifeBody = (await life.json()) as { plans?: Array<{ title: string; status: string }> };
+        if (JSON.stringify(lifeBody.plans ?? []).includes('散步')) return 'found';
+        const admin = await fetch(`${baseURL}/api/admin/life/plans`, { headers: { 'x-admin-token': ADMIN } });
+        const adminBody = (await admin.json()) as { plans?: Array<{ title: string; source: string; status: string }> };
+        const conversation = (adminBody.plans ?? []).filter((p) => p.source === 'conversation');
+        return conversation.length > 0 ? `conversation:${conversation[0]!.status}` : 'no_conversation_plan';
+      },
+      { timeout: 20_000 }
+    )
+    .toMatch(/found|conversation:/);
+});
+
+
 test('shows an isolated streaming draft before committing the final reply', async ({ page }) => {
   await control({ queue: ['一二三四五六七八九十，这是一段比较长的流式回复内容。'], chunkDelayMs: 200 });
   await page.goto('/');
@@ -169,7 +207,8 @@ test('SOOYA sends a playable voice message with a real duration', async ({ page 
       mediaRequests.push({ url: request.url(), authorization: request.headers().authorization });
     }
   });
-  await control({ queue: ['晚安，好好睡一觉[[voice]]'] });
+  // Second queued response feeds the independent voice-script generation.
+  await control({ queue: ['晚安，好好睡一觉[[voice]]', '晚安，好好睡一觉'] });
   await page.goto('/');
   await send(page, '用语音说晚安');
   await waitForReply(page);
@@ -209,8 +248,10 @@ test('TTS failure falls back to a text bubble', async ({ page }) => {
   await waitForReply(page);
 
   const last = page.locator('[data-testid="message"][data-role="assistant"]').last();
+  // The hidden draft publishes the full reply as a text fallback; no failed
+  // audio bubble is left behind.
   await expect(last.getByTestId('text-bubble')).toContainText('这段内容本来要用语音');
-  await expect(last.locator('.bubble-audio.failed')).toBeVisible();
+  await expect(last.locator('.bubble-audio')).toHaveCount(0);
 });
 
 test('a combined reply renders text, sticker, image and audio together', async ({ page }) => {
@@ -400,15 +441,14 @@ test('chat model failure is shown to the user instead of hanging', async ({ page
   await control({ failChat: true });
   await page.goto('/');
   await send(page, '你好');
-  await waitForReply(page);
-  // A failing chat provider is reported with the `provider_unavailable` copy from
-  // core/public-error.ts ('模型服务暂时不可用，请稍后重试。'), not the `reply_failed`
-  // one this assertion was originally written against, so the old /失败|超时/
-  // pattern could never match even though the user was told. Accept any of the
-  // public failure messages: what matters is that the bubble explains itself.
-  await expect(page.locator('[data-testid="message"][data-role="assistant"]').last()).toContainText(
-    /失败|超时|不可用|无法处理/
-  );
+  // A hidden generation failure renders the structured failure card (with a
+  // retry handle) instead of fake character text — no assistant bubble, so
+  // waitForReply (which requires a sent message) does not apply.
+  await expect(page.locator('.reply-failure-card')).toBeVisible({ timeout: 25_000 });
+  await expect(page.locator('[data-testid="message"][data-role="assistant"]')).toHaveCount(0);
+  const card = page.locator('.reply-failure-card');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText(/失败|超时|不可用|无法处理|没有生成成功/);
 });
 
 test('PWA: manifest, icons and service worker are served correctly', async ({ page, request }) => {

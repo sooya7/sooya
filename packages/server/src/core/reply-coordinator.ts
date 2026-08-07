@@ -1,21 +1,70 @@
 import type { EventBus } from '../events/bus.js';
 import type { MessageRepo } from '../db/repos/message.repo.js';
-import type { ReplyBatchRepo, ReplyBatchRow } from '../db/repos/reply-batch.repo.js';
-import type { ChatMessage } from './types.js';
+import type { DbLike } from '../db/handle.js';
+import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
+import type { ReplyBatchRepo, ReplyBatchRow, AppendAction } from '../db/repos/reply-batch.repo.js';
+import type { ChatMessage, ReplyFailure } from './types.js';
 import type { ReplyOptions, ReplyOutcome, Replier } from './replier.js';
+import { redactDiagnostic, type PublicFailure } from './public-error.js';
 import { sortableId } from '../util/ids.js';
+import { abortableDelay, isBenignAbort, StaleGenerationError, UserInterruptedError } from '../util/abort.js';
+import { HttpTimeoutError } from '../util/http.js';
 
 const LEASE_MS = 120_000;
 const LEASE_HEARTBEAT_MS = 30_000;
-const MAX_COMPLETION_ATTEMPTS = 3;
+
+export interface AcceptUserMessageResult {
+  batchId: string;
+  revision: number;
+  action: AppendAction;
+}
+
+/** Outcome of a proactive delivery task run (produced by the task itself). */
+export type ProactiveRunOutcome =
+  | { kind: 'sent'; messageId: string }
+  | { kind: 'blocked'; blockedReason: string }
+  | { kind: 'discarded' };
+
+/**
+ * P0-1: a proactive reach-out delivered through the coordinator. The task
+ * owns composition/persistence; the coordinator owns priority (user replies
+ * always win), abort-on-user-activity and once-only scheduling.
+ */
+export interface ProactiveDeliveryTask {
+  candidateId: string;
+  requestedMode: string;
+  run(signal: AbortSignal): Promise<ProactiveRunOutcome>;
+}
+
+export interface ProactiveDeliveryResult {
+  status: 'blocked' | 'sent' | 'failed' | 'cancelled';
+  blockedReason: string | null;
+  messageId: string | null;
+}
 
 export interface ReplyCoordinatorOptions {
-  debounceMs?: number;
+  initialDebounceMs?: number;
+  interruptDebounceMs?: number;
+  maxCollectionMs?: number;
+  publishGraceMs?: number;
+  requestTimeoutMs?: number;
+  timeoutRetries?: number;
+  retryBaseDelayMs?: number;
+  interruptible?: boolean;
   messages: MessageRepo;
   batches: ReplyBatchRepo;
   replier: Replier;
   bus: EventBus;
-  onCompleted?: (batchId: string, userMessages: ChatMessage[], outcome: ReplyOutcome, owner: string) => void | Promise<void>;
+  /** Optional: completes the batch and persists reply.completed atomically. */
+  db?: DbLike;
+  errorLog?: ErrorLogRepo;
+  onCompleted?: (
+    batchId: string,
+    userMessages: ChatMessage[],
+    outcome: ReplyOutcome,
+    owner: string,
+    revision: number
+  ) => void | Promise<void>;
 }
 
 interface BatchRuntime {
@@ -23,28 +72,107 @@ interface BatchRuntime {
   waiters: Array<{ resolve: (outcome: ReplyOutcome) => void; reject: (error: unknown) => void }>;
 }
 
-/** Serializes durable reply batches while keeping the collection debounce restart-safe. */
+interface ActiveGeneration {
+  batchId: string;
+  revision: number;
+  controller: AbortController;
+  startedAt: number;
+  attempt: number;
+  published: boolean;
+  firstTokenAt: number | null;
+}
+
+/**
+ * Serializes durable reply batches and owns the interruptible generation
+ * lifecycle:
+ *
+ *   collecting → queued → generating → publishing → completed
+ *                                ↘ superseded (benign, no failure UI)
+ *
+ * The publish barrier (`visible_at`) is the single line between "a newer
+ * message may silently replace this" and "this reply is out for good".
+ * Revision fencing in the database decides every race — aborting the HTTP
+ * request is only an optimization.
+ */
 export class ReplyCoordinator {
-  private readonly debounceMs: number;
+  private readonly initialDebounceMs: number;
+  private readonly interruptDebounceMs: number;
+  private readonly maxCollectionMs: number;
+  private readonly publishGraceMs: number;
+  private readonly requestTimeoutMs: number;
+  private readonly timeoutRetries: number;
+  private readonly retryBaseDelayMs: number;
+  private readonly interruptible: boolean;
+
   private readonly runtime = new Map<string, BatchRuntime>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly ready: string[] = [];
   private readonly readySet = new Set<string>();
+  private readonly activeGenerations = new Map<string, ActiveGeneration>();
+  /** Abort handles for timeout-retry backoffs, which outlive their active generation entry. */
+  private readonly retryControllers = new Map<string, AbortController>();
+  /** Proactive deliveries wait for an idle reply slot and yield to user messages. */
+  private readonly proactiveQueue: ProactiveDeliveryTask[] = [];
+  private proactiveActive: { task: ProactiveDeliveryTask; controller: AbortController } | null = null;
+  private readonly proactiveWaiters = new Map<string, (result: ProactiveDeliveryResult) => void>();
+  private proactiveRunning = false;
   private running = false;
   private stopped = false;
   private readonly owner = sortableId('reply-worker');
 
   constructor(private readonly deps: ReplyCoordinatorOptions) {
-    const requested = deps.debounceMs ?? 900;
-    this.debounceMs = requested === 0 ? 0 : Math.max(500, Math.min(requested, 1500));
+    this.initialDebounceMs = deps.initialDebounceMs ?? 200;
+    this.interruptDebounceMs = deps.interruptDebounceMs ?? 300;
+    this.maxCollectionMs = deps.maxCollectionMs ?? 4000;
+    this.publishGraceMs = deps.publishGraceMs ?? 600;
+    this.requestTimeoutMs = deps.requestTimeoutMs ?? 45_000;
+    this.timeoutRetries = deps.timeoutRetries ?? 1;
+    this.retryBaseDelayMs = deps.retryBaseDelayMs ?? 600;
+    this.interruptible = deps.interruptible ?? true;
   }
 
-  dueAt(now = Date.now()): string {
-    return new Date(now + this.debounceMs).toISOString();
+  dueAt(now = Date.now(), interrupt = false): string {
+    const delay = interrupt ? this.interruptDebounceMs : this.initialDebounceMs;
+    return new Date(now + delay).toISOString();
+  }
+
+  /**
+   * Route-side admission hook. The transaction already appended the message to
+   * a batch (see ReplyBatchRepo.appendOrCreateMessage); this reacts to the
+   * action: abort hidden generations, reschedule with the right debounce.
+   */
+  async onMessageAccepted(action: AppendAction, batchId: string, options: ReplyOptions): Promise<void> {
+    // P0-1: a user message always preempts proactive deliveries.
+    this.cancelProactive();
+    const batch = this.deps.batches.get(batchId);
+    if (!batch) return;
+    const runtime = this.runtime.get(batchId) ?? { options, waiters: [] };
+    runtime.options = options;
+    this.runtime.set(batchId, runtime);
+
+    if (action === 'interrupt') {
+      this.interruptGeneration(batchId, 'new_user_message');
+      this.deps.bus.publish('reply.generation.interrupted', {
+        batchId,
+        revision: batch.revision,
+        reason: 'new_user_message'
+      });
+      this.schedule(batch, true);
+      return;
+    }
+    if (action === 'next_batch') {
+      this.deps.bus.publish('reply.batch.collecting', {
+        batchId,
+        revision: batch.revision,
+        messageCount: this.deps.batches.messageIds(batchId).length
+      });
+    }
+    this.schedule(batch, false);
   }
 
   enqueue(batchId: string, options: ReplyOptions): Promise<ReplyOutcome> {
     if (this.stopped) return Promise.reject(new Error('reply coordinator is stopped'));
+    this.cancelProactive();
     const batch = this.deps.batches.get(batchId);
     if (!batch) return Promise.reject(new Error(`reply batch not found: ${batchId}`));
     return new Promise<ReplyOutcome>((resolve, reject) => {
@@ -52,17 +180,104 @@ export class ReplyCoordinator {
       current.options = options;
       current.waiters.push({ resolve, reject });
       this.runtime.set(batchId, current);
-      this.activate(batch);
-      const messageIds = this.deps.batches.messageIds(batchId);
-      this.deps.bus.publish('reply.queued', { count: messageIds.length, latestMessageId: messageIds.at(-1), batchId });
+      this.schedule(batch, false);
     });
   }
 
-  /** Re-queues persisted collecting/queued/running work after a process restart. */
+  /** Re-queues persisted open work after a process restart. */
   recover(options: ReplyOptions): void {
     for (const batch of this.deps.batches.recoverOpen()) {
       if (!this.runtime.has(batch.id)) this.runtime.set(batch.id, { options, waiters: [] });
-      this.activate(batch);
+      this.schedule(batch, false);
+    }
+  }
+
+  /** Explicit user retry (failed / partial batches). */
+  async retryBatch(batchId: string): Promise<ReplyBatchRow | undefined> {
+    const batch = this.deps.batches.retry(batchId);
+    if (!batch) return undefined;
+    const options = this.runtime.get(batchId)?.options ?? { recentMessages: 24, memoryLimit: 8 };
+    const runtime = this.runtime.get(batchId) ?? { options, waiters: [] };
+    runtime.options = options;
+    this.runtime.set(batchId, runtime);
+    this.deps.bus.publish('reply.batch.queued', { batchId, revision: batch.revision });
+    this.schedule(batch, false);
+    return batch;
+  }
+
+  /**
+   * P0-1: deliver a proactive reach-out through the coordinator. Priority is
+   * user replies > proactive: the task is refused while a reply batch is open,
+   * waits in the queue for an idle slot, and is aborted (chat/TTS/image
+   * providers included) the moment a user message arrives.
+   */
+  async enqueueProactive(task: ProactiveDeliveryTask): Promise<ProactiveDeliveryResult> {
+    if (this.stopped) return { status: 'blocked', blockedReason: 'stopped', messageId: null };
+    if (this.deps.batches.openBatch()) return { status: 'blocked', blockedReason: 'reply_in_progress', messageId: null };
+    if (this.proactiveActive?.task.candidateId === task.candidateId
+      || this.proactiveQueue.some((queued) => queued.candidateId === task.candidateId)) {
+      return { status: 'blocked', blockedReason: 'candidate_already_queued', messageId: null };
+    }
+    this.proactiveQueue.push(task);
+    void this.drainProactive();
+    return new Promise<ProactiveDeliveryResult>((resolve) => {
+      this.proactiveWaiters.set(task.candidateId, resolve);
+    });
+  }
+
+  /** Cancels queued proactive tasks and aborts the running one (P0-1). */
+  private cancelProactive(): void {
+    for (const task of this.proactiveQueue.splice(0)) {
+      this.resolveProactive(task.candidateId, { status: 'cancelled', blockedReason: 'user_appeared', messageId: null });
+    }
+    const active = this.proactiveActive;
+    if (active) {
+      // The task's run() observes the abort and settles; drainProactive then
+      // resolves the waiter as cancelled.
+      active.controller.abort(new UserInterruptedError('user appeared'));
+    }
+  }
+
+  private resolveProactive(candidateId: string, result: ProactiveDeliveryResult): void {
+    const waiter = this.proactiveWaiters.get(candidateId);
+    if (waiter) {
+      this.proactiveWaiters.delete(candidateId);
+      waiter(result);
+    }
+  }
+
+  private async drainProactive(): Promise<void> {
+    if (this.proactiveRunning || this.stopped) return;
+    this.proactiveRunning = true;
+    try {
+      while (!this.stopped) {
+        const task = this.proactiveQueue.shift();
+        if (!task) break;
+        // Re-check priority: a reply batch may have opened while the task
+        // waited in the queue.
+        if (this.deps.batches.openBatch()) {
+          this.resolveProactive(task.candidateId, { status: 'blocked', blockedReason: 'reply_in_progress', messageId: null });
+          continue;
+        }
+        const controller = new AbortController();
+        this.proactiveActive = { task, controller };
+        let result: ProactiveDeliveryResult;
+        try {
+          const outcome = await task.run(controller.signal);
+          if (outcome.kind === 'sent') result = { status: 'sent', blockedReason: null, messageId: outcome.messageId };
+          else if (outcome.kind === 'blocked') result = { status: 'blocked', blockedReason: outcome.blockedReason, messageId: null };
+          else result = { status: 'cancelled', blockedReason: controller.signal.aborted ? 'user_appeared' : 'discarded', messageId: null };
+        } catch (error) {
+          result = controller.signal.aborted
+            ? { status: 'cancelled', blockedReason: 'user_appeared', messageId: null }
+            : { status: 'failed', blockedReason: (error as Error).message.slice(0, 300), messageId: null };
+        }
+        this.proactiveActive = null;
+        this.resolveProactive(task.candidateId, result);
+      }
+    } finally {
+      this.proactiveRunning = false;
+      if (this.proactiveQueue.length > 0 && !this.stopped) void this.drainProactive();
     }
   }
 
@@ -70,45 +285,60 @@ export class ReplyCoordinator {
     this.stopped = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+    for (const batchId of [...this.activeGenerations.keys()]) {
+      this.interruptGeneration(batchId, 'shutdown');
+    }
+    for (const controller of this.retryControllers.values()) controller.abort(new UserInterruptedError('coordinator shutdown'));
+    this.retryControllers.clear();
+    for (const task of this.proactiveQueue.splice(0)) {
+      this.resolveProactive(task.candidateId, { status: 'cancelled', blockedReason: 'stopped', messageId: null });
+    }
+    if (this.proactiveActive) this.proactiveActive.controller.abort(new UserInterruptedError('coordinator shutdown'));
     const error = new Error('reply coordinator stopped');
-    for (const batch of this.runtime.values()) for (const waiter of batch.waiters) waiter.reject(error);
-    this.runtime.clear();
-    while (this.running) await new Promise((resolve) => setTimeout(resolve, 20));
+    for (const [batchId, runtime] of this.runtime) {
+      for (const waiter of runtime.waiters) waiter.reject(error);
+      this.runtime.delete(batchId);
+    }
   }
 
-  private activate(batch: ReplyBatchRow): void {
-    const previous = this.timers.get(batch.id);
-    if (previous) clearTimeout(previous);
-    this.timers.delete(batch.id);
-    if (batch.status === 'queued') {
-      this.makeReady(batch.id);
-      return;
+  private schedule(batch: ReplyBatchRow, interrupted: boolean): void {
+    if (this.stopped) return;
+    const existing = this.timers.get(batch.id);
+    if (existing) {
+      clearTimeout(existing);
+      this.timers.delete(batch.id);
     }
-    if (batch.status === 'running') {
-      const delay = Math.max(0, Date.parse(batch.lease_expires_at ?? new Date().toISOString()) - Date.now());
+    if (batch.status === 'collecting') {
+      const due = Date.parse(batch.due_at);
+      const now = Date.now();
+      // Max collection caps the TOTAL time this batch has been collecting,
+      // not just the current debounce window.
+      const sinceOpen = now - Date.parse(batch.opened_at);
+      const capLeft = Math.max(0, this.maxCollectionMs - sinceOpen);
+      const delay = Math.max(0, Math.min(due - now, capLeft));
       const timer = setTimeout(() => {
         this.timers.delete(batch.id);
-        if (this.deps.batches.recoverExpired(batch.id)) {
-          this.deps.messages.failInterruptedBatchShell(batch.id);
-          this.makeReady(batch.id);
-        } else {
-          const current = this.deps.batches.get(batch.id);
-          if (current) this.activate(current);
+        if (this.deps.batches.markQueued(batch.id)) {
+          const row = this.deps.batches.get(batch.id);
+          if (row) this.deps.bus.publish('reply.batch.queued', { batchId: row.id, revision: row.revision });
         }
+        this.makeReady(batch.id);
       }, delay);
       timer.unref?.();
       this.timers.set(batch.id, timer);
       return;
     }
-    if (batch.status !== 'collecting') return;
-    const delay = Math.max(0, Date.parse(batch.due_at) - Date.now());
-    const timer = setTimeout(() => {
-      this.timers.delete(batch.id);
-      this.deps.batches.markQueued(batch.id);
+    if (batch.status === 'queued') {
       this.makeReady(batch.id);
-    }, delay);
-    timer.unref?.();
-    this.timers.set(batch.id, timer);
+      return;
+    }
+    if (batch.status === 'generating') {
+      return;
+    }
+    if (batch.status === 'publishing') {
+      this.observeActive(batch.id);
+      return;
+    }
   }
 
   private makeReady(batchId: string): void {
@@ -127,80 +357,15 @@ export class ReplyCoordinator {
         const batchId = this.ready.shift();
         if (!batchId) break;
         this.readySet.delete(batchId);
-        const claimed = this.deps.batches.claim(batchId, this.owner, LEASE_MS);
-        if (!claimed) {
-          this.observeCompetingWorker(batchId);
+        const batch = this.deps.batches.get(batchId);
+        if (!batch || batch.status !== 'queued') continue;
+        if (!this.interruptible) {
+          const claimed = this.deps.batches.beginGenerating(batchId, batch.revision, this.owner, LEASE_MS);
+          if (!claimed) continue;
+          void this.runLegacyGeneration(batchId, claimed.revision);
           continue;
         }
-        const runtime = this.runtime.get(batchId);
-        const options = runtime?.options;
-        if (!options) {
-          if (!this.deps.batches.requeue(batchId, 'reply options unavailable', this.owner)) {
-            this.observeCompetingWorker(batchId);
-          }
-          continue;
-        }
-        const messages = this.deps.batches.messageIds(batchId)
-          .map((id) => this.deps.messages.get(id))
-          .filter((message): message is ChatMessage => Boolean(message));
-        try {
-          let leaseLost = false;
-          const heartbeat = setInterval(() => {
-            try {
-              if (!this.deps.batches.renewLease(batchId, this.owner, LEASE_MS)) leaseLost = true;
-            } catch {
-              leaseLost = true;
-            }
-          }, LEASE_HEARTBEAT_MS);
-          heartbeat.unref?.();
-          const existing = this.deps.messages.findAssistantByBatchId(batchId);
-          let outcome: ReplyOutcome;
-          try {
-            outcome = existing?.status === 'sent'
-              ? outcomeFromMessage(existing)
-              : await this.deps.replier.replyBatch(messages, options, batchId);
-          } finally {
-            clearInterval(heartbeat);
-          }
-          if (leaseLost) {
-            this.observeCompetingWorker(batchId);
-            continue;
-          }
-          if (!outcome.ok) {
-            this.deps.batches.fail(batchId, outcome.error?.message ?? 'reply failed', this.owner);
-            for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
-            this.runtime.delete(batchId);
-            continue;
-          }
-          try {
-            await this.deps.onCompleted?.(batchId, messages, outcome, this.owner);
-          } catch (error) {
-            if (claimed.attempts >= MAX_COMPLETION_ATTEMPTS) {
-              this.deps.batches.fail(batchId, (error as Error).message, this.owner);
-              for (const waiter of runtime?.waiters ?? []) waiter.reject(error);
-              this.runtime.delete(batchId);
-              continue;
-            }
-            if (!this.deps.batches.requeue(batchId, (error as Error).message, this.owner)) {
-              this.observeCompetingWorker(batchId);
-              continue;
-            }
-            const delay = Math.min(5000, 500 * Math.pow(2, claimed.attempts - 1));
-            const timer = setTimeout(() => {
-              this.timers.delete(batchId);
-              this.makeReady(batchId);
-            }, delay);
-            timer.unref?.();
-            this.timers.set(batchId, timer);
-            continue;
-          }
-          for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
-          this.runtime.delete(batchId);
-        } catch (error) {
-          this.deps.batches.fail(batchId, (error as Error).message, this.owner);
-          for (const waiter of runtime?.waiters ?? []) waiter.reject(error);
-          this.runtime.delete(batchId);
-        }
+        await this.startGeneration(batchId, batch.revision, false);
       }
     } finally {
       this.running = false;
@@ -208,7 +373,313 @@ export class ReplyCoordinator {
     }
   }
 
-  private observeCompetingWorker(batchId: string): void {
+  private async startGeneration(batchId: string, revision: number, isRetry: boolean): Promise<void> {
+    const batch = this.deps.batches.beginGenerating(batchId, revision, this.owner, LEASE_MS);
+    if (!batch) return;
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const active: ActiveGeneration = {
+      batchId,
+      revision,
+      controller,
+      startedAt,
+      attempt: batch.attempts,
+      published: false,
+      firstTokenAt: null
+    };
+    this.activeGenerations.set(batchId, active);
+
+    if (isRetry) {
+      this.deps.bus.publish('reply.generation.retrying', { batchId, revision, attempt: batch.attempts });
+    } else {
+      this.deps.bus.publish('reply.generation.started', { batchId, revision, attempt: batch.attempts });
+    }
+    this.deps.batches.recordGeneration({
+      batchId,
+      revision,
+      attempt: batch.attempts,
+      status: 'started',
+      startedAt: new Date(startedAt).toISOString()
+    });
+
+    const runtime = this.runtime.get(batchId);
+    const options = runtime?.options ?? { recentMessages: 24, memoryLimit: 8 };
+    const userMessages = this.deps.batches.messageIds(batchId)
+      .map((id) => this.deps.messages.get(id))
+      .filter((message): message is ChatMessage => Boolean(message));
+
+    const heartbeat = setInterval(() => {
+      try {
+        if (!this.deps.batches.renewLease(batchId, this.owner, LEASE_MS)) controller.abort(new StaleGenerationError('lease lost'));
+      } catch {
+        controller.abort(new StaleGenerationError('lease heartbeat failed'));
+      }
+    }, LEASE_HEARTBEAT_MS);
+    heartbeat.unref?.();
+
+    try {
+      const generated = await this.deps.replier.generateText(userMessages, {
+        recentMessages: options.recentMessages,
+        memoryLimit: options.memoryLimit,
+        signal: controller.signal,
+        batchId,
+        revision,
+        owner: this.owner,
+        publishGraceMs: this.publishGraceMs,
+        requestTimeoutMs: this.requestTimeoutMs,
+        beginPublish: async () => {
+          const won = this.deps.batches.beginPublishing(batchId, revision, this.owner);
+          if (won) active.published = true;
+          return won;
+        }
+      });
+
+      const outcome = await this.deps.replier.publishGeneratedReply(batch, userMessages, generated, {
+        signal: controller.signal,
+        owner: this.owner,
+        beginPublish: async () => {
+          const won = this.deps.batches.beginPublishing(batchId, revision, this.owner);
+          if (won) active.published = true;
+          return won;
+        }
+      });
+
+      clearInterval(heartbeat);
+      this.activeGenerations.delete(batchId);
+      this.deps.batches.recordGeneration({
+        batchId,
+        revision,
+        attempt: batch.attempts,
+        status: 'completed',
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        firstTokenMs: generated.firstTokenAt !== null ? generated.firstTokenAt - startedAt : null,
+        visibleMs: active.published ? Math.max(0, Date.now() - startedAt) : null
+      });
+
+      if (!outcome.ok) {
+        this.deps.batches.fail(batchId, revision, outcome.error?.code ?? 'internal_error', outcome.error?.message ?? 'reply failed', this.owner);
+        this.publishFailure(batchId, revision, toReplyFailureFromPublic(outcome.error, batchId, revision));
+        for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+        this.runtime.delete(batchId);
+        return;
+      }
+      const partial = generated.interrupted !== undefined;
+      const completedPayload = {
+        batchId,
+        revision,
+        messageId: outcome.messageId,
+        message: this.deps.messages.get(outcome.messageId),
+        partial,
+        degraded: outcome.degraded
+      };
+      let completedEvent: ReturnType<EventBus['persist']> | null = null;
+      if (this.deps.db) {
+        try {
+          completedEvent = this.deps.db.transaction(() => {
+            if (!this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner, partial)) return null;
+            return this.deps.bus.persist('reply.completed', completedPayload);
+          })();
+        } catch (error) {
+          // Published content is never silently revoked: route through the
+          // failure path, which keeps the message and completes the batch as
+          // partial so waiters still resolve.
+          throw new Error(`reply.completed persistence failed: ${(error as Error).message}`);
+        }
+      } else {
+        completedEvent = this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner, partial)
+          ? this.deps.bus.persist('reply.completed', completedPayload)
+          : null;
+      }
+      if (!completedEvent) {
+        this.deps.bus.publish('reply.superseded', { batchId, revision });
+        for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError('batch completed by competing worker'));
+        this.runtime.delete(batchId);
+        return;
+      }
+      this.deps.bus.fanout(completedEvent);
+      try {
+        await this.deps.onCompleted?.(batchId, userMessages, outcome, this.owner, revision);
+      } catch (error) {
+        // The batch is already completed. Post-processing (memory/push/summary/
+        // life bridge) runs as durable jobs with their own retries, so a hook
+        // failure must never requeue the batch — that would re-run the model
+        // and could publish a second reply.
+        this.deps.errorLog?.add('reply.completion', 'post_processing_failed', {
+          batchId,
+          revision,
+          message: (error as Error).message ?? String(error)
+        });
+      }
+      for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+      this.runtime.delete(batchId);
+    } catch (error) {
+      clearInterval(heartbeat);
+      this.activeGenerations.delete(batchId);
+      await this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, error, userMessages);
+    }
+  }
+
+  private async handleGenerationFailure(
+    batchId: string,
+    revision: number,
+    active: ActiveGeneration,
+    runtime: BatchRuntime | undefined,
+    startedAt: number,
+    error: unknown,
+    userMessages: ChatMessage[]
+  ): Promise<void> {
+    const batch = this.deps.batches.get(batchId);
+    if (isBenignAbort(error)) {
+      this.deps.batches.recordGeneration({
+        batchId, revision, attempt: active.attempt, status: 'superseded',
+        startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
+        interruptionReason: (error as Error).name, durationMs: Date.now() - startedAt
+      });
+      if (batch && batch.revision === revision && batch.status === 'generating') {
+        this.deps.batches.requeue(batchId, revision, 'interrupted', this.owner);
+        if (!this.stopped) {
+          const timer = setTimeout(() => {
+            this.timers.delete(batchId);
+            this.makeReady(batchId);
+          }, this.interruptDebounceMs);
+          timer.unref?.();
+          this.timers.set(batchId, timer);
+        }
+        // The retry will resolve the waiters when it completes.
+        return;
+      }
+      // Interrupted into an open batch: the batch will regenerate on its own
+      // and resolve the waiters then. Only terminal batches leave waiters
+      // with no future — reject those so callers do not hang forever.
+      if (batch && (batch.status === 'failed' || batch.status === 'cancelled' || batch.status === 'superseded')) {
+        for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError(`generation ${batch.status}`));
+        this.runtime.delete(batchId);
+      }
+      return;
+    }
+
+    const isTimeout = error instanceof HttpTimeoutError;
+    const retryable = !active.published && batch?.retry_count !== undefined && batch.retry_count < this.timeoutRetries;
+    if (isTimeout && retryable) {
+      this.deps.batches.recordGeneration({
+        batchId, revision, attempt: active.attempt, status: 'retrying',
+        startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
+        errorCode: 'model_timeout', durationMs: Date.now() - startedAt
+      });
+      this.deps.bus.publish('reply.generation.retrying', { batchId, revision, attempt: active.attempt + 1 });
+      // The active generation entry was already removed by the catch in
+      // startGeneration, so the backoff gets its own cancellable controller:
+      // a newer user message or shutdown aborts it instead of waiting it out.
+      const retryController = new AbortController();
+      this.retryControllers.set(batchId, retryController);
+      try {
+        await abortableDelay(this.retryBaseDelayMs, retryController.signal);
+      } catch (abortErr) {
+        this.retryControllers.delete(batchId);
+        if (isBenignAbort(abortErr)) return;
+        return this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, abortErr, userMessages);
+      }
+      this.retryControllers.delete(batchId);
+      if (this.stopped) return;
+      const current = this.deps.batches.get(batchId);
+      if (!current || current.revision !== revision || current.visible_at !== null) {
+        return this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, new StaleGenerationError(), userMessages);
+      }
+      // Atomic generating → queued (+retry_count) with the lease cleared;
+      // startGeneration only claims queued batches, so without this the
+      // retry would never actually restart the provider call.
+      if (!this.deps.batches.prepareRetry(batchId, revision, this.owner)) {
+        return this.handleGenerationFailure(batchId, revision, active, runtime, startedAt, new StaleGenerationError('retry fence lost'), userMessages);
+      }
+      await this.startGeneration(batchId, revision, true);
+      return;
+    }
+
+    const failure: ReplyFailure = toReplyFailure(error, isTimeout, active.published);
+    this.deps.batches.recordGeneration({
+      batchId, revision, attempt: active.attempt, status: 'failed',
+      startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
+      errorCode: failure.code, durationMs: Date.now() - startedAt
+    });
+    if (active.published) {
+      // Published content stays: complete the batch as partial (fenced on
+      // publishing) instead of failing it, and record the provider error only
+      // in the generation audit. Order matters — fail() would make the
+      // publishing-fenced complete() lose the race.
+      const shell = this.deps.messages.findAssistantByBatchId(batchId);
+      if (shell && this.deps.batches.complete(batchId, revision, shell.id, this.owner, true)) {
+        this.deps.messages.setStatus(shell.id, 'sent', 'partial:interrupted');
+        this.deps.bus.publish('reply.publishing.partial', { batchId, revision, messageId: shell.id });
+        const outcome: ReplyOutcome = {
+          messageId: shell.id,
+          ok: true,
+          parts: shell.content.filter((part) => part.status === 'sent').map((part) => part.type),
+          degraded: ['partial:interrupted']
+        };
+        for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+        this.runtime.delete(batchId);
+        return;
+      }
+      // No shell (its transaction rolled back) or the fence moved on: never
+      // leave the batch half-open in 'publishing' — fail it and reject the
+      // callers.
+      this.deps.batches.fail(batchId, revision, failure.code, failure.message, this.owner);
+      for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError('published shell lost or fence moved'));
+      this.runtime.delete(batchId);
+      return;
+    }
+    this.deps.batches.fail(batchId, revision, failure.code, failure.message, this.owner);
+    this.publishFailure(batchId, revision, failure);
+    // The provider error lands in the error log (redacted) with the same
+    // incident id the failure card carries, so support can correlate them.
+    this.deps.errorLog?.add('reply', failure.code, {
+      batchId,
+      revision,
+      incidentId: failure.incidentId,
+      diagnostic: redactDiagnostic(error)
+    });
+    const outcome: ReplyOutcome = {
+      messageId: '',
+      ok: false,
+      parts: [],
+      // Keep the stable degradation vocabulary the UI keys on (old replier
+      // contract): a hidden failure still reports chat:provider_unavailable.
+      degraded: [failure.code === 'model_timeout' ? 'chat:model_timeout' : failure.code === 'rate_limited' ? 'chat:rate_limited' : 'chat:provider_unavailable'],
+      error: publicFailureFromReply(failure)
+    };
+    for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+    this.runtime.delete(batchId);
+  }
+
+  private publishFailure(batchId: string, revision: number, failure: ReplyFailure): void {
+    try {
+      // Best-effort: the batch state and the outcome carry the failure even if
+      // the event cannot be persisted. Published shells attach their message.
+      const shell = this.deps.messages.findAssistantByBatchId(batchId);
+      const event = this.deps.bus.persist('reply.failed', {
+        batchId,
+        revision,
+        failure,
+        message: shell ? this.deps.messages.get(shell.id) : null
+      });
+      this.deps.bus.fanout(event);
+    } catch { /* never let event persistence take down the failure handling */ }
+  }
+
+  private interruptGeneration(batchId: string, reason: 'new_user_message' | 'shutdown'): void {
+    const active = this.activeGenerations.get(batchId);
+    if (active) {
+      active.controller.abort(new UserInterruptedError(reason === 'new_user_message' ? 'superseded by newer user message' : 'coordinator shutdown'));
+      this.activeGenerations.delete(batchId);
+    }
+    // A timeout retry still in its backoff must also stop when a newer
+    // message lands or the coordinator shuts down.
+    this.retryControllers.get(batchId)?.abort(new UserInterruptedError(reason === 'new_user_message' ? 'superseded by newer user message' : 'coordinator shutdown'));
+  }
+
+  private observeActive(batchId: string): void {
     const batch = this.deps.batches.get(batchId);
     const runtime = this.runtime.get(batchId);
     if (!runtime) return;
@@ -221,7 +692,7 @@ export class ReplyCoordinator {
         return;
       }
     }
-    if (!batch || batch.status === 'failed' || batch.status === 'cancelled') {
+    if (!batch || batch.status === 'failed' || batch.status === 'cancelled' || batch.status === 'superseded') {
       const error = new Error(batch?.last_error ?? `reply batch ${batch?.status ?? 'missing'}`);
       for (const waiter of runtime.waiters) waiter.reject(error);
       this.runtime.delete(batchId);
@@ -229,11 +700,87 @@ export class ReplyCoordinator {
     }
     const timer = setTimeout(() => {
       this.timers.delete(batchId);
-      this.observeCompetingWorker(batchId);
+      this.observeActive(batchId);
     }, 500);
     timer.unref?.();
     this.timers.set(batchId, timer);
   }
+
+  private async runLegacyGeneration(batchId: string, revision: number): Promise<void> {
+    try {
+      const batch = this.deps.batches.get(batchId);
+      if (!batch || batch.status !== 'generating') return;
+      const runtime = this.runtime.get(batchId);
+      const options = runtime?.options ?? { recentMessages: 24, memoryLimit: 8 };
+      const userMessages = this.deps.batches.messageIds(batchId)
+        .map((id) => this.deps.messages.get(id))
+        .filter((message): message is ChatMessage => Boolean(message));
+      const outcome = await this.deps.replier.replyBatch(userMessages, options, batchId);
+      if (!outcome.ok) {
+        this.deps.batches.fail(batchId, revision, outcome.error?.code ?? 'internal_error', outcome.error?.message ?? 'reply failed', this.owner);
+        for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+        this.runtime.delete(batchId);
+        return;
+      }
+      if (this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner)) {
+        await this.deps.onCompleted?.(batchId, userMessages, outcome, this.owner, revision);
+        this.deps.bus.publish('reply.completed', { batchId, revision, messageId: outcome.messageId, message: this.deps.messages.get(outcome.messageId) });
+      }
+      for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
+      this.runtime.delete(batchId);
+    } catch (error) {
+      this.deps.batches.fail(batchId, revision, 'internal_error', (error as Error).message, this.owner);
+    }
+  }
+}
+
+function toReplyFailure(error: unknown, isTimeout: boolean, published: boolean): ReplyFailure {
+  const incidentId = sortableId('inc');
+  if (isTimeout) {
+    return {
+      batchId: '',
+      revision: 0,
+      code: published ? 'provider_unavailable' : 'model_timeout',
+      retryable: !published,
+      message: published ? '回复中断了。' : '这次回复没有生成成功。',
+      incidentId
+    };
+  }
+  const err = error as Error;
+  const status = (err as { status?: number }).status;
+  if (typeof status === 'number' && status === 429) {
+    return { batchId: '', revision: 0, code: 'rate_limited', retryable: true, message: '请求太频繁了，稍后再试一次吧。', incidentId };
+  }
+  return {
+    batchId: '',
+    revision: 0,
+    code: 'provider_unavailable',
+    retryable: false,
+    message: '这次回复没有生成成功。',
+    incidentId
+  };
+}
+
+/** PublicFailure (from the replier) → the richer ReplyFailure shape for events. */
+function toReplyFailureFromPublic(failure: PublicFailure | undefined, batchId: string, revision: number): ReplyFailure {
+  if (!failure) return { batchId, revision, code: 'internal_error', retryable: false, message: 'reply failed', incidentId: sortableId('inc') };
+  return {
+    batchId,
+    revision,
+    code: failure.code === 'internal_error' ? 'internal_error' : 'provider_unavailable',
+    retryable: failure.code === 'provider_unavailable',
+    message: failure.message,
+    incidentId: failure.incidentId
+  };
+}
+
+/** ReplyFailure → the public failure shape carried on ReplyOutcome.error. */
+function publicFailureFromReply(failure: ReplyFailure): PublicFailure {
+  return {
+    incidentId: failure.incidentId ?? '',
+    code: failure.code === 'internal_error' ? 'internal_error' : 'provider_unavailable',
+    message: failure.message
+  };
 }
 
 function outcomeFromMessage(message: ChatMessage): ReplyOutcome {
@@ -243,4 +790,9 @@ function outcomeFromMessage(message: ChatMessage): ReplyOutcome {
     parts: message.content.filter((part) => part.status === 'sent').map((part) => part.type),
     degraded: []
   };
+}
+
+/** Exported for tests: shape of the structured failure events. */
+export function failureCodeFor(error: unknown): ReplyFailure['code'] {
+  return toReplyFailure(error, error instanceof HttpTimeoutError, false).code;
 }

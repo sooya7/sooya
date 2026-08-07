@@ -1,14 +1,16 @@
 import type { MessageRepo, CreatePartInput } from '../db/repos/message.repo.js';
 import type { ProactiveAttemptRepo, ProactiveMode } from '../db/repos/proactive.repo.js';
 import type { JobRepo } from '../db/repos/misc.repo.js';
+import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
 import type { LifeLogRow } from '../db/repos/life.repo.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ConfigStore } from '../config/store.js';
-import type { LifeEngine } from './life.js';
+import type { LifeRuntime } from './life.js';
 import type { MediaStore } from '../media/store.js';
 import type { StickerLibrary } from '../media/stickers.js';
 import type { EventBus } from '../events/bus.js';
 import type { ChatMessage } from './types.js';
+import type { ReplyCoordinator, ProactiveDeliveryTask } from './reply-coordinator.js';
 
 export type { ProactiveMode } from '../db/repos/proactive.repo.js';
 
@@ -56,14 +58,30 @@ export class ProactiveComposer {
       attempts: ProactiveAttemptRepo;
       jobs: JobRepo;
       messages: MessageRepo;
-      life: LifeEngine;
+      life: LifeRuntime;
+      replyBatches: ReplyBatchRepo;
       capabilities: CapabilityRegistry;
       config: ConfigStore;
       media: MediaStore;
       stickers: StickerLibrary;
       bus: EventBus;
+      /** D5: proactive voice runs through the full voice pipeline. */
+      voice?: import('./voice/service.js').VoiceService | null;
+      /** P0-1: proactive deliveries are scheduled by the reply coordinator. */
+      coordinator: ReplyCoordinator;
     }
   ) {}
+
+  /** True when a user message arrived after the evaluation snapshot. */
+  private userAppearedSince(lastUserAt: string | null): boolean {
+    if (!lastUserAt) return false;
+    const recent = this.deps.messages.recent(20);
+    for (const message of recent) {
+      if (message.role !== 'user') continue;
+      if (Date.parse(message.createdAt) > Date.parse(lastUserAt)) return true;
+    }
+    return false;
+  }
 
   evaluate(): ProactiveEvaluation {
     const recent = this.deps.messages.recent(40);
@@ -79,6 +97,10 @@ export class ProactiveComposer {
       lastAssistantAt: lastAssistant?.createdAt ?? null
     };
     if (!decision.reach || !decision.candidate) return { reach: false, reason: decision.reason, ...base };
+    // §50.4: never reach out while a reply batch is open — the user is mid-
+    // conversation and an unprompted message would stack on her reply.
+    const openBatch = this.deps.replyBatches.openBatch();
+    if (openBatch) return { reach: false, reason: 'reply_in_progress', ...base };
     if (this.recentlyDiscussed(decision.candidate, recent)) {
       return { reach: false, reason: 'recent_topic', ...base };
     }
@@ -115,113 +137,144 @@ export class ProactiveComposer {
       };
     }
 
-    let text: string;
-    try {
-      text = await composeProactiveText(
-        this.deps.capabilities.chatProvider(),
-        this.deps.config.getPersona().systemPrompt,
-        this.deps.life.contextLines(this.lastUserDate(evaluation)),
-        candidate.activity
-      );
-    } catch (error) {
-      const reason = 'compose_failed';
-      this.deps.attempts.update(attempt.id, {
-        status: 'failed',
-        blockedReason: reason,
-        detail: { error: safeError(error) }
-      });
-      return this.failed(candidate.id, requestedMode, reason);
-    }
-    if (!text) {
-      const reason = 'empty_text';
-      this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: reason });
-      return this.failed(candidate.id, requestedMode, reason);
-    }
-
-    let prepared: PreparedMedia;
-    try {
-      prepared = await this.prepareMedia(requestedMode ?? 'text', text, candidate);
-    } catch (error) {
-      const reason = 'media_failed';
-      this.deps.attempts.update(attempt.id, {
-        status: 'failed',
-        blockedReason: reason,
-        detail: { error: safeError(error) }
-      });
-      return this.failed(candidate.id, requestedMode, reason);
-    }
-
-    const parts: CreatePartInput[] = [{ type: 'text', text, status: 'sent' }];
-    if (prepared.part) parts.push(prepared.part);
-    let message: ChatMessage;
-    let event;
-    try {
-      const persisted = this.deps.messages.inTransaction(() => {
-        const created = this.deps.messages.createInTransaction({
-          role: 'assistant',
-          status: 'sent',
-          parts,
-          meta: {
-            proactive: true,
-            proactiveAttemptId: attempt.id,
-            proactiveCandidateId: candidate.id,
-            lifeLogId: candidate.id,
-            activity: candidate.activity,
-            proactiveMode: prepared.finalMode,
-            ...(prepared.fallbackReason ? { fallbackReason: prepared.fallbackReason } : {})
-          }
-        });
-        if (!created.created) throw new Error('proactive message unexpectedly duplicated');
-        return {
-          message: created.message,
-          event: this.deps.bus.persist('message.received', { message: created.message })
-        };
-      });
-      message = persisted.message;
-      event = persisted.event;
-    } catch (error) {
-      const reason = 'message_persist_failed';
-      this.deps.attempts.update(attempt.id, {
-        status: 'failed',
-        blockedReason: reason,
-        finalMode: prepared.finalMode,
-        fallbackReason: prepared.fallbackReason,
-        detail: { error: safeError(error) }
-      });
-      return this.failed(candidate.id, requestedMode, reason, prepared.finalMode, prepared.fallbackReason);
-    }
-
-    // The message and every selected media reference are now durable.
-    this.deps.life.markShared(candidate.id);
-    this.deps.attempts.update(attempt.id, {
-      status: 'sent',
-      blockedReason: null,
-      finalMode: prepared.finalMode,
-      fallbackReason: prepared.fallbackReason,
-      messageId: message.id,
-      sendSuccess: true,
-      detail: { mediaPersisted: Boolean(prepared.part), pushEnqueued: false }
-    });
-    if (prepared.stickerId) this.deps.stickers.markUsed(prepared.stickerId);
-    this.deps.bus.fanout(event);
-
-    let pushEnqueued = false;
-    try {
-      this.deps.jobs.enqueue('push.reply', { messageId: message.id }, { maxAttempts: 3 });
-      pushEnqueued = true;
-    } catch (error) {
-      this.deps.attempts.update(attempt.id, { detail: { pushError: safeError(error) } });
-    }
-    this.deps.attempts.update(attempt.id, { detail: { mediaPersisted: Boolean(prepared.part), pushEnqueued } });
-    return {
-      status: 'sent',
-      blockedReason: null,
+    // P0-1: the whole delivery (compose -> media -> persist) runs as a task on
+    // the reply coordinator. The coordinator enforces user-reply priority,
+    // aborts the task the moment a user message arrives (the signal reaches
+    // the chat/TTS/image providers), and guarantees once-only scheduling.
+    let finalMode: ProactiveMode | null = null;
+    let fallbackReason: string | null = null;
+    const task: ProactiveDeliveryTask = {
       candidateId: candidate.id,
-      messageId: message.id,
+      requestedMode: requestedMode ?? 'text',
+      run: async (signal) => {
+        const provider = this.deps.capabilities.chatProvider();
+        const persona = this.deps.config.getPersona();
+        const lifeLines = this.deps.life.contextLines(this.lastUserDate(evaluation));
+
+        let text: string;
+        try {
+          text = await composeProactiveText(provider, persona.systemPrompt, lifeLines, candidate.activity, signal);
+        } catch (error) {
+          if (signal.aborted) return { kind: 'discarded' };
+          const reason = 'compose_failed';
+          this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: reason, detail: { error: safeError(error) } });
+          throw new Error(reason);
+        }
+        if (!text) {
+          if (signal.aborted) return { kind: 'discarded' };
+          const reason = 'empty_text';
+          this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: reason });
+          throw new Error(reason);
+        }
+
+        let prepared: PreparedMedia;
+        try {
+          prepared = await this.prepareMedia(requestedMode ?? 'text', text, candidate, signal);
+        } catch (error) {
+          if (signal.aborted) return { kind: 'discarded' };
+          const reason = 'media_failed';
+          this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: reason, detail: { error: safeError(error) } });
+          throw new Error(reason);
+        }
+        finalMode = prepared.finalMode;
+        fallbackReason = prepared.fallbackReason;
+
+        // Final gate: the user may have appeared while we composed/prepared.
+        if (signal.aborted || this.userAppearedSince(evaluation.lastUserAt)) {
+          return { kind: 'discarded' };
+        }
+
+        const parts: CreatePartInput[] = [{ type: 'text', text, status: 'sent' }];
+        if (prepared.part) parts.push(prepared.part);
+        try {
+          // P1-4: the attempt is marked 'sent' in the SAME transaction as the
+          // message; the partial unique index on (candidate_id) WHERE
+          // status='sent' rejects a concurrent sender, rolling the message
+          // back with it.
+          const persisted = this.deps.messages.inTransaction(() => {
+            const created = this.deps.messages.createInTransaction({
+              role: 'assistant',
+              status: 'sent',
+              parts,
+              meta: {
+                proactive: true,
+                proactiveAttemptId: attempt.id,
+                proactiveCandidateId: candidate.id,
+                lifeLogId: candidate.id,
+                activity: candidate.activity,
+                proactiveMode: prepared.finalMode,
+                ...(prepared.fallbackReason ? { fallbackReason: prepared.fallbackReason } : {})
+              }
+            });
+            if (!created.created) throw new Error('proactive message unexpectedly duplicated');
+            this.deps.attempts.update(attempt.id, {
+              status: 'sent',
+              blockedReason: null,
+              finalMode: prepared.finalMode,
+              fallbackReason: prepared.fallbackReason,
+              messageId: created.message.id,
+              sendSuccess: true,
+              detail: { mediaPersisted: Boolean(prepared.part), pushEnqueued: false }
+            });
+            return {
+              message: created.message,
+              event: this.deps.bus.persist('message.received', { message: created.message })
+            };
+          });
+          if (prepared.stickerId) this.deps.stickers.markUsed(prepared.stickerId);
+          this.deps.life.markShared(candidate.id);
+          this.deps.bus.fanout(persisted.event);
+          let pushEnqueued = false;
+          try {
+            this.deps.jobs.enqueue('push.reply', { messageId: persisted.message.id }, { maxAttempts: 3 });
+            pushEnqueued = true;
+          } catch (error) {
+            this.deps.attempts.update(attempt.id, { detail: { pushError: safeError(error) } });
+          }
+          this.deps.attempts.update(attempt.id, { detail: { mediaPersisted: Boolean(prepared.part), pushEnqueued } });
+          return { kind: 'sent', messageId: persisted.message.id };
+        } catch (error) {
+          if (isUniqueConstraint(error)) {
+            // Another sender won the race for this candidate (P1-4).
+            this.deps.attempts.update(attempt.id, { status: 'blocked', blockedReason: 'candidate_already_sent' });
+            return { kind: 'blocked', blockedReason: 'candidate_already_sent' };
+          }
+          const reason = 'message_persist_failed';
+          this.deps.attempts.update(attempt.id, {
+            status: 'failed',
+            blockedReason: reason,
+            finalMode: prepared.finalMode,
+            fallbackReason: prepared.fallbackReason,
+            detail: { error: safeError(error) }
+          });
+          throw new Error(`${reason}: ${(error as Error).message ?? String(error)}`);
+        }
+      }
+    };
+
+    const result = await this.deps.coordinator.enqueueProactive(task);
+    if (result.status === 'sent') {
+      return {
+        status: 'sent',
+        blockedReason: null,
+        candidateId: candidate.id,
+        messageId: result.messageId,
+        requestedMode,
+        finalMode,
+        fallbackReason,
+        sendSuccess: true
+      };
+    }
+    this.deps.attempts.update(attempt.id, { status: result.status === 'failed' ? 'failed' : 'blocked', blockedReason: result.blockedReason ?? result.status });
+    return {
+      status: result.status === 'failed' ? 'failed' : 'blocked',
+      blockedReason: result.blockedReason ?? result.status,
+      candidateId: candidate.id,
+      messageId: null,
       requestedMode,
-      finalMode: prepared.finalMode,
-      fallbackReason: prepared.fallbackReason,
-      sendSuccess: true
+      finalMode,
+      fallbackReason,
+      sendSuccess: false
     };
   }
 
@@ -239,7 +292,7 @@ export class ProactiveComposer {
     return 'text';
   }
 
-  private async prepareMedia(mode: ProactiveMode, text: string, candidate: LifeLogRow): Promise<PreparedMedia> {
+  private async prepareMedia(mode: ProactiveMode, text: string, candidate: LifeLogRow, signal: AbortSignal): Promise<PreparedMedia> {
     if (mode === 'text') return { part: null, finalMode: 'text', fallbackReason: null, stickerId: null };
     if (mode === 'text_sticker') {
       const selection = this.deps.stickers.select({
@@ -262,20 +315,22 @@ export class ProactiveComposer {
     }
     if (mode === 'voice') {
       if (!this.deps.capabilities.has('tts')) return { part: null, finalMode: 'text', fallbackReason: 'voice_unavailable', stickerId: null };
+      // D5: proactive voice runs the full voice pipeline (script → guard →
+      // delivery → TTS) through VoiceService — never a raw synthesize() call.
+      if (!this.deps.voice) return { part: null, finalMode: 'text', fallbackReason: 'voice_unavailable', stickerId: null };
       try {
-        const audio = await this.deps.capabilities.ttsProvider().synthesize(text);
-        const media = await this.deps.media.save({
-          kind: 'audio',
-          origin: 'generated',
-          data: audio.data,
-          declaredMime: audio.mime,
-          filename: `proactive.${audio.format}`,
-          durationHint: audio.durationSec ?? null,
-          transcript: text,
-          meta: { proactive: true, candidateId: candidate.id }
-        });
+        const result = await this.deps.voice.synthesizeProactive(text, { candidateId: candidate.id, activity: candidate.activity }, signal);
+        if (!result.ok || !result.mediaId) {
+          return { part: null, finalMode: 'text', fallbackReason: result.fallbackReason ?? 'voice_failed', stickerId: null };
+        }
         return {
-          part: { type: 'audio', mediaId: media.id, status: 'sent', transcript: text, duration: media.duration ?? audio.durationSec ?? null },
+          part: {
+            type: 'audio',
+            mediaId: result.mediaId,
+            status: 'sent',
+            transcript: result.transcript,
+            meta: { proactive: true, candidateId: candidate.id, voiceGenerationId: result.generationId ?? undefined }
+          },
           finalMode: 'voice',
           fallbackReason: null,
           stickerId: null
@@ -286,7 +341,8 @@ export class ProactiveComposer {
     }
     if (!this.deps.capabilities.has('image')) return { part: null, finalMode: 'text', fallbackReason: 'image_unavailable', stickerId: null };
     try {
-      const image = await this.deps.capabilities.imageProvider().generate(candidate.activity);
+      if (signal.aborted) return { part: null, finalMode: 'text', fallbackReason: 'aborted', stickerId: null };
+      const image = await this.deps.capabilities.imageProvider().generate(candidate.activity, { signal });
       const media = await this.deps.media.save({
         kind: 'image',
         origin: 'generated',
@@ -340,7 +396,8 @@ async function composeProactiveText(
   provider: ReturnType<CapabilityRegistry['chatProvider']>,
   personaPrompt: string,
   lifeLines: string[],
-  activity: string
+  activity: string,
+  signal: AbortSignal
 ): Promise<string> {
   const result = await provider.complete({
     system: [
@@ -352,9 +409,16 @@ async function composeProactiveText(
     ].join('\n'),
     messages: [{ role: 'user', content: [{ type: 'text', text: '（没有人说话，你主动开口）' }] }],
     temperature: 0.9,
-    maxTokens: 120
+    maxTokens: 120,
+    signal
   });
   return result.text.trim().replace(/^["“”「」]|["“”「」]$/gu, '').slice(0, 120);
+}
+
+/** True for better-sqlite3 UNIQUE constraint violations (P1-4). */
+function isUniqueConstraint(error: unknown): boolean {
+  const code = (error as { code?: string }).code ?? '';
+  return typeof code === 'string' && code.includes('SQLITE_CONSTRAINT');
 }
 
 function textOf(message: ChatMessage): string {

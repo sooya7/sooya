@@ -13,6 +13,8 @@
     "test": "npm run test -w @sooya/server",
     "test:e2e": "playwright test",
     "typecheck": "npm run typecheck -w @sooya/server && npm run typecheck -w @sooya/web",
+    "rollback:preflight": "node scripts/rollback-preflight.mjs",
+    "rollback:normalize": "node scripts/rollback-normalize.mjs",
     "package": "node scripts/make-release.mjs",
     "verify:release": "node scripts/check-release.mjs"
   }

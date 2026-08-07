@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { getToken } from '../lib/api.js';
 import { BUBBLE_IMAGE_CSS_WIDTH, fetchAuthenticatedMedia, mediaThumbnailPath, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
+import { api } from '../lib/api.js';
 import type { ChatMessage, MessagePart } from '../lib/types.js';
 import { isReplayableUserMessage, isRetryableFailedMessage } from '../lib/useChat.js';
 import { stripModelDirectivesForDisplay } from '../lib/messageDirectives.js';
@@ -142,6 +143,46 @@ interface Props {
   onRetry?: (message: ChatMessage) => void; onResend?: (message: ChatMessage) => void; onQuote?: (message: ChatMessage) => void; onWithdraw?: (message: ChatMessage) => void; onOpenImage?: (mediaId: string) => void; onNotice?: (text: string) => void;
 }
 
+/**
+ * Plays a read-aloud audio attached to a text part (meta.readAloudMediaId).
+ * The media ref is fetched lazily; playback uses the authenticated blob path.
+ */
+function ReadAloudButton({ mediaId }: { mediaId: string }) {
+  const [mediaPath, setMediaPath] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.mediaMeta(mediaId).then((result) => { if (!cancelled) setMediaPath(result.media.url); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [mediaId]);
+  const media = useAuthenticatedMedia(mediaPath, 'user', 'audio');
+  const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => {
+    if (!media.url) return;
+    const audio = new Audio(media.url);
+    audioRef.current = audio;
+    const onEnded = () => setPlaying(false);
+    audio.addEventListener('ended', onEnded);
+    return () => { audio.removeEventListener('ended', onEnded); audio.pause(); audioRef.current = null; };
+  }, [media.url]);
+  if (!mediaPath && !media.url) return null;
+  return (
+    <button
+      type="button"
+      className="read-aloud-btn"
+      data-testid="read-aloud"
+      disabled={!media.url}
+      onClick={() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        if (playing) { audio.pause(); setPlaying(false); } else { void audio.play().then(() => setPlaying(true)).catch(() => undefined); }
+      }}
+    >
+      {playing ? '停止' : '朗读'}
+    </button>
+  );
+}
+
 export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, timeZone, highlightQuery, highlighted, highlightNonce, quoted, quotedLabel, quotedStatus, onQuotedClick, previousId, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
   const mine = message.role === 'user';
   // Every assistant turn carries `replyTo` for stream recovery, so a preview is only
@@ -152,7 +193,17 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
   // A user-selected quote is intentional, even when the quoted message is
   // immediately above it. The assistant's structural replyTo link is the
   // case where suppressing the adjacent preview avoids repetition.
-  const showReplyPreview = Boolean(message.replyTo) && (mine || message.replyTo !== previousId) && (Boolean(quoted) || Boolean(quotedStatus) || mine);
+  // Auto-merged batches must not render a misleading quote card: the
+  // structural replyTo is only a stream-recovery link. Only an explicitly
+  // user-chosen target (replyMode === 'explicit') forces the preview.
+  const replyMode = message.meta?.replyMode as string | undefined;
+  // Structural replyTo (stream recovery / auto batches) shows a preview only
+  // when it says something the bubble order does not — i.e. NOT the message
+  // right above. A user-chosen quote (mine or replyMode 'explicit') is
+  // deliberate and always shows when the target is available.
+  const showReplyPreview = Boolean(message.replyTo)
+    && (Boolean(quoted) || Boolean(quotedStatus) || mine)
+    && (mine || replyMode === 'explicit' || previousId === null || message.replyTo !== previousId);
   const visible = message.content.filter((part) => part.type !== 'system');
   const failedMessage = message.status === 'failed';
   const replayable = isReplayableUserMessage(message);
@@ -236,7 +287,7 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
             <span className="reply-text">{quoted ? quotedPreview(quoted) : quotedStatus === 'loading' ? '正在读取原消息…' : quotedStatus === 'error' ? '原消息暂时无法读取' : '原消息已删除或不可用'}</span>
           </div>
         )}
-        <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': { const displayText = stripModelDirectivesForDisplay(part.text); return displayText ? <div key={part.id} className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{highlightedText(displayText, highlightQuery)}</div> : null; } case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>
+        <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': { const displayText = stripModelDirectivesForDisplay(part.text); const readAloudId = part.meta?.readAloudMediaId as string | undefined; return displayText ? <div key={part.id} className="text-bubble-block"><div className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{highlightedText(displayText, highlightQuery)}</div>{readAloudId && <ReadAloudButton mediaId={readAloudId} />}</div> : null; } case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>
         <div className="msg-meta"><span className="clock" title={formatFullDateTime(message.createdAt, timeZone)}>{formatClock(message.createdAt, timeZone)}</span>{message.pendingLocal && message.status !== 'failed' && <span className="sending-dot" aria-label="发送中" />}{failedMessage && <span className="failed-flag">发送失败{retryable && onRetry && <button type="button" className="retry-btn" onClick={() => onRetry(message)}>重试</button>}</span>}<button type="button" className="message-menu-button" aria-label="消息操作" onClick={(event) => openMenu(event.clientX, event.clientY)}>···</button></div>
       </div>
       {menu && <div ref={menuRef} className="message-action-menu" role="menu" aria-label="消息操作" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 10000 }}>

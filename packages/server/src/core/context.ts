@@ -6,7 +6,7 @@ import type { ChatMessage } from './types.js';
 import type { ChatTurn, ChatContentPart } from '../providers/types.js';
 import type { MediaStore } from '../media/store.js';
 import type { MediaRepo } from '../db/repos/media.repo.js';
-import type { LifeEngine } from './life.js';
+import type { LifeRuntime } from './life.js';
 import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
 import { formatZonedDateTime } from '../util/time-zone.js';
 import { prepareVisionInput } from '../media/vision-input.js';
@@ -74,7 +74,7 @@ export class ContextBuilder {
     private readonly mediaRepo: MediaRepo,
     private readonly mediaStore: MediaStore,
     private readonly mediaText: MediaTextRepo,
-    private readonly life?: LifeEngine,
+    private readonly life?: LifeRuntime,
     private readonly timeZone = 'Asia/Shanghai'
   ) {}
 

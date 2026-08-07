@@ -5,7 +5,9 @@ import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { EventBus } from '../events/bus.js';
 import type { BackupService } from '../backup/service.js';
 import type { MediaStore } from '../media/store.js';
-import type { LifeEngine } from './life.js';
+import type { LifeRuntime } from './life.js';
+import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
+import { LifeSimEngine } from './life2/engine.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ChatProvider } from '../providers/types.js';
 import type { ConfigStore } from '../config/store.js';
@@ -98,7 +100,8 @@ export interface JobDeps {
   messages: MessageRepo;
   bus: EventBus;
   backups: BackupService;
-  life: LifeEngine;
+  life: LifeRuntime;
+  batches: ReplyBatchRepo;
   proactive: ProactiveComposer;
   capabilities: CapabilityRegistry;
   config: ConfigStore;
@@ -147,6 +150,24 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     if (!message || message.role !== 'assistant' || message.status !== 'sent') return;
     const result = await deps.push.notifyReply(message);
     if (result.delivered || result.removed || result.failed) deps.bus.publish('push.updated', { ...result });
+  });
+
+  /*
+   * Life conversation bridge (§49-50): a completed exchange may carry a user
+   * suggestion ("试试 X") and a warmth signal for the vitals. Runs as its own
+   * durable job so a failure here never re-runs the reply model; the revision
+   * fence guarantees only the final revision writes into life state.
+   */
+  worker.register('life.conversation', async (payload) => {
+    if (!(deps.life instanceof LifeSimEngine)) return;
+    const batchId = payload.batchId ? String(payload.batchId) : '';
+    const revision = Number(payload.revision ?? 0);
+    if (batchId && revision > 0 && !deps.batches.isCurrentRevision(batchId, revision)) return;
+    const ids = Array.isArray(payload.userMessageIds) ? payload.userMessageIds.map((id) => String(id)).filter(Boolean) : [];
+    const lastUserMessageId = payload.lastUserMessageId ? String(payload.lastUserMessageId) : null;
+    const userText = ids.map((id) => textOf(deps.messages.get(id))).filter(Boolean).join('\n');
+    if (lastUserMessageId) deps.life.extractConversationIntent(userText, lastUserMessageId);
+    deps.life.applyConversationEffect(payload.warmth === 'warm' ? 'warm' : 'neutral');
   });
 
   /*

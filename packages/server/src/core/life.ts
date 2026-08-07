@@ -13,7 +13,7 @@ import { timeZoneOffsetMinutes, zonedParts } from '../util/time-zone.js';
  * *been* doing, which is the part she cannot recompute.
  */
 
-export type LifeKind = 'sleep' | 'wake' | 'meal' | 'rest' | 'play' | 'out' | 'chore' | 'wind_down';
+export type LifeKind = 'sleep' | 'wake' | 'meal' | 'rest' | 'play' | 'out' | 'chore' | 'wind_down' | 'work' | 'study';
 
 export interface LifeSlot {
   /** Local hour the slot opens, inclusive. Slots are sorted and cover 0-24. */
@@ -155,6 +155,23 @@ export interface LifeTickResult {
   kind: LifeKind;
   mood: string;
   endedPrevious: LifeLogRow | null;
+}
+
+/**
+ * The minimal life surface shared by the legacy LifeEngine and LifeSimEngine
+ * (Life V2). Wiring that only drives ticks, prompts, reach-outs and the panel
+ * depends on this instead of a concrete engine, so enabling Life V2 does not
+ * require changing every call site. V2-only methods are reached by narrowing
+ * on the concrete class where they are actually needed.
+ */
+export interface LifeRuntime {
+  tick(): LifeTickResult | { changed: boolean; activity: string; kind: string; mood: string; endedPrevious: LifeLogRow | null };
+  contextLines(lastUserMessageAt?: Date | null): string[];
+  shouldReachOut(lastUserMessageAt: Date | null, lastAssistantMessageAt: Date | null): { reach: boolean; reason: string; candidate: LifeLogRow | null };
+  markShared(id: string): void;
+  snapshot(): { activity: string; kind: string; mood: string; startedAt: string; endsAt: string; recent: Array<{ activity: string; startedAt: string; endedAt: string }> };
+  settings: LifeConfig;
+  now(): Date;
 }
 
 export class LifeEngine {

@@ -77,11 +77,33 @@ const EnvSchema = z.object({
   SUMMARY_CHUNK_MESSAGES: intish(30),
   WITHDRAW_WINDOW_MS: intish(5 * 60_000),
 
+  /* Interruptible reply pipeline (see docs/plan: 可打断回复与连续消息合并). */
+  REPLY_INTERRUPTIBLE_GENERATION: boolish(true),
+  REPLY_INITIAL_DEBOUNCE_MS: intish(200),
+  REPLY_INTERRUPT_DEBOUNCE_MS: intish(300),
+  REPLY_PUBLISH_GRACE_MS: intish(600),
+  REPLY_MAX_COLLECTION_MS: intish(4000),
+  CHAT_REQUEST_TIMEOUT_MS: intish(45_000),
+  CHAT_TIMEOUT_RETRIES: intish(1),
+  CHAT_RETRY_BASE_DELAY_MS: intish(600),
+
+  /* Independent voice expression system (see docs/plan: 独立语音表达系统). */
+  VOICE_V2_ENABLED: boolish(true),
+  VOICE_INDEPENDENT_SCRIPT_ENABLED: boolish(true),
+  VOICE_NATURALNESS_GUARD_ENABLED: boolish(true),
+  VOICE_ADVANCED_DELIVERY_ENABLED: boolish(true),
+  VOICE_AUTO_COMPLEMENT_ENABLED: boolish(true),
+  VOICE_READ_ALOUD_ENABLED: boolish(true),
+  VOICE_DAILY_AUTO_CAP: intish(20),
+  VOICE_TTS_RETRIES: intish(0),
+
   ENABLE_BACKGROUND_JOBS: boolish(true),
   DISABLE_MEMORY_PIPELINE: boolish(false),
 
   /* She keeps her own hours whether or not anyone is talking to her. */
   ENABLE_LIFE_ENGINE: boolish(true),
+  /* v2 life simulation: vitals / themes / scored activities / threads. */
+  ENABLE_LIFE_V2: boolish(true),
   /* IANA timezone; the old fixed offset remains available for compatibility. */
   LIFE_TIME_ZONE: z.string().default('Asia/Shanghai'),
   LIFE_TZ_OFFSET_MINUTES: intish(8 * 60),

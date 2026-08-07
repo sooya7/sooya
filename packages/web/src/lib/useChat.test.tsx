@@ -520,12 +520,18 @@ describe('useChat 错误事件', () => {
     const { chat, push } = await mountStreaming();
     await push('reply.thinking', {});
     await push('reply.text.delta', { messageId: 'm_9', delta: '未完成' });
-    await push('reply.failed', { error: '上游超时', message: message({ id: 'm_9', seq: 9, status: 'failed' }) });
+    await push('reply.failed', {
+      batchId: 'rb_1',
+      revision: 1,
+      failure: { code: 'model_timeout', retryable: true, message: '上游超时' },
+      message: message({ id: 'm_9', seq: 9, status: 'failed' })
+    });
 
     // 失败后必须停掉「正在思考」，否则界面会一直假装她还在写。
     expect(chat().streamingDraft).toBeNull();
     expect(chat().activity).toEqual({ thinking: false, label: null });
-    expect(chat().error).toBe('上游超时');
+    expect(chat().error).toBeNull();
+    expect(chat().replyFailures['rb_1:1']).toMatchObject({ message: '上游超时', code: 'model_timeout', retryable: true });
     expect(chat().messages.find((m) => m.id === 'm_9')!.status).toBe('failed');
   });
 

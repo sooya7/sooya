@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
 
 let harness: Harness | null = null;
@@ -53,6 +53,54 @@ async function withReachOut(options: Parameters<typeof createHarness>[0] = {}): 
     clock: () => localTime('2026-07-31T17:30')
   });
 }
+
+describe('ProactiveComposer — coordinator scheduling (P0-1)', () => {
+  it('aborts an in-flight proactive delivery when the user sends a message', async () => {
+    harness = await withReachOut({ chat: { script: [['刚刚去公园看猫，橘猫踩了我的鞋'], ['回复用户']], delayMs: 800 } });
+    stageCandidate(harness);
+    const pending = harness.app.services.proactive.run();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/messages',
+      payload: { clientMsgId: 'user-appeared-1', content: [{ type: 'text', text: '在吗' }] }
+    });
+    const result = await pending;
+    expect(result.status).toBe('blocked');
+    expect(result.blockedReason).toBe('user_appeared');
+    expect(result.messageId).toBeNull();
+    const assistants = harness.app.repos.messages.recent(50).filter((m) => m.role === 'assistant' && m.meta?.proactive);
+    expect(assistants).toHaveLength(0);
+    // The user message started a reply generation; let it settle before the
+    // harness closes the database, or the late completion rejects on a closed
+    // connection after the test.
+    await vi.waitFor(
+      () => expect(harness!.app.repos.replyBatches.openBatch()).toBeUndefined(),
+      { timeout: 10_000 }
+    );
+  });
+
+  it('blocks a proactive delivery while a reply batch is open', async () => {
+    harness = await withReachOut();
+    stageCandidate(harness);
+    const user = harness.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '连续输入' }] }).message;
+    harness.app.db.raw.prepare('UPDATE messages SET created_at = ? WHERE id = ?')
+      .run(localTime('2026-07-31T16:00').toISOString(), user.id);
+    harness.app.repos.replyBatches.appendOrCreateMessage(user.id, new Date(Date.now() + 5000).toISOString(), new Date(Date.now() + 5000).toISOString());
+    const result = await harness.app.services.proactive.run();
+    expect(result.status).toBe('blocked');
+    expect(result.blockedReason).toBe('reply_in_progress');
+  });
+
+  it('P1-4: a second sender for the same candidate cannot mark its attempt sent', async () => {
+    harness = await withReachOut();
+    const msg = harness.app.repos.messages.create({ role: 'assistant', status: 'sent', parts: [{ type: 'text', text: '已发送' }] }).message;
+    const first = harness.app.repos.proactive.create({ candidateId: 'cand-x', candidateKind: 'play', candidateActivity: '练琴', requestedMode: 'text', status: 'blocked', detail: {} });
+    const second = harness.app.repos.proactive.create({ candidateId: 'cand-x', candidateKind: 'play', candidateActivity: '练琴', requestedMode: 'text', status: 'blocked', detail: {} });
+    harness.app.repos.proactive.update(first.id, { status: 'sent', messageId: msg.id, sendSuccess: true });
+    expect(() => harness.app.repos.proactive.update(second.id, { status: 'sent', messageId: msg.id, sendSuccess: true })).toThrow(/SQLITE_CONSTRAINT|UNIQUE/i);
+  });
+});
 
 describe('ProactiveComposer', () => {
   it('blocks a candidate whose topic was recently discussed and records the reason', async () => {

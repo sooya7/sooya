@@ -96,12 +96,12 @@ describe('SSE streaming', () => {
     const types = stream.events.map((e) => e.event);
     for (const expected of [
       'message.received',
-      'reply.thinking',
+      'reply.publishing.started',
       'reply.text.delta',
       'reply.text.done',
       'reply.sticker.selecting',
       'reply.image.generating',
-      'reply.audio.generating',
+      'voice.plan.created',
       'reply.media.saved',
       'reply.content.done',
       'reply.completed'
@@ -112,7 +112,9 @@ describe('SSE streaming', () => {
   });
 
   it('streams text incrementally', async () => {
-    h = await createHarness({ chat: { script: [['一', '二', '三', '四']] } });
+    // delayMs > publish grace: chunks arrive after the barrier opens, so each
+    // one streams as its own delta instead of one buffered flush.
+    h = await createHarness({ chat: { script: [['一', '二', '三', '四']], delayMs: 700 } });
     const base = await listen(h);
     const stream = await openStream(base);
     await stream.waitFor('stream.ready');
