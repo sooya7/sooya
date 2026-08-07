@@ -2354,6 +2354,27 @@ button {
   font-size: 15px;
 }
 
+.admin-page .preview-textarea-label,
+.admin-page .preview-emotion-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  flex-wrap: wrap;
+}
+
+.admin-page .preview-textarea-label {
+  display: grid;
+  align-items: stretch;
+}
+
+.admin-page .preview-textarea-label textarea,
+.admin-page .preview-emotion-label select {
+  font-weight: 400;
+}
+
 .admin-page .preview-block textarea {
   width: 100%;
   min-height: 88px;
@@ -2401,6 +2422,12 @@ button {
 .admin-page .preview-audio {
   width: 100%;
   max-width: 100%;
+}
+
+/* A long provider name (or capability list) must wrap, never stretch the page. */
+.admin-page .pref-row .muted,
+.admin-page .provider-name {
+  overflow-wrap: anywhere;
 }
 
 /* ---- Metrics dashboard ---- */
@@ -2511,6 +2538,29 @@ button {
   gap: 14px;
 }
 
+.admin-page .compare-col-wide {
+  grid-column: 1 / -1;
+}
+
+.admin-page .metrics-more {
+  margin-top: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--accent-deep);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.admin-page .metrics-more:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-tint);
+}
+
 .admin-page .compare-col {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -2557,6 +2607,78 @@ button {
   border-radius: 10px;
   padding: 10px;
   color: var(--ink);
+}
+
+.admin-page .shadow-code:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.admin-page .shadow-diff-verdict {
+  margin-top: 12px;
+}
+
+.admin-page .shadow-diff-verdict h4 {
+  color: var(--danger-ink);
+}
+
+.admin-page .text-danger {
+  color: var(--danger-ink);
+  font-weight: 600;
+}
+
+/* ---- Experiment report / history ---- */
+
+.admin-page .experiment-details {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-page .experiment-details h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.admin-page .experiment-details-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.admin-page .experiment-diff-table {
+  margin-top: 10px;
+}
+
+.admin-page .history-timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.admin-page .history-timeline li {
+  display: grid;
+  gap: 2px;
+  padding-left: 12px;
+  border-left: 2px solid var(--accent-line);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.admin-page .history-event {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+@media (max-width: 680px) {
+  .admin-page .experiment-details-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---- Decision trace ---- */
@@ -3108,6 +3230,10 @@ button {
 
   .admin-page .compare-grid {
     grid-template-columns: 1fr;
+  }
+
+  .admin-page .compare-col-wide {
+    grid-column: 1;
   }
 
   .admin-page .admin-actions button,
