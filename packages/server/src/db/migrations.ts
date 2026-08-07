@@ -918,6 +918,69 @@ export const MIGRATIONS: Migration[] = [
           WHERE status = 'sent' AND candidate_id IS NOT NULL;
       `);
     }
+  },
+  {
+    version: 19,
+    name: 'life_locations',
+    up: (db) => {
+      /*
+       * Location model (next phase): SOOYA's own life locations, travel
+       * edges between them, the current location state and the visit
+       * history. All behavior is gated behind LOCATION_MODEL_ENABLED; the
+       * tables are inert when the flag is off.
+       */
+      db.exec(`
+        CREATE TABLE life_locations (
+          id            TEXT PRIMARY KEY,
+          name          TEXT NOT NULL,
+          kind          TEXT NOT NULL CHECK (kind IN ('home','neighborhood','cafe','restaurant','store','park','library','mall','transit','work','study','venue','outdoor','other')),
+          city          TEXT,
+          region        TEXT,
+          country       TEXT,
+          time_zone     TEXT,
+          lat           REAL,
+          lng           REAL,
+          tags_json     TEXT NOT NULL DEFAULT '[]',
+          indoor        INTEGER NOT NULL DEFAULT 0,
+          visit_weight  REAL NOT NULL DEFAULT 1.0,
+          source        TEXT NOT NULL DEFAULT 'builtin' CHECK (source IN ('builtin','generated','admin','conversation')),
+          active        INTEGER NOT NULL DEFAULT 1,
+          created_at    TEXT NOT NULL,
+          updated_at    TEXT NOT NULL
+        );
+        CREATE INDEX idx_life_locations_active ON life_locations(active, kind);
+
+        CREATE TABLE life_location_edges (
+          from_id        TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          to_id          TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          travel_minutes INTEGER NOT NULL DEFAULT 15,
+          mode           TEXT NOT NULL DEFAULT 'walk' CHECK (mode IN ('walk','bike','transit','car','unknown')),
+          PRIMARY KEY (from_id, to_id)
+        );
+
+        CREATE TABLE life_location_state (
+          id                 INTEGER PRIMARY KEY CHECK (id = 1),
+          location_id        TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          arrived_at         TEXT NOT NULL,
+          expected_leave_at  TEXT,
+          source_plan_id     TEXT,
+          source_activity_id TEXT,
+          confidence         REAL NOT NULL DEFAULT 1.0,
+          updated_at         TEXT NOT NULL
+        );
+
+        CREATE TABLE life_location_visits (
+          id                 TEXT PRIMARY KEY,
+          location_id        TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          entered_at         TEXT NOT NULL,
+          left_at            TEXT,
+          source_plan_id     TEXT,
+          source_activity_id TEXT,
+          created_at         TEXT NOT NULL
+        );
+        CREATE INDEX idx_life_location_visits ON life_location_visits(location_id, entered_at DESC);
+      `);
+    }
   }
 ];
 

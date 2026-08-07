@@ -31,6 +31,8 @@ import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/
 import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig, type LifeRuntime } from './core/life.js';
 import { LifeRepo } from './db/repos/life.repo.js';
 import { LifeV2Repo } from './db/repos/life-v2.repo.js';
+import { LifeLocationRepo } from './db/repos/location.repo.js';
+import { LocationService } from './core/location/service.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
@@ -94,6 +96,7 @@ export interface SooyaApp {
     proactive: ProactiveAttemptRepo;
     voice: VoiceGenerationRepo;
     lifeV2: LifeV2Repo;
+    locations: LifeLocationRepo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
     replyBatches: ReplyBatchRepo;
@@ -106,6 +109,7 @@ export interface SooyaApp {
     memory: MemoryService;
     life: LifeRuntime;
     proactive: ProactiveComposer;
+    location: LocationService;
     voice: VoiceService;
     push: PushService;
     storage: StorageService;
@@ -186,6 +190,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     proactive: new ProactiveAttemptRepo(dbHandle),
     voice: new VoiceGenerationRepo(dbHandle),
     lifeV2: new LifeV2Repo(dbHandle),
+    locations: new LifeLocationRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle),
     replyBatches: new ReplyBatchRepo(dbHandle)
@@ -221,6 +226,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       proactiveMode: policy.proactiveMode ?? DEFAULT_LIFE_CONFIG.proactiveMode
     };
   };
+  const location = new LocationService(repos.locations, repos.audit, opts.clock);
+  location.setEnabled(env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED);
   const life = env.ENABLE_LIFE_V2
     ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
@@ -457,7 +464,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, location, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     recurringTimers: [],

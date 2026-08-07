@@ -289,6 +289,7 @@ export function registerFeatureRoutes(app: SooyaApp): void {
    * rather than the admin guard: this is hers to show the user, not a setting.
    */
   server.get('/api/life', chatGuard, async () => services.life.snapshot());
+  server.get('/api/life/locations', chatGuard, async () => ({ locations: services.location.list(), current: services.location.current() }));
 
   server.post('/api/admin/life/tick', adminGuard, async () => {
     const result = services.life.tick();

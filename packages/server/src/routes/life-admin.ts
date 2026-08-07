@@ -1,6 +1,27 @@
 import { z } from 'zod';
 import type { SooyaApp } from '../app.js';
 import { requireAdminToken } from './auth.js';
+import { toLifeLocation } from '../db/repos/location.repo.js';
+
+const LocationKindSchema = z.enum(['home','neighborhood','cafe','restaurant','store','park','library','mall','transit','work','study','venue','outdoor','other']);
+const LocationWriteSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  kind: LocationKindSchema,
+  city: z.string().trim().max(80).nullable().optional(),
+  region: z.string().trim().max(80).nullable().optional(),
+  country: z.string().trim().max(80).nullable().optional(),
+  timeZone: z.string().trim().max(80).nullable().optional(),
+  lat: z.number().min(-90).max(90).nullable().optional(),
+  lng: z.number().min(-180).max(180).nullable().optional(),
+  tags: z.array(z.string().min(1).max(40)).max(20).optional(),
+  indoor: z.boolean().optional(),
+  visitWeight: z.number().min(0).max(10).optional()
+});
+const LocationOverrideSchema = z.object({
+  locationId: z.string().min(1).max(80),
+  reason: z.string().trim().max(200).optional()
+});
+const IdParams = z.object({ id: z.string().min(1).max(80) });
 
 const ThreadCreateSchema = z.object({
   title: z.string().trim().min(1).max(120),
@@ -29,6 +50,49 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
   });
 
   server.get('/api/admin/life/threads', { preHandler: guard }, async () => ({ threads: repos.lifeV2.threads() }));
+
+  // ---- locations (next phase) ----
+
+  server.get('/api/admin/life/locations', { preHandler: guard }, async () => ({ locations: app.services.location.list() }));
+
+  server.post('/api/admin/life/locations', { preHandler: guard }, async (req, reply) => {
+    const parsed = LocationWriteSchema.safeParse(req.body);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const row = repos.locations.create({ ...parsed.data, source: 'admin' });
+    repos.audit.add('life.location', 'create', row.id, { name: row.name, kind: row.kind });
+    return { location: toLifeLocation(row) };
+  });
+
+  server.patch('/api/admin/life/locations/:id', { preHandler: guard }, async (req, reply) => {
+    const params = IdParams.safeParse(req.params);
+    if (!params.success) { reply.code(400); return { error: 'bad_request', issues: params.error.issues }; }
+    const parsed = LocationWriteSchema.safeParse(req.body);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const row = repos.locations.update(params.data.id, parsed.data);
+    if (!row) { reply.code(404); return { error: 'not_found' }; }
+    repos.audit.add('life.location', 'update', row.id, { name: row.name });
+    return { location: toLifeLocation(row) };
+  });
+
+  server.delete('/api/admin/life/locations/:id', { preHandler: guard }, async (req, reply) => {
+    const params = IdParams.safeParse(req.params);
+    if (!params.success) { reply.code(400); return { error: 'bad_request', issues: params.error.issues }; }
+    const row = repos.locations.get(params.data.id);
+    if (!row) { reply.code(404); return { error: 'not_found' }; }
+    repos.locations.deactivate(params.data.id);
+    repos.locations.deleteEdgesTo(params.data.id);
+    repos.audit.add('life.location', 'delete', params.data.id, { name: row.name });
+    return { ok: true };
+  });
+
+  /** Explicit admin override — always audited; the admin cannot bypass the coordinator. */
+  server.post('/api/admin/life/location/override', { preHandler: guard }, async (req, reply) => {
+    const parsed = LocationOverrideSchema.safeParse(req.body);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const location = app.services.location.override(parsed.data.locationId, parsed.data.reason ?? 'admin override');
+    if (!location) { reply.code(404); return { error: 'not_found' }; }
+    return { location };
+  });
 
   /** E4: admin-created thread (creation source #4). */
   server.post('/api/admin/life/threads', { preHandler: guard }, async (req, reply) => {

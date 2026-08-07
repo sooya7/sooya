@@ -112,7 +112,17 @@ const EnvSchema = z.object({
   LIFE_QUIET_GAP_MINUTES: intish(180),
   LIFE_MAX_REACH_OUTS_PER_DAY: intish(3),
   /* Unprompted messages are off until the user turns them on. */
-  ENABLE_LIFE_REACH_OUT: boolish(false)
+  ENABLE_LIFE_REACH_OUT: boolish(false),
+  // Next phase: world context / admin / experiments (all off by default;
+  // off must behave exactly like the stable release).
+  WORLD_CONTEXT_ENABLED: boolish(false),
+  LOCATION_MODEL_ENABLED: boolish(false),
+  WEATHER_ENABLED: boolish(false),
+  LIFE_ADMIN_UI_ENABLED: boolish(false),
+  VOICE_PREFERENCES_UI_ENABLED: boolish(false),
+  METRICS_DASHBOARD_ENABLED: boolish(false),
+  SHADOW_MODE_ENABLED: boolish(false),
+  EXPERIMENTS_ENABLED: boolish(false)
 });
 
 export type RawEnv = z.infer<typeof EnvSchema>;
