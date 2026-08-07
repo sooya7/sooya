@@ -79,3 +79,13 @@ export function weekdayOfLocalDate(localDate: string): number {
   const [y, m, d] = localDate.split('-').map(Number);
   return new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
 }
+
+/**
+ * 本地日历日期加/减 N 天（YYYY-MM-DD）。用 UTC 日期运算，仅做纯日历数学，
+ * 与时区无关。越界月份/年份由 Date 自动进位。
+ */
+export function addDaysLocalDate(localDate: string, days: number): string {
+  const [y, m, d] = localDate.split('-').map(Number);
+  const shifted = new Date(Date.UTC(y!, m! - 1, d! + days));
+  return shifted.toISOString().slice(0, 10);
+}
