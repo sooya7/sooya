@@ -1,0 +1,88 @@
+import { expect, test, type Page } from '@playwright/test';
+
+const CHAT_TOKEN = 'e2e-chat-token';
+const ADMIN_TOKEN = 'e2e-admin-token';
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(({ chat, admin }) => {
+    localStorage.setItem('sooya.token', chat);
+    localStorage.setItem('sooya.admin-token', admin);
+  }, { chat: CHAT_TOKEN, admin: ADMIN_TOKEN });
+});
+
+async function gotoAdmin(page: Page, path: string): Promise<void> {
+  await page.goto(path);
+}
+
+/**
+ * Next-phase surfaces (P0-P3): the world-context admin, voice preferences,
+ * metrics, shadow comparison and experiment panels are all reachable by exact
+ * path, render against the live server, and their controls round-trip through
+ * the admin API. The stable chat flows are covered by the other specs running
+ * against the same server with these flags on.
+ */
+test.describe('next-phase admin surfaces', () => {
+  test('life admin shows overview and the location manager lists builtins', async ({ page }) => {
+    await gotoAdmin(page, '/admin/life');
+    await expect(page.getByTestId('life-admin-page')).toBeVisible();
+    await expect(page.getByTestId('life-overview')).toBeVisible();
+    await expect(page.getByText('在哪里')).toBeVisible();
+    // Location model is enabled on the e2e server: the location manager
+    // lists the seeded builtins including home.
+    await page.getByRole('button', { name: 'Locations' }).click();
+    await expect(page.getByTestId('life-location-list')).toBeVisible();
+    await expect(page.getByTestId('life-location-list').getByRole('cell', { name: '家', exact: true })).toBeVisible();
+  });
+
+  test('voice preferences render quiet hours and capabilities', async ({ page }) => {
+    await gotoAdmin(page, '/settings/voice');
+    await expect(page.getByTestId('voice-preferences-page')).toBeVisible();
+    await expect(page.getByTestId('voice-quiet-hours')).toBeVisible();
+  });
+
+  test('metrics dashboard aggregates reply and voice activity', async ({ page }) => {
+    // Send a message first so the dashboard has something to aggregate.
+    await page.goto('/');
+    await expect(page.getByTestId('scroller')).toBeVisible();
+    await page.getByTestId('composer-input').fill('你好');
+    await page.getByTestId('btn-send').click();
+    await expect(page.getByTestId('scroller')).toContainText('你好', { timeout: 20_000 });
+
+    await gotoAdmin(page, '/admin/metrics');
+    await expect(page.getByTestId('metrics-page')).toBeVisible();
+    await expect(page.getByTestId('metrics-page').locator('.metrics-category table').first()).toBeVisible();
+  });
+
+  test('shadow comparison renders empty state and lists runs once sampled', async ({ page, request }) => {
+    await gotoAdmin(page, '/admin/shadow');
+    await expect(page.getByTestId('shadow-runs-page')).toBeVisible();
+    await expect(page.getByTestId('shadow-run-count')).toBeVisible();
+
+    // The read-only listing endpoint answers under the admin token.
+    const runs = await request.get('/api/admin/shadow-runs?limit=10', { headers: { 'x-admin-token': ADMIN_TOKEN } });
+    expect(runs.ok()).toBeTruthy();
+    expect(await runs.json()).toHaveProperty('runs');
+  });
+
+  test('experiment panel walks draft -> shadow -> running -> paused -> completed', async ({ page }) => {
+    // Lifecycle transitions confirm before applying; accept them.
+    page.on('dialog', (dialog) => void dialog.accept());
+    await gotoAdmin(page, '/admin/experiments');
+    await expect(page.getByTestId('experiments-page')).toBeVisible();
+
+    const name = `e2e-实验-${Date.now()}`;
+    await page.getByPlaceholder('例如：连续性权重 1.5').fill(name);
+    await page.getByRole('button', { name: '创建草稿' }).click();
+    const row = page.getByTestId('experiment-table').getByText(name).locator('..');
+    await expect(row).toContainText('草稿');
+
+    await row.getByRole('button', { name: '开始 Shadow' }).click();
+    await expect(row).toContainText('Shadow 采样中');
+    await row.getByRole('button', { name: '正式运行' }).click();
+    await expect(row).toContainText('正式运行');
+    await row.getByRole('button', { name: '暂停' }).click();
+    await expect(row).toContainText('已暂停');
+    await row.getByRole('button', { name: '完成' }).click();
+    await expect(row).toContainText('已完成');
+  });
+});

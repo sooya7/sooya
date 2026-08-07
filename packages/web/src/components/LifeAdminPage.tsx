@@ -31,7 +31,7 @@ const SECTIONS: Array<{ key: Section; label: string }> = [
 export default function LifeAdminPage() {
   const [section, setSection] = useState<Section>('overview');
   return (
-    <div className="admin-page">
+    <div className="admin-page" data-testid="life-admin-page">
       <header className="admin-header">
         <div className="admin-header-row">
           <h1>Life 管理中心</h1>
@@ -80,7 +80,7 @@ function OverviewSection() {
   if (error) return <p className="admin-error">{error}</p>;
   if (!data) return <p>加载中…</p>;
   return (
-    <div className="life-overview">
+    <div className="life-overview" data-testid="life-overview">
       <div className="overview-card">
         <h3>她现在的状态</h3>
         <dl>
@@ -292,7 +292,7 @@ function LocationsSection() {
         </select>
         <button type="submit">创建</button>
       </form>
-      <table className="admin-table">
+      <table className="admin-table" data-testid="life-location-list">
         <thead><tr><th>名称</th><th>类型</th><th>标签</th><th>权重</th><th>操作</th></tr></thead>
         <tbody>
           {data.locations.map((l: AdminLifeLocation) => (

@@ -37,7 +37,7 @@ export default function MetricsDashboardPage() {
   const categories = [...new Set((data ?? []).map((a) => a.category))];
 
   return (
-    <div className="admin-page">
+    <div className="admin-page" data-testid="metrics-page">
       <header className="admin-header">
         <div className="admin-header-row">
           <h1>Metrics 仪表盘</h1>

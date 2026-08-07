@@ -93,7 +93,7 @@ export default function VoicePreferencesPage() {
   };
 
   return (
-    <div className="admin-page">
+    <div className="admin-page" data-testid="voice-preferences-page">
       <header className="admin-header">
         <div className="admin-header-row">
           <h1>语音偏好</h1>
@@ -140,7 +140,7 @@ export default function VoicePreferencesPage() {
         </div>
         <div className="pref-row">
           <span>安静时段（自动语音静默）</span>
-          <span className="quiet-hours">
+          <span className="quiet-hours" data-testid="voice-quiet-hours">
             <input
               type="number" min={0} max={23} value={prefs.quietHours?.from ?? 0}
               onChange={(e) => void save({ quietHours: { from: Number(e.target.value), to: prefs.quietHours?.to ?? 8 } })}
