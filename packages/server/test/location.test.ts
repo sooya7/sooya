@@ -249,6 +249,18 @@ describe('location model (P0)', () => {
     expect(audit.some((a) => a.category === 'life.location' && a.action === 'create')).toBe(true);
   });
 
+  it('does not duplicate seeds on a legacy DB (pre-key rows)', async () => {
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false });
+    // 模拟 v19 时代的库：已有地点但没有 key 列数据。
+    harness.app.repos.locations.create({ name: '家', kind: 'home', source: 'builtin' });
+    harness.app.repos.locations.create({ name: '街角咖啡店', kind: 'cafe', source: 'builtin' });
+    harness.app.services.location.setEnabled(true);
+    const homes = harness.app.services.location.list().filter((l) => l.kind === 'home');
+    expect(homes.length).toBe(1);
+    // 默认城市补上，城市功能可用。
+    expect(harness.app.services.location.activeCity()?.timeZone).toBe('Asia/Shanghai');
+  });
+
   it('GET /api/life/locations exposes the known locations without inventing details', async () => {
     harness = await createHarness({
       skipStickerImport: true,

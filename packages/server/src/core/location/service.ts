@@ -253,14 +253,19 @@ export class LocationService {
 
   /**
    * One-time builtin seed: stable keys + real edges + baseline home state.
-   * 幂等：按 key 查重，管理端改过的种子不会被覆盖。
+   * 幂等：已播种（有 key）或存在历史数据（v19 升级库/管理端数据）时不重复播种。
    */
   private seedBuiltins(): void {
+    const existing = this.repo.list(false);
+    if (existing.length > 0) {
+      // 历史库：地点由管理端/旧种子维护，绝不重复播种；只补默认城市。
+      this.ensureDefaultCity();
+      return;
+    }
     const city = this.ensureDefaultCity();
     const byKey = new Map<string, string>();
     for (const seed of BUILTIN_SEEDS) {
-      const existing = this.repo.getByKey(seed.key);
-      const row = existing ?? this.repo.create({ ...seed, key: seed.key, cityId: city.id, source: 'builtin' });
+      const row = this.repo.getByKey(seed.key) ?? this.repo.create({ ...seed, key: seed.key, cityId: city.id, source: 'builtin' });
       byKey.set(seed.key, row.id);
     }
     // 双向建边：步行时间对称，往返都不需要单独配边。
