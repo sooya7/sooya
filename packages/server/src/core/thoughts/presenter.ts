@@ -263,7 +263,7 @@ export function cleanMonologue(raw: string): string {
   let text = String(raw ?? '')
     .replace(/\[\[.*?\]\]/gu, '')
     .replace(/^(?:内心独白|想法|我在想|想)[:：]\s*/u, '')
-    .replace(/^["''“”‘’\s]+|["''“”‘’\s]+$/gu, '')
+    .replace(/^[\s"'“”‘’「」『』]+|[\s"'“”‘’「」『』]+$/gu, '')
     .replace(/\s+/gu, ' ')
     .trim();
   if (!text) return '';
