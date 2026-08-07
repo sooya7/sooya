@@ -129,3 +129,32 @@ npm start                  # 或 docker compose up -d --build
 5. 打开 admin 面板检查 `/api/admin/life/*` 数据。
 
 > 由于本环境无 Node.js，以上 typecheck/测试未能在交付前运行。若 typecheck 报错，请把错误贴回来，我立即修复。
+
+---
+
+## 稳定化修复完成状态（upgrade/core-systems-stabilization 分支）
+
+> 由《UPGRADE-STABILIZATION-PLAN.md》驱动的修复已于 2026-08-07 在本分支完成，全部门禁通过。
+
+### 完成项
+- **P0-A**：migrations v15-v17 语法修复；`markQueued`/`prepareRetry` 补齐；删除 `debounceMs` 残留（统一 `initialDebounceMs/interruptDebounceMs/maxCollectionMs/publishGraceMs`）；抽出 `LifeRuntime` 接口。
+- **P0-B**：timeout 自动重试真正二次发起 provider 调用（可中止退避 + 事务化 `prepareRetry`）；已发布 partial 直接 `publishing → completed(partial)` 且不再标 failed；memory/push/summary/life 后处理全部为独立 durable jobs，回复完成后永不重跑模型；中断/恢复/发布竞态测试补齐。
+- **P0-C**：VoiceScriptGenerator prompt 真实嵌入用户本轮内容/已定回复/语音模式；TTS cancel 中止真正传给 provider 的信号；media.save 与发布前 revision fencing；用户要求语音时 hidden-draft（音频成功前不出现气泡、文字永不先显后消）。
+- **P1-A**：spokenText/synthesisText 分离（transcript 存完整脚本、合成按 maxChars 裁剪）；Naturalness Guard 全项生效（不合格重写一次→规则降级）；Delivery Plan 真正消费（pace→speed、instructions 编译、用户保存的情绪映射优先）；7 个 VOICE_* flag 全部接入或删除。
+- **P1-B**：睡眠 vitals（settle 按 life_state.kind 漂移，睡觉恢复 energy/偿还睡眠债）；conversation plan 可执行（activityId/freeformIntent/tags，无法解析保持 planned）；plan 生命周期闭环（life_state.meta 记录 planId，完成/跳过/outcome 落库）；thread 四个创建来源 + 活跃上限 3；时区统一 `localDateTimeToUtc/localDateOfIso`（不再 `startsWith(localDate)`）；continuity 真实因果上下文（买菜→做饭等）。
+- **P1-C**：主动消息等待期间用户出现即取消（user_appeared）；主动语音改走 VoiceService 全链路（不再直接 `ttsProvider().synthesize`）。
+
+### 门禁结果（分支 HEAD）
+| 门禁 | 结果 |
+|---|---|
+| `npm ci` | ✅ |
+| `npm run typecheck` | ✅ 0 error |
+| `npm test -w @sooya/server` | ✅ 591/591 |
+| `npm test -w @sooya/web` | ✅ 444/444 |
+| `npm run build` | ✅ |
+| Playwright E2E（desktop+mobile） | ✅ 84/84 |
+
+### 已知限制（非阻断）
+- 模型指令驱动的 replace（`[[voice-only]]`）仍走"文字已显示后替换"路径；用户指令驱动的 replace（用语音回我/只发语音）已实现 hidden-draft。模型侧很少直接输出该标记，前端也未提供该指令入口。
+- 天气/地点/A-B/Shadow/管理面板 UI/语音偏好 UI 未实施（方案标注暂缓）。
+- 失败卡片的「继续生成」（partial 续写）依赖 `POST /api/reply-batches/:id/retry`，前端按钮已就绪。
