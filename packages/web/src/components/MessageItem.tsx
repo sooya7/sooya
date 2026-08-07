@@ -3,6 +3,8 @@ import { getToken } from '../lib/api.js';
 import { BUBBLE_IMAGE_CSS_WIDTH, fetchAuthenticatedMedia, mediaThumbnailPath, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 import { api } from '../lib/api.js';
+import { adminApi, type VisibleThought } from '../lib/admin.js';
+import { getInnerThoughtMode, limitToThreeSentences, nextInnerThoughtMode, setInnerThoughtMode, INNER_THOUGHT_MODES, type InnerThoughtMode } from '../lib/innerThought.js';
 import type { ChatMessage, MessagePart } from '../lib/types.js';
 import { isReplayableUserMessage, isRetryableFailedMessage } from '../lib/useChat.js';
 import { stripModelDirectivesForDisplay } from '../lib/messageDirectives.js';
@@ -183,6 +185,83 @@ function ReadAloudButton({ mediaId }: { mediaId: string }) {
   );
 }
 
+/**
+ * Inner-thought UI ("⌁ 她在想…"). Renders above the bubbles inside `.msg-body`,
+ * so it inherits the message's max-width and is measured by the virtualizer
+ * like any other content — the only size changes are user-initiated (toggle),
+ * so there is no unpredictable scroll jump. Modes are stored locally
+ * (lib/innerThought.ts): off / brief (collapsed chip) / immersive (expanded).
+ * On mobile it expands inline; it never opens a separate "thinking window".
+ */
+export function InnerThoughtChip({ messageId, onNotice }: { messageId: string; onNotice?: (text: string) => void }) {
+  const [mode, setMode] = useState<InnerThoughtMode>(() => getInnerThoughtMode());
+  const [thought, setThought] = useState<VisibleThought | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    const controller = new AbortController();
+    if (mode !== 'off') {
+      adminApi.visibleThought(messageId, controller.signal)
+        .then((body) => { if (mounted.current && body?.thought) setThought(body.thought); })
+        .catch(() => { /* no thought (404), flag off, or offline: stay quiet */ });
+    } else {
+      setThought(null);
+    }
+    return () => { mounted.current = false; controller.abort(); };
+  }, [messageId, mode]);
+
+  const cycleMode = () => {
+    const next = nextInnerThoughtMode(mode);
+    setInnerThoughtMode(next);
+    setMode(next);
+    const label = INNER_THOUGHT_MODES.find((m) => m.value === next)?.label ?? next;
+    onNotice?.(`内心想法模式：${label}`);
+  };
+
+  if (mode === 'off' || !thought) return null;
+
+  const text = limitToThreeSentences(thought.text);
+  const showBody = expanded || mode === 'immersive';
+  const modeLabel = INNER_THOUGHT_MODES.find((m) => m.value === mode)?.label ?? mode;
+
+  if (!showBody) {
+    return (
+      <div className="thought-chip-row">
+        <button
+          type="button"
+          className="thought-chip"
+          aria-expanded={false}
+          data-testid="inner-thought"
+          onClick={() => setExpanded(true)}
+        >
+          <span className="thought-prefix" aria-hidden="true">⌁</span> 她在想…
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="thought-block" data-testid="inner-thought">
+      <div className="thought-block-head">
+        <button
+          type="button"
+          className="thought-chip"
+          aria-expanded={true}
+          onClick={() => setExpanded(false)}
+        >
+          <span className="thought-prefix" aria-hidden="true">⌁</span> 她在想…
+        </button>
+        <button type="button" className="thought-mode-btn" aria-label={`内心想法模式：${modeLabel}`} title="切换模式：关闭 / 简短 / 沉浸" onClick={cycleMode}>
+          {modeLabel}
+        </button>
+      </div>
+      <p className="thought-text">{text}</p>
+    </div>
+  );
+}
+
 export const MessageItem = memo(function MessageItem({ message, personaName, avatar, userAvatar, showAvatar, timeZone, highlightQuery, highlighted, highlightNonce, quoted, quotedLabel, quotedStatus, onQuotedClick, previousId, onRetry, onResend, onQuote, onWithdraw, onOpenImage, onNotice }: Props) {
   const mine = message.role === 'user';
   // Every assistant turn carries `replyTo` for stream recovery, so a preview is only
@@ -286,6 +365,9 @@ export const MessageItem = memo(function MessageItem({ message, personaName, ava
             <span className="reply-author">{quotedLabel || '原消息'}</span>
             <span className="reply-text">{quoted ? quotedPreview(quoted) : quotedStatus === 'loading' ? '正在读取原消息…' : quotedStatus === 'error' ? '原消息暂时无法读取' : '原消息已删除或不可用'}</span>
           </div>
+        )}
+        {!mine && message.status === 'sent' && (
+          <InnerThoughtChip messageId={message.id} onNotice={onNotice} />
         )}
         <div className="bubbles">{visible.map((part) => { switch (part.type) { case 'text': { const displayText = stripModelDirectivesForDisplay(part.text); const readAloudId = part.meta?.readAloudMediaId as string | undefined; return displayText ? <div key={part.id} className="text-bubble-block"><div className={`bubble bubble-text ${mine ? 'mine' : 'theirs'}`} data-testid="text-bubble">{highlightedText(displayText, highlightQuery)}</div>{readAloudId && <ReadAloudButton mediaId={readAloudId} />}</div> : null; } case 'sticker': return <StickerPart key={part.id} part={part} />; case 'image': return <ImagePart key={part.id} part={part} mine={mine} onOpen={onOpenImage} />; case 'audio': return <AudioBubble key={part.id} part={part} mine={mine} />; case 'file': return <FilePart key={part.id} part={part} mine={mine} />; default: return null; } })}</div>
         <div className="msg-meta"><span className="clock" title={formatFullDateTime(message.createdAt, timeZone)}>{formatClock(message.createdAt, timeZone)}</span>{message.pendingLocal && message.status !== 'failed' && <span className="sending-dot" aria-label="发送中" />}{failedMessage && <span className="failed-flag">发送失败{retryable && onRetry && <button type="button" className="retry-btn" onClick={() => onRetry(message)}>重试</button>}</span>}<button type="button" className="message-menu-button" aria-label="消息操作" onClick={(event) => openMenu(event.clientX, event.clientY)}>···</button></div>

@@ -51,7 +51,7 @@ export function adminFailureKind(error: unknown): AdminFailureKind {
 
 async function adminRequest<T>(
   path: string,
-  options: { method?: string; body?: unknown; headers?: HeadersInit } = {}
+  options: { method?: string; body?: unknown; headers?: HeadersInit; signal?: AbortSignal } = {}
 ): Promise<T> {
   const headers = new Headers(options.headers);
   const token = getAdminToken();
@@ -65,7 +65,7 @@ async function adminRequest<T>(
     body = JSON.stringify(options.body);
   }
 
-  const res = await fetch(path, { method: options.method ?? 'GET', headers, body });
+  const res = await fetch(path, { method: options.method ?? 'GET', headers, body, signal: options.signal });
   const text = await res.text();
   let responseBody: unknown = null;
   if (text) {
@@ -506,6 +506,6 @@ export const adminApi = {
       `/api/admin/decision-trace?batchId=${encodeURIComponent(batchId)}${revision !== undefined ? `&revision=${revision}` : ''}`
     ),
   /** User-visible inner thought for a message (may 404 when none exists). */
-  visibleThought: (messageId: string) =>
-    adminRequest<{ thought: VisibleThought | null }>(`/api/thoughts/${encodeURIComponent(messageId)}`)
+  visibleThought: (messageId: string, signal?: AbortSignal) =>
+    adminRequest<{ thought: VisibleThought | null }>(`/api/thoughts/${encodeURIComponent(messageId)}`, { signal })
 };
