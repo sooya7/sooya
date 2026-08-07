@@ -674,7 +674,7 @@ export const MIGRATIONS: Migration[] = [
           WHERE role = 'assistant' AND status IN ('sending','sent') AND batch_id IS NOT NULL;
       `);
     }
-  }
+  },
   {
     version: 15,
     name: 'interruptible_reply_batches',
@@ -767,8 +767,7 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX idx_reply_generations_batch ON reply_generations(batch_id, revision);
       `);
     }
-  }
-
+  },
   {
     version: 16,
     name: 'voice_generations',
@@ -801,8 +800,7 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX idx_voice_generations_message ON voice_generations(message_id);
       `);
     }
-  }
-
+  },
   {
     version: 17,
     name: 'life_system_v2',
