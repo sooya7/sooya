@@ -5,6 +5,7 @@ import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { ReplyBatchRepo, ReplyBatchRow, AppendAction } from '../db/repos/reply-batch.repo.js';
 import type { ChatMessage, ReplyFailure } from './types.js';
 import type { ReplyOptions, ReplyOutcome, Replier } from './replier.js';
+import type { ThoughtsBridge } from './thoughts/bridge.js';
 import { redactDiagnostic, type PublicFailure } from './public-error.js';
 import { sortableId } from '../util/ids.js';
 import { abortableDelay, isBenignAbort, StaleGenerationError, UserInterruptedError } from '../util/abort.js';
@@ -60,6 +61,12 @@ export interface ReplyCoordinatorOptions {
   errorLog?: ErrorLogRepo;
   /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
   metrics?: import('./metrics.js').MetricsService;
+  /**
+   * Next-phase visible thoughts / decision trace (VISIBLE_THOUGHTS_ENABLED).
+   * Optional: when absent (or when its flags are off) the coordinator behaves
+   * exactly as before — zero behaviour change.
+   */
+  thoughts?: ThoughtsBridge;
   onCompleted?: (
     batchId: string,
     userMessages: ChatMessage[],
@@ -146,6 +153,9 @@ export class ReplyCoordinator {
   async onMessageAccepted(action: AppendAction, batchId: string, options: ReplyOptions): Promise<void> {
     // P0-1: a user message always preempts proactive deliveries.
     this.cancelProactive();
+    // A real new message (not a duplicate) supersedes not-yet-published
+    // thoughts: they must never attach to a reply the user has moved past.
+    if (action !== 'appended') this.notifyThoughtsUserActivity();
     const batch = this.deps.batches.get(batchId);
     if (!batch) return;
     const runtime = this.runtime.get(batchId) ?? { options, waiters: [] };
@@ -196,6 +206,7 @@ export class ReplyCoordinator {
 
   /** Explicit user retry (failed / partial batches). */
   async retryBatch(batchId: string): Promise<ReplyBatchRow | undefined> {
+    this.notifyThoughtsUserActivity();
     const batch = this.deps.batches.retry(batchId);
     if (!batch) return undefined;
     const options = this.runtime.get(batchId)?.options ?? { recentMessages: 24, memoryLimit: 8 };
@@ -285,6 +296,7 @@ export class ReplyCoordinator {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.notifyThoughtsUserActivity();
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     for (const batchId of [...this.activeGenerations.keys()]) {
@@ -472,6 +484,12 @@ export class ReplyCoordinator {
         this.runtime.delete(batchId);
         return;
       }
+      // Next phase (visible thoughts): the reply is fully published — barrier
+      // open, message persisted. Hand over to the thoughts bridge, which
+      // records the admin decision trace and generates the user-visible
+      // thought, fire-and-forget. A slow or failing thought model must never
+      // delay `complete` or break the reply, hence no await.
+      this.notifyThoughtsReplyCompleted(batchId, revision, outcome, userMessages, generated.text ?? '');
       const partial = generated.interrupted !== undefined;
       const completedPayload = {
         batchId,
@@ -689,6 +707,40 @@ export class ReplyCoordinator {
     this.retryControllers.get(batchId)?.abort(new UserInterruptedError(reason === 'new_user_message' ? 'superseded by newer user message' : 'coordinator shutdown'));
   }
 
+  /** Next-phase visible thoughts: cancel not-yet-published thoughts. Best-effort. */
+  private notifyThoughtsUserActivity(): void {
+    try {
+      this.deps.thoughts?.onUserActivity();
+    } catch {
+      // Thoughts are best-effort: never let them break the reply path.
+    }
+  }
+
+  /**
+   * Next-phase visible thoughts: the reply is fully published, hand over to
+   * the thoughts bridge (decision trace + inner monologue), fire-and-forget.
+   */
+  private notifyThoughtsReplyCompleted(batchId: string, revision: number, outcome: ReplyOutcome, userMessages: ChatMessage[], finalReply: string): void {
+    const thoughts = this.deps.thoughts;
+    if (!thoughts || !outcome.ok || !outcome.messageId) return;
+    try {
+      thoughts.beginForReply({
+        batchId,
+        revision,
+        messageId: outcome.messageId,
+        userMessages,
+        finalReply,
+        degraded: outcome.degraded
+      });
+    } catch (error) {
+      this.deps.errorLog?.add('thoughts.bridge', 'begin_failed', {
+        batchId,
+        revision,
+        message: String((error as Error)?.message ?? error).slice(0, 500)
+      });
+    }
+  }
+
   private observeActive(batchId: string): void {
     const batch = this.deps.batches.get(batchId);
     const runtime = this.runtime.get(batchId);
@@ -735,6 +787,9 @@ export class ReplyCoordinator {
       if (this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner)) {
         await this.deps.onCompleted?.(batchId, userMessages, outcome, this.owner, revision);
         this.deps.bus.publish('reply.completed', { batchId, revision, messageId: outcome.messageId, message: this.deps.messages.get(outcome.messageId) });
+        // Legacy (non-interruptible) path: same thoughts hand-over as
+        // startGeneration, with the canonical text read back from the message.
+        this.notifyThoughtsReplyCompleted(batchId, revision, outcome, userMessages, replyTextOf(outcome.messageId, this.deps.messages));
       }
       for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
       this.runtime.delete(batchId);
@@ -805,4 +860,15 @@ function outcomeFromMessage(message: ChatMessage): ReplyOutcome {
 /** Exported for tests: shape of the structured failure events. */
 export function failureCodeFor(error: unknown): ReplyFailure['code'] {
   return toReplyFailure(error, error instanceof HttpTimeoutError, false).code;
+}
+
+/** Canonical text of a persisted assistant message (legacy path fallback). */
+function replyTextOf(messageId: string, messages: MessageRepo): string {
+  const message = messageId ? messages.get(messageId) : undefined;
+  if (!message) return '';
+  return message.content
+    .filter((part) => part.type === 'text')
+    .map((part) => (part.type === 'text' ? (part.text ?? '') : ''))
+    .join(' ')
+    .trim();
 }
