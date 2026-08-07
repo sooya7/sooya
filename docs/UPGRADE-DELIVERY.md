@@ -1,7 +1,9 @@
 # SOOYA 核心升级稳定化修复 — 交付文档
 
 > 交付分支：`upgrade/core-systems-stabilization`
-> 交付版本：`7962eb3`（2026-08-08）
+> 代码交付版本：`7962eb3`（2026-08-08）
+> 交付文档版本：`6e3bc69`
+> 最终验收版本：待最终 HEAD 与 GitHub CI 确认后填写（见文末 READY TO MERGE 记录）
 > 依据：《SOOYA 核心升级稳定化修复方案》（`docs/UPGRADE-STABILIZATION-PLAN.md`）+ 实施稿 `sooya-upgraded-src.zip`
 > 基线：`main`（`319a36c`）
 
@@ -82,10 +84,12 @@ dac1e46 docs: add core upgrade stabilization plan          ← 分支起点（�
 - E5 时区：新增 `localDateTimeToUtc/localDateOfIso/weekdayOfLocalDate`，引擎本地时间走 IANA 时区；删除 `startsWith(localDate)` 对 UTC ISO 的比较。
 - E6 Continuity：bestScored 传入真实因果上下文（上一活动 follow-up hooks/tags/outcome、thread 关联活动），买菜→做饭等获得评分加成。
 
-### P1-C 主动消息统一 — 完成
+### P1-C 主动消息统一
 
-- D5 主动语音改走 `VoiceService.synthesizeProactive`（脚本→守卫→韵律→TTS 全链路），禁止直接 `ttsProvider().synthesize()`。
-- F1 主动消息在合成/准备期间用户出现即取消（`blocked: user_appeared`），永不与用户回复竞争；同一 share candidate 只发布一次。
+- ✅ 主动消息冲突保护 — 完成：reply 批次打开时 proactive 被拒绝（`reply_in_progress`）。
+- ✅ 主动语音 VoiceService 接入 — 完成（D5）：proactive voice 走 `VoiceService.synthesizeProactive`（脚本→守卫→韵律→TTS 全链路），禁止直接 `ttsProvider().synthesize()`。
+- ✅ Proactive Coordinator 统一调度 — 完成（F1/P0-1）：`ReplyCoordinator.enqueueProactive(task)` 统一调度，用户消息永远优先——队列中的 proactive 立即取消，运行中的 proactive（chat/TTS/image 生成中）底层 AbortSignal 真正触发；未发布即丢弃、已发布不撤回。
+- ✅ Proactive 发布幂等 — 完成（P1-4）：migration v18 对 `proactive_attempts(candidate_id) WHERE status='sent'` 加部分唯一索引；attempt 与消息同事务落定，并发重复发送被约束拒绝（`candidate_already_sent`）。
 
 ---
 
@@ -125,10 +129,12 @@ dac1e46 docs: add core upgrade stabilization plan          ← 分支起点（�
 |---|---|---|
 | 依赖安装 | `npm ci` | ✅ |
 | 类型检查 | `npm run typecheck` | ✅ 0 error |
-| Server 测试 | `npm test -w @sooya/server` | ✅ 591/591（61 文件，约 22 分钟） |
-| Web 测试 | `npm test -w @sooya/web` | ✅ 444/444（35 文件） |
+| Server 测试 | `npm test -w @sooya/server` | ✅ 本地全量通过 |
+| Web 测试 | `npm test -w @sooya/web` | ✅ 本地全量通过 |
 | 构建 | `npm run build` | ✅ server + web |
-| E2E | `npm run test:e2e` | ✅ 84/84（desktop + mobile，约 5 分钟） |
+| E2E | `npm run test:e2e` | ✅ 本地全量通过 |
+| **本地门禁** | 上述全部 | ✅ **PASS** |
+| **GitHub CI** | push 后 Actions | ⏳ **PENDING**（最终 HEAD 验证后更新） |
 
 ---
 
@@ -149,14 +155,17 @@ dac1e46 docs: add core upgrade stabilization plan          ← 分支起点（�
 ## 8. 部署与回滚
 
 - 数据库迁移 v15/v16/v17 为**一次性前向迁移**（新增表/列，重建 reply_batches）；升级部署前建议先备份数据目录。
-- 回滚：切回旧版本代码即可，旧代码不识别新状态列时会以 legacy 语义运行（`running` 行在启动恢复时被归一到 generating/queued）；已产生的 `generating/publishing/superseded` 状态行由旧版 `recoverOpen` 兜底处理。
+- 回滚（P0-5）：**v15 之后存在 `generating/publishing/superseded` 等新状态，旧代码不能完整处理，禁止"切回旧代码即可"。**
+  - **首选（推荐）**：停止服务 → 恢复升级前的 DB backup → checkout 旧 release → 启动。
+  - **保留新 DB 降代码**：必须先用 `npm run rollback:preflight` 检查（open 批次/进行中的语音与 proactive/迁移一致性），再显式执行 `npm run rollback:normalize`（`generating`+hidden→`queued`；`publishing`+visible→`completed/partial`；`publishing`+hidden→`queued`；`superseded`→`cancelled`；输出每项修改）。进行中的语音生成或 proactive 交付未清零时 normalize 拒绝执行。
+  - 降级前不得残留 `generating / publishing / superseded` 状态。
 - 环境变量：`VOICE_LIFE_SHARE_ENABLED` 已删除（未使用）；其余 `VOICE_*`/`REPLY_*` 开关默认值不变，可逐项关闭新管线回退（`VOICE_V2_ENABLED=false` 回退旧朗读路径，`REPLY_INTERRUPTIBLE_GENERATION=false` 回退旧非打断流程）。
 
 ---
 
 ## 9. 已知限制（非阻断）
 
-1. 模型指令驱动的 replace（模型直接输出 `[[voice-only]]`）仍走"文字已显示后替换"路径；用户指令驱动已实现 hidden-draft。模型侧极少输出该标记，前端无此指令入口。
+1. 模型自动语音仅允许 `complement`/`summary`（P0-3）：模型自行输出 `[[voice-only]]` 被降级为 complement；`replace` 只由明确用户指令（只发语音/用语音回我/不要打字）触发，走 hidden-draft，不会出现文字先显后消。
 2. 天气、真实地点、A/B、Shadow 模式、Life Admin 完整 UI、Voice Preferences 完整 UI 按方案标注暂缓，未实施。
 3. web 测试存在 jsdom `act(...)` stderr 警告（非失败）；server 套件因串行 + harness 启动较慢（约 22 分钟）。
 
