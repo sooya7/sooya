@@ -15,6 +15,7 @@ import { planDelivery, deliveryToTTSOptions } from './delivery.js';
 import { parseVoiceIntent, mergeVoiceDirectives } from './intent.js';
 import { assessNaturalness, estimateSpeechSeconds, voiceTextSimilarity, splitSentences } from './naturalness.js';
 import { normalizeVoiceText, ruleBasedColloquial } from './normalize.js';
+import { semanticRiskReport } from './semantic.js';
 import { decideVoiceMode } from './planner.js';
 import type { VoiceDecision } from './planner.js';
 import { DEFAULT_SPEECH_STYLE, stylePromptHints } from './style.js';
@@ -206,14 +207,65 @@ export class VoiceService {
       }
     }
 
-    // 2. Normalize: transcript stays human, synthesis gets cleaned (D1).
-    const { spokenText, synthesisText } = normalizeVoiceText(script.spokenText);
+    // 2. Normalize: the stored transcript is what was actually spoken; the
+    // synthesis text is its pronunciation-normalized form (D1, P0-2).
+    let { spokenText, synthesisText } = normalizeVoiceText(script.spokenText);
     if (!spokenText.trim()) return { ok: false, degraded: [...degraded, 'voice:empty-script'], partId: null, mediaId: null, generationId: null, shellId: null };
-    // Only the first maxChars characters are synthesized (cost and clip-length
-    // control); the transcript always keeps the COMPLETE script so nothing the
-    // user could have heard is ever lost from the stored copy.
-    const clippedSynthesis = synthesisText.length > maxChars ? synthesisText.slice(0, maxChars) : synthesisText;
-    const wasClipped = clippedSynthesis.length < synthesisText.length;
+
+    // 3. Semantic guard (P1-5): the script must not ADD high-risk facts
+    // (numbers, dates, amounts, strong negations, promises) the reply never
+    // stated. complement/summary may be dropped, replace falls back to the
+    // canonical text.
+    if (mode !== 'read_aloud') {
+      const report = semanticRiskReport(synthesisText, args.finalText);
+      if (!report.ok) {
+        if (mode === 'summary') {
+          script = await this.generateScript(args.finalText, mode, args.userText, maxSeconds, signal, 2, report.risks.map((r) => `新增了正文没有的事实：${r}`).concat('不要新增任何正文没有的数字、时间、金额或承诺'));
+          if (script) ({ spokenText, synthesisText } = normalizeVoiceText(script.spokenText));
+        }
+        if (semanticRiskReport(synthesisText, args.finalText).ok) {
+          // rewrite fixed it
+        } else if (mode === 'replace') {
+          return this.publishReplaceTextFallback(args, args.finalText, degraded, 'semantic_risk');
+        } else {
+          return { ok: false, degraded: [...degraded, 'voice:semantic-risk'], partId: null, mediaId: null, generationId: null, shellId: null };
+        }
+      }
+    }
+
+    // 4. Length policy (P0-2): never ship truncated audio that pretends to be
+    // the full answer. replace compacts once then falls back to full text;
+    // complement may shorten at whole-sentence boundaries; summary is bounded
+    // at generation and dropped rather than clipped; read_aloud reads as-is.
+    let clipped = false;
+    if (synthesisText.length > maxChars) {
+      if (mode === 'replace') {
+        if (script && !script.styleTags.includes('rule-fallback')) {
+          const compact = await this.generateScript(args.finalText, mode, args.userText, maxSeconds, signal, 2, ['更短：当前脚本超过语音时长上限，压缩到核心内容，保留所有关键事实，不要逐条展开']);
+          if (compact) ({ spokenText, synthesisText } = normalizeVoiceText(compact.spokenText));
+        }
+        if (synthesisText.length > maxChars) {
+          return this.publishReplaceTextFallback(args, args.finalText, degraded, 'too_long');
+        }
+      } else if (mode === 'complement') {
+        const sentences = splitSentences(synthesisText);
+        const kept: string[] = [];
+        let length = 0;
+        for (const sentence of sentences) {
+          if (length + sentence.length > maxChars) break;
+          kept.push(sentence);
+          length += sentence.length;
+        }
+        if (kept.length === 0 || length < Math.min(maxChars, synthesisText.length) * 0.5) {
+          return { ok: false, degraded: [...degraded, 'voice:too-long'], partId: null, mediaId: null, generationId: null, shellId: null };
+        }
+        spokenText = kept.join('');
+        synthesisText = kept.join('');
+        clipped = true;
+      } else if (mode === 'summary') {
+        return { ok: false, degraded: [...degraded, 'voice:too-long'], partId: null, mediaId: null, generationId: null, shellId: null };
+      }
+    }
 
     // 3. Delivery. Explicit emotion wins; otherwise detect it from the reply
     // text through the saved mapping, like the legacy read-back path did.
@@ -236,7 +288,7 @@ export class VoiceService {
       requestedBy: decision.requestedBy,
       status: 'scripted',
       spokenText,
-      synthesisText: clippedSynthesis,
+      synthesisText,
       delivery: delivery as unknown as Record<string, unknown>,
       naturalness: { accepted: true },
       provider: this.deps.capabilities.ttsProvider()?.name ?? null
@@ -261,7 +313,7 @@ export class VoiceService {
       for (let attempt = 0; attempt <= this.flags.ttsRetries; attempt++) {
         if (attempt > 0) this.deps.voice.update(generation.id, { retry_count: attempt });
         try {
-          audio = await provider.synthesize(clippedSynthesis, { ...ttsOptions, signal: combined.signal });
+          audio = await provider.synthesize(synthesisText, { ...ttsOptions, signal: combined.signal });
           break;
         } catch (err) {
           if (signal.aborted || combined.signal.aborted) throw err;
@@ -294,8 +346,8 @@ export class VoiceService {
         throw new StaleGenerationError('voice revision stale before publish');
       }
 
-      // 6. Publish per mode.
-      const clipped = wasClipped;
+      // 6. Publish per mode. `clipped` is only true for complement
+      // sentence-boundary shortening; replace never ships truncated audio.
       const meta: VoicePartMeta = {
         voiceMode: mode,
         requestedBy: decision.requestedBy,
@@ -303,10 +355,10 @@ export class VoiceService {
         pace: delivery.pace,
         generatedFromTextPartId: args.textPartId,
         targetMessageId: null,
-        synthesisChars: clippedSynthesis.length,
+        synthesisChars: synthesisText.length,
         fullTranscriptAvailable: true,
         voiceGenerationId: generation.id,
-        ...(clipped ? { clipped: true, spokenChars: clippedSynthesis.length } : {})
+        ...(clipped ? { clipped: true, spokenChars: synthesisText.length } : {})
       };
       let partId: string | null = null;
       let targetShell = args.shell;
@@ -387,10 +439,24 @@ export class VoiceService {
       degraded.push('voice:script-fallback-rules');
     }
 
-    // 2. Normalize + clip (transcript keeps the full script).
-    const { spokenText, synthesisText } = normalizeVoiceText(script.spokenText);
+    // 2. Normalize: the transcript is what was actually spoken (P0-2).
+    let { spokenText, synthesisText } = normalizeVoiceText(script.spokenText);
     if (!spokenText.trim()) return { ok: false, mediaId: null, transcript: '', degraded: [...degraded, 'voice:empty-script'], generationId: null, fallbackReason: 'empty_script' };
-    const clippedSynthesis = synthesisText.length > maxChars ? synthesisText.slice(0, maxChars) : synthesisText;
+
+    // 3. Semantic guard + length policy: proactive voice is a replace — no
+    // truncated audio, fall back to text when the script cannot fit.
+    if (!semanticRiskReport(synthesisText, text).ok) {
+      return { ok: false, mediaId: null, transcript: spokenText, degraded: [...degraded, 'voice:semantic-risk'], generationId: null, fallbackReason: 'semantic_risk' };
+    }
+    if (synthesisText.length > maxChars) {
+      if (script && !script.styleTags.includes('rule-fallback')) {
+        const compact = await this.generateScript(text, 'replace', text, maxSeconds, signal, 2, ['更短：当前脚本超过语音时长上限，压缩到核心内容，保留所有关键事实，不要逐条展开']);
+        if (compact) ({ spokenText, synthesisText } = normalizeVoiceText(compact.spokenText));
+      }
+      if (synthesisText.length > maxChars) {
+        return { ok: false, mediaId: null, transcript: spokenText, degraded: [...degraded, 'voice:too-long'], generationId: null, fallbackReason: 'too_long' };
+      }
+    }
 
     // 3. Delivery (custom presets drive when the user saved them).
     const emotions = this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
@@ -409,7 +475,7 @@ export class VoiceService {
       requestedBy: 'proactive',
       status: 'scripted',
       spokenText,
-      synthesisText: clippedSynthesis,
+      synthesisText,
       delivery: delivery as unknown as Record<string, unknown>,
       naturalness: { accepted: true },
       provider: this.deps.capabilities.ttsProvider()?.name ?? null
@@ -422,7 +488,7 @@ export class VoiceService {
       for (let attempt = 0; attempt <= this.flags.ttsRetries; attempt++) {
         if (attempt > 0) this.deps.voice.update(generation.id, { retry_count: attempt });
         try {
-          audio = await provider.synthesize(clippedSynthesis, { ...ttsOptions, signal });
+          audio = await provider.synthesize(synthesisText, { ...ttsOptions, signal });
           break;
         } catch (err) {
           if (signal.aborted) throw err;
@@ -452,6 +518,37 @@ export class VoiceService {
     } finally {
       this.active.delete(generation.id);
     }
+  }
+
+  /**
+   * P0-2: replace can never ship truncated audio. When the script cannot be
+   * delivered as audio (too long after one compact rewrite, or it added facts
+   * the reply never stated), publish the CANONICAL text instead — for a hidden
+   * draft this is the first time the shell appears, carrying text.
+   */
+  private async publishReplaceTextFallback(args: InlineVoiceArgs, fallbackText: string, degraded: string[], reason: string): Promise<InlineVoiceResult> {
+    const text = (fallbackText ?? '').trim();
+    let targetShell = args.shell;
+    if (!targetShell && args.openShell) targetShell = await args.openShell();
+    if (!targetShell) return { ok: false, degraded: [...degraded, 'audio:provider_unavailable'], partId: null, mediaId: null, generationId: null, shellId: null };
+    const partId = this.deps.messages.appendPart(targetShell.id, {
+      type: 'text',
+      text,
+      status: 'sent',
+      meta: { voiceFallback: true, voiceMode: 'replace', voiceFallbackReason: reason }
+    });
+    degraded.push('audio:provider_unavailable');
+    this.emit('voice.published', {
+      voiceGenerationId: null,
+      batchId: args.batchId,
+      revision: args.revision,
+      messageId: targetShell.id,
+      mode: 'replace',
+      status: 'published-as-text',
+      partId,
+      reason
+    });
+    return { ok: true, degraded, partId, mediaId: null, generationId: null, shellId: targetShell.id };
   }
 
   private guardAccepts(script: VoiceScript, text: string, mode: VoiceMode, maxSeconds: number): boolean {
@@ -501,7 +598,7 @@ export class VoiceService {
       `事实只能来自上面【你已经确定的回复内容】，不要编造、补充或承诺任何新信息。`,
       styleHints,
       `时长上限约 ${maxSeconds} 秒（中文约每秒 4-5 字）。`,
-      ...(attempt > 0 && reportReasons?.length ? [`上一版没有通过自然度检查，原因：${reportReasons.join('；')}。请针对这些问题重写。`] : []),
+      ...(attempt > 0 && reportReasons?.length ? [`上一版没有通过检查，原因：${reportReasons.join('；')}。请针对这些问题重写。`] : []),
       `只输出脚本本身，不要任何解释或前后缀。`
     ].join('\n');
     try {

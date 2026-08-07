@@ -383,13 +383,12 @@ describe('voice replies', () => {
     const long = '这是一段很重要的长回复内容。'.repeat(40); // 560 chars > default 300
     h = await createHarness({ tts: 'ok', chat: { script: [[`${long}[[voice-only]]`]] } });
     const { body } = await sendText(h.app, '只发语音');
-    const audio = body.reply.content.find((p: any) => p.type === 'audio');
-    expect(partTypes(body.reply)).toEqual(['audio']);
-    expect(audio.status).toBe('sent');
-    expect(audio.transcript).toHaveLength(long.length);
-    expect(audio.meta.clipped).toBe(true);
-    expect(audio.meta.spokenChars).toBe(300);
-    expect(audio.meta.fullTranscriptAvailable).toBe(true);
+    // P0-2: replace never ships truncated audio. A script that cannot fit the
+    // clip budget (after one compact rewrite) falls back to the FULL text.
+    expect(partTypes(body.reply)).toEqual(['text']);
+    const text = body.reply.content[0];
+    expect(text.text).toHaveLength(long.length);
+    expect(text.meta).toMatchObject({ voiceFallback: true, voiceMode: 'replace' });
   });
 
   it('voice-only still hides the text bubble when the whole text fits in one clip', async () => {
