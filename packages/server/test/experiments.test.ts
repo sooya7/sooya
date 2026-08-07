@@ -45,11 +45,13 @@ describe('experiments (P3)', () => {
 
     const events = experiments.events(created.id);
     const kinds = events.map((e) => e.event);
-    expect(kinds).toContain('started');
+    expect(kinds).toContain('created');
+    expect(kinds).toContain('shadow');
+    expect(kinds).toContain('promoted');
     expect(kinds).toContain('paused');
     // The promotion assigned a variant and recorded it.
-    const started = events.find((e) => e.event === 'started')!;
-    expect(['x1', 'x1.5']).toContain(started.variant);
+    const promoted = events.find((e) => e.event === 'promoted')!;
+    expect(['x1', 'x1.5']).toContain(promoted.variant);
   });
 
   it('assigns day-sticky variants deterministically and rolls back on pause', async () => {
@@ -153,7 +155,7 @@ describe('experiments (P3)', () => {
     });
     expect(events.statusCode).toBe(200);
     const kinds = (events.json() as { events: Array<{ event: string }> }).events.map((e) => e.event);
-    expect(kinds).toEqual(expect.arrayContaining(['started', 'paused', 'completed']));
+    expect(kinds).toEqual(expect.arrayContaining(['promoted', 'paused', 'completed']));
 
     const list = await harness.app.server.inject({
       method: 'GET',
