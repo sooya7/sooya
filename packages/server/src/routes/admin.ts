@@ -559,6 +559,33 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { aggregates: app.services.metrics.aggregates(days), daily: app.services.metrics.daily(days) };
   });
 
+  // 分布统计（min/max/mean/p50/p95，本地日期窗口，完整版 §10）。
+  server.get('/api/admin/metrics/distributions', guard, async (req) => {
+    const days = Math.max(1, Math.min(90, Number((req.query as { days?: string }).days ?? 7)));
+    return { distributions: app.services.metrics.distributions(days) };
+  });
+
+  // 版本对比：currentDays 为当前窗口，previousDays 为其前等长基线窗口。
+  server.get('/api/admin/metrics/release-compare', guard, async (req) => {
+    const q = req.query as { currentDays?: string; previousDays?: string };
+    const currentDays = Math.max(1, Math.min(90, Number(q.currentDays ?? 7)));
+    const previousDays = Math.max(1, Math.min(90, Number(q.previousDays ?? 7)));
+    return { comparison: app.services.metrics.releaseComparisonDays(currentDays, previousDays) };
+  });
+
+  // 导出：只含指标名与数值，绝不包含私人正文。format=csv → text/csv；默认 json。
+  server.get('/api/admin/metrics/export', guard, async (req, reply) => {
+    const q = req.query as { format?: string; days?: string };
+    const days = Math.max(1, Math.min(90, Number(q.days ?? 7)));
+    const rows = app.services.metrics.exportRows(days);
+    if (q.format === 'csv') {
+      reply.header('content-type', 'text/csv; charset=utf-8');
+      reply.header('content-disposition', 'attachment; filename="metrics.csv"');
+      return app.services.metrics.toCsv(rows);
+    }
+    return { metrics: rows };
+  });
+
   server.get('/api/admin/system', guard, async () => ({
     version: app.state.version,
     startedAt: app.state.startedAt,
@@ -663,19 +690,77 @@ export function registerAdminRoutes(app: SooyaApp): void {
 
   server.patch('/api/admin/experiments/:id', guard, async (req, reply) => {
     const id = (req.params as { id: string }).id;
-    const { status } = (req.body ?? {}) as { status?: string };
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const status = typeof body.status === 'string' ? body.status : undefined;
     const allowed = ['draft', 'shadow', 'running', 'paused', 'completed', 'cancelled'];
-    if (!status || !allowed.includes(status)) {
+    if (status && !allowed.includes(status)) {
       reply.code(400);
       return { error: 'bad_request', message: 'status must be one of draft|shadow|running|paused|completed|cancelled' };
     }
-    const result = services.experiments.setStatus(id, status);
-    if (!result.ok) {
-      reply.code(result.error === 'not_found' ? 404 : 409);
-      return { error: result.error };
+    const rolloutPercent = body.rolloutPercent === undefined ? undefined : Number(body.rolloutPercent);
+    if (body.rolloutPercent !== undefined && ![10, 25, 50, 100].includes(rolloutPercent!)) {
+      reply.code(400);
+      return { error: 'bad_request', message: 'rolloutPercent must be one of 10|25|50|100' };
     }
-    repos.audit.add('experiment', status, id);
-    return { experiment: result.experiment };
+    const variants = Array.isArray(body.variants)
+      ? body.variants.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter(Boolean)
+      : undefined;
+    if (body.variants !== undefined && (!variants || variants.length < 2)) {
+      reply.code(400);
+      return { error: 'bad_request', message: 'variants must contain at least 2 items' };
+    }
+    const assignmentScope = body.assignmentScope === 'session' || body.assignmentScope === 'conversation'
+      ? body.assignmentScope
+      : body.assignmentScope === 'day' ? 'day' : undefined;
+    const hasConfig = body.name !== undefined || variants !== undefined || assignmentScope !== undefined || body.rolloutPercent !== undefined;
+    if (!status && !hasConfig) {
+      reply.code(400);
+      return { error: 'bad_request', message: 'nothing to update: status or a config field is required' };
+    }
+
+    let experiment;
+    if (hasConfig) {
+      const result = services.experiments.updateConfig(id, {
+        ...(body.name !== undefined ? { name: String(body.name).trim() } : {}),
+        ...(variants !== undefined ? { variants } : {}),
+        ...(assignmentScope !== undefined ? { assignmentScope } : {}),
+        ...(body.rolloutPercent !== undefined ? { rolloutPercent } : {})
+      });
+      if (!result.ok) {
+        reply.code(404);
+        return { error: result.error };
+      }
+      repos.audit.add('experiment', 'config_changed', id);
+      experiment = result.experiment;
+    }
+
+    if (status) {
+      const result = services.experiments.setStatus(id, status);
+      if (!result.ok) {
+        reply.code(result.error === 'not_found' ? 404 : 409);
+        return { error: result.error };
+      }
+      repos.audit.add('experiment', status, id);
+      experiment = result.experiment;
+    }
+    return { experiment };
+  });
+
+  // 实验报告：只写 observed difference（样本数/均值），无统计显著性（§12）。
+  server.get('/api/admin/experiments/:id/report', guard, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const report = services.experiments.report(id, repos.metrics);
+    if (!report) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    return { report };
+  });
+
+  // 实验历史：全生命周期 audit 事件（created/shadow/promoted/paused/resumed/completed/config_changed）。
+  server.get('/api/admin/experiments/:id/history', guard, async (req) => {
+    const id = (req.params as { id: string }).id;
+    return { history: services.experiments.history(id) };
   });
 
   server.get('/api/admin/experiments/:id/events', guard, async (req) => {
