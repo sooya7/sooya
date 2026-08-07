@@ -13,7 +13,7 @@ import { timeZoneOffsetMinutes, zonedParts } from '../util/time-zone.js';
  * *been* doing, which is the part she cannot recompute.
  */
 
-export type LifeKind = 'sleep' | 'wake' | 'meal' | 'rest' | 'play' | 'out' | 'chore' | 'wind_down';
+export type LifeKind = 'sleep' | 'wake' | 'meal' | 'rest' | 'play' | 'out' | 'chore' | 'wind_down' | 'work' | 'study';
 
 export interface LifeSlot {
   /** Local hour the slot opens, inclusive. Slots are sorted and cover 0-24. */

@@ -6,7 +6,8 @@ import type { LifeVitals } from './vitals.js';
  * Rule-driven: the engine picks by score, not by template cycling.
  */
 
-export type LifeKind = 'sleep' | 'wake' | 'meal' | 'rest' | 'play' | 'out' | 'chore' | 'wind_down' | 'work' | 'study';
+import type { LifeKind } from '../life.js';
+export type { LifeKind };
 
 export interface LifeActivityDefinition {
   id: string;
@@ -135,9 +136,14 @@ export function scoreActivity(def: LifeActivityDefinition, ctx: ScoreContext, no
   if (def.kind === 'play') score += mapRange(v.curiosity, 45, 100, 0, 16);
   if (def.kind === 'work' || def.kind === 'study') score += mapRange(v.focus, 45, 100, 0, 12) - Math.max(0, 60 - v.energy) / 4;
 
-  // Continuity bonus (§43.3): simple tag chain.
+  // Continuity bonus (§43.3 / E6): the previous activity's follow-up hooks
+  // (买菜 → 做饭), its tags, its outcome tags, or an open thread's related
+  // activities all raise the score of the natural next step.
   for (const prev of ctx.continuityFrom) {
-    if (def.followUpHooks.includes(prev)) score += 12;
+    if (prev === def.id || def.followUpHooks.includes(prev) || def.tags.some((t) => t === prev)) {
+      score += 12;
+      break;
+    }
   }
 
   // Theme fit

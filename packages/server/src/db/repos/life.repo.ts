@@ -237,13 +237,21 @@ export class LifeRepo {
     return this.db.prepare('SELECT * FROM life_plans WHERE id = ?').get(id) as LifePlanRow | undefined;
   }
 
-  updatePlan(id: string, patch: Partial<Pick<LifePlanRow, 'title' | 'kind' | 'planned_start' | 'planned_end' | 'status' | 'priority'>>): LifePlanRow | undefined {
+  updatePlan(
+    id: string,
+    patch: Partial<Pick<LifePlanRow, 'title' | 'kind' | 'planned_start' | 'planned_end' | 'status' | 'priority'>> & { meta?: Record<string, unknown> }
+  ): LifePlanRow | undefined {
     const current = this.getPlan(id);
     if (!current) return undefined;
-    const next = { ...current, ...patch, updated_at: nowIso() };
+    const next = {
+      ...current,
+      ...patch,
+      meta_json: patch.meta ? JSON.stringify({ ...JSON.parse(current.meta_json), ...patch.meta }) : current.meta_json,
+      updated_at: nowIso()
+    };
     this.db.prepare(`
-      UPDATE life_plans SET title=?, kind=?, planned_start=?, planned_end=?, status=?, priority=?, updated_at=? WHERE id=?
-    `).run(next.title, next.kind, next.planned_start, next.planned_end, next.status, next.priority, next.updated_at, id);
+      UPDATE life_plans SET title=?, kind=?, planned_start=?, planned_end=?, status=?, priority=?, meta_json=?, updated_at=? WHERE id=?
+    `).run(next.title, next.kind, next.planned_start, next.planned_end, next.status, next.priority, next.meta_json, next.updated_at, id);
     return next;
   }
 

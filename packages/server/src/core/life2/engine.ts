@@ -1,8 +1,9 @@
 import type { LifeRepo, LifeLogRow, LifePlanRow, LifeEventRow } from '../../db/repos/life.repo.js';
 import { LifeV2Repo, type LifeDayThemeRow, type LifeShareCandidateRow, type LifeThreadRow } from '../../db/repos/life-v2.repo.js';
 import { resolveActivity, isSilentHour, DEFAULT_LIFE_CONFIG, type LifeConfig, type ResolvedActivity } from '../life.js';
-import { LifeVitalsEngine } from './vitals.js';
+import { LifeVitalsEngine, KIND_VITAL_EFFECTS } from './vitals.js';
 import type { LifeVitalsRow } from '../../db/repos/life-v2.repo.js';
+import { localDateOfIso, localDateTimeToUtc, timeZoneOffsetMinutes, weekdayOfLocalDate, zonedParts } from '../../util/time-zone.js';
 import {
   ACTIVITY_LIBRARY,
   defById,
@@ -25,7 +26,25 @@ export interface LifeSimResult {
 }
 
 /** Local calendar parts (mirrors life.ts internals without exporting them). */
-function localParts(at: Date, tzOffsetMinutes: number): { dayIndex: number; hour: number; minute: number; dayStartMs: number; localDate: string } {
+function localParts(
+  at: Date,
+  tzOffsetMinutes: number,
+  timeZone?: string
+): { dayIndex: number; hour: number; minute: number; dayStartMs: number; localDate: string } {
+  if (timeZone) {
+    try {
+      const parts = zonedParts(at, timeZone);
+      const offset = timeZoneOffsetMinutesSafe(at, timeZone, tzOffsetMinutes);
+      const dayIndex = Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86_400_000);
+      return {
+        dayIndex,
+        hour: parts.hour,
+        minute: parts.minute,
+        dayStartMs: Date.UTC(parts.year, parts.month - 1, parts.day) - offset * 60_000,
+        localDate: `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`
+      };
+    } catch { /* fall back to the legacy offset below */ }
+  }
   const shifted = new Date(at.getTime() + tzOffsetMinutes * 60_000);
   const dayIndex = Math.floor(shifted.getTime() / 86_400_000);
   return {
@@ -35,6 +54,14 @@ function localParts(at: Date, tzOffsetMinutes: number): { dayIndex: number; hour
     dayStartMs: dayIndex * 86_400_000 - tzOffsetMinutes * 60_000,
     localDate: shifted.toISOString().slice(0, 10)
   };
+}
+
+function timeZoneOffsetMinutesSafe(at: Date, timeZone: string, fallback: number): number {
+  try {
+    return timeZoneOffsetMinutes(at, timeZone);
+  } catch {
+    return fallback;
+  }
 }
 
 const THEME_POOL: Array<{ theme: string; toneTags: string[]; planIds: string[] }> = [
@@ -86,7 +113,7 @@ export class LifeSimEngine {
     private readonly clock: () => Date = () => new Date()
   ) {
     this.resolve = typeof config === 'function' ? config : () => config;
-    this.vitals = new LifeVitalsEngine(v2, clock);
+    this.vitals = new LifeVitalsEngine(v2, clock, repo);
   }
 
   get settings(): LifeConfig {
@@ -104,7 +131,7 @@ export class LifeSimEngine {
   // ------------------------------------------------------------------ theme
 
   dayTheme(): LifeDayThemeRow {
-    const parts = localParts(this.clock(), this.tzOffset);
+    const parts = localParts(this.clock(), this.tzOffset, this.settings.timeZone);
     const existing = this.v2.themeFor(parts.localDate);
     if (existing) return existing;
     return this.rollTheme(parts);
@@ -113,7 +140,7 @@ export class LifeSimEngine {
   private rollTheme(parts: { dayIndex: number; hour: number; localDate: string }): LifeDayThemeRow {
     const v = this.vitals.settle();
     const recent = this.v2.recentThemes(7).map((t) => t.theme);
-    const weekday = new Date(Date.parse(`${parts.localDate}T00:00:00Z`) + this.tzOffset * 60_000).getUTCDay();
+    const weekday = weekdayOfLocalDate(parts.localDate);
     const isWeekend = weekday === 0 || weekday === 6;
     const candidates = [...THEME_POOL];
     const factors: string[] = [];
@@ -137,7 +164,7 @@ export class LifeSimEngine {
   /** 2-3 plans from the theme pool; keeps conversation-sourced plans. */
   private generateDayPlans(theme: LifeDayThemeRow, dayIndex: number): void {
     const today = theme.local_date;
-    const existing = this.repo.listPlans().filter((p) => (p.planned_start ?? '').startsWith(today));
+    const existing = this.repo.listPlans().filter((p) => isLocalDate(p.planned_start, today, this.tzOffset, this.settings.timeZone));
     if (existing.length >= 2) return;
     const pool = THEME_POOL.find((c) => c.theme === theme.theme) ?? THEME_POOL[0]!;
     const ids = pool.planIds;
@@ -146,7 +173,7 @@ export class LifeSimEngine {
       const def = defById(id);
       if (!def) continue;
       const hour = 9 + dayIndex % 9;
-      const start = new Date(Date.parse(`${today}T00:00:00Z`) + this.tzOffset * 60_000 + hour * 3_600_000);
+      const start = localDateTimeToUtc(today, hour, 0, this.settings.timeZone, this.tzOffset);
       this.repo.createPlan({
         title: pickTitle(def, dayIndex, hour),
         kind: def.kind,
@@ -168,7 +195,7 @@ export class LifeSimEngine {
    */
   tick(): LifeSimResult {
     const at = this.clock();
-    const parts = localParts(at, this.tzOffset);
+    const parts = localParts(at, this.tzOffset, this.settings.timeZone);
     const v = this.vitals.settle();
     const theme = this.dayTheme();
     const current = this.repo.current();
@@ -189,25 +216,27 @@ export class LifeSimEngine {
       this.finishActivity(current, parts);
     }
 
-    const previous = this.repo.advance({
+    const advanced = this.repo.advance({
       activity: resolved.activity,
       kind: resolved.kind,
       mood: resolved.mood,
       startedAt: resolved.startedAt.toISOString(),
       endsAt: resolved.endsAt.toISOString(),
-      meta: { source: resolved.source, activityId: resolved.activityId ?? null }
+      meta: { source: resolved.source, activityId: resolved.activityId ?? null, planId: (resolved as { planId?: string }).planId ?? null }
     });
     this.rollIncident(resolved, parts, theme);
     this.v2.expireShareCandidates();
     this.decayThreads();
-    return { changed: true, activity: resolved.activity, kind: resolved.kind, mood: resolved.mood, endedPrevious: previous };
+    this.settlePlanWindows(parts);
+    this.ensureSeedThreads();
+    return { changed: true, activity: resolved.activity, kind: resolved.kind, mood: resolved.mood, endedPrevious: advanced.previous };
   }
 
   private resolveNext(
     parts: { dayIndex: number; hour: number; minute: number; dayStartMs: number; localDate: string },
     v: LifeVitalsRow,
     theme: LifeDayThemeRow
-  ): ResolvedActivity & { source: string; activityId?: string | null } {
+  ): ResolvedActivity & { source: string; activityId?: string | null; planId?: string | null } {
     const at = this.clock();
 
     // 1. Night sleep.
@@ -226,12 +255,16 @@ export class LifeSimEngine {
       return start !== null && Math.abs(start - at.getTime()) < 2 * 3_600_000;
     });
     if (duePlan && duePlan.meta_json) {
-      const meta = JSON.parse(duePlan.meta_json) as { activityId?: string };
-      const def = defById(meta.activityId ?? '');
-      if (def) return this.scored(parts, at, def.id, 'plan:user', duePlan.id);
+      const meta = JSON.parse(duePlan.meta_json) as { activityId?: string; freeformIntent?: string };
+      const def = meta.activityId ? defById(meta.activityId) : meta.freeformIntent ? this.matchActivity(meta.freeformIntent) : undefined;
+      if (def) {
+        this.repo.updatePlan(duePlan.id, { status: 'active', meta: { startedActivityId: def.id } });
+        return this.scored(parts, at, def.id, 'plan:user', duePlan.id);
+      }
+      // 无法安全解析的活动保持 planned，不假装完成 (E2)。
     }
     // 4. Today's theme plan in its window.
-    const todayPlans = this.repo.listPlans().filter((p) => (p.planned_start ?? '').startsWith(parts.localDate) && p.status === 'planned');
+    const todayPlans = this.repo.listPlans().filter((p) => isLocalDate(p.planned_start, parts.localDate, this.tzOffset, this.settings.timeZone) && p.status === 'planned');
     const windowPlan = todayPlans.find((p) => {
       const start = p.planned_start ? Date.parse(p.planned_start) : null;
       return start !== null && at.getTime() >= start - 15 * 60_000 && at.getTime() <= start + 75 * 60_000;
@@ -257,7 +290,7 @@ export class LifeSimEngine {
     activityId: string,
     source: string,
     planId?: string
-  ): ResolvedActivity & { source: string; activityId?: string | null } {
+  ): ResolvedActivity & { source: string; activityId?: string | null; planId?: string | null } {
     const def = defById(activityId) ?? ACTIVITY_LIBRARY[0]!;
     const seed = parts.dayIndex * 31 + parts.hour;
     const startedAt = new Date(at.getTime());
@@ -289,6 +322,19 @@ export class LifeSimEngine {
       for (const id of meta.relatedActivityIds ?? []) threadFitIds.add(id);
     }
     const themeTags = JSON.parse(theme.tone_tags_json) as string[];
+    // E6: real causal context — previous activity's follow-up hooks and tags,
+    // its outcome tags, and the open threads' related activities. 买菜 → 做饭
+    // gets its bonus because shopping's follow-up hook ('cook') is a def id.
+    const continuityFrom: string[] = [];
+    const prevState = this.repo.current();
+    if (prevState) {
+      const prevMeta = safeMeta(prevState.meta_json);
+      const prevDef = defById(String(prevMeta.activityId ?? ''));
+      if (prevDef) continuityFrom.push(...prevDef.followUpHooks, ...prevDef.tags);
+      const prevEvents = this.repo.events(1);
+      if (prevEvents[0]) continuityFrom.push(...(outcomeDetailTagsFor(prevEvents[0], prevDef) ?? []));
+    }
+    for (const id of threadFitIds) continuityFrom.push(id);
     const ctx = {
       vitals: v,
       hour: parts.hour,
@@ -297,7 +343,7 @@ export class LifeSimEngine {
       usage: this.v2,
       themeTags,
       threadFitIds,
-      continuityFrom: []
+      continuityFrom: [...new Set(continuityFrom)]
     };
     let best: LifeActivityDefinition | null = null;
     let bestScore = -Infinity;
@@ -316,12 +362,13 @@ export class LifeSimEngine {
   private finishActivity(current: LifeRepoCurrent, parts: { dayIndex: number; hour: number }): void {
     const meta = safeMeta(current.meta_json);
     const activityId = (meta.activityId as string | undefined) ?? '';
+    const planId = (meta.planId as string | undefined) ?? null;
     const def = defById(activityId);
     const outcomeTag = def ? seededPick(def.possibleOutcomes, parts.dayIndex * 7 + parts.hour) : 'normal';
     const summary = outcomeFor(outcomeTag);
     const kind = current.kind;
-    // Record the outcome as an event.
-    this.repo.recordEvent({
+    // Record the outcome as an event, linked to its plan when one drove it.
+    const event = this.repo.recordEvent({
       eventType: 'activity.finished',
       activity: current.activity,
       kind,
@@ -330,8 +377,16 @@ export class LifeSimEngine {
       moodAfter: outcomeTag === 'disappointing' || outcomeTag === 'stuck' || outcomeTag === 'frustrating' ? '有点失落' : outcomeTag === 'pleasant' || outcomeTag === 'progress' || outcomeTag === 'fun_session' ? '心情不错' : null,
       happenedAt: this.clock().toISOString(),
       shareable: (def?.shareability ?? 0) >= 0.45 && outcomeTag !== 'normal',
+      planId,
       meta: { resultType: outcomeTag, magnitude: 'small', tags: def ? outcomeDetailTags(def, outcomeTag) : [kind] }
     });
+    // E3: close the plan lifecycle — the activity that started a plan ends it.
+    if (planId) {
+      this.repo.updatePlan(planId, {
+        status: 'completed',
+        meta: { outcomeId: event.id, outcome: outcomeTag, completedAt: this.clock().toISOString() }
+      });
+    }
     if (def) {
       this.v2.recordUsage({ activityId: def.id, tags: def.tags, outcomeTags: [outcomeTag], usedAt: this.clock().toISOString() });
       // Thread advance when the activity belongs to an open thread.
@@ -340,6 +395,8 @@ export class LifeSimEngine {
         if ((tmeta.relatedActivityIds ?? []).includes(def.id)) {
           this.v2.saveThread({
             id: thread.id,
+            title: thread.title,
+            category: thread.category,
             progress: Math.min(1, thread.progress + 0.15 + Math.random() * 0.1),
             heat: Math.min(1, thread.heat + 0.1),
             status: thread.progress >= 0.85 ? 'resolved' : thread.status,
@@ -347,6 +404,8 @@ export class LifeSimEngine {
           });
         }
       }
+      // E4: an outcome with follow-up hooks opens a thread ("做完这件事，接着…").
+      this.createFollowUpThread(def, outcomeTag);
       // Share candidate for good outcomes.
       if (def.shareability >= 0.45 && !['normal', 'disappointing', 'stuck', 'frustrating'].includes(outcomeTag)) {
         const nowIso = this.clock().toISOString();
@@ -362,6 +421,11 @@ export class LifeSimEngine {
           meta: { activity: current.activity, summary, kind }
         });
       }
+    } else {
+      // E1: routine (non-library) activities still move the vitals through the
+      // kind-level table instead of being free — sleeping now recovers energy.
+      const kindEffect = KIND_VITAL_EFFECTS[kind];
+      if (kindEffect) this.vitals.applyEffect(kindEffect);
     }
     // Vitals effect of the finished activity.
     if (def) this.vitals.applyEffect(def.effects);
@@ -397,6 +461,8 @@ export class LifeSimEngine {
       if (hours > 6) {
         this.v2.saveThread({
           id: t.id,
+          title: t.title,
+          category: t.category,
           heat: Math.max(0.05, t.heat - hours * 0.004),
           status: t.status,
           nextActions: JSON.parse(t.next_actions_json)
@@ -417,27 +483,136 @@ export class LifeSimEngine {
     if (target.length < 4) return null;
     const isOut = /店|馆|公园|散步|走|买|看|玩|吃/u.test(target);
     const start = new Date(Date.now() + 3 * 3_600_000);
-    return this.repo.createPlan({
+    // E2: map the suggestion onto the activity library when possible, else
+    // keep a constrained freeform intent; unresolvable plans stay planned.
+    const mapped = this.matchActivity(target);
+    const meta: Record<string, unknown> = {
+      relatedMessageId: messageId,
+      userSuggestion: true,
+      freeformIntent: target,
+      tags: mapped ? mapped.tags : []
+    };
+    if (mapped) meta.activityId = mapped.id;
+    const plan = this.repo.createPlan({
       title: target,
-      kind: isOut ? 'out' : 'play',
+      kind: mapped?.kind ?? (isOut ? 'out' : 'play'),
       plannedStart: start.toISOString(),
       plannedEnd: new Date(start.getTime() + 60 * 60_000).toISOString(),
       status: 'planned',
       source: 'conversation',
       priority: 0.75,
-      meta: { relatedMessageId: messageId, userSuggestion: true }
+      meta
     });
+    // E4: conversation suggestions also open a thread so the plan stays alive.
+    this.createThreadFromSuggestion(target, mapped?.id ?? null, messageId);
+    return plan;
   }
 
   applyConversationEffect(mood: 'warm' | 'neutral' | 'rough'): void {
     this.vitals.applyConversation(mood);
   }
 
+  /**
+   * Keyword matcher from a free-form phrase onto the activity library (E2).
+   * Deterministic and cheap; a miss keeps the plan as freeformIntent.
+   */
+  private matchActivity(text: string): LifeActivityDefinition | null {
+    const t = (text ?? '').toLowerCase();
+    const rules: Array<[RegExp, string]> = [
+      [/买菜|超市|采购|囤货|便利店/u, 'shopping'],
+      [/散步|公园|遛|走走|出门走|压马路/u, 'walk'],
+      [/咖啡|奶茶|拿铁|饮品|下午茶/u, 'cafe'],
+      [/书|小说|漫画|杂志/u, 'reading'],
+      [/游戏|打机|steam|switch|ps5/u, 'gaming'],
+      [/琴|钢琴|吉他|音乐|唱歌/u, 'music'],
+      [/画|素描|水彩|涂鸦/u, 'craft'],
+      [/做饭|做饭菜|煮面|下厨|菜谱|晚饭|午饭|早餐|面|饭/u, 'cook'],
+      [/学|教程|课|练习|复习|背/u, 'study'],
+      [/澡|泡澡|洗漱/u, 'shower'],
+      [/收拾|整理|打扫|清洁/u, 'organize'],
+      [/洗衣|洗衣服|晒被子/u, 'laundry'],
+      [/花|绿植|植物/u, 'garden'],
+      [/电影|剧|追剧/u, 'reading']
+    ];
+    for (const [re, id] of rules) if (re.test(t)) return defById(id) ?? null;
+    return null;
+  }
+
+  /** E4: a finished activity with follow-up hooks opens a thread (bounded). */
+  private createFollowUpThread(def: LifeActivityDefinition, outcomeTag: string): void {
+    if (def.followUpHooks.length === 0) return;
+    if (this.v2.threads('open').length >= 3) return;
+    const target = def.followUpHooks.map((id) => defById(id)).find((d) => d !== undefined);
+    if (!target) return;
+    this.v2.saveThread({
+      title: `${def.titleTemplates[0]}之后，接着${target.titleTemplates[0] ?? '做点什么'}`,
+      category: 'follow_up',
+      status: 'open',
+      progress: 0,
+      importance: 0.4 + (outcomeTag === 'pleasant' || outcomeTag === 'progress' ? 0.2 : 0),
+      heat: 0.35,
+      nextActions: target.titleTemplates.slice(0, 3),
+      meta: { relatedActivityIds: [target.id], source: 'activity_outcome' }
+    });
+  }
+
+  /** E4: a conversation suggestion opens a thread too (bounded). */
+  private createThreadFromSuggestion(target: string, activityId: string | null, messageId: string): void {
+    if (this.v2.threads('open').length >= 3) return;
+    this.v2.saveThread({
+      title: `把「${target.slice(0, 16)}」安排上`,
+      category: 'conversation',
+      status: 'open',
+      progress: 0,
+      importance: 0.5,
+      heat: 0.4,
+      nextActions: activityId ? (defById(activityId)?.titleTemplates.slice(0, 3) ?? []) : ['找个合适的时间去做'],
+      meta: { relatedActivityIds: activityId ? [activityId] : [], source: 'conversation', sourceMessageId: messageId }
+    });
+  }
+
+  /** E4: seed a couple of persona-flavoured interest threads once (bounded). */
+  private ensureSeedThreads(): void {
+    if (this.v2.threads().length > 0) return;
+    const seeds: Array<[string, string]> = [
+      ['画画', 'craft'],
+      ['练琴', 'music'],
+      ['看书', 'reading'],
+      ['养绿植', 'garden']
+    ];
+    for (const [title, id] of seeds) {
+      const def = defById(id);
+      if (!def) continue;
+      this.v2.saveThread({
+        title: `${title}，慢慢练起来`,
+        category: 'interest',
+        status: 'open',
+        progress: 0.1,
+        importance: 0.3,
+        heat: 0.3,
+        nextActions: def.titleTemplates.slice(0, 3),
+        meta: { relatedActivityIds: [def.id], source: 'persona_seed' }
+      });
+    }
+  }
+
+  /** E3: plans whose window passed without starting are closed as skipped. */
+  private settlePlanWindows(parts: { dayIndex: number; hour: number; localDate: string }): void {
+    const at = this.clock().getTime();
+    for (const plan of this.repo.listPlans('planned')) {
+      if (!plan.planned_start) continue;
+      const startMs = Date.parse(plan.planned_start);
+      if (at - startMs > 75 * 60_000) {
+        this.repo.updatePlan(plan.id, { status: 'skipped', meta: { skippedAt: new Date(at).toISOString() } });
+      }
+    }
+  }
+
   // ------------------------------------------------------------ context
 
   contextLines(lastUserMessageAt?: Date | null): string[] {
     const at = this.clock();
-    const parts = localParts(at, this.tzOffset);
+    const parts = localParts(at, this.tzOffset, this.settings.timeZone);
     const current = this.repo.current();
     const v = this.vitals.settle();
     const theme = this.dayTheme();
@@ -451,7 +626,7 @@ export class LifeSimEngine {
     lines.push(`今天的主题是「${theme.theme}」。`);
     const vitalsSummary = this.vitals.summary(v);
     if (vitalsSummary.length) lines.push(`身体状态：${vitalsSummary.join('，')}。`);
-    const todayPlans = this.repo.listPlans().filter((p) => (p.planned_start ?? '').startsWith(parts.localDate));
+    const todayPlans = this.repo.listPlans().filter((p) => isLocalDate(p.planned_start, parts.localDate, this.tzOffset, this.settings.timeZone));
     const pending = todayPlans.filter((p) => p.status === 'planned' || p.status === 'active').slice(0, 3);
     if (pending.length) lines.push(`今天计划：${pending.map((p) => p.title).join('；')}。`);
     const recentEvents = this.repo.events(3);
@@ -539,8 +714,8 @@ export class LifeSimEngine {
     const current = this.repo.current();
     const v = this.vitals.settle();
     const theme = this.dayTheme();
-    const parts = localParts(this.clock(), this.tzOffset);
-    const todayPlans = this.repo.listPlans().filter((p) => (p.planned_start ?? '').startsWith(parts.localDate));
+    const parts = localParts(this.clock(), this.tzOffset, this.settings.timeZone);
+    const todayPlans = this.repo.listPlans().filter((p) => isLocalDate(p.planned_start, parts.localDate, this.tzOffset, this.settings.timeZone));
     return {
       activity: current?.activity ?? resolved.activity,
       kind: current?.kind ?? resolved.kind,
@@ -560,4 +735,18 @@ type LifeRepoCurrent = NonNullable<ReturnType<LifeRepo['current']>>;
 
 function safeMeta(json: string): Record<string, unknown> {
   try { return JSON.parse(json) as Record<string, unknown>; } catch { return {}; }
+}
+
+/** E5: is the plan's start instant on the given local calendar date? */
+function isLocalDate(iso: string | null | undefined, localDate: string, fallbackOffsetMinutes: number, timeZone?: string): boolean {
+  if (!iso) return false;
+  return localDateOfIso(iso, timeZone, fallbackOffsetMinutes) === localDate;
+}
+
+/** Outcome tags of the most recent event, for continuity scoring (E6). */
+function outcomeDetailTagsFor(event: LifeEventRow | undefined, def: LifeActivityDefinition | undefined): string[] | null {
+  if (!event) return null;
+  const meta = safeMeta(event.meta_json);
+  const resultType = meta.resultType as string | undefined;
+  return resultType && def ? outcomeDetailTags(def, resultType) : [];
 }

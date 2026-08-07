@@ -1,4 +1,5 @@
 import type { LifeV2Repo, LifeVitalsRow } from '../../db/repos/life-v2.repo.js';
+import type { LifeRepo } from '../../db/repos/life.repo.js';
 
 /**
  * Continuous vitals engine (§38). Values drift lazily: nothing is written on
@@ -51,7 +52,8 @@ export const KIND_VITAL_EFFECTS: Record<string, VitalEffect> = {
 export class LifeVitalsEngine {
   constructor(
     private readonly repo: LifeV2Repo,
-    private readonly clock: () => Date = () => new Date()
+    private readonly clock: () => Date = () => new Date(),
+    private readonly lifeRepo?: LifeRepo
   ) {}
 
   /** Current vitals, lazily settled from the last write. */
@@ -70,19 +72,35 @@ export class LifeVitalsEngine {
     const elapsedMs = now.getTime() - Date.parse(row.updated_at);
     if (elapsedMs <= 0) return row;
     const hours = elapsedMs / 3_600_000;
-    const v: LifeVitals = {
-      energy: clamp(row.energy - hours * 1.6),
-      hunger: clamp(row.hunger + hours * 3.2),
-      stress: clamp(row.stress - hours * 0.4),
-      social_need: clamp(row.social_need + hours * 1.1),
-      loneliness: clamp(row.loneliness + hours * 0.9),
-      curiosity: clamp(row.curiosity - hours * 0.5),
-      comfort: clamp(row.comfort - hours * 0.6),
-      focus: clamp(row.focus - hours * 0.8),
-      sleep_debt: row.sleep_debt
-    };
-    // The sleep debt only decays during sleep; otherwise it keeps a slow edge.
-    const settled: LifeVitalsRow = { ...v, sleep_debt: Math.max(0, row.sleep_debt - hours * 0.02), updated_at: now.toISOString(), meta_json: row.meta_json };
+    // E1: the drift depends on what she is actually doing. Sleeping must
+    // recover energy and pay down the sleep debt — the old unconditional
+    // awake drift made her progressively more tired the longer she slept.
+    const asleep = this.lifeRepo?.current()?.kind === 'sleep';
+    const v: LifeVitals = asleep
+      ? {
+          energy: clamp(row.energy + hours * 2.2),
+          hunger: clamp(row.hunger + hours * 0.7),
+          stress: clamp(row.stress - hours * 1.2),
+          social_need: clamp(row.social_need + hours * 0.2),
+          loneliness: clamp(row.loneliness + hours * 0.15),
+          curiosity: clamp(row.curiosity - hours * 0.4),
+          comfort: clamp(row.comfort + hours * 0.5),
+          focus: clamp(row.focus + hours * 0.3),
+          sleep_debt: Math.max(0, row.sleep_debt - hours * 1.1)
+        }
+      : {
+          energy: clamp(row.energy - hours * 1.6),
+          hunger: clamp(row.hunger + hours * 3.2),
+          stress: clamp(row.stress - hours * 0.4),
+          social_need: clamp(row.social_need + hours * 1.1),
+          loneliness: clamp(row.loneliness + hours * 0.9),
+          curiosity: clamp(row.curiosity - hours * 0.5),
+          comfort: clamp(row.comfort - hours * 0.6),
+          focus: clamp(row.focus - hours * 0.8),
+          // Sleep debt only decays meaningfully during sleep; awake it keeps a slow edge.
+          sleep_debt: Math.max(0, row.sleep_debt - hours * 0.02)
+        };
+    const settled: LifeVitalsRow = { ...v, updated_at: now.toISOString(), meta_json: row.meta_json };
     this.repo.upsertVitals(settled);
     return settled;
   }
