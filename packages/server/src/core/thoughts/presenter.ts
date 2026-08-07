@@ -229,6 +229,7 @@ export class ThoughtPresenter {
         batchId: thought.batchId,
         revision: thought.revision,
         kind: thought.kind,
+        visibility: thought.visibility,
         status: thought.status,
         text: thought.status === 'completed' ? thought.text : ''
       }
