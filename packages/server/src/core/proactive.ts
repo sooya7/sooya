@@ -64,8 +64,21 @@ export class ProactiveComposer {
       media: MediaStore;
       stickers: StickerLibrary;
       bus: EventBus;
+      /** D5: proactive voice runs through the full voice pipeline. */
+      voice?: import('./voice/service.js').VoiceService | null;
     }
   ) {}
+
+  /** True when a user message arrived after the evaluation snapshot. */
+  private userAppearedSince(lastUserAt: string | null): boolean {
+    if (!lastUserAt) return false;
+    const recent = this.deps.messages.recent(20);
+    for (const message of recent) {
+      if (message.role !== 'user') continue;
+      if (Date.parse(message.createdAt) > Date.parse(lastUserAt)) return true;
+    }
+    return false;
+  }
 
   evaluate(): ProactiveEvaluation {
     const recent = this.deps.messages.recent(40);
@@ -155,6 +168,29 @@ export class ProactiveComposer {
         detail: { error: safeError(error) }
       });
       return this.failed(candidate.id, requestedMode, reason);
+    }
+
+    // F1: the user may appear while we composed / prepared media. Nothing is
+    // persisted until this final gate — an unprompted message must never stack
+    // on a live conversation or a reply that just started.
+    if (this.userAppearedSince(evaluation.lastUserAt)) {
+      const reason = 'user_appeared';
+      this.deps.attempts.update(attempt.id, {
+        status: 'blocked',
+        blockedReason: reason,
+        finalMode: prepared.finalMode,
+        fallbackReason: prepared.fallbackReason
+      });
+      return {
+        status: 'blocked',
+        blockedReason: reason,
+        candidateId: candidate.id,
+        messageId: null,
+        requestedMode,
+        finalMode: prepared.finalMode,
+        fallbackReason: prepared.fallbackReason,
+        sendSuccess: false
+      };
     }
 
     const parts: CreatePartInput[] = [{ type: 'text', text, status: 'sent' }];
@@ -268,20 +304,22 @@ export class ProactiveComposer {
     }
     if (mode === 'voice') {
       if (!this.deps.capabilities.has('tts')) return { part: null, finalMode: 'text', fallbackReason: 'voice_unavailable', stickerId: null };
+      // D5: proactive voice runs the full voice pipeline (script → guard →
+      // delivery → TTS) through VoiceService — never a raw synthesize() call.
+      if (!this.deps.voice) return { part: null, finalMode: 'text', fallbackReason: 'voice_unavailable', stickerId: null };
       try {
-        const audio = await this.deps.capabilities.ttsProvider().synthesize(text);
-        const media = await this.deps.media.save({
-          kind: 'audio',
-          origin: 'generated',
-          data: audio.data,
-          declaredMime: audio.mime,
-          filename: `proactive.${audio.format}`,
-          durationHint: audio.durationSec ?? null,
-          transcript: text,
-          meta: { proactive: true, candidateId: candidate.id }
-        });
+        const result = await this.deps.voice.synthesizeProactive(text, { candidateId: candidate.id, activity: candidate.activity });
+        if (!result.ok || !result.mediaId) {
+          return { part: null, finalMode: 'text', fallbackReason: result.fallbackReason ?? 'voice_failed', stickerId: null };
+        }
         return {
-          part: { type: 'audio', mediaId: media.id, status: 'sent', transcript: text, duration: media.duration ?? audio.durationSec ?? null },
+          part: {
+            type: 'audio',
+            mediaId: result.mediaId,
+            status: 'sent',
+            transcript: result.transcript,
+            meta: { proactive: true, candidateId: candidate.id, voiceGenerationId: result.generationId ?? undefined }
+          },
           finalMode: 'voice',
           fallbackReason: null,
           stickerId: null

@@ -355,6 +355,106 @@ export class VoiceService {
     }
   }
 
+  /**
+   * D5: proactive voice — the share candidate's line runs the SAME pipeline as
+   * inline voice (script → guard → delivery → TTS) instead of a raw
+   * ttsProvider().synthesize() call. No batch/shell: the audio is the whole
+   * message; on failure the caller falls back to text.
+   */
+  async synthesizeProactive(
+    text: string,
+    context: { candidateId: string; activity: string }
+  ): Promise<{ ok: boolean; mediaId: string | null; transcript: string; degraded: string[]; generationId: string | null; fallbackReason: string | null }> {
+    const degraded: string[] = [];
+    const persona = this.deps.config.getPersona();
+    const maxSeconds = this.speechStyle.maxVoiceSeconds || persona.voicePolicy.maxCharsPerClip / 8;
+    const maxChars = persona.voicePolicy.maxCharsPerClip;
+    const controller = new AbortController();
+    const signal = controller.signal;
+
+    // 1. Script (independent voice script, naturalness guarded).
+    let script: VoiceScript | null = null;
+    if (this.flags.independentScript) script = await this.generateScript(text, 'replace', text, maxSeconds, signal, 0);
+    if (script && this.flags.naturalnessGuard && !this.guardAccepts(script, text, 'replace', maxSeconds)) {
+      const report = assessNaturalness(script.spokenText, text, 'replace', { maxVoiceSeconds: maxSeconds });
+      script = await this.generateScript(text, 'replace', text, maxSeconds, signal, 1, report.reasons);
+      if (script && this.flags.naturalnessGuard && !this.guardAccepts(script, text, 'replace', maxSeconds)) {
+        script = this.degradeScript(script, text, 'replace', maxChars);
+      }
+    }
+    if (!script) {
+      const fallback = ruleBasedColloquial(text, maxChars);
+      script = { spokenText: fallback, mode: 'replace', purpose: 'full_answer', estimatedSeconds: estimateSpeechSeconds(fallback), semanticClaims: [], styleTags: ['rule-fallback'] };
+      degraded.push('voice:script-fallback-rules');
+    }
+
+    // 2. Normalize + clip (transcript keeps the full script).
+    const { spokenText, synthesisText } = normalizeVoiceText(script.spokenText);
+    if (!spokenText.trim()) return { ok: false, mediaId: null, transcript: '', degraded: [...degraded, 'voice:empty-script'], generationId: null, fallbackReason: 'empty_script' };
+    const clippedSynthesis = synthesisText.length > maxChars ? synthesisText.slice(0, maxChars) : synthesisText;
+
+    // 3. Delivery (custom presets drive when the user saved them).
+    const emotions = this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
+    const emotion = resolveVoiceDelivery(text, null, emotions).emotion;
+    const delivery = planDelivery(emotion);
+    const ttsOptions = deliveryToTTSOptions(delivery, emotions, {
+      advanced: this.flags.advancedDelivery,
+      customPresets: this.deps.settings.has('voice.emotions')
+    });
+
+    // 4. Generation record + TTS.
+    const generation = this.deps.voice.create({
+      batchId: null,
+      revision: 0,
+      mode: 'replace',
+      requestedBy: 'proactive',
+      status: 'scripted',
+      spokenText,
+      synthesisText: clippedSynthesis,
+      delivery: delivery as unknown as Record<string, unknown>,
+      naturalness: { accepted: true },
+      provider: this.deps.capabilities.ttsProvider()?.name ?? null
+    });
+    this.active.set(generation.id, controller);
+    try {
+      const provider = this.deps.capabilities.ttsProvider();
+      let audio: Awaited<ReturnType<typeof provider.synthesize>> | null = null;
+      let lastError: unknown;
+      for (let attempt = 0; attempt <= this.flags.ttsRetries; attempt++) {
+        if (attempt > 0) this.deps.voice.update(generation.id, { retry_count: attempt });
+        try {
+          audio = await provider.synthesize(clippedSynthesis, { ...ttsOptions, signal });
+          break;
+        } catch (err) {
+          if (signal.aborted) throw err;
+          lastError = err;
+          if (attempt < this.flags.ttsRetries) await abortableDelay(400 * (attempt + 1), signal);
+        }
+      }
+      if (!audio) throw lastError ?? new Error('tts failed');
+      const media = await this.deps.media.save({
+        kind: 'audio',
+        origin: 'generated',
+        data: audio.data,
+        declaredMime: audio.mime,
+        filename: `proactive.${audio.format}`,
+        durationHint: audio.durationSec ?? null,
+        transcript: spokenText,
+        meta: { tts: true, voiceMode: 'replace', requestedBy: 'proactive', candidateId: context.candidateId, activity: context.activity }
+      });
+      this.deps.voice.update(generation.id, { status: 'published', media_id: media.id, completed_at: new Date().toISOString() });
+      this.emit('voice.published', { voiceGenerationId: generation.id, mode: 'replace', status: 'published', mediaId: media.id, proactive: true });
+      return { ok: true, mediaId: media.id, transcript: spokenText, degraded, generationId: generation.id, fallbackReason: null };
+    } catch (err) {
+      if (signal.aborted) throw err;
+      this.deps.voice.update(generation.id, { status: 'failed', failed_at: new Date().toISOString(), failure_code: 'tts_failed' });
+      this.deps.errorLog.add('voice.tts', 'tts_failed', { diagnostic: redactDiagnostic(err as Error) });
+      return { ok: false, mediaId: null, transcript: spokenText, degraded: [...degraded, 'audio:provider_unavailable'], generationId: generation.id, fallbackReason: 'voice_failed' };
+    } finally {
+      this.active.delete(generation.id);
+    }
+  }
+
   private guardAccepts(script: VoiceScript, text: string, mode: VoiceMode, maxSeconds: number): boolean {
     if (mode === 'read_aloud') return true;
     return assessNaturalness(script.spokenText, text, mode, { maxVoiceSeconds: maxSeconds }).accepted;

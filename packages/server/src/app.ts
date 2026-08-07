@@ -224,25 +224,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const life = env.ENABLE_LIFE_V2
     ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
-  const proactive = new ProactiveComposer({
-    attempts: repos.proactive,
-    replyBatches: repos.replyBatches,
-    jobs: repos.jobs,
-    messages: repos.messages,
-    life,
-    capabilities,
-    config,
-    media: mediaStore,
-    stickers: stickerLibrary,
-    bus
-  });
-  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, repos.mediaText, env.ENABLE_LIFE_ENGINE ? life : undefined, env.LIFE_TIME_ZONE);
-  const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
-    triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
-    chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
-    keepRecent: env.CONTEXT_RECENT_MESSAGES
-  });
-  const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
   const voiceService = new VoiceService({
     messages: repos.messages,
     media: mediaStore,
@@ -263,6 +244,28 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     }
   });
   voiceService.dailyAutoCap = env.VOICE_DAILY_AUTO_CAP;
+
+  const proactive = new ProactiveComposer({
+    attempts: repos.proactive,
+    replyBatches: repos.replyBatches,
+    jobs: repos.jobs,
+    messages: repos.messages,
+    life,
+    capabilities,
+    config,
+    media: mediaStore,
+    stickers: stickerLibrary,
+    bus,
+    voice: voiceService
+  });
+  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, repos.mediaText, env.ENABLE_LIFE_ENGINE ? life : undefined, env.LIFE_TIME_ZONE);
+  const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
+    triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
+    chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
+    keepRecent: env.CONTEXT_RECENT_MESSAGES
+  });
+  const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
+
   const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED });
   const replyCoordinator = new ReplyCoordinator({
     messages: repos.messages,
