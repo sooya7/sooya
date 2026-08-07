@@ -211,12 +211,21 @@ export class Replier {
         const won = await options.beginPublish();
         if (!won) throw new StaleGenerationError('publish barrier lost');
         published = true;
-        const created = this.createShell(userMessages, latestUserMessage, batchId);
+        // The shell and its first events commit in ONE transaction: if the
+        // events cannot be persisted, the shell rolls back with them, so a
+        // crash/event failure can never leave a half-created bubble.
+        const created = this.stableBoundary(
+          () => this.createShell(userMessages, latestUserMessage, batchId),
+          'reply.publishing.started',
+          (message) => ({ batchId, revision, messageId: message.id }),
+          (message) =>
+            visibleText
+              ? [{ type: 'reply.text.delta', payload: { messageId: message.id, delta: visibleText } }]
+              : []
+        );
         shell = created;
-        this.deps.bus.publish('reply.publishing.started', { batchId, revision, messageId: created.id });
         if (visibleText) {
           textPartId = this.deps.messages.appendPart(created.id, { type: 'text', text: visibleText, status: 'pending' });
-          this.deps.bus.publish('reply.text.delta', { messageId: created.id, delta: visibleText });
         }
         return created;
       };

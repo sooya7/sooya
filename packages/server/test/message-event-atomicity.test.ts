@@ -139,60 +139,64 @@ describe('message and durable event atomicity', () => {
     unsubscribe();
   });
 
-  it('rolls back the assistant shell when reply.thinking cannot be persisted', async () => {
-    const user = harness.app.repos.messages.create({
-      role: 'user',
-      status: 'sent',
-      parts: [{ type: 'text', text: 'hello', status: 'sent' }]
-    }).message;
-    abortEventType(harness, 'reply.thinking');
+  it('rolls back the assistant shell when reply.publishing.started cannot be persisted', async () => {
+    // The shell and its first events commit in one transaction (the publish
+    // barrier), so an event persistence failure rolls the shell back.
+    abortEventType(harness, 'reply.publishing.started');
     const live: StreamEvent[] = [];
     const unsubscribe = harness.app.services.bus.subscribe((event) => live.push(event));
 
-    await expect(harness.app.services.replier.reply(user, { recentMessages: 10, memoryLimit: 10 })).rejects.toThrow(
-      'injected event failure'
-    );
+    const response = await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/messages/sync',
+      payload: sendPayload('pub_event_failure')
+    });
     unsubscribe();
 
+    // The publication failed outright, so the sync call surfaces the failure.
+    expect(response.statusCode).toBe(500);
     expect(harness.app.repos.messages.recent(100).filter((message) => message.role === 'assistant')).toHaveLength(0);
-    expect(harness.app.services.bus.replay(0).filter((event) => event.type === 'reply.thinking')).toHaveLength(0);
-    expect(live.filter((event) => event.type === 'reply.thinking')).toHaveLength(0);
+    expect(harness.app.services.bus.replay(0).filter((event) => event.type === 'reply.publishing.started')).toHaveLength(0);
+    expect(live.filter((event) => event.type === 'reply.publishing.started')).toHaveLength(0);
   });
 
-  it('never commits a sent assistant state without reply.completed', async () => {
-    const user = harness.app.repos.messages.create({
-      role: 'user',
-      status: 'sent',
-      parts: [{ type: 'text', text: 'complete this', status: 'sent' }]
-    }).message;
+  it('published content stays visible when reply.completed cannot be persisted', async () => {
+    // The completion event commits atomically with the batch completion; on
+    // persistence failure the reply falls back to the partial path — visible
+    // content is never silently revoked (B2).
     abortEventType(harness, 'reply.completed');
 
-    const outcome = await harness.app.services.replier.reply(user, { recentMessages: 10, memoryLimit: 10 });
-    const stored = harness.app.repos.messages.get(outcome.messageId)!;
+    const response = await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/messages/sync',
+      payload: sendPayload('completed_event_failure')
+    });
+    const body = response.json() as { reply: { status: string } | null; outcome: { ok: boolean } };
     const completed = harness.app.services.bus.replay(0).filter((event) => event.type === 'reply.completed');
 
     expect(completed).toHaveLength(0);
-    expect(stored.status).not.toBe('sent');
+    expect(body.outcome.ok).toBe(true);
+    expect(body.reply?.status).toBe('sent');
+    const user = harness.app.repos.messages.recent(100).find((m) => m.role === 'user')!;
+    const batch = harness.app.repos.replyBatches.findByMessage(user.id)!;
+    expect(JSON.parse(batch.meta_json) as { partial?: number }).toMatchObject({ partial: 1 });
   });
 
-  it('rolls back failed status and content when reply.failed cannot be persisted', async () => {
-    const user = harness.app.repos.messages.create({
-      role: 'user',
-      status: 'sent',
-      parts: [{ type: 'text', text: 'fail this', status: 'sent' }]
-    }).message;
+  it('fails the batch and resolves the caller when reply.failed cannot be persisted', async () => {
     vi.spyOn(harness.app.services.context, 'build').mockRejectedValueOnce(new Error('private context failure'));
     abortEventType(harness, 'reply.failed');
 
-    await expect(harness.app.services.replier.reply(user, { recentMessages: 10, memoryLimit: 10 })).rejects.toThrow(
-      'injected event failure'
-    );
-    const assistant = harness.app.repos.messages.recent(100).find((message) => message.role === 'assistant')!;
+    const response = await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/messages/sync',
+      payload: sendPayload('failed_event_failure')
+    });
 
-    expect(assistant.status).toBe('sending');
-    expect(assistant.error).toBeNull();
-    expect(assistant.content).toHaveLength(0);
-    expect(assistant.meta.failure).toBeUndefined();
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { outcome: { ok: boolean } };
+    expect(body.outcome.ok).toBe(false);
+    // A hidden failure never creates an assistant message.
+    expect(harness.app.repos.messages.recent(100).filter((message) => message.role === 'assistant')).toHaveLength(0);
     expect(harness.app.services.bus.replay(0).filter((event) => event.type === 'reply.failed')).toHaveLength(0);
   });
 
@@ -201,16 +205,19 @@ describe('message and durable event atomicity', () => {
     { terminal: 'reply.failed' as const, chatError: new Error('private provider failure') }
   ])('$terminal carries the complete authoritative current message', async ({ terminal, chatError }) => {
     if (chatError) vi.spyOn(harness.app.services.context, 'build').mockRejectedValueOnce(chatError);
-    const user = harness.app.repos.messages.create({
-      role: 'user',
-      status: 'sent',
-      parts: [{ type: 'text', text: 'authoritative payload', status: 'sent' }]
-    }).message;
-
-    const outcome = await harness.app.services.replier.reply(user, { recentMessages: 10, memoryLimit: 10 });
+    const response = await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/messages/sync',
+      payload: sendPayload('authoritative-payload')
+    });
+    const outcome = (response.json() as { outcome: { messageId: string; ok: boolean } }).outcome;
     const event = harness.app.services.bus.replay(0).find((candidate) => candidate.type === terminal)!;
 
     expect(event).toBeDefined();
-    expect(event.payload.message).toEqual(harness.app.repos.messages.get(outcome.messageId));
+    // A completed reply carries the authoritative message; a hidden failure
+    // has no message (null) but the structured failure object.
+    expect(event.payload.message ?? null).toEqual(
+      outcome.ok ? harness.app.repos.messages.get(outcome.messageId) : null
+    );
   });
 });

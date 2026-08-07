@@ -347,7 +347,6 @@ export class VoiceService {
         });
         throw err;
       }
-      console.error('PROBE synthesis err:', (err as Error)?.name, (err as Error)?.message, 'combined.aborted=', combined.signal.aborted, 'signal.aborted=', signal.aborted);
       return this.handleSynthesisFailure(generation.id, mode, args, spokenText, maxChars, err, degraded);
     } finally {
       this.active.delete(generation.id);

@@ -94,7 +94,7 @@ describe('ReplyCoordinator — debounce & collection', () => {
       messages: { get: vi.fn(() => user), findAssistantByBatchId: vi.fn() } as never,
       batches,
       replier: stubReplier({ generateText }),
-      bus: { publish: vi.fn() } as never,
+      bus: { publish: vi.fn(), persist: vi.fn(() => ({ type: 'reply.completed' })), fanout: vi.fn() } as never,
       initialDebounceMs: 200,
       onCompleted: vi.fn()
     });
@@ -127,7 +127,7 @@ describe('ReplyCoordinator — debounce & collection', () => {
       messages: { get: vi.fn(() => user), findAssistantByBatchId: vi.fn() } as never,
       batches,
       replier: stubReplier({ generateText }),
-      bus: { publish: vi.fn() } as never,
+      bus: { publish: vi.fn(), persist: vi.fn(() => ({ type: 'reply.completed' })), fanout: vi.fn() } as never,
       initialDebounceMs: 200,
       maxCollectionMs: 4000,
       onCompleted: vi.fn()
@@ -281,12 +281,16 @@ describe('ReplyCoordinator — timeout retry (B1)', () => {
     const publish = vi.fn((type: string, payload: unknown) => {
       if (type === 'reply.failed') failedEvents.push(payload);
     });
+    const persist = vi.fn((type: string, payload: unknown) => {
+      if (type === 'reply.failed') failedEvents.push(payload);
+      return { type, payload };
+    });
     const generateText = vi.fn(async () => { throw new HttpTimeoutError('always times out'); });
     coordinator = new ReplyCoordinator({
       messages: app.repos.messages,
       batches: app.repos.replyBatches,
       replier: stubReplier({ generateText }),
-      bus: { publish } as never,
+      bus: { publish, persist, fanout: vi.fn() } as never,
       timeoutRetries: 1,
       retryBaseDelayMs: 20,
       onCompleted: vi.fn()
@@ -323,11 +327,12 @@ describe('ReplyCoordinator — partial publication (B2)', () => {
     const publish = vi.fn((type: string, payload: unknown) => {
       if (type === 'reply.publishing.partial') partialEvents.push(payload);
     });
+    const persist = vi.fn((type: string, payload: unknown) => ({ type, payload }));
     coordinator = new ReplyCoordinator({
       messages: app.repos.messages,
       batches: app.repos.replyBatches,
       replier: stubReplier({ generateText }),
-      bus: { publish } as never,
+      bus: { publish, persist, fanout: vi.fn() } as never,
       timeoutRetries: 1,
       onCompleted: vi.fn()
     });

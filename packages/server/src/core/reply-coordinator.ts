@@ -1,5 +1,6 @@
 import type { EventBus } from '../events/bus.js';
 import type { MessageRepo } from '../db/repos/message.repo.js';
+import type { DbLike } from '../db/handle.js';
 import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { ReplyBatchRepo, ReplyBatchRow, AppendAction } from '../db/repos/reply-batch.repo.js';
 import type { ChatMessage, ReplyFailure } from './types.js';
@@ -31,6 +32,8 @@ export interface ReplyCoordinatorOptions {
   batches: ReplyBatchRepo;
   replier: Replier;
   bus: EventBus;
+  /** Optional: completes the batch and persists reply.completed atomically. */
+  db?: DbLike;
   errorLog?: ErrorLogRepo;
   onCompleted?: (
     batchId: string,
@@ -352,12 +355,39 @@ export class ReplyCoordinator {
         return;
       }
       const partial = generated.interrupted !== undefined;
-      if (!this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner, partial)) {
+      const completedPayload = {
+        batchId,
+        revision,
+        messageId: outcome.messageId,
+        message: this.deps.messages.get(outcome.messageId),
+        partial,
+        degraded: outcome.degraded
+      };
+      let completedEvent: ReturnType<EventBus['persist']> | null = null;
+      if (this.deps.db) {
+        try {
+          completedEvent = this.deps.db.transaction(() => {
+            if (!this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner, partial)) return null;
+            return this.deps.bus.persist('reply.completed', completedPayload);
+          })();
+        } catch (error) {
+          // Published content is never silently revoked: route through the
+          // failure path, which keeps the message and completes the batch as
+          // partial so waiters still resolve.
+          throw new Error(`reply.completed persistence failed: ${(error as Error).message}`);
+        }
+      } else {
+        completedEvent = this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner, partial)
+          ? this.deps.bus.persist('reply.completed', completedPayload)
+          : null;
+      }
+      if (!completedEvent) {
         this.deps.bus.publish('reply.superseded', { batchId, revision });
         for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError('batch completed by competing worker'));
         this.runtime.delete(batchId);
         return;
       }
+      this.deps.bus.fanout(completedEvent);
       try {
         await this.deps.onCompleted?.(batchId, userMessages, outcome, this.owner, revision);
       } catch (error) {
@@ -371,14 +401,6 @@ export class ReplyCoordinator {
           message: (error as Error).message ?? String(error)
         });
       }
-      this.deps.bus.publish('reply.completed', {
-        batchId,
-        revision,
-        messageId: outcome.messageId,
-        message: this.deps.messages.get(outcome.messageId),
-        partial,
-        degraded: outcome.degraded
-      });
       for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
       this.runtime.delete(batchId);
     } catch (error) {
@@ -489,8 +511,11 @@ export class ReplyCoordinator {
         this.runtime.delete(batchId);
         return;
       }
-      // Fence lost (e.g. the user retried): a competing worker owns the batch.
-      for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError('batch owned by competing worker'));
+      // No shell (its transaction rolled back) or the fence moved on: never
+      // leave the batch half-open in 'publishing' — fail it and reject the
+      // callers.
+      this.deps.batches.fail(batchId, revision, failure.code, failure.message, this.owner);
+      for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError('published shell lost or fence moved'));
       this.runtime.delete(batchId);
       return;
     }
@@ -518,7 +543,18 @@ export class ReplyCoordinator {
   }
 
   private publishFailure(batchId: string, revision: number, failure: ReplyFailure): void {
-    this.deps.bus.publish('reply.failed', { batchId, revision, failure });
+    try {
+      // Best-effort: the batch state and the outcome carry the failure even if
+      // the event cannot be persisted. Published shells attach their message.
+      const shell = this.deps.messages.findAssistantByBatchId(batchId);
+      const event = this.deps.bus.persist('reply.failed', {
+        batchId,
+        revision,
+        failure,
+        message: shell ? this.deps.messages.get(shell.id) : null
+      });
+      this.deps.bus.fanout(event);
+    } catch { /* never let event persistence take down the failure handling */ }
   }
 
   private interruptGeneration(batchId: string, reason: 'new_user_message' | 'shutdown'): void {

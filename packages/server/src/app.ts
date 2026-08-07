@@ -272,6 +272,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     batches: repos.replyBatches,
     replier,
     bus,
+    db: dbHandle,
     initialDebounceMs: opts.replyDebounceMs ?? env.REPLY_INITIAL_DEBOUNCE_MS,
     interruptDebounceMs: env.REPLY_INTERRUPT_DEBOUNCE_MS,
     maxCollectionMs: env.REPLY_MAX_COLLECTION_MS,
