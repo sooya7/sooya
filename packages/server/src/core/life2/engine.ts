@@ -117,7 +117,9 @@ export class LifeSimEngine {
     /** Optional next-phase location service (LOCATION_MODEL_ENABLED). */
     private readonly location?: import('../location/service.js').LocationService,
     /** Optional next-phase weather service (WEATHER_ENABLED). */
-    private readonly weather?: import('../weather/service.js').WeatherService
+    private readonly weather?: import('../weather/service.js').WeatherService,
+    /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
+    private readonly metrics?: import('../metrics.js').MetricsService
   ) {
     this.resolve = typeof config === 'function' ? config : () => config;
     this.vitals = new LifeVitalsEngine(v2, clock, repo);
@@ -191,6 +193,7 @@ export class LifeSimEngine {
         priority: 0.6,
         meta: { activityId: id, dayThemeId: theme.id, optional: true }
       });
+      this.metrics?.record('life', 'plan_create');
     }
   }
 
@@ -371,6 +374,7 @@ export class LifeSimEngine {
     for (const def of ACTIVITY_LIBRARY) {
       if (def.kind === 'sleep' || def.kind === 'wake') continue;
       const score = scoreActivity(def, ctx, nowIso);
+      this.metrics?.record('life', 'activity_score');
       if (score > bestScore) {
         bestScore = score;
         best = def;
@@ -410,6 +414,7 @@ export class LifeSimEngine {
         status: 'completed',
         meta: { outcomeId: event.id, outcome: outcomeTag, completedAt: this.clock().toISOString() }
       });
+      this.metrics?.record('life', 'plan_complete');
     }
     if (def) {
       this.v2.recordUsage({ activityId: def.id, tags: def.tags, outcomeTags: [outcomeTag], usedAt: this.clock().toISOString() });
@@ -426,6 +431,7 @@ export class LifeSimEngine {
             status: thread.progress >= 0.85 ? 'resolved' : thread.status,
             nextActions: JSON.parse(thread.next_actions_json)
           });
+          if (thread.progress >= 0.85) this.metrics?.record('life', 'thread_resolve');
         }
       }
       // E4: an outcome with follow-up hooks opens a thread ("做完这件事，接着…").
@@ -578,6 +584,7 @@ export class LifeSimEngine {
       nextActions: target.titleTemplates.slice(0, 3),
       meta: { relatedActivityIds: [target.id], source: 'activity_outcome' }
     });
+    this.metrics?.record('life', 'thread_create');
   }
 
   /** E4: a conversation suggestion opens a thread too (bounded). */
@@ -593,6 +600,7 @@ export class LifeSimEngine {
       nextActions: activityId ? (defById(activityId)?.titleTemplates.slice(0, 3) ?? []) : ['找个合适的时间去做'],
       meta: { relatedActivityIds: activityId ? [activityId] : [], source: 'conversation', sourceMessageId: messageId }
     });
+    this.metrics?.record('life', 'thread_create');
   }
 
   /** E4: seed a couple of persona-flavoured interest threads once (bounded). */
@@ -617,6 +625,7 @@ export class LifeSimEngine {
         nextActions: def.titleTemplates.slice(0, 3),
         meta: { relatedActivityIds: [def.id], source: 'persona_seed' }
       });
+      this.metrics?.record('life', 'thread_create');
     }
   }
 
@@ -628,6 +637,7 @@ export class LifeSimEngine {
       const startMs = Date.parse(plan.planned_start);
       if (at - startMs > 75 * 60_000) {
         this.repo.updatePlan(plan.id, { status: 'skipped', meta: { skippedAt: new Date(at).toISOString() } });
+        this.metrics?.record('life', 'plan_skip');
       }
     }
   }

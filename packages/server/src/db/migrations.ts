@@ -1003,6 +1003,28 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX idx_weather_snapshots_key ON weather_snapshots(location_key, observed_at DESC);
       `);
     }
+  },
+  {
+    version: 21,
+    name: 'metric_daily',
+    up: (db) => {
+      /*
+       * Privacy-safe daily metrics (next phase): only (date, category,
+       * metric, sums/counts) — never message text, prompts or addresses.
+       * Aggregated daily; no external time-series database.
+       */
+      db.exec(`
+        CREATE TABLE metric_daily (
+          date         TEXT NOT NULL,
+          category     TEXT NOT NULL,
+          metric       TEXT NOT NULL,
+          sum_value    REAL NOT NULL DEFAULT 0,
+          count        INTEGER NOT NULL DEFAULT 0,
+          last_updated TEXT NOT NULL,
+          PRIMARY KEY (date, category, metric)
+        );
+      `);
+    }
   }
 ];
 

@@ -58,6 +58,8 @@ export interface ReplyCoordinatorOptions {
   /** Optional: completes the batch and persists reply.completed atomically. */
   db?: DbLike;
   errorLog?: ErrorLogRepo;
+  /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
+  metrics?: import('./metrics.js').MetricsService;
   onCompleted?: (
     batchId: string,
     userMessages: ChatMessage[],
@@ -401,6 +403,7 @@ export class ReplyCoordinator {
       status: 'started',
       startedAt: new Date(startedAt).toISOString()
     });
+    this.deps.metrics?.record('reply', 'start');
 
     const runtime = this.runtime.get(batchId);
     const options = runtime?.options ?? { recentMessages: 24, memoryLimit: 8 };
@@ -457,6 +460,10 @@ export class ReplyCoordinator {
         firstTokenMs: generated.firstTokenAt !== null ? generated.firstTokenAt - startedAt : null,
         visibleMs: active.published ? Math.max(0, Date.now() - startedAt) : null
       });
+      this.deps.metrics?.record('reply', 'success');
+      this.deps.metrics?.record('reply', 'latency_ms', Date.now() - startedAt);
+      if (generated.firstTokenAt !== null) this.deps.metrics?.record('reply', 'first_visible_ms', generated.firstTokenAt - startedAt);
+      if (generated.interrupted !== undefined) this.deps.metrics?.record('reply', 'partial');
 
       if (!outcome.ok) {
         this.deps.batches.fail(batchId, revision, outcome.error?.code ?? 'internal_error', outcome.error?.message ?? 'reply failed', this.owner);
@@ -537,6 +544,7 @@ export class ReplyCoordinator {
         startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
         interruptionReason: (error as Error).name, durationMs: Date.now() - startedAt
       });
+      this.deps.metrics?.record('reply', (error as Error).name === 'UserInterruptedError' ? 'interrupt' : 'superseded');
       if (batch && batch.revision === revision && batch.status === 'generating') {
         this.deps.batches.requeue(batchId, revision, 'interrupted', this.owner);
         if (!this.stopped) {
@@ -568,6 +576,7 @@ export class ReplyCoordinator {
         startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
         errorCode: 'model_timeout', durationMs: Date.now() - startedAt
       });
+      this.deps.metrics?.record('reply', 'auto_retry');
       this.deps.bus.publish('reply.generation.retrying', { batchId, revision, attempt: active.attempt + 1 });
       // The active generation entry was already removed by the catch in
       // startGeneration, so the backoff gets its own cancellable controller:
@@ -603,6 +612,7 @@ export class ReplyCoordinator {
       startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
       errorCode: failure.code, durationMs: Date.now() - startedAt
     });
+    this.deps.metrics?.record('reply', `failure_${failure.code}`);
     if (active.published) {
       // Published content stays: complete the batch as partial (fenced on
       // publishing) instead of failing it, and record the provider error only

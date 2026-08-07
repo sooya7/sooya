@@ -36,6 +36,8 @@ import { LocationService } from './core/location/service.js';
 import { WeatherRepo } from './db/repos/weather.repo.js';
 import { WeatherService } from './core/weather/service.js';
 import { WorldContextService } from './core/world-context.js';
+import { MetricsRepo } from './db/repos/metrics.repo.js';
+import { MetricsService } from './core/metrics.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
@@ -101,6 +103,7 @@ export interface SooyaApp {
     lifeV2: LifeV2Repo;
     locations: LifeLocationRepo;
     weather: WeatherRepo;
+    metrics: MetricsRepo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
     replyBatches: ReplyBatchRepo;
@@ -116,6 +119,7 @@ export interface SooyaApp {
     location: LocationService;
     weather: WeatherService;
     world: WorldContextService;
+    metrics: MetricsService;
     voice: VoiceService;
     push: PushService;
     storage: StorageService;
@@ -198,6 +202,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     lifeV2: new LifeV2Repo(dbHandle),
     locations: new LifeLocationRepo(dbHandle),
     weather: new WeatherRepo(dbHandle),
+    metrics: new MetricsRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle),
     replyBatches: new ReplyBatchRepo(dbHandle)
@@ -241,8 +246,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
   weather.setEnabled(env.WORLD_CONTEXT_ENABLED && env.WEATHER_ENABLED);
   const world = new WorldContextService(location, weather, opts.clock, env.LIFE_TIME_ZONE);
+  const metrics = new MetricsService(repos.metrics, opts.clock);
+  metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
   const life = env.ENABLE_LIFE_V2
-    ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather)
+    ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
   const voiceService = new VoiceService({
     messages: repos.messages,
@@ -261,7 +268,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       autoComplement: env.VOICE_AUTO_COMPLEMENT_ENABLED,
       readAloud: env.VOICE_READ_ALOUD_ENABLED,
       ttsRetries: env.VOICE_TTS_RETRIES
-    }
+    },
+    metrics
   });
   voiceService.dailyAutoCap = env.VOICE_DAILY_AUTO_CAP;
 
@@ -289,6 +297,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     retryBaseDelayMs: env.CHAT_RETRY_BASE_DELAY_MS,
     interruptible: env.REPLY_INTERRUPTIBLE_GENERATION,
     errorLog: repos.errors,
+    metrics,
     onCompleted: (batchId, userMessages, outcome, owner, revision) => {
       // The batch is already marked completed by the coordinator (revision-
       // fenced); this hook only enqueues the downstream jobs atomically.
@@ -324,7 +333,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     stickers: stickerLibrary,
     bus,
     voice: voiceService,
-    coordinator: replyCoordinator
+    coordinator: replyCoordinator,
+    metrics
   });
   const backups = new BackupService({
     db: () => dbHandle,
@@ -477,7 +487,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, location, weather, world, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, location, weather, world, metrics, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     recurringTimers: [],

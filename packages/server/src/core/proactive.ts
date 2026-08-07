@@ -69,6 +69,8 @@ export class ProactiveComposer {
       voice?: import('./voice/service.js').VoiceService | null;
       /** P0-1: proactive deliveries are scheduled by the reply coordinator. */
       coordinator: ReplyCoordinator;
+      /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
+      metrics?: import('./metrics.js').MetricsService;
     }
   ) {}
 
@@ -254,6 +256,7 @@ export class ProactiveComposer {
 
     const result = await this.deps.coordinator.enqueueProactive(task);
     if (result.status === 'sent') {
+      this.deps.metrics?.record('proactive', 'sent');
       return {
         status: 'sent',
         blockedReason: null,
@@ -265,7 +268,12 @@ export class ProactiveComposer {
         sendSuccess: true
       };
     }
-    this.deps.attempts.update(attempt.id, { status: result.status === 'failed' ? 'failed' : 'blocked', blockedReason: result.blockedReason ?? result.status });
+    const blockedReason = result.blockedReason ?? result.status;
+    this.deps.metrics?.record('proactive', blockedReason === 'user_appeared' ? 'user_appeared_cancel'
+      : blockedReason === 'reply_in_progress' ? 'reply_conflict'
+      : blockedReason === 'candidate_already_sent' || blockedReason === 'candidate_already_queued' ? 'duplicate'
+      : result.status === 'failed' ? 'failed' : 'blocked');
+    this.deps.attempts.update(attempt.id, { status: result.status === 'failed' ? 'failed' : 'blocked', blockedReason });
     return {
       status: result.status === 'failed' ? 'failed' : 'blocked',
       blockedReason: result.blockedReason ?? result.status,
