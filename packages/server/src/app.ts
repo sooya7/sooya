@@ -38,6 +38,8 @@ import { WeatherService } from './core/weather/service.js';
 import { WorldContextService } from './core/world-context.js';
 import { MetricsRepo } from './db/repos/metrics.repo.js';
 import { MetricsService } from './core/metrics.js';
+import { ShadowRepo } from './db/repos/shadow.repo.js';
+import { ShadowService } from './core/shadow.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
@@ -104,6 +106,7 @@ export interface SooyaApp {
     locations: LifeLocationRepo;
     weather: WeatherRepo;
     metrics: MetricsRepo;
+    shadow: ShadowRepo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
     replyBatches: ReplyBatchRepo;
@@ -120,6 +123,7 @@ export interface SooyaApp {
     weather: WeatherService;
     world: WorldContextService;
     metrics: MetricsService;
+    shadow: ShadowService;
     voice: VoiceService;
     push: PushService;
     storage: StorageService;
@@ -203,6 +207,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     locations: new LifeLocationRepo(dbHandle),
     weather: new WeatherRepo(dbHandle),
     metrics: new MetricsRepo(dbHandle),
+    shadow: new ShadowRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle),
     replyBatches: new ReplyBatchRepo(dbHandle)
@@ -238,10 +243,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       proactiveMode: policy.proactiveMode ?? DEFAULT_LIFE_CONFIG.proactiveMode
     };
   };
+  const shadow = new ShadowService(repos.shadow);
+  shadow.setEnabled(env.SHADOW_MODE_ENABLED);
   const location = new LocationService(repos.locations, repos.audit, opts.clock, (loc) => {
     if (!loc) return null;
     return weather.cachedCondition({ key: loc.id, city: loc.city, region: loc.region, lat: loc.lat, lng: loc.lng });
-  });
+  }, shadow);
   location.setEnabled(env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED);
   const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
   weather.setEnabled(env.WORLD_CONTEXT_ENABLED && env.WEATHER_ENABLED);
@@ -249,7 +256,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const metrics = new MetricsService(repos.metrics, opts.clock);
   metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
   const life = env.ENABLE_LIFE_V2
-    ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics)
+    ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics, shadow)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
   const voiceService = new VoiceService({
     messages: repos.messages,
@@ -487,7 +494,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, location, weather, world, metrics, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, location, weather, world, metrics, shadow, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     recurringTimers: [],

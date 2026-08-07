@@ -119,7 +119,9 @@ export class LifeSimEngine {
     /** Optional next-phase weather service (WEATHER_ENABLED). */
     private readonly weather?: import('../weather/service.js').WeatherService,
     /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
-    private readonly metrics?: import('../metrics.js').MetricsService
+    private readonly metrics?: import('../metrics.js').MetricsService,
+    /** Next-phase shadow runtime (SHADOW_MODE_ENABLED). */
+    private readonly shadow?: import('../shadow.js').ShadowService,
   ) {
     this.resolve = typeof config === 'function' ? config : () => config;
     this.vitals = new LifeVitalsEngine(v2, clock, repo);
@@ -379,6 +381,37 @@ export class LifeSimEngine {
         bestScore = score;
         best = def;
       }
+    }
+    // Shadow candidate: recompute with a stronger continuity weight and a
+    // tighter anti-repeat window. Purely computed — the shadow never writes.
+    if (this.shadow?.isEnabled) {
+      this.shadow.run({
+        subsystem: 'life.activity_selector',
+        canonicalVersion: 'canonical',
+        shadowVersion: 'cont1.5-tight48',
+        input: {
+          hour: parts.hour,
+          dayIndex: parts.dayIndex,
+          themeTags,
+          threadCount: threadFitIds.size,
+          continuityCount: continuityFrom.length,
+          weatherCondition
+        },
+        canonicalDecision: best ? { best: best.id, score: bestScore } : null,
+        runShadow: () => {
+          let shadowBest: string | null = null;
+          let shadowScore = -Infinity;
+          for (const def of ACTIVITY_LIBRARY) {
+            if (def.kind === 'sleep' || def.kind === 'wake') continue;
+            const score = scoreActivity(def, { ...ctx, continuityWeight: 1.5, antiRepeatTiers: [48, 96, 168] }, nowIso);
+            if (score > shadowScore) {
+              shadowScore = score;
+              shadowBest = def.id;
+            }
+          }
+          return { best: shadowBest, score: shadowScore };
+        }
+      });
     }
     return best?.id ?? null;
   }

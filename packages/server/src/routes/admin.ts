@@ -628,4 +628,13 @@ export function registerAdminRoutes(app: SooyaApp): void {
     repos.audit.add('backup', 'deleted', name);
     return { deleted: true };
   });
+
+  // ---------------------------------------------------------------------------
+  // Shadow mode + single-user experiments (SHADOW_MODE_ENABLED / EXPERIMENTS_ENABLED).
+  // Shadow runs are read-only by construction; experiments gate variant use.
+  // ---------------------------------------------------------------------------
+  server.get('/api/admin/shadow-runs', guard, async (req) => {
+    const { subsystem, limit } = req.query as { subsystem?: string; limit?: string };
+    return { runs: services.shadow.list(subsystem, Math.max(1, Math.min(500, Number(limit ?? 100)))) };
+  });
 }

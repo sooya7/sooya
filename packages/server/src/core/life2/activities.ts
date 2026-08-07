@@ -93,6 +93,10 @@ export interface ScoreContext {
   weatherCondition?: string | null;
   /** Next phase: very hot (>=33C) suppresses midday outdoor activities. */
   weatherHot?: boolean;
+  /** Experiment knob: continuity bonus multiplier (default 1). */
+  continuityWeight?: number;
+  /** Experiment knob: exact-repeat tiers in hours (default [24,72,168]). */
+  antiRepeatTiers?: [number, number, number];
 }
 
 /** Tags overlap penalty (§44.3) against the last few used activities. */
@@ -110,13 +114,13 @@ export function semanticRepeatPenalty(repo: LifeV2Repo, candidate: LifeActivityD
   return Math.round(maxOverlap * 30 * 100) / 100;
 }
 
-export function exactRepeatPenalty(repo: LifeV2Repo, candidate: LifeActivityDefinition, nowIso: string): number {
+export function exactRepeatPenalty(repo: LifeV2Repo, candidate: LifeActivityDefinition, nowIso: string, tiers: [number, number, number] = [24, 72, 168]): number {
   const usage = repo.getUsage(candidate.id);
   if (!usage?.last_used_at) return 0;
   const hours = (Date.parse(nowIso) - Date.parse(usage.last_used_at)) / 3_600_000;
-  if (hours < 24) return 60;
-  if (hours < 72) return 30;
-  if (hours < 168) return 10;
+  if (hours < tiers[0]) return 60;
+  if (hours < tiers[1]) return 30;
+  if (hours < tiers[2]) return 10;
   return 0;
 }
 
@@ -159,10 +163,12 @@ export function scoreActivity(def: LifeActivityDefinition, ctx: ScoreContext, no
 
   // Continuity bonus (§43.3 / E6): the previous activity's follow-up hooks
   // (买菜 → 做饭), its tags, its outcome tags, or an open thread's related
-  // activities all raise the score of the natural next step.
+  // activities all raise the score of the natural next step. The weight is an
+  // experiment knob (single-user A/B).
+  const continuityWeight = ctx.continuityWeight ?? 1;
   for (const prev of ctx.continuityFrom) {
     if (prev === def.id || def.followUpHooks.includes(prev) || def.tags.some((t) => t === prev)) {
-      score += 12;
+      score += 12 * continuityWeight;
       break;
     }
   }
@@ -173,8 +179,8 @@ export function scoreActivity(def: LifeActivityDefinition, ctx: ScoreContext, no
   // Thread fit
   if (ctx.threadFitIds.has(def.id)) score += 14;
 
-  // Anti-repeat
-  score -= exactRepeatPenalty(ctx.usage, def, nowIso);
+  // Anti-repeat (tiers are an experiment knob)
+  score -= exactRepeatPenalty(ctx.usage, def, nowIso, ctx.antiRepeatTiers);
   score -= semanticRepeatPenalty(ctx.usage, def);
 
   // Controlled randomness (§43.4): only breaks near-ties.

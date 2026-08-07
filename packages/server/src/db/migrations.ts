@@ -1025,7 +1025,33 @@ export const MIGRATIONS: Migration[] = [
         );
       `);
     }
-  }
+  },
+  {
+    version: 22,
+    name: 'shadow_runs',
+    up: (db) => {
+      /*
+       * Shadow mode (next phase P3): canonical keeps running, shadow only
+       * computes a candidate decision. Rows store anonymized fingerprints —
+       * never full private prompts or message text.
+       */
+      db.exec(`
+        CREATE TABLE shadow_runs (
+          id                  TEXT PRIMARY KEY,
+          subsystem           TEXT NOT NULL,
+          canonical_version   TEXT NOT NULL,
+          shadow_version      TEXT NOT NULL,
+          input_fingerprint   TEXT NOT NULL,
+          canonical_decision  TEXT NOT NULL,
+          shadow_decision     TEXT NOT NULL,
+          diff_json           TEXT NOT NULL DEFAULT '{}',
+          duration_ms         INTEGER NOT NULL DEFAULT 0,
+          created_at          TEXT NOT NULL
+        );
+        CREATE INDEX idx_shadow_runs_subsystem ON shadow_runs(subsystem, created_at DESC);
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

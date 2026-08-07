@@ -49,7 +49,9 @@ export class LocationService {
     private readonly audit: AuditRepo,
     private readonly clock: () => Date = () => new Date(),
     /** Optional next-phase weather condition getter (cached, never blocks). */
-    private readonly weatherConditionFor?: (location: LifeLocation | null) => string | null
+    private readonly weatherConditionFor?: (location: LifeLocation | null) => string | null,
+    /** Next-phase shadow runtime (SHADOW_MODE_ENABLED). */
+    private readonly shadow?: import('../shadow.js').ShadowService
   ) {}
 
   /** Flag wiring: LOCATION_MODEL_ENABLED (master WORLD_CONTEXT_ENABLED too). */
@@ -126,6 +128,7 @@ export class LocationService {
     if (!this.enabled) return null;
     const now = this.clock();
     const current = this.repo.currentState();
+    const weatherCondition = this.weatherConditionFor?.(this.current() ?? this.homeLocation()) ?? null;
     const selection = scoreLocationCandidates(
       this.repo.list(true),
       {
@@ -136,7 +139,7 @@ export class LocationService {
         repeatWindowHours: 24,
         threadTags: [],
         hour: now.getUTCHours() + 8 % 24, // local-hour approximation for selection
-        weatherCondition: this.weatherConditionFor?.(this.current() ?? this.homeLocation()) ?? null
+        weatherCondition
       },
       (from, to) => {
         const edge = this.repo.edge(from, to);
@@ -144,6 +147,43 @@ export class LocationService {
       },
       now.getTime()
     );
+    if (this.shadow?.isEnabled) {
+      // Shadow candidate: does dropping the weather modifiers change the pick?
+      // Purely computed — the shadow never writes state.
+      this.shadow.run({
+        subsystem: 'life.location_selector',
+        canonicalVersion: 'canonical',
+        shadowVersion: 'weather-off',
+        input: {
+          kind,
+          currentLocationId: current?.location_id ?? null,
+          recentVisitIds: this.repo.recentlyVisitedLocationIds(24),
+          weatherCondition
+        },
+        canonicalDecision: selection ? { locationId: selection.locationId, reason: selection.reason } : null,
+        runShadow: () => {
+          const w = scoreLocationCandidates(
+            this.repo.list(true),
+            {
+              def: def ?? null,
+              kind,
+              currentLocationId: current?.location_id ?? null,
+              recentVisitIds: this.repo.recentlyVisitedLocationIds(24),
+              repeatWindowHours: 24,
+              threadTags: [],
+              hour: now.getUTCHours() + 8 % 24,
+              weatherCondition: null
+            },
+            (from, to) => {
+              const edge = this.repo.edge(from, to);
+              return edge ? { travelMinutes: edge.travel_minutes, mode: edge.mode } : undefined;
+            },
+            now.getTime()
+          );
+          return w ? { locationId: w.locationId, reason: w.reason } : null;
+        }
+      });
+    }
     if (!selection) return null;
     if (current && current.location_id === selection.locationId) return selection;
 
