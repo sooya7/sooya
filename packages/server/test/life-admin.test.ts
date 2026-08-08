@@ -214,6 +214,32 @@ describe('Life Admin API (P1)', () => {
     expect(active[0]!.id).toBe(ningboId);
   });
 
+  it('serves the weather admin endpoints (status/forecast/refresh)', async () => {
+    harness = await createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', WEATHER_ENABLED: 'true', ADMIN_API_TOKEN: 'admin-test-token' }
+    });
+    const status = await harness.app.server.inject({ method: 'GET', url: '/api/admin/weather/status', headers: ADMIN });
+    expect(status.statusCode).toBe(200);
+    const body = status.json() as { enabled: boolean; provider: { name: string | null; configured: boolean }; lastSnapshot: unknown; location: unknown };
+    expect(typeof body.enabled).toBe('boolean');
+    expect(body.provider).toMatchObject({ configured: false });
+    // Weather identity is the active city (宁波).
+    expect(body.location).toMatchObject({ kind: 'home' });
+
+    const forecast = await harness.app.server.inject({ method: 'GET', url: '/api/admin/weather/forecast', headers: ADMIN });
+    expect(forecast.statusCode).toBe(200);
+
+    const refresh = await harness.app.server.inject({ method: 'POST', url: '/api/admin/weather/refresh', headers: ADMIN });
+    expect(refresh.statusCode).toBe(200);
+    expect((refresh.json() as { ok: boolean }).ok).toBe(true);
+
+    // Guarded: no token -> 401.
+    const unauthorized = await harness.app.server.inject({ method: 'GET', url: '/api/admin/weather/status' });
+    expect(unauthorized.statusCode).toBe(401);
+  });
+
   it('keeps the admin life endpoints behind the guard', async () => {
     harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { ADMIN_API_TOKEN: 'admin-test-token' } });
     const res = await harness.app.server.inject({ method: 'GET', url: '/api/admin/life/overview' });
