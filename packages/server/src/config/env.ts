@@ -122,7 +122,21 @@ const EnvSchema = z.object({
   VOICE_PREFERENCES_UI_ENABLED: boolish(false),
   METRICS_DASHBOARD_ENABLED: boolish(false),
   SHADOW_MODE_ENABLED: boolish(false),
-  EXPERIMENTS_ENABLED: boolish(false)
+  EXPERIMENTS_ENABLED: boolish(false),
+
+  /* Weather production provider (next phase): unconfigured -> no-op provider,
+     weather=unknown, life/chat unaffected. */
+  WEATHER_PROVIDER: z.string().default(''),
+  WEATHER_BASE_URL: z.string().default(''),
+  WEATHER_API_KEY: z.string().default(''),
+  WEATHER_TIMEOUT_MS: intish(5000),
+
+  /* Visible thoughts layer (next phase): safe public thought summaries +
+     admin decision traces. All off by default. */
+  VISIBLE_THOUGHTS_ENABLED: boolish(false),
+  VISIBLE_INNER_MONOLOGUE_ENABLED: boolish(false),
+  ADMIN_DECISION_TRACE_ENABLED: boolish(false),
+  VISIBLE_THOUGHTS_TIMEOUT_MS: intish(8000)
 });
 
 export type RawEnv = z.infer<typeof EnvSchema>;

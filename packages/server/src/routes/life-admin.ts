@@ -210,4 +210,40 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
     const limit = Math.max(1, Math.min(200, Number((req.query as { limit?: string }).limit ?? 50)));
     return { events: repos.life.events(limit) };
   });
+
+  // Cities / travel / geocoding (next phase final, v25).
+  server.get('/api/admin/life/cities', { preHandler: guard }, async () => ({ cities: app.services.location.listCities() }));
+  server.post('/api/admin/life/cities', { preHandler: guard }, async (req, reply) => {
+    const body = (req.body ?? {}) as { name?: string; region?: string; country?: string; timeZone?: string; active?: boolean };
+    if (!body.name || typeof body.name !== 'string') {
+      reply.code(400);
+      return { error: 'bad_request', message: 'name is required' };
+    }
+    const city = app.services.location.createCity({
+      name: body.name,
+      ...(body.region ? { region: body.region } : {}),
+      ...(body.country ? { country: body.country } : {}),
+      ...(body.timeZone ? { timeZone: body.timeZone } : {}),
+      ...(typeof body.active === 'boolean' ? { active: body.active } : {})
+    });
+    repos.audit.add('life.city', 'created', city.id, { name: city.name });
+    return { city };
+  });
+  server.patch('/api/admin/life/cities/:id', { preHandler: guard }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const body = (req.body ?? {}) as { name?: string; region?: string | null; country?: string | null; timeZone?: string; active?: boolean };
+    const city = app.services.location.updateCity(id, body);
+    if (!city) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    repos.audit.add('life.city', 'updated', id, { patch: body });
+    return { city };
+  });
+  server.get('/api/admin/life/travel', { preHandler: guard }, async () => ({ travel: app.services.location.currentTravel() }));
+  server.post('/api/admin/life/geocode/search', { preHandler: guard }, async (req) => {
+    const query = String((req.body as { query?: string } | undefined)?.query ?? '').trim();
+    if (!query) return { candidates: [] };
+    return { candidates: await app.services.location.geocodeSearch(query, 8) };
+  });
 }

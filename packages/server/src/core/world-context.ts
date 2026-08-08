@@ -1,34 +1,11 @@
 import type { LocationService } from './location/service.js';
 import type { WeatherService, WeatherLocation } from './weather/service.js';
 import type { WeatherSnapshot, WeatherCondition } from '../db/repos/weather.repo.js';
-import type { LifeLocation, LifeLocationRepo } from '../db/repos/location.repo.js';
+import type { LifeLocation, LifeLocationRepo, LifeCity } from '../db/repos/location.repo.js';
+import type { TravelState } from './location/travel.js';
 import { toLifeLocation } from '../db/repos/location.repo.js';
 import type { WeatherForecastSummary, DaylightSnapshot } from './weather/forecast.js';
 import { localDateOfIso } from '../util/time-zone.js';
-
-/**
- * PLACEHOLDER —— LifeCity / TravelState 类型归 Agent A 定义（contract §1.1，
- * v25 life_cities + travel_state）。本 worktree 尚无 Agent A 的模块，此处按
- * contract 冻结形状占位；Integration 合并时替换为：
- *   import type { LifeCity, TravelState } from '../db/repos/location.repo.js'
- * 并删除下面两个占位接口。
- */
-export interface LifeCity {
-  id: string;
-  name: string;
-  region?: string;
-  country?: string;
-  timeZone: string;   // IANA；唯一 active 城市上下文
-  active: boolean;
-}
-
-export interface TravelState {
-  fromLocationId: string;
-  toLocationId: string;
-  mode: 'walk' | 'bike' | 'transit' | 'car' | 'unknown';
-  startedAt: string;
-  expectedArriveAt: string;   // 禁止瞬移；到达后写 state + visit
-}
 
 /**
  * WorldContextService (next phase): the unified read surface for location +
@@ -73,7 +50,7 @@ export class WorldContextService {
   snapshot(): WorldSnapshot {
     const now = this.clock();
     const current = this.location.isEnabled ? this.location.current() : null;
-    const timeZone = current?.timeZone ?? this.defaultTimeZone;
+    const timeZone = this.location.timeZoneFor(current) ?? this.defaultTimeZone;
     const weatherLocation: WeatherLocation | null = current
       ? { key: current.id, city: current.city, region: current.region, lat: current.lat, lng: current.lng }
       : null;
@@ -92,10 +69,10 @@ export class WorldContextService {
       now: now.toISOString(),
       localDate: localDateOfIso(now.toISOString(), timeZone),
       timeZone,
-      city: null,             // Agent A/Integration 的 life_cities（v25）落地后接入
+      city: this.location.isEnabled ? this.location.activeCity() : null,
       location: current,
       previousLocation: current ? this.previousLocationFrom(current.id) : null,
-      travel: null,           // Agent A/Integration 的 travel_state（v25）落地后接入
+      travel: this.location.isEnabled ? this.location.currentTravel() : null,
       weather,
       forecast,
       daylight,
