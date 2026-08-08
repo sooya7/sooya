@@ -70,9 +70,9 @@ afterEach(async () => {
 });
 
 describe('ChatView 视图状态生命周期', () => {
-  it('active 从 true 变为 false 时保存卸载前的实际 scrollTop', async () => {
+  it('active 从 true 变为 false 时按锚点模型保存视图状态', async () => {
     const chat = chatController();
-    const viewStateRef: ChatViewStateRef = { current: { scrollTop: 0, stickToBottom: false } };
+    const viewStateRef: ChatViewStateRef = { current: { anchor: null, stickToBottom: false } };
     const render = (active: boolean) => active ? <ChatView chat={chat} viewStateRef={viewStateRef} /> : null;
 
     await act(async () => { root.render(render(true)); });
@@ -82,6 +82,7 @@ describe('ChatView 视图状态生命周期', () => {
 
     await act(async () => { root.render(render(false)); });
 
-    expect(viewStateRef.current).toEqual({ scrollTop: 321, stickToBottom: false });
+    // 虚拟列表 mock 无条目 → 没有可见消息可作锚点 → 退化为无锚点（顶部恢复）。
+    expect(viewStateRef.current).toEqual({ anchor: null, stickToBottom: false });
   });
 });
