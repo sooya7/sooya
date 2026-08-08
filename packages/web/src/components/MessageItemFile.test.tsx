@@ -10,7 +10,7 @@ vi.mock('../lib/authenticatedMedia.js', () => ({
   safeDownloadName: (name: string) => name,
   blobForMediaUrl: () => null
 }));
-vi.mock('../lib/api.js', () => ({ getToken: () => 'tok' }));
+vi.mock('../lib/api.js', () => ({ getToken: () => 'tok', api: { visibleThought: async () => ({ thought: null }) } }));
 
 import { MessageItem } from './MessageItem.js';
 import type { ChatMessage } from '../lib/types.js';

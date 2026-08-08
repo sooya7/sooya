@@ -31,9 +31,27 @@ export function clearAdminToken(): void {
   clearMediaCache('admin');
 }
 
+export type AdminFailureKind = 'unauthorized' | 'flag-disabled' | 'provider-unconfigured' | 'error';
+
+/**
+ * UI convention for backend "not ready" states (see INTEGRATION-NOTES-ui.md):
+ * HTTP 401/403 → unauthorized; a message mentioning an ENABLED flag or
+ * "未启用" → flag-disabled; a message mentioning provider config or "未配置" →
+ * provider-unconfigured; everything else is a plain error.
+ */
+export function adminFailureKind(error: unknown): AdminFailureKind {
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) return 'unauthorized';
+    const text = String(error.message ?? '');
+    if (/disabled|未启用|not enabled|ENABLED/i.test(text)) return 'flag-disabled';
+    if (/configured|未配置|no provider|provider/i.test(text)) return 'provider-unconfigured';
+  }
+  return 'error';
+}
+
 async function adminRequest<T>(
   path: string,
-  options: { method?: string; body?: unknown; headers?: HeadersInit } = {}
+  options: { method?: string; body?: unknown; headers?: HeadersInit; signal?: AbortSignal } = {}
 ): Promise<T> {
   const headers = new Headers(options.headers);
   const token = getAdminToken();
@@ -47,7 +65,7 @@ async function adminRequest<T>(
     body = JSON.stringify(options.body);
   }
 
-  const res = await fetch(path, { method: options.method ?? 'GET', headers, body });
+  const res = await fetch(path, { method: options.method ?? 'GET', headers, body, signal: options.signal });
   const text = await res.text();
   let responseBody: unknown = null;
   if (text) {
@@ -194,6 +212,107 @@ export interface AdminJob {
   updated_at: string;
 }
 
+export interface AdminLifePlan { id: string; title: string; kind: string; status: string; source: string; priority: number; planned_start: string | null; planned_end: string | null; meta_json: string; }
+export interface AdminLifeThread { id: string; title: string; category: string; status: string; progress: number; heat: number; next_actions_json: string; meta_json: string; }
+export interface AdminLifeVitals { energy: number; hunger: number; stress: number; social_need: number; loneliness: number; curiosity: number; comfort: number; focus: number; sleep_debt: number; }
+export interface AdminLifeOverview {
+  snapshot: { activity: string; kind: string; mood: string; theme?: string; vitals?: string[] };
+  location: { id: string; name: string; kind: string } | null;
+  weather: string | null;
+  vitals: AdminLifeVitals | null;
+  activePlan: { id: string; title: string; kind: string; status: string } | null;
+  openThreads: Array<{ id: string; title: string; progress: number }>;
+  recentEvents: Array<{ id: string; eventType: string; description: string; happenedAt: string }>;
+}
+export interface AdminLifeLocation { id: string; name: string; kind: string; tags: string[]; indoor: boolean; visitWeight: number; source: string; active: boolean; }
+export interface AdminProactiveAttempt { id: string; candidateId: string | null; status: string; blockedReason: string | null; messageId: string | null; requestedMode: string | null; createdAt: string; }
+
+/* ---- Next phase (frozen contract §1/§2): life cities, travel, weather, ---- */
+
+export type TravelMode = 'walk' | 'bike' | 'transit' | 'car' | 'unknown';
+
+export interface LifeCity {
+  id: string;
+  name: string;
+  region?: string | null;
+  country?: string | null;
+  timeZone: string;
+  active: boolean;
+}
+
+export interface TravelState {
+  fromLocationId: string;
+  toLocationId: string;
+  mode: TravelMode;
+  startedAt: string;
+  expectedArriveAt: string;
+}
+
+export type WeatherCondition = 'clear' | 'partly_cloudy' | 'cloudy' | 'rain' | 'drizzle' | 'snow' | 'storm' | 'fog' | 'haze' | 'extreme_heat' | 'extreme_cold' | 'unknown';
+
+export interface WeatherSnapshot {
+  observedAt: string;
+  condition: WeatherCondition;
+  temperatureC?: number;
+  feelsLikeC?: number;
+  humidity?: number;
+  precipitationMm?: number;
+  windKph?: number;
+  provider: string;
+  locationKey: string;
+  stale: boolean;
+}
+
+export interface WeatherForecastPeriod {
+  at: string;
+  condition: WeatherCondition;
+  temperatureC?: number;
+  precipitationMm?: number;
+  windKph?: number;
+}
+
+export interface WeatherForecastSummary {
+  generatedAt: string;
+  provider: string;
+  next12h: WeatherForecastPeriod[];
+  next3d: WeatherForecastPeriod[];
+  severe: boolean;
+}
+
+export interface DaylightSnapshot {
+  sunrise: string;
+  sunset: string;
+  isDaylight: boolean;
+}
+
+/** Response shape of GET /api/admin/weather/status (UI-level contract). */
+export interface WeatherStatus {
+  enabled: boolean;
+  provider: { name: string | null; configured: boolean; active: boolean };
+  lastSnapshot: WeatherSnapshot | null;
+  cacheAgeSec: number | null;
+  fallback: 'primary' | 'secondary' | 'cache' | 'unknown' | null;
+  daylight: DaylightSnapshot | null;
+  forecast: WeatherForecastSummary | null;
+}
+
+
+/* ---- Next phase: metrics ---- */
+
+export interface MetricsDistribution {
+  category: string;
+  metric: string;
+  count: number;
+  sum: number;
+  min: number;
+  max: number;
+  mean: number;
+  p50: number;
+  p95: number;
+}
+
+export interface MetricAggregate { category: string; metric: string; sum: number; count: number; avg: number; }
+
 export const adminApi = {
   system: () => adminRequest<AdminSystemStatus>('/api/admin/system'),
   capabilities: () => adminRequest<AdminCapabilities>('/api/admin/capabilities'),
@@ -203,6 +322,25 @@ export const adminApi = {
   models: () => adminRequest<{ models: AdminModels }>('/api/admin/models'),
   updateModels: (patch: AdminModels) =>
     adminRequest<{ models: AdminModels }>('/api/admin/models', { method: 'PUT', body: patch }),
+  lifeOverview: () => adminRequest<AdminLifeOverview>('/api/admin/life/overview'),
+  lifeVitals: () => adminRequest<{ vitals: AdminLifeVitals | null }>('/api/admin/life/vitals'),
+  adjustVitals: (field: string, delta: number) =>
+    adminRequest<{ vitals: AdminLifeVitals }>('/api/admin/life/vitals/adjust', { method: 'POST', body: { field, delta } }),
+  resetVitals: () => adminRequest<{ ok: true }>('/api/admin/life/vitals/reset', { method: 'POST' }),
+  lifePlans: () => adminRequest<{ plans: AdminLifePlan[] }>('/api/admin/life/plans'),
+  updatePlan: (id: string, patch: Partial<Pick<AdminLifePlan, 'title' | 'status' | 'priority'>> & { plannedStart?: string | null; plannedEnd?: string | null }) =>
+    adminRequest<{ plan: AdminLifePlan }>(`/api/admin/life/plans/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
+  lifeThreads: () => adminRequest<{ threads: AdminLifeThread[] }>('/api/admin/life/threads'),
+  updateThread: (id: string, status: string) =>
+    adminRequest<{ thread: AdminLifeThread }>(`/api/admin/life/threads/${encodeURIComponent(id)}`, { method: 'PATCH', body: { status } }),
+  lifeEvents: (limit = 50) => adminRequest<{ events: Array<{ id: string; eventType: string; description: string; happenedAt: string; meta_json?: string }> }>(`/api/admin/life/events?limit=${limit}`),
+  lifeLocations: () => adminRequest<{ locations: AdminLifeLocation[] }>('/api/admin/life/locations'),
+  createLocation: (input: { name: string; kind: string; tags?: string[]; indoor?: boolean; visitWeight?: number }) =>
+    adminRequest<{ location: AdminLifeLocation }>('/api/admin/life/locations', { method: 'POST', body: input }),
+  deleteLocation: (id: string) => adminRequest<{ ok: true }>(`/api/admin/life/locations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  overrideLocation: (locationId: string, reason: string) =>
+    adminRequest<{ location: AdminLifeLocation }>('/api/admin/life/location/override', { method: 'POST', body: { locationId, reason } }),
+  proactiveAttempts: () => adminRequest<{ attempts: AdminProactiveAttempt[] }>('/api/admin/life/proactive'),
   stickers: () => adminRequest<{ stickers: AdminSticker[] }>('/api/admin/stickers'),
   uploadSticker: (body: FormData) =>
     adminRequest<{ created: AdminSticker[]; failed: Array<{ filename: string; error: string }> }>('/api/admin/stickers', {
@@ -249,5 +387,22 @@ export const adminApi = {
   restoreBackup: (name: string) =>
     adminRequest<Record<string, unknown>>(`/api/admin/backups/${encodeURIComponent(name)}/restore`, { method: 'POST' }),
   deleteBackup: (name: string) =>
-    adminRequest<{ deleted: boolean }>(`/api/admin/backups/${encodeURIComponent(name)}`, { method: 'DELETE' })
+    adminRequest<{ deleted: boolean }>(`/api/admin/backups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  /* ---- Next phase (frozen contract §2): life cities / travel ---- */
+  lifeCities: () => adminRequest<{ cities: LifeCity[] }>('/api/admin/life/cities'),
+  // 产品范围：中国城市、统一 Asia/Shanghai——country/timeZone 由服务端固定。
+  createCity: (input: { name: string; region?: string }) =>
+    adminRequest<{ city: LifeCity }>('/api/admin/life/cities', { method: 'POST', body: input }),
+  updateCity: (id: string, patch: Partial<Pick<LifeCity, 'name' | 'region' | 'active'>>) =>
+    adminRequest<{ city: LifeCity }>(`/api/admin/life/cities/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
+  lifeTravel: () => adminRequest<{ travel: TravelState | null }>('/api/admin/life/travel'),
+  /* ---- Next phase: weather ---- */
+  weatherStatus: () => adminRequest<WeatherStatus>('/api/admin/weather/status'),
+  weatherForecast: () => adminRequest<{ forecast: WeatherForecastSummary | null }>('/api/admin/weather/forecast'),
+  weatherRefresh: () => adminRequest<{ snapshot: WeatherSnapshot | null }>('/api/admin/weather/refresh', { method: 'POST' }),
+  /* ---- Next phase: metrics ---- */
+  metrics: (days: number) => adminRequest<{ aggregates: MetricAggregate[] }>(`/api/admin/metrics?days=${days}`),
+  metricsDistributions: (days: number) =>
+    adminRequest<{ distributions: MetricsDistribution[] }>(`/api/admin/metrics/distributions?days=${days}`),
+
 };

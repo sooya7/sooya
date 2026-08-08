@@ -113,7 +113,13 @@ export class LifeSimEngine {
     private readonly repo: LifeRepo,
     private readonly v2: LifeV2Repo,
     config: LifeConfig | (() => LifeConfig) = DEFAULT_LIFE_CONFIG,
-    private readonly clock: () => Date = () => new Date()
+    private readonly clock: () => Date = () => new Date(),
+    /** Optional next-phase location service (LOCATION_MODEL_ENABLED). */
+    private readonly location?: import('../location/service.js').LocationService,
+    /** Optional next-phase weather service (WEATHER_ENABLED). */
+    private readonly weather?: import('../weather/service.js').WeatherService,
+    /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
+    private readonly metrics?: import('../metrics.js').MetricsService,
   ) {
     this.resolve = typeof config === 'function' ? config : () => config;
     this.vitals = new LifeVitalsEngine(v2, clock, repo);
@@ -187,6 +193,7 @@ export class LifeSimEngine {
         priority: 0.6,
         meta: { activityId: id, dayThemeId: theme.id, optional: true }
       });
+      this.metrics?.record('life', 'plan_create');
     }
   }
 
@@ -233,6 +240,12 @@ export class LifeSimEngine {
     this.decayThreads();
     this.settlePlanWindows(parts);
     this.ensureSeedThreads();
+    // Next phase: the resolved activity may move SOOYA to a matching location.
+    const activityId = (resolved as { activityId?: string | null }).activityId ?? null;
+    const planId = (resolved as { planId?: string | null }).planId ?? null;
+    if (activityId || resolved.source === 'routine') {
+      this.location?.onActivityResolved(activityId ? defById(activityId) : null, resolved.kind, planId, activityId);
+    }
     return { changed: true, activity: resolved.activity, kind: resolved.kind, mood: resolved.mood, endedPrevious: advanced.previous };
   }
 
@@ -326,6 +339,24 @@ export class LifeSimEngine {
       for (const id of meta.relatedActivityIds ?? []) threadFitIds.add(id);
     }
     const themeTags = JSON.parse(theme.tone_tags_json) as string[];
+    // Next phase: cached weather condition modifiers (never blocks on fetch).
+    // Weather target is the active city (city + country only), never a
+    // location id — city switches immediately change the weather identity.
+    const city = this.location?.isEnabled ? this.location.activeCity() : null;
+    const weatherQuery = city
+      ? { key: `${city.country ?? '中国'}|${city.region ?? ''}|${city.name}`, country: city.country ?? '中国', region: city.region ?? null, city: city.name }
+      : null;
+    const weatherCondition = weatherQuery && this.weather?.isEnabled
+      ? this.weather.cachedCondition(weatherQuery)
+      : null;
+    // Next phase: cached forecast summary + daylight (sync, 缓存/天文估算，
+    // 绝不触发网络请求，绝不影响 tick 性能与稳定性)。
+    const forecast = weatherQuery && this.weather?.isEnabled
+      ? this.weather.cachedForecastSummary(weatherQuery)
+      : null;
+    const daylight = weatherQuery && this.weather?.isEnabled
+      ? this.weather.cachedDaylight(weatherQuery, this.clock(), this.settings.timeZone)
+      : null;
     // E6: real causal context — previous activity's follow-up hooks and tags,
     // its outcome tags, and the open threads' related activities. 买菜 → 做饭
     // gets its bonus because shopping's follow-up hook ('cook') is a def id.
@@ -347,7 +378,10 @@ export class LifeSimEngine {
       usage: this.v2,
       themeTags,
       threadFitIds,
-      continuityFrom: [...new Set(continuityFrom)]
+      continuityFrom: [...new Set(continuityFrom)],
+      ...(weatherCondition ? { weatherCondition } : {}),
+      ...(forecast ? { forecast } : {}),
+      ...(daylight ? { daylight } : {})
     };
     let best: LifeActivityDefinition | null = null;
     let bestScore = -Infinity;
@@ -355,6 +389,7 @@ export class LifeSimEngine {
     for (const def of ACTIVITY_LIBRARY) {
       if (def.kind === 'sleep' || def.kind === 'wake') continue;
       const score = scoreActivity(def, ctx, nowIso);
+      this.metrics?.record('life', 'activity_score');
       if (score > bestScore) {
         bestScore = score;
         best = def;
@@ -394,6 +429,7 @@ export class LifeSimEngine {
         status: 'completed',
         meta: { outcomeId: event.id, outcome: outcomeTag, completedAt: this.clock().toISOString() }
       });
+      this.metrics?.record('life', 'plan_complete');
     }
     if (def) {
       this.v2.recordUsage({ activityId: def.id, tags: def.tags, outcomeTags: [outcomeTag], usedAt: this.clock().toISOString() });
@@ -410,6 +446,7 @@ export class LifeSimEngine {
             status: thread.progress >= 0.85 ? 'resolved' : thread.status,
             nextActions: JSON.parse(thread.next_actions_json)
           });
+          if (thread.progress >= 0.85) this.metrics?.record('life', 'thread_resolve');
         }
       }
       // E4: an outcome with follow-up hooks opens a thread ("做完这件事，接着…").
@@ -562,6 +599,7 @@ export class LifeSimEngine {
       nextActions: target.titleTemplates.slice(0, 3),
       meta: { relatedActivityIds: [target.id], source: 'activity_outcome' }
     });
+    this.metrics?.record('life', 'thread_create');
   }
 
   /** E4: a conversation suggestion opens a thread too (bounded). */
@@ -577,6 +615,7 @@ export class LifeSimEngine {
       nextActions: activityId ? (defById(activityId)?.titleTemplates.slice(0, 3) ?? []) : ['找个合适的时间去做'],
       meta: { relatedActivityIds: activityId ? [activityId] : [], source: 'conversation', sourceMessageId: messageId }
     });
+    this.metrics?.record('life', 'thread_create');
   }
 
   /** E4: seed a couple of persona-flavoured interest threads once (bounded). */
@@ -601,6 +640,7 @@ export class LifeSimEngine {
         nextActions: def.titleTemplates.slice(0, 3),
         meta: { relatedActivityIds: [def.id], source: 'persona_seed' }
       });
+      this.metrics?.record('life', 'thread_create');
     }
   }
 
@@ -612,6 +652,7 @@ export class LifeSimEngine {
       const startMs = Date.parse(plan.planned_start);
       if (at - startMs > 75 * 60_000) {
         this.repo.updatePlan(plan.id, { status: 'skipped', meta: { skippedAt: new Date(at).toISOString() } });
+        this.metrics?.record('life', 'plan_skip');
       }
     }
   }
@@ -646,6 +687,10 @@ export class LifeSimEngine {
     const userPlans = this.repo.listPlans().filter((p) => p.source === 'conversation' && (p.status === 'planned' || p.status === 'active'));
     if (userPlans.length) {
       lines.push(`你之前建议的「${userPlans[0]!.title}」还只是计划，还没有发生。`);
+    }
+    // Next phase: known location facts only (never invented addresses).
+    if (this.location?.isEnabled) {
+      lines.push(...(this.location.contextLines() ?? []));
     }
     lines.push('这些是你真实的近况，被问起就照实说，不要临时编造别的活动。');
     return lines;
@@ -724,6 +769,7 @@ export class LifeSimEngine {
     const theme = this.dayTheme();
     const parts = localParts(this.clock(), this.tzOffset, this.settings.timeZone);
     const todayPlans = this.repo.listPlans().filter((p) => isLocalDate(p.planned_start, parts.localDate, this.tzOffset, this.settings.timeZone));
+    const location = this.location?.isEnabled ? this.location.current() : null;
     return {
       activity: current?.activity ?? resolved.activity,
       kind: current?.kind ?? resolved.kind,
@@ -734,7 +780,8 @@ export class LifeSimEngine {
       theme: theme.theme,
       vitals: this.vitals.summary(v),
       plans: todayPlans.slice(0, 5).map((p) => ({ title: p.title, status: p.status })),
-      threads: this.v2.threads('open').slice(0, 3).map((t) => ({ title: t.title, progress: Math.round(t.progress * 100) }))
+      threads: this.v2.threads('open').slice(0, 3).map((t) => ({ title: t.title, progress: Math.round(t.progress * 100) })),
+      ...(location ? { location: { id: location.id, name: location.name, kind: location.kind } } : {})
     };
   }
 }

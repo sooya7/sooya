@@ -918,7 +918,324 @@ export const MIGRATIONS: Migration[] = [
           WHERE status = 'sent' AND candidate_id IS NOT NULL;
       `);
     }
-  }
+  },
+  {
+    version: 19,
+    name: 'life_locations',
+    up: (db) => {
+      /*
+       * Location model (next phase): SOOYA's own life locations, travel
+       * edges between them, the current location state and the visit
+       * history. All behavior is gated behind LOCATION_MODEL_ENABLED; the
+       * tables are inert when the flag is off.
+       */
+      db.exec(`
+        CREATE TABLE life_locations (
+          id            TEXT PRIMARY KEY,
+          name          TEXT NOT NULL,
+          kind          TEXT NOT NULL CHECK (kind IN ('home','neighborhood','cafe','restaurant','store','park','library','mall','transit','work','study','venue','outdoor','other')),
+          city          TEXT,
+          region        TEXT,
+          country       TEXT,
+          time_zone     TEXT,
+          lat           REAL,
+          lng           REAL,
+          tags_json     TEXT NOT NULL DEFAULT '[]',
+          indoor        INTEGER NOT NULL DEFAULT 0,
+          visit_weight  REAL NOT NULL DEFAULT 1.0,
+          source        TEXT NOT NULL DEFAULT 'builtin' CHECK (source IN ('builtin','generated','admin','conversation')),
+          active        INTEGER NOT NULL DEFAULT 1,
+          created_at    TEXT NOT NULL,
+          updated_at    TEXT NOT NULL
+        );
+        CREATE INDEX idx_life_locations_active ON life_locations(active, kind);
+
+        CREATE TABLE life_location_edges (
+          from_id        TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          to_id          TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          travel_minutes INTEGER NOT NULL DEFAULT 15,
+          mode           TEXT NOT NULL DEFAULT 'walk' CHECK (mode IN ('walk','bike','transit','car','unknown')),
+          PRIMARY KEY (from_id, to_id)
+        );
+
+        CREATE TABLE life_location_state (
+          id                 INTEGER PRIMARY KEY CHECK (id = 1),
+          location_id        TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          arrived_at         TEXT NOT NULL,
+          expected_leave_at  TEXT,
+          source_plan_id     TEXT,
+          source_activity_id TEXT,
+          confidence         REAL NOT NULL DEFAULT 1.0,
+          updated_at         TEXT NOT NULL
+        );
+
+        CREATE TABLE life_location_visits (
+          id                 TEXT PRIMARY KEY,
+          location_id        TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          entered_at         TEXT NOT NULL,
+          left_at            TEXT,
+          source_plan_id     TEXT,
+          source_activity_id TEXT,
+          created_at         TEXT NOT NULL
+        );
+        CREATE INDEX idx_life_location_visits ON life_location_visits(location_id, entered_at DESC);
+      `);
+    }
+  },
+  {
+    version: 20,
+    name: 'weather_snapshots',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE weather_snapshots (
+          location_key     TEXT NOT NULL,
+          observed_at      TEXT NOT NULL,
+          condition        TEXT NOT NULL DEFAULT 'unknown' CHECK (condition IN ('clear','cloudy','rain','snow','storm','fog','wind','unknown')),
+          temperature_c    REAL,
+          feels_like_c     REAL,
+          humidity         REAL,
+          precipitation_mm REAL,
+          wind_kph         REAL,
+          provider         TEXT NOT NULL,
+          created_at       TEXT NOT NULL,
+          PRIMARY KEY (location_key, observed_at)
+        );
+        CREATE INDEX idx_weather_snapshots_key ON weather_snapshots(location_key, observed_at DESC);
+      `);
+    }
+  },
+  {
+    version: 21,
+    name: 'metric_daily',
+    up: (db) => {
+      /*
+       * Privacy-safe daily metrics (next phase): only (date, category,
+       * metric, sums/counts) — never message text, prompts or addresses.
+       * Aggregated daily; no external time-series database.
+       */
+      db.exec(`
+        CREATE TABLE metric_daily (
+          date         TEXT NOT NULL,
+          category     TEXT NOT NULL,
+          metric       TEXT NOT NULL,
+          sum_value    REAL NOT NULL DEFAULT 0,
+          count        INTEGER NOT NULL DEFAULT 0,
+          last_updated TEXT NOT NULL,
+          PRIMARY KEY (date, category, metric)
+        );
+      `);
+    }
+  },
+  {
+    version: 22,
+    name: 'shadow_runs',
+    up: (db) => {
+      /*
+       * Shadow mode (next phase P3): canonical keeps running, shadow only
+       * computes a candidate decision. Rows store anonymized fingerprints —
+       * never full private prompts or message text.
+       */
+      db.exec(`
+        CREATE TABLE shadow_runs (
+          id                  TEXT PRIMARY KEY,
+          subsystem           TEXT NOT NULL,
+          canonical_version   TEXT NOT NULL,
+          shadow_version      TEXT NOT NULL,
+          input_fingerprint   TEXT NOT NULL,
+          canonical_decision  TEXT NOT NULL,
+          shadow_decision     TEXT NOT NULL,
+          diff_json           TEXT NOT NULL DEFAULT '{}',
+          duration_ms         INTEGER NOT NULL DEFAULT 0,
+          created_at          TEXT NOT NULL
+        );
+        CREATE INDEX idx_shadow_runs_subsystem ON shadow_runs(subsystem, created_at DESC);
+      `);
+    }
+  },
+  {
+    version: 23,
+    name: 'experiments',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE experiments (
+          id               TEXT PRIMARY KEY,
+          name             TEXT NOT NULL,
+          subsystem        TEXT NOT NULL,
+          variants_json    TEXT NOT NULL DEFAULT '[]',
+          status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','shadow','running','paused','completed','cancelled')),
+          assignment_scope TEXT NOT NULL DEFAULT 'day' CHECK (assignment_scope IN ('day','session','conversation')),
+          created_at       TEXT NOT NULL,
+          updated_at       TEXT NOT NULL
+        );
+
+        CREATE TABLE experiment_assignments (
+          experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+          scope_key     TEXT NOT NULL,
+          variant       TEXT NOT NULL,
+          assigned_at   TEXT NOT NULL,
+          PRIMARY KEY (experiment_id, scope_key)
+        );
+
+        CREATE TABLE experiment_events (
+          id            TEXT PRIMARY KEY,
+          experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+          variant       TEXT NOT NULL,
+          event         TEXT NOT NULL,
+          created_at    TEXT NOT NULL
+        );
+        CREATE INDEX idx_experiment_events ON experiment_events(experiment_id, created_at DESC);
+      `);
+    }
+  },
+  /*
+   * v24 visible_thoughts (next phase final): public-safe visible inner
+   * thoughts + admin decision traces. Never holds hidden chain-of-thought.
+   */
+  {
+    version: 24,
+    name: 'visible_thoughts',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE visible_thoughts (
+          id         TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL,
+          batch_id   TEXT NOT NULL,
+          revision   INTEGER NOT NULL,
+          kind       TEXT NOT NULL CHECK (kind IN ('inner_monologue','decision_summary')),
+          text       TEXT NOT NULL DEFAULT '',
+          visibility TEXT NOT NULL CHECK (visibility IN ('user','admin')),
+          status     TEXT NOT NULL CHECK (status IN ('generating','completed','cancelled','failed')),
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_thoughts_message ON visible_thoughts(message_id);
+        CREATE INDEX idx_thoughts_batch_rev ON visible_thoughts(batch_id, revision);
+        CREATE INDEX idx_thoughts_visibility ON visible_thoughts(visibility);
+        CREATE INDEX idx_thoughts_created ON visible_thoughts(created_at);
+
+        CREATE TABLE decision_traces (
+          batch_id     TEXT NOT NULL,
+          revision     INTEGER NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at   TEXT NOT NULL,
+          PRIMARY KEY (batch_id, revision)
+        );
+        CREATE INDEX idx_decision_traces_created ON decision_traces(created_at DESC);
+      `);
+    }
+  },
+  {
+    version: 25,
+    name: 'life_cities_travel',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE life_cities (
+          id         TEXT PRIMARY KEY,
+          key        TEXT UNIQUE,
+          name       TEXT NOT NULL,
+          region     TEXT,
+          country    TEXT,
+          time_zone  TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+          active     INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_life_cities_active ON life_cities(active);
+
+        CREATE TABLE travel_state (
+          id                 INTEGER PRIMARY KEY CHECK (id = 1),
+          from_location_id   TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          to_location_id     TEXT NOT NULL REFERENCES life_locations(id) ON DELETE CASCADE,
+          mode               TEXT NOT NULL DEFAULT 'walk' CHECK (mode IN ('walk','bike','transit','car','unknown')),
+          started_at         TEXT NOT NULL,
+          expected_arrive_at TEXT NOT NULL,
+          source_plan_id     TEXT,
+          source_activity_id TEXT,
+          created_at         TEXT NOT NULL
+        );
+
+        ALTER TABLE life_locations ADD COLUMN city_id TEXT REFERENCES life_cities(id) ON DELETE SET NULL;
+        ALTER TABLE life_locations ADD COLUMN key TEXT;
+        CREATE UNIQUE INDEX idx_life_locations_key ON life_locations(key) WHERE key IS NOT NULL;
+      `);
+    }
+  },
+  {
+    version: 26,
+    name: 'metrics_distributions',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE metric_daily ADD COLUMN min_value REAL;
+        ALTER TABLE metric_daily ADD COLUMN max_value REAL;
+
+        CREATE TABLE metric_distributions (
+          date     TEXT NOT NULL,
+          category TEXT NOT NULL,
+          metric   TEXT NOT NULL,
+          bucket   REAL NOT NULL,
+          count    INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (date, category, metric, bucket)
+        );
+      `);
+    }
+  },
+  {
+    version: 27,
+    name: 'experiment_rollout',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE experiments ADD COLUMN rollout_percent INTEGER NOT NULL DEFAULT 100 CHECK (rollout_percent IN (10, 25, 50, 100));
+      `);
+    }
+  },
+  {
+    version: 28,
+    name: 'weather_forecasts',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE weather_snapshots ADD COLUMN visibility_km REAL;
+        ALTER TABLE weather_snapshots ADD COLUMN pressure_hpa REAL;
+
+        CREATE TABLE weather_forecasts (
+          location_key TEXT NOT NULL,
+          generated_at TEXT NOT NULL,
+          provider     TEXT NOT NULL,
+          periods_json TEXT NOT NULL,
+          created_at   TEXT NOT NULL,
+          PRIMARY KEY (location_key, generated_at)
+        );
+        CREATE INDEX idx_weather_forecasts_key ON weather_forecasts(location_key, generated_at DESC);
+
+        CREATE TABLE weather_daylight (
+          location_key TEXT NOT NULL,
+          local_date   TEXT NOT NULL,
+          sunrise      TEXT NOT NULL,
+          sunset       TEXT NOT NULL,
+          provider     TEXT NOT NULL,
+          created_at   TEXT NOT NULL,
+          PRIMARY KEY (location_key, local_date)
+        );
+      `);
+    }
+  },
+  {
+    version: 29,
+    name: 'cleanup_experiments_shadow_geocoding_decision_trace',
+    up: (db) => {
+      /*
+       * Final closure (精简执行版): drop the product systems removed from the
+       * single-user companion — experiments, shadow mode and decision traces.
+       * Everything else (locations, cities, travel, weather, metrics,
+       * visible thoughts) is retained; historical migrations are untouched.
+       */
+      db.exec(`
+        DROP TABLE IF EXISTS experiment_assignments;
+        DROP TABLE IF EXISTS experiment_events;
+        DROP TABLE IF EXISTS experiments;
+        DROP TABLE IF EXISTS shadow_runs;
+        DROP TABLE IF EXISTS decision_traces;
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

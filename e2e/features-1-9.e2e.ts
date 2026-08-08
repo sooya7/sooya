@@ -268,14 +268,16 @@ test.describe('SOOYA 1-9 user flows', () => {
 
     await page.goBack();
     await expect(viewer).toBeHidden();
-    expect(await page.evaluate(() => history.state)).toEqual({ existing: 'preserved' });
+    // SPA history: the popstate round-trip is async, so wait for the state
+    // to actually return to the baseline entry.
+    await expect.poll(() => page.evaluate(() => history.state)).toEqual({ existing: 'preserved' });
 
     await secondCard.locator('.gallery-thumb').click();
     await expect(viewer).toBeVisible();
     expect(await page.evaluate(() => history.length)).toBe(baseline + 1);
     await viewer.getByRole('button', { name: '关闭图片' }).click();
     await expect(viewer).toBeHidden();
-    expect(await page.evaluate(() => history.state)).toEqual({ existing: 'preserved' });
+    await expect.poll(() => page.evaluate(() => history.state)).toEqual({ existing: 'preserved' });
   });
 
   test('message menu supports quote, resend-safe reply target and placeholder withdraw', async ({ page }) => {

@@ -86,6 +86,130 @@ describe('v14 → latest migration upgrade (P1-2)', () => {
     }
   });
 
+  it.each([18, 23, 28])('migrates a v%s fixture to latest and drops the closed systems', async (from) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), `sooya-upgrade-${from}-`));
+    const dbDir = path.join(dir, 'database');
+    await fs.mkdir(dbDir, { recursive: true });
+    const file = path.join(dbDir, 'sooya.db');
+    const db = new Database(file);
+    db.exec('CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)');
+    const insert = db.prepare('INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)');
+    for (const migration of MIGRATIONS.slice(0, from)) {
+      db.transaction(() => {
+        migration.up(db as never);
+        insert.run(migration.version, migration.name, new Date().toISOString());
+      })();
+    }
+    // Seed rows that must survive (or be dropped) across the v29 cleanup.
+    db.exec(`
+      INSERT INTO messages(id, conversation_id, role, created_at, updated_at, seq, status, client_msg_id, reply_to, error, meta_json)
+        VALUES ('msg_up_1', 'main', 'user', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', 1, 'sent', NULL, NULL, NULL, '{}');
+    `);
+    // v19+ fixtures: seed REAL legacy location data (no key, no city_id,
+    // state on an inactive location, travel to an inactive location).
+    const hasLocations = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'life_locations'").get();
+    if (hasLocations) {
+      // v23's life_locations predates the v25 key/city_id columns; insert
+      // with the shape the fixture actually has.
+      const hasKey = Boolean(db.prepare("PRAGMA table_info(life_locations)").all().find((c) => (c as { name: string }).name === 'key'));
+      if (hasKey) {
+        db.exec(`
+          INSERT INTO life_locations(id, key, name, kind, city_id, city, region, country, time_zone, lat, lng, tags_json, indoor, visit_weight, source, active, created_at, updated_at)
+            VALUES ('loc_legacy_home', NULL, '家', 'home', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]', 1, 1, 'builtin', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+                   ('loc_legacy_cafe', NULL, '咖啡店', 'cafe', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]', 1, 1, 'builtin', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+                   ('loc_legacy_park', NULL, '社区公园', 'park', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]', 0, 1, 'builtin', 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+                   ('loc_legacy_custom', 'custom', '外婆家的小院', 'other', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]', 0, 1, 'admin', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+        `);
+      } else {
+        db.exec(`
+          INSERT INTO life_locations(id, name, kind, city, region, country, time_zone, lat, lng, tags_json, indoor, visit_weight, source, active, created_at, updated_at)
+            VALUES ('loc_legacy_home', '家', 'home', NULL, NULL, NULL, NULL, NULL, NULL, '[]', 1, 1, 'builtin', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+                   ('loc_legacy_cafe', '咖啡店', 'cafe', NULL, NULL, NULL, NULL, NULL, NULL, '[]', 1, 1, 'builtin', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+                   ('loc_legacy_park', '社区公园', 'park', NULL, NULL, NULL, NULL, NULL, NULL, '[]', 0, 1, 'builtin', 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+                   ('loc_legacy_custom', '外婆家的小院', 'other', NULL, NULL, NULL, NULL, NULL, NULL, '[]', 0, 1, 'admin', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+        `);
+      }
+      // state exists from v19, travel_state only from v25; guard both.
+      const hasState = Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'life_location_state'").get());
+      const hasTravel = Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'travel_state'").get());
+      if (hasState) {
+        db.exec(`
+          INSERT INTO life_location_state(id, location_id, arrived_at, expected_leave_at, source_plan_id, source_activity_id, confidence, updated_at)
+            VALUES (1, 'loc_legacy_park', '2026-01-01T00:00:00.000Z', NULL, NULL, NULL, 0.9, '2026-01-01T00:00:00.000Z');
+        `);
+      }
+      if (hasTravel) {
+        db.exec(`
+          INSERT INTO travel_state(id, from_location_id, to_location_id, mode, started_at, expected_arrive_at, source_plan_id, source_activity_id, created_at)
+            VALUES (1, 'loc_legacy_home', 'loc_legacy_park', 'walk', '2026-01-01T00:00:00.000Z', '2026-01-01T00:30:00.000Z', NULL, NULL, '2026-01-01T00:00:00.000Z');
+        `);
+      }
+    }
+    db.close();
+
+    try {
+      const opened = openDatabase({ file, backupDir: path.join(dir, 'backup'), onLog: () => {} });
+      try {
+        const version = (opened.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get() as { v: number }).v;
+        expect(version).toBe(LATEST_VERSION);
+        // Messages survive.
+        const msg = opened.db.prepare("SELECT * FROM messages WHERE id = 'msg_up_1'").get() as { role: string };
+        expect(msg.role).toBe('user');
+        // v29 cleanup: closed systems' tables are gone, retained ones exist.
+        for (const gone of ['experiments', 'experiment_assignments', 'experiment_events', 'shadow_runs', 'decision_traces']) {
+          const row = opened.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(gone);
+          expect(row, `${gone} should be dropped by v29`).toBeUndefined();
+        }
+        for (const kept of ['visible_thoughts', 'life_cities', 'travel_state', 'weather_forecasts', 'metric_distributions', 'messages', 'memories']) {
+          const row = opened.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(kept);
+          expect(row, `${kept} should be retained`).toBeTruthy();
+        }
+        expect(opened.db.pragma('foreign_key_check')).toEqual([]);
+      } finally {
+        opened.db.close();
+      }
+
+      // v19+ fixtures: boot the app on the migrated DB and verify the legacy
+      // location normalization (Ningbo only when no city exists, key
+      // backfill, city binding, state/travel repair).
+      if (from >= 19) {
+        const { createHarness } = await import('./helpers/harness.js');
+        const booted = await createHarness({
+          skipStickerImport: true,
+          startWorkers: false,
+          env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', DATA_DIR: dir }
+        });
+        try {
+          const service = booted.app.services.location;
+          expect(service.activeCity()?.name).toBe('宁波');
+          const locations = service.list();
+          const home = locations.find((l) => l.name === '家')!;
+          const cafe = locations.find((l) => l.name === '咖啡店')!;
+          const custom = locations.find((l) => l.name === '外婆家的小院')!;
+          // Recognizable legacy builtins get stable keys; admin locations are
+          // never guessed (v23 had no key column at all, so NULL there).
+          expect(home.key).toBe('home');
+          expect(cafe.key).toBe('cafe');
+          if (from >= 25) expect(custom.key).toBe('custom');
+          else expect(custom.key).toBeNull();
+          // Legacy builtins bind to the active city.
+          expect(home.cityId).toBe(service.activeCity()!.id);
+          expect(cafe.cityId).toBe(service.activeCity()!.id);
+          if (from >= 25) {
+            // State pointed at the inactive park -> repaired to home.
+            expect(service.current()?.key).toBe('home');
+            // Travel referencing the inactive park -> cleared.
+            expect(service.currentTravel()).toBeNull();
+          }
+        } finally {
+          await booted.cleanup();
+        }
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('a failing migration transaction rolls back completely', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sooya-rollback-'));
     const file = path.join(dir, 'sooya.db');

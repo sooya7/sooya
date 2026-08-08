@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import ChatSessionHost from './App.js';
 import AdminPanel from './components/AdminPanel.js';
 import GalleryPage from './components/GalleryPage.js';
+import LifeAdminPage from './components/LifeAdminPage.js';
+import VoicePreferencesPage from './components/VoicePreferencesPage.js';
 import { ImageViewerHost } from './components/ImageViewerHost.js';
 import { useAppRoute } from './lib/navigation.js';
 
@@ -9,6 +11,11 @@ export default function AppShell() {
   const route = useAppRoute();
   const [chatStarted, setChatStarted] = useState(route === 'chat');
   const shouldMountChat = chatStarted || route === 'chat';
+  // Next phase pages are addressed by exact path so the admin panel keeps its
+  // own tab structure at /admin.
+  const path = typeof window !== 'undefined' ? window.location.pathname : '';
+  const isLifeAdmin = path === '/admin/life';
+  const isVoicePrefs = path === '/settings/voice';
 
   useEffect(() => {
     if (route === 'chat') setChatStarted(true);
@@ -18,6 +25,8 @@ export default function AppShell() {
     {shouldMountChat && <ChatSessionHost active={route === 'chat'} />}
     {route === 'chat' && <ImageViewerHost />}
     {route === 'gallery' && <GalleryPage />}
-    {route === 'admin' && <AdminPanel />}
+    {route === 'admin' && !isLifeAdmin && <AdminPanel />}
+    {route === 'admin' && isLifeAdmin && <LifeAdminPage />}
+    {isVoicePrefs && <VoicePreferencesPage />}
   </>;
 }

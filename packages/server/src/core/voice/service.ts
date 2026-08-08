@@ -114,6 +114,8 @@ export class VoiceService {
       bus: EventBus;
       errorLog: ErrorLogRepo;
       flags?: Partial<VoiceFlags>;
+      /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
+      metrics?: import('../metrics.js').MetricsService;
     }
   ) {}
 
@@ -216,6 +218,8 @@ export class VoiceService {
     // (numbers, dates, amounts, strong negations, promises) the reply never
     // stated. complement/summary may be dropped, replace falls back to the
     // canonical text.
+    this.deps.metrics?.record('voice', `mode_${mode}`);
+    this.deps.metrics?.record('voice', `requested_${decision.requestedBy}`);
     if (mode !== 'read_aloud') {
       const report = semanticRiskReport(synthesisText, args.finalText);
       if (!report.ok) {
@@ -226,8 +230,10 @@ export class VoiceService {
         if (semanticRiskReport(synthesisText, args.finalText).ok) {
           // rewrite fixed it
         } else if (mode === 'replace') {
+          this.deps.metrics?.record('voice', 'semantic_rejection');
           return this.publishReplaceTextFallback(args, args.finalText, degraded, 'semantic_risk');
         } else {
+          this.deps.metrics?.record('voice', 'semantic_rejection');
           return { ok: false, degraded: [...degraded, 'voice:semantic-risk'], partId: null, mediaId: null, generationId: null, shellId: null };
         }
       }
@@ -245,6 +251,7 @@ export class VoiceService {
           if (compact) ({ spokenText, synthesisText } = normalizeVoiceText(compact.spokenText));
         }
         if (synthesisText.length > maxChars) {
+          this.deps.metrics?.record('voice', 'fallback_text');
           return this.publishReplaceTextFallback(args, args.finalText, degraded, 'too_long');
         }
       } else if (mode === 'complement') {
@@ -313,7 +320,10 @@ export class VoiceService {
       for (let attempt = 0; attempt <= this.flags.ttsRetries; attempt++) {
         if (attempt > 0) this.deps.voice.update(generation.id, { retry_count: attempt });
         try {
+          const ttsStarted = Date.now();
           audio = await provider.synthesize(synthesisText, { ...ttsOptions, signal: combined.signal });
+          this.deps.metrics?.record('voice', 'tts_latency_ms', Date.now() - ttsStarted);
+          this.deps.metrics?.record('voice', 'tts_success');
           break;
         } catch (err) {
           if (signal.aborted || combined.signal.aborted) throw err;
@@ -387,6 +397,7 @@ export class VoiceService {
       return { ok: true, degraded, partId, mediaId: media.id, generationId: generation.id, shellId: targetShell.id };
     } catch (err) {
       const cancelledByUser = combined.signal.aborted && !signal.aborted;
+      this.deps.metrics?.record('voice', cancelledByUser ? 'cancel' : 'superseded');
       if (signal.aborted || cancelledByUser) {
         this.deps.voice.update(generation.id, { status: cancelledByUser ? 'cancelled' : 'superseded', failed_at: new Date().toISOString(), failure_code: cancelledByUser ? 'cancelled' : 'superseded' });
         this.emit(cancelledByUser ? 'voice.cancelled' : 'voice.generation.superseded', {
@@ -596,6 +607,7 @@ export class VoiceService {
     if (!caps.has('chat')) return null;
     const provider = caps.chatProvider();
     const persona = this.deps.config.getPersona();
+    if (attempt > 0) this.deps.metrics?.record('voice', 'script_rewrite');
     const styleHints = stylePromptHints(this.speechStyle);
     const prompt = [
       `你是${persona.name}。下面是你刚在聊天里写的一段文字回复。请把它改写成「语音消息的口语脚本」——就像按住语音键自然说话，不是念稿。`,
@@ -666,6 +678,8 @@ export class VoiceService {
       failureCode
     });
     this.deps.errorLog.add('voice.tts', failureCode, { diagnostic: redactDiagnostic(e) });
+    this.deps.metrics?.record('voice', 'tts_failure');
+    this.deps.metrics?.record('voice', `tts_failure_${mode}`);
 
     if (mode === 'replace') {
       // Fall back to publishing the spoken script as plain text (C5): for a

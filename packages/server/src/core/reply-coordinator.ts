@@ -1,10 +1,13 @@
 import type { EventBus } from '../events/bus.js';
+import type { StreamEvent } from './types.js';
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { DbLike } from '../db/handle.js';
 import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { ReplyBatchRepo, ReplyBatchRow, AppendAction } from '../db/repos/reply-batch.repo.js';
 import type { ChatMessage, ReplyFailure } from './types.js';
+import type { CreatePartInput } from '../db/repos/message.repo.js';
 import type { ReplyOptions, ReplyOutcome, Replier } from './replier.js';
+import type { ThoughtsBridge } from './thoughts/bridge.js';
 import { redactDiagnostic, type PublicFailure } from './public-error.js';
 import { sortableId } from '../util/ids.js';
 import { abortableDelay, isBenignAbort, StaleGenerationError, UserInterruptedError } from '../util/abort.js';
@@ -58,6 +61,14 @@ export interface ReplyCoordinatorOptions {
   /** Optional: completes the batch and persists reply.completed atomically. */
   db?: DbLike;
   errorLog?: ErrorLogRepo;
+  /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
+  metrics?: import('./metrics.js').MetricsService;
+  /**
+   * Next-phase visible thoughts / decision trace (VISIBLE_THOUGHTS_ENABLED).
+   * Optional: when absent (or when its flags are off) the coordinator behaves
+   * exactly as before — zero behaviour change.
+   */
+  thoughts?: ThoughtsBridge;
   onCompleted?: (
     batchId: string,
     userMessages: ChatMessage[],
@@ -144,6 +155,9 @@ export class ReplyCoordinator {
   async onMessageAccepted(action: AppendAction, batchId: string, options: ReplyOptions): Promise<void> {
     // P0-1: a user message always preempts proactive deliveries.
     this.cancelProactive();
+    // A real new message (not a duplicate) supersedes not-yet-published
+    // thoughts: they must never attach to a reply the user has moved past.
+    if (action !== 'appended') this.notifyThoughtsUserActivity();
     const batch = this.deps.batches.get(batchId);
     if (!batch) return;
     const runtime = this.runtime.get(batchId) ?? { options, waiters: [] };
@@ -194,6 +208,7 @@ export class ReplyCoordinator {
 
   /** Explicit user retry (failed / partial batches). */
   async retryBatch(batchId: string): Promise<ReplyBatchRow | undefined> {
+    this.notifyThoughtsUserActivity();
     const batch = this.deps.batches.retry(batchId);
     if (!batch) return undefined;
     const options = this.runtime.get(batchId)?.options ?? { recentMessages: 24, memoryLimit: 8 };
@@ -203,6 +218,38 @@ export class ReplyCoordinator {
     this.deps.bus.publish('reply.batch.queued', { batchId, revision: batch.revision });
     this.schedule(batch, false);
     return batch;
+  }
+
+  /**
+   * P0-1: the ONLY place a proactive assistant message may be persisted.
+   * The proactive task composes content and media; the coordinator owns the
+   * atomic write (message + attempt callback + event in one transaction) so
+   * Proactive/Life services never write assistant messages directly.
+   */
+  publishProactiveMessage(input: {
+    parts: CreatePartInput[];
+    meta: Record<string, unknown>;
+    /** Runs inside the same transaction (attempt bookkeeping, sent-once). */
+    onPersisted(message: ChatMessage): void;
+  }): { message: ChatMessage; event: StreamEvent } | null {
+    try {
+      return this.deps.messages.inTransaction(() => {
+        const created = this.deps.messages.createInTransaction({
+          role: 'assistant',
+          status: 'sent',
+          parts: input.parts,
+          meta: input.meta
+        });
+        if (!created.created) throw new Error('proactive message unexpectedly duplicated');
+        input.onPersisted(created.message);
+        return {
+          message: created.message,
+          event: this.deps.bus.persist('message.received', { message: created.message })
+        };
+      });
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -283,6 +330,7 @@ export class ReplyCoordinator {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.notifyThoughtsUserActivity();
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     for (const batchId of [...this.activeGenerations.keys()]) {
@@ -401,6 +449,7 @@ export class ReplyCoordinator {
       status: 'started',
       startedAt: new Date(startedAt).toISOString()
     });
+    this.deps.metrics?.record('reply', 'start');
 
     const runtime = this.runtime.get(batchId);
     const options = runtime?.options ?? { recentMessages: 24, memoryLimit: 8 };
@@ -457,6 +506,10 @@ export class ReplyCoordinator {
         firstTokenMs: generated.firstTokenAt !== null ? generated.firstTokenAt - startedAt : null,
         visibleMs: active.published ? Math.max(0, Date.now() - startedAt) : null
       });
+      this.deps.metrics?.record('reply', 'success');
+      this.deps.metrics?.record('reply', 'latency_ms', Date.now() - startedAt);
+      if (generated.firstTokenAt !== null) this.deps.metrics?.record('reply', 'first_visible_ms', generated.firstTokenAt - startedAt);
+      if (generated.interrupted !== undefined) this.deps.metrics?.record('reply', 'partial');
 
       if (!outcome.ok) {
         this.deps.batches.fail(batchId, revision, outcome.error?.code ?? 'internal_error', outcome.error?.message ?? 'reply failed', this.owner);
@@ -465,6 +518,12 @@ export class ReplyCoordinator {
         this.runtime.delete(batchId);
         return;
       }
+      // Next phase (visible thoughts): the reply is fully published — barrier
+      // open, message persisted. Hand over to the thoughts bridge, which
+      // records the admin decision trace and generates the user-visible
+      // thought, fire-and-forget. A slow or failing thought model must never
+      // delay `complete` or break the reply, hence no await.
+      this.notifyThoughtsReplyCompleted(batchId, revision, outcome, userMessages, generated.text ?? '');
       const partial = generated.interrupted !== undefined;
       const completedPayload = {
         batchId,
@@ -537,6 +596,7 @@ export class ReplyCoordinator {
         startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
         interruptionReason: (error as Error).name, durationMs: Date.now() - startedAt
       });
+      this.deps.metrics?.record('reply', (error as Error).name === 'UserInterruptedError' ? 'interrupt' : 'superseded');
       if (batch && batch.revision === revision && batch.status === 'generating') {
         this.deps.batches.requeue(batchId, revision, 'interrupted', this.owner);
         if (!this.stopped) {
@@ -568,6 +628,7 @@ export class ReplyCoordinator {
         startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
         errorCode: 'model_timeout', durationMs: Date.now() - startedAt
       });
+      this.deps.metrics?.record('reply', 'auto_retry');
       this.deps.bus.publish('reply.generation.retrying', { batchId, revision, attempt: active.attempt + 1 });
       // The active generation entry was already removed by the catch in
       // startGeneration, so the backoff gets its own cancellable controller:
@@ -603,6 +664,7 @@ export class ReplyCoordinator {
       startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
       errorCode: failure.code, durationMs: Date.now() - startedAt
     });
+    this.deps.metrics?.record('reply', `failure_${failure.code}`);
     if (active.published) {
       // Published content stays: complete the batch as partial (fenced on
       // publishing) instead of failing it, and record the provider error only
@@ -679,6 +741,40 @@ export class ReplyCoordinator {
     this.retryControllers.get(batchId)?.abort(new UserInterruptedError(reason === 'new_user_message' ? 'superseded by newer user message' : 'coordinator shutdown'));
   }
 
+  /** Next-phase visible thoughts: cancel not-yet-published thoughts. Best-effort. */
+  private notifyThoughtsUserActivity(): void {
+    try {
+      this.deps.thoughts?.onUserActivity();
+    } catch {
+      // Thoughts are best-effort: never let them break the reply path.
+    }
+  }
+
+  /**
+   * Next-phase visible thoughts: the reply is fully published, hand over to
+   * the thoughts bridge (decision trace + inner monologue), fire-and-forget.
+   */
+  private notifyThoughtsReplyCompleted(batchId: string, revision: number, outcome: ReplyOutcome, userMessages: ChatMessage[], finalReply: string): void {
+    const thoughts = this.deps.thoughts;
+    if (!thoughts || !outcome.ok || !outcome.messageId) return;
+    try {
+      thoughts.beginForReply({
+        batchId,
+        revision,
+        messageId: outcome.messageId,
+        userMessages,
+        finalReply,
+        degraded: outcome.degraded
+      });
+    } catch (error) {
+      this.deps.errorLog?.add('thoughts.bridge', 'begin_failed', {
+        batchId,
+        revision,
+        message: String((error as Error)?.message ?? error).slice(0, 500)
+      });
+    }
+  }
+
   private observeActive(batchId: string): void {
     const batch = this.deps.batches.get(batchId);
     const runtime = this.runtime.get(batchId);
@@ -725,6 +821,9 @@ export class ReplyCoordinator {
       if (this.deps.batches.complete(batchId, revision, outcome.messageId, this.owner)) {
         await this.deps.onCompleted?.(batchId, userMessages, outcome, this.owner, revision);
         this.deps.bus.publish('reply.completed', { batchId, revision, messageId: outcome.messageId, message: this.deps.messages.get(outcome.messageId) });
+        // Legacy (non-interruptible) path: same thoughts hand-over as
+        // startGeneration, with the canonical text read back from the message.
+        this.notifyThoughtsReplyCompleted(batchId, revision, outcome, userMessages, replyTextOf(outcome.messageId, this.deps.messages));
       }
       for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
       this.runtime.delete(batchId);
@@ -795,4 +894,15 @@ function outcomeFromMessage(message: ChatMessage): ReplyOutcome {
 /** Exported for tests: shape of the structured failure events. */
 export function failureCodeFor(error: unknown): ReplyFailure['code'] {
   return toReplyFailure(error, error instanceof HttpTimeoutError, false).code;
+}
+
+/** Canonical text of a persisted assistant message (legacy path fallback). */
+function replyTextOf(messageId: string, messages: MessageRepo): string {
+  const message = messageId ? messages.get(messageId) : undefined;
+  if (!message) return '';
+  return message.content
+    .filter((part) => part.type === 'text')
+    .map((part) => (part.type === 'text' ? (part.text ?? '') : ''))
+    .join(' ')
+    .trim();
 }

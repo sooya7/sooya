@@ -196,6 +196,16 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
  * 时段、还是没有做完的事可说，从外面看全都是一片安静。所以状态、日志、原因、以及能
  * 改的那几个阈值放在同一屏，看到原因就能直接改旁边的设置。
  */
+/** Entry into the full Life Admin console (next phase). */
+export function LifeAdminLink() {
+  return (
+    <span className="admin-inline-links">
+      <a className="admin-inline-link" href="/admin/life" data-testid="life-admin-entry">Life 管理中心 ›</a>
+      <a className="admin-inline-link" href="/admin" data-testid="metrics-entry">系统概览（运行指标）›</a>
+    </span>
+  );
+}
+
 export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
   const [data, setData] = useState<LifePanelData | null>(null);
   const [form, setForm] = useState<LifeSettings | null>(null);

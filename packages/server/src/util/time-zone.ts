@@ -54,19 +54,23 @@ export function localDateOfIso(iso: string, timeZone?: string, fallbackOffsetMin
 }
 
 /**
- * UTC instant of a local wall-clock time. One correction pass over the zone
- * offset is exact for the offsets in use; a second pass guards DST edges.
+ * UTC instant of a local wall-clock time. Fixed-point iteration over the zone
+ * offset: X = naive - offset(X)，偏移稳定即收敛（无 DST 区一次收敛，DST
+ * 边缘最多三次）。旧实现第二轮把已修正值当 naive 再减一次偏移，导致
+ * IANA 时区结果整体偏差一个偏移量（如 Asia/Shanghai 早 8 小时）——本轮修复。
  * Never built as `localDate + 'T00:00:00Z' + offset` (E5).
  */
 export function localDateTimeToUtc(localDate: string, hour: number, minute: number, timeZone?: string, fallbackOffsetMinutes = 0): Date {
   if (timeZone) {
     try {
-      let guess = Date.parse(`${localDate}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`);
-      for (let i = 0; i < 2; i++) {
+      const naive = Date.parse(`${localDate}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`);
+      let guess = naive;
+      let previousOffset: number | null = null;
+      for (let i = 0; i < 3; i++) {
         const offset = timeZoneOffsetMinutes(new Date(guess), timeZone);
-        const corrected = guess - offset * 60_000;
-        if (corrected === guess) break;
-        guess = corrected;
+        if (offset === previousOffset) break;
+        previousOffset = offset;
+        guess = naive - offset * 60_000;
       }
       return new Date(guess);
     } catch { /* fall through */ }
@@ -78,4 +82,14 @@ export function localDateTimeToUtc(localDate: string, hour: number, minute: numb
 export function weekdayOfLocalDate(localDate: string): number {
   const [y, m, d] = localDate.split('-').map(Number);
   return new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
+}
+
+/**
+ * 本地日历日期加/减 N 天（YYYY-MM-DD）。用 UTC 日期运算，仅做纯日历数学，
+ * 与时区无关。越界月份/年份由 Date 自动进位。
+ */
+export function addDaysLocalDate(localDate: string, days: number): string {
+  const [y, m, d] = localDate.split('-').map(Number);
+  const shifted = new Date(Date.UTC(y!, m! - 1, d! + days));
+  return shifted.toISOString().slice(0, 10);
 }

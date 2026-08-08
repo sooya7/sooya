@@ -309,6 +309,34 @@ export class MemoryRepo {
     tx(ids);
   }
 
+  /**
+   * Admin edit: rewrite content (re-normalized + FTS-synced), importance or
+   * confidence. The old normalized text stops matching recall — a corrected
+   * fact supersedes the stale one.
+   */
+  update(id: string, patch: { content?: string; importance?: number; confidence?: number }): MemoryRecord | undefined {
+    const current = this.rowById(id);
+    if (!current) return undefined;
+    const content = patch.content ?? current.content;
+    const normalized = normalizeMemoryText(content);
+    const ts = nowIso();
+    this.db
+      .prepare(
+        `UPDATE memories SET content = ?, normalized = ?, importance = ?, confidence = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(content, normalized, patch.importance ?? current.importance, patch.confidence ?? current.confidence, ts, id);
+    try {
+      this.db.prepare('DELETE FROM memories_fts WHERE rowid = ?').run(this.db.prepare('SELECT rowid FROM memories WHERE id = ?').get(id) as { rowid: number });
+      this.db.prepare("INSERT INTO memories_fts(rowid, content, kind) VALUES (?, ?, ?)").run(
+        (this.db.prepare('SELECT rowid FROM memories WHERE id = ?').get(id) as { rowid: number }).rowid,
+        content,
+        current.kind
+      );
+    } catch { /* FTS best effort */ }
+    return this.get(id);
+  }
+
   delete(id: string): boolean {
     return this.db.prepare('DELETE FROM memories WHERE id = ?').run(id).changes > 0;
   }

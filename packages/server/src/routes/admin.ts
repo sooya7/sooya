@@ -512,6 +512,25 @@ export function registerAdminRoutes(app: SooyaApp): void {
       recall: services.context.memoryRecallTrace()
     };
   });
+  server.patch('/api/admin/memories/:id', guard, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const body = (req.body ?? {}) as { content?: string; importance?: number; confidence?: number };
+    if (body.content !== undefined && (typeof body.content !== 'string' || !body.content.trim())) {
+      reply.code(400);
+      return { error: 'bad_request', message: 'content must be a non-empty string' };
+    }
+    const updated = repos.memories.update(id, {
+      ...(body.content !== undefined ? { content: body.content.trim() } : {}),
+      ...(typeof body.importance === 'number' ? { importance: body.importance } : {}),
+      ...(typeof body.confidence === 'number' ? { confidence: body.confidence } : {})
+    });
+    if (!updated) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    services.bus.publish('memory.updated', { id });
+    return { memory: updated };
+  });
   server.delete('/api/admin/memories/:id', guard, async (req, reply) => {
     const ok = repos.memories.delete((req.params as { id: string }).id);
     if (!ok) {
@@ -554,6 +573,18 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { deleted: true, trashed: true };
   });
 
+  server.get('/api/admin/metrics', guard, async (req) => {
+    const days = Math.max(1, Math.min(90, Number((req.query as { days?: string }).days ?? 7)));
+    return { aggregates: app.services.metrics.aggregates(days), daily: app.services.metrics.daily(days) };
+  });
+
+  // 分布统计（min/max/mean/p50/p95，本地日期窗口，完整版 §10）。
+  server.get('/api/admin/metrics/distributions', guard, async (req) => {
+    const days = Math.max(1, Math.min(90, Number((req.query as { days?: string }).days ?? 7)));
+    return { distributions: app.services.metrics.distributions(days) };
+  });
+
+  // 版本对比：currentDays 为当前窗口，previousDays 为其前等长基线窗口。
   server.get('/api/admin/system', guard, async () => ({
     version: app.state.version,
     startedAt: app.state.startedAt,
@@ -623,4 +654,5 @@ export function registerAdminRoutes(app: SooyaApp): void {
     repos.audit.add('backup', 'deleted', name);
     return { deleted: true };
   });
+
 }

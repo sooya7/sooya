@@ -112,7 +112,27 @@ const EnvSchema = z.object({
   LIFE_QUIET_GAP_MINUTES: intish(180),
   LIFE_MAX_REACH_OUTS_PER_DAY: intish(3),
   /* Unprompted messages are off until the user turns them on. */
-  ENABLE_LIFE_REACH_OUT: boolish(false)
+  ENABLE_LIFE_REACH_OUT: boolish(false),
+  // Next phase: world context / admin / thoughts (all off by default;
+  // off must behave exactly like the stable release).
+  WORLD_CONTEXT_ENABLED: boolish(false),
+  LOCATION_MODEL_ENABLED: boolish(false),
+  WEATHER_ENABLED: boolish(false),
+  LIFE_ADMIN_UI_ENABLED: boolish(false),
+  VOICE_PREFERENCES_UI_ENABLED: boolish(false),
+  METRICS_DASHBOARD_ENABLED: boolish(false),
+  /* Weather production provider (next phase): unconfigured -> no-op provider,
+     weather=unknown, life/chat unaffected. */
+  WEATHER_PROVIDER: z.string().default(''),
+  WEATHER_BASE_URL: z.string().default(''),
+  WEATHER_API_KEY: z.string().default(''),
+  WEATHER_TIMEOUT_MS: intish(5000),
+
+  /* Visible thoughts layer (next phase): safe public thought summaries +
+     admin decision traces. All off by default. */
+  VISIBLE_THOUGHTS_ENABLED: boolish(false),
+  VISIBLE_INNER_MONOLOGUE_ENABLED: boolish(false),
+  VISIBLE_THOUGHTS_TIMEOUT_MS: intish(8000)
 });
 
 export type RawEnv = z.infer<typeof EnvSchema>;

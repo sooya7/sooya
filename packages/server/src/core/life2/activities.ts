@@ -7,6 +7,8 @@ import type { LifeVitals } from './vitals.js';
  */
 
 import type { LifeKind } from '../life.js';
+import type { WeatherForecastSummary, DaylightSnapshot } from '../weather/forecast.js';
+import { severeWithinHours } from '../weather/forecast.js';
 export type { LifeKind };
 
 export interface LifeActivityDefinition {
@@ -24,6 +26,8 @@ export interface LifeActivityDefinition {
   effects: Partial<LifeVitals>;
   possibleOutcomes: string[];
   followUpHooks: string[];
+  /** Preferred location kinds for this activity (next-phase location model). */
+  locationAffinity?: string[];
   shareability: number;
 }
 
@@ -87,6 +91,17 @@ export interface ScoreContext {
   themeTags: string[];
   threadFitIds: Set<string>;
   continuityFrom: string[];
+  /** Next phase: cached weather condition (rain/snow/...) modifier. */
+  weatherCondition?: string | null;
+  /** Next phase: very hot (>=33C) suppresses midday outdoor activities. */
+  weatherHot?: boolean;
+  /**
+   * Next phase: forecast summary — 未来 2 小时内有 severe（暴雨/暴风等）
+   * 时长时间户外减分。天气仍是多因素评分的一部分，不是硬规则。
+   */
+  forecast?: WeatherForecastSummary | null;
+  /** Next phase: daylight — 日落后的傍晚散步获得小幅加分。 */
+  daylight?: DaylightSnapshot | null;
 }
 
 /** Tags overlap penalty (§44.3) against the last few used activities. */
@@ -104,13 +119,13 @@ export function semanticRepeatPenalty(repo: LifeV2Repo, candidate: LifeActivityD
   return Math.round(maxOverlap * 30 * 100) / 100;
 }
 
-export function exactRepeatPenalty(repo: LifeV2Repo, candidate: LifeActivityDefinition, nowIso: string): number {
+export function exactRepeatPenalty(repo: LifeV2Repo, candidate: LifeActivityDefinition, nowIso: string, tiers: [number, number, number] = [24, 72, 168]): number {
   const usage = repo.getUsage(candidate.id);
   if (!usage?.last_used_at) return 0;
   const hours = (Date.parse(nowIso) - Date.parse(usage.last_used_at)) / 3_600_000;
-  if (hours < 24) return 60;
-  if (hours < 72) return 30;
-  if (hours < 168) return 10;
+  if (hours < tiers[0]) return 60;
+  if (hours < tiers[1]) return 30;
+  if (hours < tiers[2]) return 10;
   return 0;
 }
 
@@ -136,9 +151,38 @@ export function scoreActivity(def: LifeActivityDefinition, ctx: ScoreContext, no
   if (def.kind === 'play') score += mapRange(v.curiosity, 45, 100, 0, 16);
   if (def.kind === 'work' || def.kind === 'study') score += mapRange(v.focus, 45, 100, 0, 12) - Math.max(0, 60 - v.energy) / 4;
 
+  // Weather modifier (next phase): rain/snow/storm suppress outdoor and
+  // favour cozy/library; clear favours parks and walks; heat suppresses
+  // midday outdoor. Modifiers only — vitals + plan + thread still decide.
+  const w = ctx.weatherCondition;
+  if (w === 'rain' || w === 'storm') {
+    if (def.kind === 'out') score -= 30;
+    if (def.tags.some((t) => t === 'cafe' || t === 'library' || t === 'home' || t === 'cozy')) score += 12;
+  } else if (w === 'snow') {
+    if (def.kind === 'out') score -= 25;
+    if (def.tags.some((t) => t === 'home' || t === 'cozy')) score += 8;
+  } else if (w === 'clear') {
+    if (def.tags.some((t) => t === 'park' || t === 'walk' || t === 'out')) score += 15;
+  }
+  if (ctx.weatherHot && def.kind === 'out' && ctx.hour >= 11 && ctx.hour <= 15) score -= 25;
+
+  // Forecast modifier (next phase): severe weather (暴雨/暴风等) within the
+  // next 2 hours suppresses long outdoor windows. A modifier among many —
+  // vitals + plan + thread still decide. 不制造夸张情绪。
+  if (ctx.forecast && severeWithinHours(ctx.forecast, nowIso, 2) && def.kind === 'out' && def.minDurationMinutes >= 20) {
+    score -= 20;
+  }
+
+  // Daylight modifier (next phase): 日落后的傍晚散步是自然的放松收尾，
+  // 小幅加分；只影响 walk，且不跨深夜（散步窗口本身 8-21 点）。
+  if (ctx.daylight && !ctx.daylight.isDaylight && def.id === 'walk' && ctx.hour >= 17 && ctx.hour < 22) {
+    score += 10;
+  }
+
   // Continuity bonus (§43.3 / E6): the previous activity's follow-up hooks
   // (买菜 → 做饭), its tags, its outcome tags, or an open thread's related
-  // activities all raise the score of the natural next step.
+  // activities all raise the score of the natural next step. The weight is an
+  // experiment knob (single-user A/B).
   for (const prev of ctx.continuityFrom) {
     if (prev === def.id || def.followUpHooks.includes(prev) || def.tags.some((t) => t === prev)) {
       score += 12;
@@ -152,7 +196,7 @@ export function scoreActivity(def: LifeActivityDefinition, ctx: ScoreContext, no
   // Thread fit
   if (ctx.threadFitIds.has(def.id)) score += 14;
 
-  // Anti-repeat
+  // Anti-repeat (tiers are an experiment knob)
   score -= exactRepeatPenalty(ctx.usage, def, nowIso);
   score -= semanticRepeatPenalty(ctx.usage, def);
 

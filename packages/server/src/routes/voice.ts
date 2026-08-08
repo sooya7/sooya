@@ -4,6 +4,12 @@ import type { SooyaApp } from '../app.js';
 import { requireChatToken } from './auth.js';
 import type { UserVoicePreferences } from '../core/voice/types.js';
 import { DEFAULT_VOICE_PREFERENCES } from '../core/voice/types.js';
+import { DEFAULT_VOICE_EMOTIONS } from '../core/voice.js';
+
+const VoicePreviewSchema = z.object({
+  text: z.string().trim().min(1).max(2000),
+  emotion: z.string().trim().max(40).optional()
+});
 
 const MessageIdParamsSchema = z.object({ id: z.string().min(1).max(80) });
 const ReadAloudSchema = z.object({ partId: z.string().min(1).max(80), voiceId: z.string().nullable().optional() });
@@ -21,6 +27,8 @@ const VoicePreferencesSchema = z.object({
 export function registerVoiceRoutes(app: SooyaApp): void {
   const { server, repos, services } = app;
   const auth = requireChatToken(app);
+  // Per-IP preview rate limit window, scoped to this app instance (P1-10).
+  const previewWindow = new Map<string, number>();
 
   /** Re-read a specific text part aloud, attached to the text (no new bubble). */
   server.post('/api/messages/:id/read-aloud', { preHandler: auth }, async (req, reply) => {
@@ -71,6 +79,53 @@ export function registerVoiceRoutes(app: SooyaApp): void {
     }
     const cancelled = services.voice.cancel(params.data.id);
     return { cancelled };
+  });
+
+  /** P1: provider capability surface — the UI hides unsupported controls. */
+  server.get('/api/settings/voice/capabilities', { preHandler: auth }, async () => {
+    const provider = services.capabilities.ttsProvider();
+    return {
+      configured: services.capabilities.has('tts'),
+      provider: provider?.name ?? null,
+      supportsInstructions: true,
+      supportsSpeed: true,
+      supportsAbort: true,
+      emotionEnum: Object.keys(DEFAULT_VOICE_EMOTIONS),
+      voices: provider && 'cfg' in provider ? [String((provider as { cfg?: { voice?: string } }).cfg?.voice ?? 'default')] : []
+    };
+  });
+
+  /**
+   * P1: one-shot TTS preview — no chat message, no memory/life, no media
+   * record. Character-capped and rate-limited; the audio travels as a base64
+   * data URL so there is nothing to clean up later.
+   */
+  server.post('/api/settings/voice/preview', { preHandler: auth }, async (req, reply) => {
+    const now = Date.now();
+    const last = previewWindow.get(req.ip ?? 'unknown');
+    if (last && now - last < 10_000) {
+      reply.code(429);
+      return { error: 'rate_limited', message: '试听太频繁了，稍后再试' };
+    }
+    const parsed = VoicePreviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const { text, emotion } = parsed.data;
+    const clipped = text.slice(0, 200);
+    if (!clipped.trim()) { reply.code(400); return { error: 'empty_text' }; }
+    const tts = services.capabilities.ttsProvider();
+    if (!services.capabilities.has('tts')) { reply.code(503); return { error: 'tts_not_configured' }; }
+    const audio = await tts.synthesize(clipped, {
+      signal: new AbortController().signal,
+      ...(emotion ? { apiEmotion: emotion, emotion } : {})
+    });
+    previewWindow.set(req.ip ?? 'unknown', Date.now());
+    return {
+      audioBase64: audio.data.toString('base64'),
+      mime: audio.mime,
+      format: audio.format,
+      durationSec: audio.durationSec ?? null,
+      chars: clipped.length
+    };
   });
 
   /** User voice preferences. */

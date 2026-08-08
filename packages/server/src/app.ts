@@ -31,6 +31,19 @@ import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/
 import { LifeEngine, DEFAULT_LIFE_CONFIG, type LifeConfig, type LifeRuntime } from './core/life.js';
 import { LifeRepo } from './db/repos/life.repo.js';
 import { LifeV2Repo } from './db/repos/life-v2.repo.js';
+import { LifeLocationRepo } from './db/repos/location.repo.js';
+import { LocationService } from './core/location/service.js';
+import { WeatherRepo } from './db/repos/weather.repo.js';
+import { WeatherService } from './core/weather/service.js';
+import { WorldContextService } from './core/world-context.js';
+import { MetricsRepo } from './db/repos/metrics.repo.js';
+import { MetricsService } from './core/metrics.js';
+import { createWeatherChain } from './core/weather/fallback.js';
+import { ThoughtRepo } from './db/repos/thought.repo.js';
+import { ThoughtsService } from './core/thoughts/service.js';
+import { ThoughtPresenter } from './core/thoughts/presenter.js';
+import { ThoughtSafetyFilter } from './core/thoughts/safety.js';
+import { readThoughtsFlags } from './core/thoughts/flags.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
@@ -53,6 +66,7 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerFeatureRoutes } from './routes/features.js';
 import { registerVoiceRoutes } from './routes/voice.js';
 import { registerLifeAdminRoutes } from './routes/life-admin.js';
+import { registerThoughtRoutes } from './routes/thoughts.js';
 import { ensureDirSync, cleanupTempFiles } from './util/fsx.js';
 
 export interface BuildAppOptions {
@@ -94,6 +108,10 @@ export interface SooyaApp {
     proactive: ProactiveAttemptRepo;
     voice: VoiceGenerationRepo;
     lifeV2: LifeV2Repo;
+    locations: LifeLocationRepo;
+    weather: WeatherRepo;
+    metrics: MetricsRepo;
+    thoughts: ThoughtRepo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
     replyBatches: ReplyBatchRepo;
@@ -106,6 +124,11 @@ export interface SooyaApp {
     memory: MemoryService;
     life: LifeRuntime;
     proactive: ProactiveComposer;
+    location: LocationService;
+    weather: WeatherService;
+    world: WorldContextService;
+    metrics: MetricsService;
+    thoughts: ThoughtsService;
     voice: VoiceService;
     push: PushService;
     storage: StorageService;
@@ -186,6 +209,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     proactive: new ProactiveAttemptRepo(dbHandle),
     voice: new VoiceGenerationRepo(dbHandle),
     lifeV2: new LifeV2Repo(dbHandle),
+    locations: new LifeLocationRepo(dbHandle),
+    weather: new WeatherRepo(dbHandle),
+    metrics: new MetricsRepo(dbHandle),
+    thoughts: new ThoughtRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle),
     replyBatches: new ReplyBatchRepo(dbHandle)
@@ -221,8 +248,34 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       proactiveMode: policy.proactiveMode ?? DEFAULT_LIFE_CONFIG.proactiveMode
     };
   };
+  // Weather identity is the active city (city + country), never a location id.
+  let location: LocationService;
+  const cityWeatherCondition = (): string | null => {
+    const city = location.activeCity();
+    if (!city) return null;
+    const country = city.country ?? '中国';
+    const region = city.region ?? null;
+    return weather.cachedCondition({ key: `${country}|${region ?? ''}|${city.name}`, country, region, city: city.name });
+  };
+  location = new LocationService(repos.locations, repos.audit, opts.clock, cityWeatherCondition, { timeZone: env.LIFE_TIME_ZONE });
+  location.setEnabled(env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED);
+  const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
+  weather.setEnabled(env.WORLD_CONTEXT_ENABLED && env.WEATHER_ENABLED);
+  // Production provider chain (primary -> secondary -> cache -> unknown);
+  // unconfigured env yields the no-op provider, so behaviour is unchanged.
+  weather.setProvider(createWeatherChain({
+    provider: env.WEATHER_PROVIDER,
+    baseUrl: env.WEATHER_BASE_URL,
+    apiKey: env.WEATHER_API_KEY,
+    timeoutMs: env.WEATHER_TIMEOUT_MS
+  }, repos.weather));
+  const world = new WorldContextService(location, weather, opts.clock, env.LIFE_TIME_ZONE, repos.locations);
+  // Thread location tags: real open threads feed the location selector.
+  location.setThreadsProvider(() => repos.lifeV2.threads('open'));
+  const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
+  metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
   const life = env.ENABLE_LIFE_V2
-    ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock)
+    ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
   const voiceService = new VoiceService({
     messages: repos.messages,
@@ -241,7 +294,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       autoComplement: env.VOICE_AUTO_COMPLEMENT_ENABLED,
       readAloud: env.VOICE_READ_ALOUD_ENABLED,
       ttsRetries: env.VOICE_TTS_RETRIES
-    }
+    },
+    metrics
   });
   voiceService.dailyAutoCap = env.VOICE_DAILY_AUTO_CAP;
 
@@ -254,6 +308,28 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
 
   const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED });
+  const thoughtFlags = readThoughtsFlags(process.env);
+  const thoughts = new ThoughtsService({
+    flags: thoughtFlags,
+    repo: repos.thoughts,
+    context: {
+      worldSnapshot: () => world.snapshot(),
+      lifeSummary: () => { const snap = life.snapshot(); return { activity: snap.activity, mood: snap.mood }; },
+      memoryRecallStats: () => { try { return context.memoryRecallTrace(); } catch { return null; } },
+      voiceRowFor: (messageId: string) => repos.voice.latestForMessage(messageId)
+    },
+    presenter: new ThoughtPresenter({
+      repo: repos.thoughts,
+      chat: () => capabilities.chatProvider(),
+      safety: new ThoughtSafetyFilter(),
+      bus,
+      errorLog: repos.errors,
+      safetyRefs: { personaName: config.getPersona().name },
+      timeoutMs: thoughtFlags.thoughtTimeoutMs
+    }),
+    messages: repos.messages,
+    errorLog: repos.errors
+  });
   const replyCoordinator = new ReplyCoordinator({
     messages: repos.messages,
     batches: repos.replyBatches,
@@ -269,6 +345,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     retryBaseDelayMs: env.CHAT_RETRY_BASE_DELAY_MS,
     interruptible: env.REPLY_INTERRUPTIBLE_GENERATION,
     errorLog: repos.errors,
+    metrics,
+    thoughts,
     onCompleted: (batchId, userMessages, outcome, owner, revision) => {
       // The batch is already marked completed by the coordinator (revision-
       // fenced); this hook only enqueues the downstream jobs atomically.
@@ -304,7 +382,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     stickers: stickerLibrary,
     bus,
     voice: voiceService,
-    coordinator: replyCoordinator
+    coordinator: replyCoordinator,
+    metrics
   });
   const backups = new BackupService({
     db: () => dbHandle,
@@ -457,7 +536,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     recurringTimers: [],
@@ -485,6 +564,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   registerStreamRoutes(app);
   registerVoiceRoutes(app);
   registerLifeAdminRoutes(app);
+  registerThoughtRoutes(app);
   registerAdminRoutes(app);
   registerFeatureRoutes(app);
 
