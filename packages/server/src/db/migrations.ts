@@ -1190,6 +1190,44 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE experiments ADD COLUMN rollout_percent INTEGER NOT NULL DEFAULT 100 CHECK (rollout_percent IN (10, 25, 50, 100));
       `);
     }
+  },
+  {
+    /*
+     * TEMP (Agent D local only): visible thoughts / decision trace.
+     * Final DDL moves to Integration migration v24 (see
+     * INTEGRATION-NOTES-thoughts.md MIGRATION_NEEDS); version 904 lives in the
+     * 9xx band so it can never collide with Integration's numbered versions.
+     */
+    version: 904,
+    name: 'tmp_visible_thoughts',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE visible_thoughts (
+          id         TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL,
+          batch_id   TEXT NOT NULL,
+          revision   INTEGER NOT NULL,
+          kind       TEXT NOT NULL CHECK (kind IN ('inner_monologue','decision_summary')),
+          text       TEXT NOT NULL DEFAULT '',
+          visibility TEXT NOT NULL CHECK (visibility IN ('user','admin')),
+          status     TEXT NOT NULL CHECK (status IN ('generating','completed','cancelled','failed')),
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_thoughts_message ON visible_thoughts(message_id);
+        CREATE INDEX idx_thoughts_batch_rev ON visible_thoughts(batch_id, revision);
+        CREATE INDEX idx_thoughts_visibility ON visible_thoughts(visibility);
+        CREATE INDEX idx_thoughts_created ON visible_thoughts(created_at);
+
+        CREATE TABLE decision_traces (
+          batch_id     TEXT NOT NULL,
+          revision     INTEGER NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at   TEXT NOT NULL,
+          PRIMARY KEY (batch_id, revision)
+        );
+        CREATE INDEX idx_decision_traces_created ON decision_traces(created_at DESC);
+      `);
+    }
   }
 ];
 
