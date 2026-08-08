@@ -512,6 +512,25 @@ export function registerAdminRoutes(app: SooyaApp): void {
       recall: services.context.memoryRecallTrace()
     };
   });
+  server.patch('/api/admin/memories/:id', guard, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const body = (req.body ?? {}) as { content?: string; importance?: number; confidence?: number };
+    if (body.content !== undefined && (typeof body.content !== 'string' || !body.content.trim())) {
+      reply.code(400);
+      return { error: 'bad_request', message: 'content must be a non-empty string' };
+    }
+    const updated = repos.memories.update(id, {
+      ...(body.content !== undefined ? { content: body.content.trim() } : {}),
+      ...(typeof body.importance === 'number' ? { importance: body.importance } : {}),
+      ...(typeof body.confidence === 'number' ? { confidence: body.confidence } : {})
+    });
+    if (!updated) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    services.bus.publish('memory.updated', { id });
+    return { memory: updated };
+  });
   server.delete('/api/admin/memories/:id', guard, async (req, reply) => {
     const ok = repos.memories.delete((req.params as { id: string }).id);
     if (!ok) {

@@ -80,6 +80,35 @@ describe('memory lifecycle', () => {
     expect(result.replacement.supersedesId).toBe(old.id);
   });
 
+  it('admin edit re-normalizes the fact: the old text stops being recalled', async () => {
+    h = await createHarness();
+    const record = h.app.repos.memories.upsert({ kind: 'profile', content: '用户住在杭州' }).record;
+    const edited = h.app.repos.memories.update(record.id, { content: '用户住在宁波', importance: 0.9 });
+    expect(edited?.content).toBe('用户住在宁波');
+    // The corrected fact is the current one; the stale normalized text no
+    // longer matches recall.
+    const recalled = await h.app.services.memory.recall('用户住在杭州');
+    expect(recalled.memories.some((m) => m.id === record.id && m.content === '用户住在杭州')).toBe(false);
+    expect(h.app.repos.memories.get(record.id)?.content).toBe('用户住在宁波');
+  });
+
+  it('user correction supersedes the old fact for recall', async () => {
+    h = await createHarness();
+    const old = h.app.repos.memories.upsert({ kind: 'profile', content: '最喜欢的城市是上海' }).record;
+    h.app.repos.memories.supersede(old.id, { kind: 'profile', content: '最喜欢的城市是宁波' });
+    const recalled = await h.app.services.memory.recall('最喜欢的城市');
+    expect(recalled.memories.some((m) => m.content === '最喜欢的城市是上海')).toBe(false);
+    expect(recalled.memories.some((m) => m.content === '最喜欢的城市是宁波')).toBe(true);
+  });
+
+  it('deleted memories are never recalled again', async () => {
+    h = await createHarness();
+    const record = h.app.repos.memories.upsert({ kind: 'event', content: '下周要出差北京' }).record;
+    expect(h.app.repos.memories.delete(record.id)).toBe(true);
+    const recalled = await h.app.services.memory.recall('出差北京');
+    expect(recalled.memories.some((m) => m.id === record.id)).toBe(false);
+  });
+
   it('rolls back both sides when replacement insertion fails', async () => {
     h = await createHarness();
     const old = h.app.repos.memories.upsert({ kind: 'profile', content: 'User lives in Hangzhou' }).record;
