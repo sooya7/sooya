@@ -345,8 +345,19 @@ export class LifeSimEngine {
     const themeTags = JSON.parse(theme.tone_tags_json) as string[];
     // Next phase: cached weather condition modifiers (never blocks on fetch).
     const weatherLocation = this.location?.isEnabled ? this.location.current() : null;
-    const weatherCondition = weatherLocation && this.weather?.isEnabled
-      ? this.weather.cachedCondition({ key: weatherLocation.id, city: weatherLocation.city, region: weatherLocation.region, lat: weatherLocation.lat, lng: weatherLocation.lng })
+    const weatherQuery = weatherLocation
+      ? { key: weatherLocation.id, city: weatherLocation.city, region: weatherLocation.region, lat: weatherLocation.lat, lng: weatherLocation.lng }
+      : null;
+    const weatherCondition = weatherQuery && this.weather?.isEnabled
+      ? this.weather.cachedCondition(weatherQuery)
+      : null;
+    // Next phase: cached forecast summary + daylight (sync, 缓存/天文估算，
+    // 绝不触发网络请求，绝不影响 tick 性能与稳定性)。
+    const forecast = weatherQuery && this.weather?.isEnabled
+      ? this.weather.cachedForecastSummary(weatherQuery)
+      : null;
+    const daylight = weatherQuery && this.weather?.isEnabled
+      ? this.weather.cachedDaylight(weatherQuery, this.clock(), this.settings.timeZone)
       : null;
     // E6: real causal context — previous activity's follow-up hooks and tags,
     // its outcome tags, and the open threads' related activities. 买菜 → 做饭
@@ -374,6 +385,8 @@ export class LifeSimEngine {
       threadFitIds,
       continuityFrom: [...new Set(continuityFrom)],
       ...(weatherCondition ? { weatherCondition } : {}),
+      ...(forecast ? { forecast } : {}),
+      ...(daylight ? { daylight } : {}),
       continuityWeight,
       ...(tighterRepeat ? { antiRepeatTiers: [48, 96, 168] as [number, number, number] } : {})
     };
@@ -402,7 +415,9 @@ export class LifeSimEngine {
           themeTags,
           threadCount: threadFitIds.size,
           continuityCount: continuityFrom.length,
-          weatherCondition
+          weatherCondition,
+          forecastSevere: forecast?.severe ?? null,
+          daylightKnown: daylight ? daylight.isDaylight : null
         },
         canonicalDecision: best ? { best: best.id, score: bestScore } : null,
         runShadow: () => {

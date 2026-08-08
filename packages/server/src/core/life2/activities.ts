@@ -7,6 +7,8 @@ import type { LifeVitals } from './vitals.js';
  */
 
 import type { LifeKind } from '../life.js';
+import type { WeatherForecastSummary, DaylightSnapshot } from '../weather/forecast.js';
+import { severeWithinHours } from '../weather/forecast.js';
 export type { LifeKind };
 
 export interface LifeActivityDefinition {
@@ -93,6 +95,13 @@ export interface ScoreContext {
   weatherCondition?: string | null;
   /** Next phase: very hot (>=33C) suppresses midday outdoor activities. */
   weatherHot?: boolean;
+  /**
+   * Next phase: forecast summary — 未来 2 小时内有 severe（暴雨/暴风等）
+   * 时长时间户外减分。天气仍是多因素评分的一部分，不是硬规则。
+   */
+  forecast?: WeatherForecastSummary | null;
+  /** Next phase: daylight — 日落后的傍晚散步获得小幅加分。 */
+  daylight?: DaylightSnapshot | null;
   /** Experiment knob: continuity bonus multiplier (default 1). */
   continuityWeight?: number;
   /** Experiment knob: exact-repeat tiers in hours (default [24,72,168]). */
@@ -160,6 +169,19 @@ export function scoreActivity(def: LifeActivityDefinition, ctx: ScoreContext, no
     if (def.tags.some((t) => t === 'park' || t === 'walk' || t === 'out')) score += 15;
   }
   if (ctx.weatherHot && def.kind === 'out' && ctx.hour >= 11 && ctx.hour <= 15) score -= 25;
+
+  // Forecast modifier (next phase): severe weather (暴雨/暴风等) within the
+  // next 2 hours suppresses long outdoor windows. A modifier among many —
+  // vitals + plan + thread still decide. 不制造夸张情绪。
+  if (ctx.forecast && severeWithinHours(ctx.forecast, nowIso, 2) && def.kind === 'out' && def.minDurationMinutes >= 20) {
+    score -= 20;
+  }
+
+  // Daylight modifier (next phase): 日落后的傍晚散步是自然的放松收尾，
+  // 小幅加分；只影响 walk，且不跨深夜（散步窗口本身 8-21 点）。
+  if (ctx.daylight && !ctx.daylight.isDaylight && def.id === 'walk' && ctx.hour >= 17 && ctx.hour < 22) {
+    score += 10;
+  }
 
   // Continuity bonus (§43.3 / E6): the previous activity's follow-up hooks
   // (买菜 → 做饭), its tags, its outcome tags, or an open thread's related

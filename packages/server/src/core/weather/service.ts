@@ -1,14 +1,21 @@
-import type { WeatherRepo, WeatherSnapshot, WeatherCondition } from '../../db/repos/weather.repo.js';
+import type { WeatherRepo, WeatherSnapshot, WeatherCondition, WeatherDaylightRow } from '../../db/repos/weather.repo.js';
 import { toWeatherSnapshot } from '../../db/repos/weather.repo.js';
 import type { LifeLocationRepo } from '../../db/repos/location.repo.js';
 import type { LifeRepo } from '../../db/repos/life.repo.js';
+import type { WeatherProviderFull } from './provider.js';
+import { weatherLocationKey } from './provider.js';
+import type { WeatherForecastSummary, DaylightSnapshot } from './forecast.js';
+import { summarizeForecast, forecastSummaryFromRow } from './forecast.js';
+import { astronomyDaylight, computeIsDaylight } from './daylight.js';
+import { localDateOfIso } from '../../util/time-zone.js';
 
 /**
  * Weather snapshot service (next phase). The provider is injected — never
  * hardcoded into the life engine. Caching: <30min fresh, 30-120min usable
  * with a background refresh, >120min stale. Provider failure degrades to the
  * latest snapshot, or 'unknown' when none exists. A failing provider never
- * blocks life or chat.
+ * blocks life or chat. 本轮扩展：完整快照字段、forecast（12h+3d）、
+ * daylight（本地时区）、severe 识别与语义事件 episode 去重。
  */
 
 export interface WeatherLocation {
@@ -29,14 +36,24 @@ export interface WeatherEventRecorder {
   record(eventType: string, description: string, meta: Record<string, unknown>): void;
 }
 
+export type { WeatherProviderFull };
+export type { WeatherForecast, WeatherForecastPeriod, WeatherForecastSummary, DaylightSnapshot } from './forecast.js';
+export type { SevereWeatherKind } from './severe.js';
+
 const FRESH_MS = 30 * 60 * 1000;
 const STALE_MS = 120 * 60 * 1000;
+const FORECAST_FRESH_MS = 30 * 60 * 1000;
 
-/** Conditions with semantic meaning for life events. */
-const SEMANTIC_CONDITIONS: WeatherCondition[] = ['rain', 'snow', 'storm'];
+/** 事件类型固定（contract §1.2）：雨/雪/暴风按 episode 去重。 */
+const RAIN_EVENT = 'weather.started_raining';
+const RAIN_STOPPED_EVENT = 'weather.rain_stopped';
+const SNOW_EVENT = 'weather.first_snow';
+const STORM_EVENT = 'weather.storm';
+const HEAT_WAVE_EVENT = 'weather.heat_wave';
+const COLD_SNAP_EVENT = 'weather.cold_snap';
 
 export class WeatherService {
-  private provider: WeatherProvider | null = null;
+  private provider: WeatherProviderFull | null = null;
   private enabled = false;
 
   constructor(
@@ -51,7 +68,7 @@ export class WeatherService {
   }
 
   /** Flag wiring: WEATHER_ENABLED (master WORLD_CONTEXT_ENABLED too). */
-  setProvider(provider: WeatherProvider | null): void {
+  setProvider(provider: WeatherProviderFull | null): void {
     this.provider = provider?.configured ? provider : null;
   }
 
@@ -65,9 +82,7 @@ export class WeatherService {
 
   /** The location key used for caching (city/region or coordinates when present). */
   private locationKeyFor(location: WeatherLocation): string {
-    if (location.key) return location.key;
-    if (location.lat != null && location.lng != null) return `${Math.round(location.lat * 10)},${Math.round(location.lng * 10)}`;
-    return location.city ?? location.region ?? 'unknown';
+    return weatherLocationKey(location);
   }
 
   /**
@@ -98,12 +113,103 @@ export class WeatherService {
     return cached?.condition ?? null;
   }
 
+  /** Synchronous best-known full snapshot (world context path); never blocks. */
+  cachedSnapshot(location: WeatherLocation): WeatherSnapshot | null {
+    if (!this.enabled) return null;
+    const cached = this.repo.latest(this.locationKeyFor(location));
+    if (!cached) return null;
+    const age = this.clock().getTime() - Date.parse(cached.observed_at);
+    return toWeatherSnapshot(cached, age > STALE_MS);
+  }
+
+  // ------------------------------------------------------------ forecast
+
+  /**
+   * Latest usable forecast summary: fresh cache, or a refresh through the
+   * provider chain, or the last cached one, or null. Never throws.
+   */
+  async forecastFor(location: WeatherLocation, signal?: AbortSignal): Promise<WeatherForecastSummary | null> {
+    const key = this.locationKeyFor(location);
+    const now = this.clock();
+    const cached = this.repo.latestForecast(key);
+    if (cached && now.getTime() - Date.parse(cached.generated_at) < FORECAST_FRESH_MS) {
+      return forecastSummaryFromRow(cached, now);
+    }
+    if (!this.isEnabled) return cached ? forecastSummaryFromRow(cached, now) : null;
+    try {
+      const forecast = await this.provider!.forecast?.(location, signal) ?? null;
+      if (forecast && forecast.periods.length > 0) {
+        // 链的缓存腿返回旧 forecast（generatedAt 相同）时不再重复落库。
+        if (!cached || forecast.generatedAt !== cached.generated_at) {
+          this.repo.saveForecast({
+            location_key: key,
+            generated_at: forecast.generatedAt,
+            provider: forecast.provider,
+            periods_json: JSON.stringify(forecast.periods)
+          });
+        }
+        return summarizeForecast(forecast.periods, forecast.generatedAt, forecast.provider, now);
+      }
+    } catch { /* 降级到缓存 */ }
+    const stale = this.repo.latestForecast(key);
+    return stale ? forecastSummaryFromRow(stale, now) : null;
+  }
+
+  /** Synchronous best-known forecast summary (life scoring path); never blocks. */
+  cachedForecastSummary(location: WeatherLocation): WeatherForecastSummary | null {
+    if (!this.enabled) return null;
+    const row = this.repo.latestForecast(this.locationKeyFor(location));
+    return row ? forecastSummaryFromRow(row, this.clock()) : null;
+  }
+
+  // ------------------------------------------------------------ daylight
+
+  /**
+   * Latest usable daylight: cached for the local date, else provider chain,
+   * else NOAA astronomy estimate, else null. Never throws.
+   */
+  async daylightFor(location: WeatherLocation, at: Date = this.clock(), timeZone?: string, signal?: AbortSignal): Promise<DaylightSnapshot | null> {
+    const key = this.locationKeyFor(location);
+    const localDate = daylightLocalDate(at, timeZone);
+    const cached = this.repo.daylightFor(key, localDate);
+    if (cached) return daylightFromRow(cached, at);
+    if (!this.isEnabled) return astronomyDaylight(location.lat, location.lng, at, timeZone, localDate);
+    try {
+      const daylight = await this.provider!.daylight?.(location, signal) ?? null;
+      if (daylight) {
+        this.repo.saveDaylight({
+          location_key: key,
+          local_date: localDate,
+          sunrise: daylight.sunrise,
+          sunset: daylight.sunset,
+          provider: this.providerName ?? 'unknown'
+        });
+        return { ...daylight, isDaylight: computeIsDaylight(daylight.sunrise, daylight.sunset, at.toISOString()) };
+      }
+    } catch { /* 降级到天文估算/缺省 */ }
+    return astronomyDaylight(location.lat, location.lng, at, timeZone, localDate);
+  }
+
+  /** Synchronous best-known daylight (life scoring path); never blocks. */
+  cachedDaylight(location: WeatherLocation, at: Date = this.clock(), timeZone?: string): DaylightSnapshot | null {
+    if (!this.enabled) return null;
+    const key = this.locationKeyFor(location);
+    const localDate = daylightLocalDate(at, timeZone);
+    const row = this.repo.daylightFor(key, localDate);
+    if (row) return daylightFromRow(row, at);
+    return astronomyDaylight(location.lat, location.lng, at, timeZone, localDate);
+  }
+
+  // ------------------------------------------------------------ refresh
+
   /** Fetches from the provider, stores it, and records semantic transitions. */
   private async refresh(location: WeatherLocation, signal?: AbortSignal): Promise<WeatherSnapshot> {
     const key = this.locationKeyFor(location);
-    if (!this.isEnabled) return { observedAt: this.clock().toISOString(), condition: 'unknown', provider: 'none', locationKey: key, stale: true };
+    if (!this.isEnabled) return unknownSnapshot(this.clock(), key);
     try {
       const snapshot = await this.provider!.current(location, signal);
+      // 降级腿（cache/unknown）：不落库、不触发语义事件，直接返回。
+      if (snapshot.degraded) return { ...snapshot, locationKey: key };
       this.repo.save({
         location_key: key,
         observed_at: snapshot.observedAt,
@@ -113,40 +219,92 @@ export class WeatherService {
         humidity: snapshot.humidity ?? null,
         precipitation_mm: snapshot.precipitationMm ?? null,
         wind_kph: snapshot.windKph ?? null,
+        visibility_km: snapshot.visibilityKm ?? null,
+        pressure_hpa: snapshot.pressureHpa ?? null,
         provider: snapshot.provider
       });
-      this.maybeRecordTransition(key, snapshot.condition);
+      this.maybeRecordTransition(key, snapshot);
       return { ...snapshot, locationKey: key, stale: false };
     } catch (error) {
       // Provider failure must never block life or chat: fall back to the last
       // snapshot (stale) or unknown.
       const cached = this.repo.latest(key);
       if (cached) return toWeatherSnapshot(cached, true);
-      return { observedAt: this.clock().toISOString(), condition: 'unknown', provider: 'none', locationKey: key, stale: true };
+      return unknownSnapshot(this.clock(), key);
     }
   }
 
+  // ------------------------------------------------------------ events
+
   /**
    * Weather events only on semantic change — never on every refresh.
-   * rain / snow / storm transitions produce a single life event per episode.
+   * 类型固定（contract §1.2）：started_raining / rain_stopped / first_snow /
+   * storm / heat_wave / cold_snap，全部按 episode 去重（与上一行比较）。
    */
-  private maybeRecordTransition(key: string, condition: WeatherCondition): void {
-    if (!SEMANTIC_CONDITIONS.includes(condition)) return;
+  private maybeRecordTransition(key: string, snapshot: WeatherSnapshot): void {
     const previous = this.repo.recent(key, 2)[1];
-    if (previous && previous.condition === condition) return; // same episode continues
-    const description = condition === 'rain'
-      ? '开始下雨了'
-      : condition === 'snow'
-        ? '下雪了'
-        : '外面起风变天了';
+    const condition = snapshot.condition;
+
+    // 条件转变：雨/雪/暴风开始或雨停（episode 级去重）。
+    if (condition === 'rain') {
+      if (!previous || previous.condition !== 'rain') {
+        this.recordWeatherEvent(RAIN_EVENT, '开始下雨了', key, snapshot);
+      }
+    } else if (condition === 'snow') {
+      if (!previous || previous.condition !== 'snow') {
+        this.recordWeatherEvent(SNOW_EVENT, '下雪了', key, snapshot);
+      }
+    } else if (condition === 'storm') {
+      if (!previous || previous.condition !== 'storm') {
+        this.recordWeatherEvent(STORM_EVENT, '外面起风变天了', key, snapshot);
+      }
+    } else if (previous && (previous.condition === 'rain' || previous.condition === 'snow' || previous.condition === 'storm')) {
+      if (previous.condition === 'rain') {
+        this.recordWeatherEvent(RAIN_STOPPED_EVENT, '雨停了', key, snapshot);
+      }
+      // 雪停/风暴平息没有固定事件类型，不记录。
+    }
+
+    // 温度 episode：高温/严寒（阈值 35℃ / -10℃，与 severe.ts 一致）。
+    const temperatureC = snapshot.temperatureC;
+    if (temperatureC != null) {
+      const prevTemp = previous?.temperature_c ?? null;
+      if (temperatureC >= 35 && (prevTemp == null || prevTemp < 35)) {
+        this.recordWeatherEvent(HEAT_WAVE_EVENT, '进入高温天', key, snapshot);
+      }
+      if (temperatureC <= -10 && (prevTemp == null || prevTemp > -10)) {
+        this.recordWeatherEvent(COLD_SNAP_EVENT, '气温骤降，进入严寒', key, snapshot);
+      }
+    }
+  }
+
+  private recordWeatherEvent(eventType: string, description: string, key: string, snapshot: WeatherSnapshot): void {
     this.events.recordEvent({
-      eventType: `weather.${condition === 'rain' ? 'started_raining' : condition === 'snow' ? 'first_snow' : 'weather.storm'}`,
+      eventType,
       activity: '天气变化',
       kind: 'rest',
       description,
       happenedAt: this.clock().toISOString(),
       shareable: false,
-      meta: { condition, locationKey: key }
+      meta: {
+        condition: snapshot.condition,
+        locationKey: key,
+        temperatureC: snapshot.temperatureC ?? null,
+        windKph: snapshot.windKph ?? null,
+        precipitationMm: snapshot.precipitationMm ?? null
+      }
     });
   }
+}
+
+function unknownSnapshot(now: Date, key: string): WeatherSnapshot {
+  return { observedAt: now.toISOString(), condition: 'unknown', provider: 'none', locationKey: key, stale: true };
+}
+
+function daylightLocalDate(at: Date, timeZone?: string): string {
+  return timeZone ? localDateOfIso(at.toISOString(), timeZone) : at.toISOString().slice(0, 10);
+}
+
+function daylightFromRow(row: WeatherDaylightRow, at: Date): DaylightSnapshot {
+  return { sunrise: row.sunrise, sunset: row.sunset, isDaylight: computeIsDaylight(row.sunrise, row.sunset, at.toISOString()) };
 }
