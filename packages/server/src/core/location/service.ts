@@ -21,7 +21,6 @@ import {
   travelRemainingMinutes,
   type TravelState
 } from './travel.js';
-import { NO_GEOCODER, type GeocodingCandidate, type GeocodingProvider } from './geocoding.js';
 
 /**
  * LocationService (next phase): owns SOOYA's own life location — where she
@@ -33,7 +32,6 @@ import { NO_GEOCODER, type GeocodingCandidate, type GeocodingProvider } from './
  * - 内置种子用稳定 key（key 列），禁止显示名称做内部 key；默认出行边真实建库；
  * - 时区统一走 IANA（构造注入 timeZone，默认 Asia/Shanghai），禁止 UTC+8 硬编码；
  * - LifeCity 多城市：location 带 city_id，唯一 active 城市，跨城旅行切换城市与时区；
- * - Geocoding 抽象：无 provider 优雅降级，不读用户 GPS；
  * - TravelState 防瞬移：活动解析触发出发，到达后写 state + visit；
  * - threadLocationTags 接上真实标签，选择器给匹配候选加分。
  */
@@ -72,8 +70,6 @@ const BUILTIN_EDGES: Array<[string, string, number, TravelMode]> = [
 export interface LocationServiceOptions {
   /** IANA 时区；缺省 Asia/Shanghai。禁止从 env 读取。 */
   timeZone?: string;
-  /** Geocoding provider；缺省为无操作实现（优雅降级）。 */
-  geocoding?: GeocodingProvider;
   /** 城市 repo；缺省由 service 基于地点 repo 的连接自建。 */
   cityRepo?: LifeCityRepo;
 }
@@ -81,7 +77,6 @@ export interface LocationServiceOptions {
 export class LocationService {
   private enabled = false;
   private readonly defaultTimeZone: string;
-  private readonly geocoding: GeocodingProvider;
   private readonly cityRepo: LifeCityRepo;
   private threadsProvider?: () => Array<{ meta_json: string; title: string }>;
 
@@ -91,12 +86,9 @@ export class LocationService {
     private readonly clock: () => Date = () => new Date(),
     /** Optional next-phase weather condition getter (cached, never blocks). */
     private readonly weatherConditionFor?: (location: LifeLocation | null) => string | null,
-    /** Next-phase shadow runtime (SHADOW_MODE_ENABLED). */
-    private readonly shadow?: import('../shadow.js').ShadowService,
     opts: LocationServiceOptions = {}
   ) {
     this.defaultTimeZone = opts.timeZone ?? DEFAULT_TIME_ZONE;
-    this.geocoding = opts.geocoding ?? NO_GEOCODER;
     this.cityRepo = opts.cityRepo ?? new LifeCityRepo(repo.dbHandle);
   }
 
@@ -188,25 +180,6 @@ export class LocationService {
       if (city?.time_zone) return city.time_zone;
     }
     return this.defaultTimeZone;
-  }
-
-  // ---- geocoding ----
-
-  /** Geocoding 是否已配置（否则 search/reverse 优雅降级）。 */
-  get geocodingConfigured(): boolean {
-    return this.geocoding.name !== 'none';
-  }
-
-  async geocodeSearch(query: string, limit = 5): Promise<GeocodingCandidate[]> {
-    if (!this.enabled || !query.trim()) return [];
-    const results = await this.geocoding.search(query.trim(), { limit });
-    return results.slice(0, Math.max(1, Math.min(20, limit)));
-  }
-
-  /** 只接受管理端显式给出的坐标；绝不读取用户 GPS。 */
-  async geocodeReverse(lat: number, lng: number): Promise<GeocodingCandidate | null> {
-    if (!this.enabled || !this.geocoding.reverse) return null;
-    return this.geocoding.reverse(lat, lng);
   }
 
   // ---- locations ----
@@ -390,43 +363,6 @@ export class LocationService {
       },
       now.getTime()
     );
-    if (this.shadow?.isEnabled) {
-      // Shadow candidate: does dropping the weather modifiers change the pick?
-      // Purely computed — the shadow never writes state.
-      this.shadow.run({
-        subsystem: 'life.location_selector',
-        canonicalVersion: 'canonical',
-        shadowVersion: 'weather-off',
-        input: {
-          kind,
-          currentLocationId: current?.location_id ?? null,
-          recentVisitIds: this.repo.recentlyVisitedLocationIds(24, now.getTime()),
-          weatherCondition
-        },
-        canonicalDecision: selection ? { locationId: selection.locationId, reason: selection.reason } : null,
-        runShadow: () => {
-          const w = scoreLocationCandidates(
-            this.repo.list(true),
-            {
-              def: def ?? null,
-              kind,
-              currentLocationId: current?.location_id ?? null,
-              recentVisitIds: this.repo.recentlyVisitedLocationIds(24, now.getTime()),
-              repeatWindowHours: 24,
-              threadTags,
-              hour,
-              weatherCondition: null
-            },
-            (from, to) => {
-              const edge = this.repo.edge(from, to);
-              return edge ? { travelMinutes: edge.travel_minutes, mode: edge.mode } : undefined;
-            },
-            now.getTime()
-          );
-          return w ? { locationId: w.locationId, reason: w.reason } : null;
-        }
-      });
-    }
     if (!selection) return null;
     if (current && current.location_id === selection.locationId) return selection;
 

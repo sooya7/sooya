@@ -38,7 +38,6 @@ import { WeatherService } from './core/weather/service.js';
 import { WorldContextService } from './core/world-context.js';
 import { MetricsRepo } from './db/repos/metrics.repo.js';
 import { MetricsService } from './core/metrics.js';
-import { ShadowRepo, ExperimentRepo } from './db/repos/shadow.repo.js';
 import { createWeatherChain } from './core/weather/fallback.js';
 import { ThoughtRepo } from './db/repos/thought.repo.js';
 import { ThoughtsService } from './core/thoughts/service.js';
@@ -46,7 +45,6 @@ import { ThoughtPresenter } from './core/thoughts/presenter.js';
 import { ThoughtSafetyFilter } from './core/thoughts/safety.js';
 import { DecisionTraceService } from './core/thoughts/trace.js';
 import { readThoughtsFlags } from './core/thoughts/flags.js';
-import { ShadowService, ExperimentService } from './core/shadow.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
@@ -114,8 +112,6 @@ export interface SooyaApp {
     locations: LifeLocationRepo;
     weather: WeatherRepo;
     metrics: MetricsRepo;
-    shadow: ShadowRepo;
-    experiments: ExperimentRepo;
     thoughts: ThoughtRepo;
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
@@ -133,8 +129,6 @@ export interface SooyaApp {
     weather: WeatherService;
     world: WorldContextService;
     metrics: MetricsService;
-    shadow: ShadowService;
-    experiments: ExperimentService;
     thoughts: ThoughtsService;
     voice: VoiceService;
     push: PushService;
@@ -219,8 +213,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     locations: new LifeLocationRepo(dbHandle),
     weather: new WeatherRepo(dbHandle),
     metrics: new MetricsRepo(dbHandle),
-    shadow: new ShadowRepo(dbHandle),
-    experiments: new ExperimentRepo(dbHandle),
     thoughts: new ThoughtRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle),
@@ -257,14 +249,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       proactiveMode: policy.proactiveMode ?? DEFAULT_LIFE_CONFIG.proactiveMode
     };
   };
-  const shadow = new ShadowService(repos.shadow);
-  shadow.setEnabled(env.SHADOW_MODE_ENABLED);
-  const experiments = new ExperimentService(repos.experiments, opts.clock);
-  experiments.setEnabled(env.EXPERIMENTS_ENABLED);
   const location = new LocationService(repos.locations, repos.audit, opts.clock, (loc) => {
     if (!loc) return null;
     return weather.cachedCondition({ key: loc.id, city: loc.city, region: loc.region, lat: loc.lat, lng: loc.lng });
-  }, shadow);
+  });
   location.setEnabled(env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED);
   const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
   weather.setEnabled(env.WORLD_CONTEXT_ENABLED && env.WEATHER_ENABLED);
@@ -282,7 +270,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const metrics = new MetricsService(repos.metrics, opts.clock);
   metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
   const life = env.ENABLE_LIFE_V2
-    ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics, shadow, experiments)
+    ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
   const voiceService = new VoiceService({
     messages: repos.messages,
@@ -322,7 +310,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     life: () => { const snap = life.snapshot(); return { activity: snap.activity, mood: snap.mood }; },
     context: () => context,
     voice: (messageId) => repos.voice.latestForMessage(messageId),
-    experiments: { canonicalVariantForSubsystem: (subsystem) => experiments.canonicalVariantForSubsystem(subsystem) }
   });
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
@@ -546,7 +533,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, location, weather, world, metrics, shadow, experiments, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     recurringTimers: [],

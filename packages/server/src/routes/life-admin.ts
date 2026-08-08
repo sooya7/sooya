@@ -211,7 +211,7 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
     return { events: repos.life.events(limit) };
   });
 
-  // Cities / travel / geocoding (next phase final, v25).
+  // Cities / travel (next phase final, v25).
   server.get('/api/admin/life/cities', { preHandler: guard }, async () => ({ cities: app.services.location.listCities() }));
   server.post('/api/admin/life/cities', { preHandler: guard }, async (req, reply) => {
     const body = (req.body ?? {}) as { name?: string; region?: string; country?: string; timeZone?: string; active?: boolean };
@@ -241,9 +241,4 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
     return { city };
   });
   server.get('/api/admin/life/travel', { preHandler: guard }, async () => ({ travel: app.services.location.currentTravel() }));
-  server.post('/api/admin/life/geocode/search', { preHandler: guard }, async (req) => {
-    const query = String((req.body as { query?: string } | undefined)?.query ?? '').trim();
-    if (!query) return { candidates: [] };
-    return { candidates: await app.services.location.geocodeSearch(query, 8) };
-  });
 }

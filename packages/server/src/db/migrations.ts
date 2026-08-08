@@ -1216,7 +1216,26 @@ export const MIGRATIONS: Migration[] = [
         );
       `);
     }
-  }
+  },
+  {
+    version: 29,
+    name: 'cleanup_experiments_shadow_geocoding_decision_trace',
+    up: (db) => {
+      /*
+       * Final closure (精简执行版): drop the product systems removed from the
+       * single-user companion — experiments, shadow mode and decision traces.
+       * Everything else (locations, cities, travel, weather, metrics,
+       * visible thoughts) is retained; historical migrations are untouched.
+       */
+      db.exec(`
+        DROP TABLE IF EXISTS experiment_assignments;
+        DROP TABLE IF EXISTS experiment_events;
+        DROP TABLE IF EXISTS experiments;
+        DROP TABLE IF EXISTS shadow_runs;
+        DROP TABLE IF EXISTS decision_traces;
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

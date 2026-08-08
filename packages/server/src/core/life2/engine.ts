@@ -120,10 +120,6 @@ export class LifeSimEngine {
     private readonly weather?: import('../weather/service.js').WeatherService,
     /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
     private readonly metrics?: import('../metrics.js').MetricsService,
-    /** Next-phase shadow runtime (SHADOW_MODE_ENABLED). */
-    private readonly shadow?: import('../shadow.js').ShadowService,
-    /** Next-phase single-user experiments (EXPERIMENTS_ENABLED). */
-    private readonly experiments?: import('../shadow.js').ExperimentService
   ) {
     this.resolve = typeof config === 'function' ? config : () => config;
     this.vitals = new LifeVitalsEngine(v2, clock, repo);
@@ -372,9 +368,6 @@ export class LifeSimEngine {
       if (prevEvents[0]) continuityFrom.push(...(outcomeDetailTagsFor(prevEvents[0], prevDef) ?? []));
     }
     for (const id of threadFitIds) continuityFrom.push(id);
-    // Single-user experiment knobs (day-sticky; 'control' when paused).
-    const continuityWeight = this.experiments?.variantForSubsystem('life.continuity_weight') === 'x1.5' ? 1.5 : 1;
-    const tighterRepeat = this.experiments?.variantForSubsystem('life.anti_repeat_window') === 'tighter-48';
     const ctx = {
       vitals: v,
       hour: parts.hour,
@@ -386,9 +379,7 @@ export class LifeSimEngine {
       continuityFrom: [...new Set(continuityFrom)],
       ...(weatherCondition ? { weatherCondition } : {}),
       ...(forecast ? { forecast } : {}),
-      ...(daylight ? { daylight } : {}),
-      continuityWeight,
-      ...(tighterRepeat ? { antiRepeatTiers: [48, 96, 168] as [number, number, number] } : {})
+      ...(daylight ? { daylight } : {})
     };
     let best: LifeActivityDefinition | null = null;
     let bestScore = -Infinity;
@@ -401,39 +392,6 @@ export class LifeSimEngine {
         bestScore = score;
         best = def;
       }
-    }
-    // Shadow candidate: recompute with a stronger continuity weight and a
-    // tighter anti-repeat window. Purely computed — the shadow never writes.
-    if (this.shadow?.isEnabled) {
-      this.shadow.run({
-        subsystem: 'life.activity_selector',
-        canonicalVersion: 'canonical',
-        shadowVersion: 'cont1.5-tight48',
-        input: {
-          hour: parts.hour,
-          dayIndex: parts.dayIndex,
-          themeTags,
-          threadCount: threadFitIds.size,
-          continuityCount: continuityFrom.length,
-          weatherCondition,
-          forecastSevere: forecast?.severe ?? null,
-          daylightKnown: daylight ? daylight.isDaylight : null
-        },
-        canonicalDecision: best ? { best: best.id, score: bestScore } : null,
-        runShadow: () => {
-          let shadowBest: string | null = null;
-          let shadowScore = -Infinity;
-          for (const def of ACTIVITY_LIBRARY) {
-            if (def.kind === 'sleep' || def.kind === 'wake') continue;
-            const score = scoreActivity(def, { ...ctx, continuityWeight: 1.5, antiRepeatTiers: [48, 96, 168] }, nowIso);
-            if (score > shadowScore) {
-              shadowScore = score;
-              shadowBest = def.id;
-            }
-          }
-          return { best: shadowBest, score: shadowScore };
-        }
-      });
     }
     return best?.id ?? null;
   }

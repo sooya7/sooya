@@ -86,6 +86,51 @@ describe('v14 → latest migration upgrade (P1-2)', () => {
     }
   });
 
+  it.each([18, 23, 28])('migrates a v%s fixture to latest and drops the closed systems', async (from) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), `sooya-upgrade-${from}-`));
+    const file = path.join(dir, 'sooya.db');
+    const db = new Database(file);
+    db.exec('CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)');
+    const insert = db.prepare('INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)');
+    for (const migration of MIGRATIONS.slice(0, from)) {
+      db.transaction(() => {
+        migration.up(db as never);
+        insert.run(migration.version, migration.name, new Date().toISOString());
+      })();
+    }
+    // Seed rows that must survive (or be dropped) across the v29 cleanup.
+    db.exec(`
+      INSERT INTO messages(id, conversation_id, role, created_at, updated_at, seq, status, client_msg_id, reply_to, error, meta_json)
+        VALUES ('msg_up_1', 'main', 'user', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', 1, 'sent', NULL, NULL, NULL, '{}');
+    `);
+    db.close();
+
+    try {
+      const opened = openDatabase({ file, backupDir: path.join(dir, 'backup'), onLog: () => {} });
+      try {
+        const version = (opened.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get() as { v: number }).v;
+        expect(version).toBe(LATEST_VERSION);
+        // Messages survive.
+        const msg = opened.db.prepare("SELECT * FROM messages WHERE id = 'msg_up_1'").get() as { role: string };
+        expect(msg.role).toBe('user');
+        // v29 cleanup: closed systems' tables are gone, retained ones exist.
+        for (const gone of ['experiments', 'experiment_assignments', 'experiment_events', 'shadow_runs', 'decision_traces']) {
+          const row = opened.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(gone);
+          expect(row, `${gone} should be dropped by v29`).toBeUndefined();
+        }
+        for (const kept of ['visible_thoughts', 'life_cities', 'travel_state', 'weather_forecasts', 'metric_distributions', 'messages', 'memories']) {
+          const row = opened.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(kept);
+          expect(row, `${kept} should be retained`).toBeTruthy();
+        }
+        expect(opened.db.pragma('foreign_key_check')).toEqual([]);
+      } finally {
+        opened.db.close();
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('a failing migration transaction rolls back completely', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sooya-rollback-'));
     const file = path.join(dir, 'sooya.db');
