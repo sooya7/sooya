@@ -54,7 +54,11 @@ e1c1df1 test(shadow): prove zero side effects                                  1
 47750a3 feat(experiments): add single-user experiment framework                19
 d25b020 feat(web): add experiment control panel                                20
 fbd4ac3 test(experiments): cover sticky assignment and attribution             21
-<提交 22/23 见文末门禁记录>
+109c0d4 test(e2e): cover world/admin/voice/shadow/experiment flows             22
+8a530b6 docs: add delivery and rollout guide for next phase                    23
+
+（上述为升级分支 `upgrade/world-context-admin-experiments` 的 23 个提交；
+  最终收口在集成分支 `integration/next-phase-final` 上继续，见 §8/§9）
 ```
 
 ## 3. 能力清单与关键设计
@@ -120,21 +124,45 @@ Phase 5  Experiments ON（先实验 anti-repeat / continuity）
 - Weather/Location 关闭后 Life 回稳定行为；Shadow/Experiment 关闭后 canonical 完全不变；
 - provider 故障一律 graceful degradation（缓存 → 上次快照 → unknown）。
 
+---
+
+## 9. 集成分支提交记录（integration/next-phase-final，6fbf768 → c6bfae6）
+
+```text
+8cfdcec Merge agent/scroll-anchor            5423b9a Merge agent/ui-responsive
+575967f Merge agent/visible-thoughts         3fd05f9 Merge agent/metrics-experiments
+3de93c6 Merge agent/weather-world            04cfe5c/… Merge agent/location-complete
+0fbfcd5 chore(db): unify migrations v24-v28
+2c7bec3 feat(integration): wire env/app/routes/AppShell/world-context
+8a95971 fix(integration): adapt tests to unified next-phase semantics
+6530155 test(admin): adapt overview to anti-teleport travel semantics
+c6bfae6 docs(qa): independent acceptance report
+```
+
+## 10. 状态
+
+> **READY TO MERGE**（最终 HEAD c6bfae6 全部门禁通过，待 GitHub CI 最终确认）
+
 ## 7. 已知问题
 
-- **e2e 既有 flake**：`e2e/navigation.e2e.ts:39` 滚动恢复测试在完整 suite 的 mobile 项目上间歇失败（虚拟化列表恢复早于布局完成的竞态，main 分支同样可复现）。完整根因分析与建议见 `docs/E2E-ISSUE-SCROLL-RESTORE.md`。本阶段以 CI 等价配置 `retries=1` 跑通门禁。
+- **scroll restore 已结构性修复**：原 e2e flake（`e2e/navigation.e2e.ts:39`，完整 suite 的 mobile 上间歇失败）已通过 anchor-based 恢复（`ChatScrollAnchor { messageId, offsetFromViewportTop }`）根治——不再依赖绝对 scrollTop/固定 sleep/rAF 预算，QA 验证 E2E retries=0 全量 98/98 无 flake。完整根因分析与修复记录见 `docs/E2E-ISSUE-SCROLL-RESTORE.md`。
 
-## 8. 门禁结果（本机最终 HEAD）
+## 8. 门禁结果（最终 HEAD：集成分支 `integration/next-phase-final` @ c6bfae6）
 
-| 门禁 | 结果 |
-|---|---|
-| typecheck（server + web） | PASS（0 error） |
-| server 测试（vitest） | PASS |
-| web 测试 | PASS |
-| build | PASS |
-| E2E（含 next-phase spec） | PASS（retries=1，与 CI 一致） |
-| migration fixture / rollback tooling | PASS（schema v23，preflight 上限同步） |
-| 重启恢复 | PASS |
-| GitHub CI | 见 PR 状态 |
+| 门禁 | 结果 | 证据 |
+|---|---|---|
+| typecheck（server + web） | ✅ PASS | 0 error |
+| server 全量测试 | ✅ PASS | 81 文件 / 748/748 |
+| web 全量测试 | ✅ PASS | 45 文件 / 498/498 |
+| build（server + web） | ✅ PASS | dist 产出 |
+| E2E 全量 retries=0 | ✅ PASS | 98/98（QA 独立验证；navigation scroll-restore desktop+mobile 双绿、无 flake） |
+| migration fixture | ✅ PASS | v14→latest / v18→latest / v23→latest |
+| migration rollback | ✅ PASS | preflight 上限 v28、事务回滚 |
+| 重启恢复 | ✅ PASS | restart-recovery 5/5 |
+| feature-flag fallback | ✅ PASS | 11 个新 flag 默认全 false；metrics/shadow/thoughts flag-off 零写入/零行/零模型调用 |
+| privacy | ✅ PASS | thoughts-safety 20/20、metrics-export 无私人正文、presenter 白名单审查 |
+| Shadow/Experiment 语义 | ✅ PASS | status=shadow 时 canonical 恒 control（byte-equivalent 用例） |
+| UI Compatibility Matrix | ✅ PASS | 8 页 × 9 维度（QA-REPORT.md 表格） |
+| GitHub CI | 待最终确认 | 本机已等价验证；CI 配置 retries=1 更宽松 |
 
-> 门禁详细数值在最终验证后补录。
+> 独立 QA 结论（`QA-REPORT.md`）：**可以合入**。QA 阶段修复 4 个问题（D1 HIGH metrics 页契约白屏、D2 HIGH e2e CI flags 缺失、D3/D4 定位器适配）。
