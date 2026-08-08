@@ -59,6 +59,8 @@ export default async function globalSetup(): Promise<void> {
     stdio: 'inherit'
   });
 
+  const serverLogPath = path.join(dataRoot, 'server.log');
+  const serverLogFd = fs.openSync(serverLogPath, 'w');
   const server: ChildProcess = spawn(process.execPath, [path.join(ROOT, 'packages/server/dist/main.js')], {
     env: {
       ...process.env,
@@ -86,8 +88,12 @@ export default async function globalSetup(): Promise<void> {
       ENABLE_BACKGROUND_JOBS: 'true',
       BACKUP_INTERVAL_MS: '0'
     },
-    stdio: 'inherit'
+    // Server logs go to a file so the teardown can fail the run when an
+    // unhandled rejection / uncaught exception appears — a green suite must
+    // never silently swallow a process-level crash.
+    stdio: ['ignore', serverLogFd, serverLogFd]
   });
+  fs.closeSync(serverLogFd);
 
   await waitFor(`http://127.0.0.1:${MOCK_PORT}/__control`);
   await waitFor(`http://127.0.0.1:${PORT}/health/ready`);
@@ -95,6 +101,6 @@ export default async function globalSetup(): Promise<void> {
   process.env.E2E_DATA_ROOT = dataRoot;
   fs.writeFileSync(
     path.join(os.tmpdir(), 'sooya-e2e-pids.json'),
-    JSON.stringify({ mock: mock.pid, server: server.pid, dataRoot })
+    JSON.stringify({ mock: mock.pid, server: server.pid, dataRoot, serverLogPath })
   );
 }

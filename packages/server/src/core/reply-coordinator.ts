@@ -590,6 +590,18 @@ export class ReplyCoordinator {
     userMessages: ChatMessage[]
   ): Promise<void> {
     const batch = this.deps.batches.get(batchId);
+    if (!batch) {
+      // The batch (and every row referencing it) was cascade-deleted while
+      // this generation was in flight — e.g. an admin chat clear raced the
+      // publish. SQLite's foreign keys then reject every audit/state write
+      // (reply_generations.batch_id, ...) against a row that no longer
+      // exists. That is the real lifecycle outcome, not something to paper
+      // over: the reply can never arrive, so the waiters are rejected and
+      // nothing is persisted for the vanished batch.
+      for (const waiter of runtime?.waiters ?? []) waiter.reject(new StaleGenerationError('batch cleared'));
+      this.runtime.delete(batchId);
+      return;
+    }
     if (isBenignAbort(error)) {
       this.deps.batches.recordGeneration({
         batchId, revision, attempt: active.attempt, status: 'superseded',
