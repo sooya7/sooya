@@ -1,11 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdminPersona } from '../lib/admin.js';
-import { adminMediaUrl, featureApi, type LifePanelData, type LifeSettings, type PersonaReference } from '../lib/features.js';
-import { formatGap, herClock, reachReasonText, slotProgress, sortedLog } from '../lib/lifeView.js';
-import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
+import { AppLink } from './AppLink.js';
+import { featureApi, type LifePanelData, type LifeSettings, type PersonaReference } from '../lib/features.js';
+import { mediaThumbnailPath } from '../lib/authenticatedMedia.js';
+import { formatGap, herClock, proactiveReasonText, reachReasonText, shareModeText, slotProgress, sortedLog } from '../lib/lifeView.js';
+import { useAuthenticatedMedia, type AuthenticatedMediaState } from '../lib/useAuthenticatedMedia.js';
 
 const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'gentle'] as const;
-const EMOTION_LABELS: Record<string, string> = { neutral: '中性', happy: '开心', sad: '难过', angry: '生气', gentle: '温柔' };
+const EMOTION_LABELS: Record<string, string> = { neutral: '中性', happy: '开心', sad: '难过', angry: '生气', gentle: '温柔', sleepy: '困倦', confused: '疑惑' };
+export function emotionLabel(value: string): string {
+  return EMOTION_LABELS[value] ?? value;
+}
+/** 计划与活动共用一套 kind 词表（服务端还会产出 sleep/work 等作息类）。 */
+const LIFE_KIND_LABELS: Record<string, string> = {
+  chore: '家务', out: '出门', play: '玩耍', meal: '吃饭', rest: '休息',
+  sleep: '睡觉', study: '学习', work: '工作', wake: '起床', wind_down: '睡前放松', reading: '阅读', task: '任务'
+};
+export function lifeKindLabel(value: string): string {
+  return LIFE_KIND_LABELS[value] ?? value;
+}
 function bytes(value: unknown): string {
   const n = Number(value ?? 0);
   if (n < 1024) return `${n} B`;
@@ -18,10 +31,20 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : '操作失败';
 }
 
+function AvatarPreview({ label, media }: { label: string; media: AuthenticatedMediaState }) {
+  if (media.url) return <img className="admin-avatar-preview" src={media.url} alt={`${label}预览`} />;
+  if (media.loading) return <span className="admin-avatar-preview-skeleton" role="img" aria-label={`${label}加载中`} />;
+  return <>
+    <span className="admin-avatar-preview-placeholder" role="img" aria-label={media.error ? `${label}加载失败` : `${label}尚未设置`}><span aria-hidden="true">暂无</span></span>
+    {media.error && <small role="status">{media.error}</small>}
+    {media.retriable && <button type="button" onClick={media.retry}>重试预览</button>}
+  </>;
+}
+
 export function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminPersona; onPersona: (p: AdminPersona) => void; onNotice: (s: string) => void }) {
-  const assistantMedia = useAuthenticatedMedia(persona.avatar, 'admin', 'image');
-  const userMedia = useAuthenticatedMedia(persona.userAvatar, 'admin', 'image');
-  persona = { ...persona, avatar: assistantMedia.url ?? '', userAvatar: userMedia.url ?? '' };
+  // 预览只显示 88px，请求缩略图档位即可，原图动辄几 MB。
+  const assistantMedia = useAuthenticatedMedia(persona.avatar ? mediaThumbnailPath(persona.avatar, 88) : persona.avatar, 'admin', 'image');
+  const userMedia = useAuthenticatedMedia(persona.userAvatar ? mediaThumbnailPath(persona.userAvatar, 88) : persona.userAvatar, 'admin', 'image');
   const upload = async (slot: 'assistant' | 'user', file?: File) => {
     if (!file) return;
     try {
@@ -36,8 +59,8 @@ export function AvatarEditor({ persona, onPersona, onNotice }: { persona: AdminP
     <section className="admin-form-card" data-testid="avatar-settings">
       <div className="admin-panel-heading"><div><p>分别上传 SOOYA 与用户头像。选好文件就会立即上传，聊天页面随即刷新。</p></div></div>
       <div className="admin-summary">
-        <label className="admin-card"><strong>SOOYA 头像</strong><img src={adminMediaUrl(persona.avatar)} alt="SOOYA 头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} />{assistantMedia.error && <small role="status">{assistantMedia.error}</small>}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('assistant', event.target.files?.[0])} /></label>
-        <label className="admin-card"><strong>用户头像</strong><img src={adminMediaUrl(persona.userAvatar)} alt="用户头像预览" style={{ width: 88, height: 88, borderRadius: '50%', objectFit: 'cover' }} />{userMedia.error && <small role="status">{userMedia.error}</small>}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('user', event.target.files?.[0])} /></label>
+        <div className="admin-card"><strong>SOOYA 头像</strong><AvatarPreview label="SOOYA 头像" media={assistantMedia} /><input aria-label="上传 SOOYA 头像" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('assistant', event.target.files?.[0])} /></div>
+        <div className="admin-card"><strong>用户头像</strong><AvatarPreview label="用户头像" media={userMedia} /><input aria-label="上传用户头像" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => void upload('user', event.target.files?.[0])} /></div>
       </div>
     </section>
   );
@@ -133,6 +156,7 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [data, setData] = useState<Record<string, any> | null>(null);
   const [text, setText] = useState('你好呀，我是 SOOYA。');
   const [emotion, setEmotion] = useState('neutral');
+  const [previewed, setPreviewed] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewUrlRef = useRef<string | null>(null);
   const load = () => featureApi.voice().then(setData).catch((error) => onNotice(errorText(error)));
@@ -161,6 +185,7 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
       const url = URL.createObjectURL(blob);
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       previewUrlRef.current = url;
+      setPreviewed(true);
       if (audioRef.current) {
         audioRef.current.src = url;
         await audioRef.current.play();
@@ -178,14 +203,11 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
       <label>发送频率<select value={String(policy.frequency ?? 'medium')} onChange={(event) => setPolicy('frequency', event.target.value)}><option value="never">从不</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
       <label>单段最大字符<input type="number" min={20} max={2000} value={Number(policy.maxCharsPerClip ?? 300)} onChange={(event) => setPolicy('maxCharsPerClip', Number(event.target.value))} /></label>
       <label><span>附带文字</span><input type="checkbox" checked={Boolean(policy.alwaysAttachTranscript)} onChange={(event) => setPolicy('alwaysAttachTranscript', event.target.checked)} /></label>
-      <label>默认音色<input value={String(model.voice ?? '')} onChange={(event) => setModel('voice', event.target.value)} disabled={supported.voice === false} /></label>
-      <label>默认语速<input type="number" min={0.25} max={4} step={0.05} value={Number(model.speed ?? 1)} onChange={(event) => setModel('speed', Number(event.target.value))} disabled={supported.speed === false} /></label>
+      <p className="admin-muted admin-form-wide">音色和语速属于接口配置，在「模型配置 → 语音合成模型」里设置；这里只管她什么时候说话、带什么情绪。</p>
       <label>表达模式<select value={String(model.instructionMode ?? 'auto')} onChange={(event) => setModel('instructionMode', event.target.value)} disabled={supported.instructions === false}><option value="on">始终使用情绪提示</option><option value="auto">自动</option><option value="off">关闭</option></select></label>
       <label>情绪强度<input type="number" min={0} max={1} step={0.05} value={Number(model.emotionIntensity ?? 0.7)} onChange={(event) => setModel('emotionIntensity', Number(event.target.value))} disabled={supported.instructions === false} /></label>
-      <label>音调<input aria-label="音调" value="当前供应商不支持" disabled /><small>当前 TTS 供应商没有可用的音调参数。</small></label>
-      <label>音量<input aria-label="音量" value="当前供应商不支持" disabled /><small>当前 TTS 供应商没有可用的音量参数。</small></label>
-      <div className="admin-form-wide"><strong>情绪映射</strong>{EMOTIONS.map((key) => { const item = emotions[key] ?? { label: EMOTION_LABELS[key], instructions: '', speed: 1 }; return <div className="admin-list-row" key={key}><span>{item.label ?? EMOTION_LABELS[key]}</span><input aria-label={`${key}提示`} value={String(item.instructions ?? '')} onChange={(event) => setData({ ...data, emotions: { ...emotions, [key]: { ...item, instructions: event.target.value } } })} disabled={supported.instructions === false} /><input aria-label={`${key}语速`} type="number" step={0.05} min={0.25} max={4} value={Number(item.speed ?? 1)} onChange={(event) => setData({ ...data, emotions: { ...emotions, [key]: { ...item, speed: Number(event.target.value) } } })} disabled={supported.speed === false} /></div>; })}</div>
-      <div className="admin-card"><strong>试听</strong><textarea value={text} onChange={(event) => setText(event.target.value)} /><select value={emotion} onChange={(event) => setEmotion(event.target.value)}>{EMOTIONS.map((key) => <option key={key} value={key}>{EMOTION_LABELS[key]}</option>)}</select><button type="button" disabled={!capability.ok && !capability.configured} onClick={() => void preview()}>试听</button><audio ref={audioRef} controls /></div>
+      <div className="admin-form-wide"><strong>情绪映射</strong><div className="admin-list-row emotion-map-header" aria-hidden="true"><span>情绪</span><small>说话方式</small><small>语速</small></div>{EMOTIONS.map((key) => { const item = emotions[key] ?? { label: EMOTION_LABELS[key], instructions: '', speed: 1 }; return <div className="admin-list-row emotion-map-row" key={key}><span>{item.label ?? EMOTION_LABELS[key]}</span><input aria-label={`${emotionLabel(key)}说话方式`} value={String(item.instructions ?? '')} onChange={(event) => setData({ ...data, emotions: { ...emotions, [key]: { ...item, instructions: event.target.value } } })} disabled={supported.instructions === false} /><input aria-label={`${emotionLabel(key)}语速`} type="number" step={0.05} min={0.25} max={4} value={Number(item.speed ?? 1)} onChange={(event) => setData({ ...data, emotions: { ...emotions, [key]: { ...item, speed: Number(event.target.value) } } })} disabled={supported.speed === false} /></div>; })}</div>
+      <div className="admin-card"><strong>试听</strong><textarea value={text} onChange={(event) => setText(event.target.value)} /><select value={emotion} onChange={(event) => setEmotion(event.target.value)}>{EMOTIONS.map((key) => <option key={key} value={key}>{EMOTION_LABELS[key]}</option>)}</select><button type="button" disabled={!capability.ok && !capability.configured} onClick={() => void preview()}>试听</button><audio ref={audioRef} controls style={previewed ? undefined : { display: 'none' }} /></div>
       <div className="admin-actions"><button type="button" onClick={() => void save()}>保存语音配置</button></div>
     </section>
   );
@@ -200,8 +222,7 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
 export function LifeAdminLink() {
   return (
     <span className="admin-inline-links">
-      <a className="admin-inline-link" href="/admin/life" data-testid="life-admin-entry">Life 管理中心 ›</a>
-      <a className="admin-inline-link" href="/admin" data-testid="metrics-entry">系统概览（运行指标）›</a>
+      <AppLink className="admin-inline-link" href="/admin/life/console" data-testid="life-admin-entry">打开完整生活管理 ›</AppLink>
     </span>
   );
 }
@@ -278,7 +299,7 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
 
       <div className="admin-card" data-testid="life-plans">
         <div className="admin-card-subtitle"><h2>接下来要做的事</h2><span className="admin-count-badge">{data.plans.length}</span></div>
-        <div className="admin-list-row">
+        <div className="admin-list-row life-plan-create">
           <input aria-label="生活计划" placeholder="例如：整理书桌" value={planTitle} onChange={(event) => setPlanTitle(event.target.value)} />
           <select aria-label="生活计划类型" value={planKind} onChange={(event) => setPlanKind(event.target.value)}>
             <option value="chore">家务</option><option value="out">出门</option><option value="play">玩耍</option><option value="meal">吃饭</option><option value="rest">休息</option>
@@ -287,7 +308,7 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
         </div>
         {data.plans.length === 0 ? <div className="admin-empty">还没有排好的计划。</div> : data.plans.slice(0, 12).map((plan) => (
           <div className="admin-list-row" key={plan.id}>
-            <span><strong>{plan.title}</strong><small> · {plan.kind} · {lifePlanStatusText(plan.status)}</small></span>
+            <span><strong>{plan.title}</strong><small> · {lifeKindLabel(plan.kind)} · {lifePlanStatusText(plan.status)}</small></span>
             <span className="admin-actions">
               {plan.status === 'planned' && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'active' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>开始</button>}
               {plan.status === 'active' && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'paused' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>暂停</button>}
@@ -298,27 +319,25 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
         ))}
       </div>
 
-      <div className="admin-form-wide">
+      <div className="admin-form-wide life-rules" data-testid="life-rules">
         <strong>规则</strong>
-        <div className="admin-list-row">
-          <span>允许主动开口</span>
-          <input aria-label="允许主动开口" type="checkbox" checked={form.reachOut} onChange={(event) => setForm({ ...form, reachOut: event.target.checked })} />
-          <span>安静间隔（分钟）</span>
-          <input aria-label="安静间隔" type="number" min={5} max={1440} value={form.quietGapMinutes} onChange={(event) => setForm({ ...form, quietGapMinutes: Number(event.target.value) })} />
-        </div>
-        <div className="admin-list-row">
-          <span>每天最多几条</span>
-          <input aria-label="每天最多几条" type="number" min={0} max={20} value={form.maxReachOutsPerDay} onChange={(event) => setForm({ ...form, maxReachOutsPerDay: Number(event.target.value) })} />
-          <span>静默时段</span>
-          <input aria-label="静默开始" type="number" min={0} max={23} value={form.silentFrom} onChange={(event) => setForm({ ...form, silentFrom: Number(event.target.value) })} />
-          <input aria-label="静默结束" type="number" min={0} max={23} value={form.silentTo} onChange={(event) => setForm({ ...form, silentTo: Number(event.target.value) })} />
-        </div>
-        <div className="admin-list-row">
-          <span>主动分享模式</span>
+        <label className="life-rule-toggle"><span>允许主动开口</span><input aria-label="允许主动开口" type="checkbox" checked={form.reachOut} onChange={(event) => setForm({ ...form, reachOut: event.target.checked })} /></label>
+        <label>安静间隔（分钟）——你多久没说话后她才可能开口<input aria-label="安静间隔" type="number" min={5} max={1440} value={form.quietGapMinutes} onChange={(event) => setForm({ ...form, quietGapMinutes: Number(event.target.value) })} /></label>
+        <label>每天最多主动几条<input aria-label="每天最多几条" type="number" min={0} max={20} value={form.maxReachOutsPerDay} onChange={(event) => setForm({ ...form, maxReachOutsPerDay: Number(event.target.value) })} /></label>
+        <label>
+          静默时段（这段时间她不会主动说话）
+          <span className="life-quiet-range">
+            <input aria-label="静默开始" type="number" min={0} max={23} value={form.silentFrom} onChange={(event) => setForm({ ...form, silentFrom: Number(event.target.value) })} />
+            <span aria-hidden="true">点 至</span>
+            <input aria-label="静默结束" type="number" min={0} max={23} value={form.silentTo} onChange={(event) => setForm({ ...form, silentTo: Number(event.target.value) })} />
+            <span aria-hidden="true">点</span>
+          </span>
+        </label>
+        <label>主动分享模式
           <select aria-label="主动分享模式" value={form.proactiveMode ?? 'auto'} onChange={(event) => setForm({ ...form, proactiveMode: event.target.value as LifeSettings['proactiveMode'] })}>
             <option value="auto">自动（默认文字优先）</option><option value="text">文字</option><option value="text_sticker">文字＋表情包</option><option value="voice">语音</option><option value="image">图片</option>
           </select>
-        </div>
+        </label>
         <div className="admin-actions"><button type="button" disabled={busy} onClick={() => void save()}>保存生活设置</button></div>
       </div>
 
@@ -326,8 +345,8 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
         <div className="admin-card-subtitle"><h2>主动分享记录</h2><span className="admin-count-badge">{data.proactive.length}</span></div>
         {data.proactive.length === 0 ? <div className="admin-empty">还没有主动分享尝试。</div> : data.proactive.slice(0, 12).map((attempt) => (
           <div className="admin-list-row" key={attempt.id}>
-            <span><strong>{attempt.candidateActivity ?? '无候选'}</strong><small> · {attempt.requestedMode ?? '未选模式'} → {attempt.finalMode ?? '未发送'}</small></span>
-            <small>{attempt.status === 'blocked' ? `阻断：${attempt.blockedReason ?? '未知'}` : attempt.status === 'failed' ? `失败：${attempt.blockedReason ?? attempt.fallbackReason ?? '未知'}` : `${attempt.sendSuccess ? '已发送' : '未发送'} · ${attempt.userResponseMessageId ? '用户已响应' : '未响应'}`}</small>
+            <span><strong>{attempt.candidateActivity ?? '无候选'}</strong><small> · {shareModeText(attempt.requestedMode) ?? '未选模式'} → {shareModeText(attempt.finalMode) ?? '未发送'}</small></span>
+            <small>{attempt.status === 'blocked' ? `阻断：${proactiveReasonText(attempt.blockedReason) ?? '未知'}` : attempt.status === 'failed' ? `失败：${proactiveReasonText(attempt.blockedReason ?? attempt.fallbackReason) ?? '未知'}` : `${attempt.sendSuccess ? '已发送' : '未发送'} · ${attempt.userResponseMessageId ? '用户已响应' : '未响应'}`}</small>
           </div>
         ))}
       </div>
@@ -347,7 +366,7 @@ export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
       <div className="admin-card" data-testid="life-events">
         <div className="admin-card-subtitle"><h2>生活事件</h2><span className="admin-count-badge">{data.events.length}</span></div>
         {data.events.length === 0 ? <div className="admin-empty">推进生活状态后，完成的事情会留在这里。</div> : data.events.slice(0, 12).map((event) => (
-          <div className="admin-list-row" key={event.id}><span>{event.description}<small> · {event.kind} · {herClock(event.happened_at, tz)}</small></span><small>{event.shareable ? (event.shared_at ? '已分享' : '可分享') : '仅记录'}</small></div>
+          <div className="admin-list-row" key={event.id}><span>{event.description}<small> · {lifeKindLabel(event.kind)} · {herClock(event.happened_at, tz)}</small></span><small>{event.shareable ? (event.shared_at ? '已分享' : '可分享') : '仅记录'}</small></div>
         ))}
       </div>
     </section>

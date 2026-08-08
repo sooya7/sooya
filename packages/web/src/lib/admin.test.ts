@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { adminApi, clearAdminToken, getAdminToken, setAdminToken } from './admin.js';
+import { ADMIN_UNAUTHORIZED_EVENT, adminApi, clearAdminToken, getAdminToken, setAdminToken } from './admin.js';
 import { ApiError, getToken, setToken } from './api.js';
 import { acquireAuthenticatedMedia, clearMediaCache, takeCachedMedia } from './authenticatedMedia.js';
 import type { ModelPreset } from './modelPresets.js';
@@ -466,12 +466,33 @@ describe('adminRequest 响应解析与错误', () => {
     expect((error as ApiError).message).toBe('request failed (502)');
   });
 
-  it('401 不会自动清空本地令牌（当前没有这个副作用，面板自己决定何时清）', async () => {
+  it('401 会清空本地令牌并通知管理外壳', async () => {
     setAdminToken('admin-secret');
+    const unauthorized = vi.fn();
+    window.addEventListener(ADMIN_UNAUTHORIZED_EVENT, unauthorized);
     captureFetch(() => json({ message: 'unauthorized' }, 401));
 
     await expect(adminApi.system()).rejects.toBeInstanceOf(ApiError);
 
-    expect(getAdminToken()).toBe('admin-secret');
+    expect(getAdminToken()).toBeNull();
+    expect(unauthorized).toHaveBeenCalledTimes(1);
+    window.removeEventListener(ADMIN_UNAUTHORIZED_EVENT, unauthorized);
+  });
+
+  it('旧令牌请求晚到的 401 不会注销已经更新的令牌', async () => {
+    let respond!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { respond = resolve; })));
+    const unauthorized = vi.fn();
+    window.addEventListener(ADMIN_UNAUTHORIZED_EVENT, unauthorized);
+    setAdminToken('old-secret');
+
+    const pending = adminApi.system();
+    setAdminToken('new-secret');
+    respond(json({ message: 'old token expired' }, 401));
+    await expect(pending).rejects.toBeInstanceOf(ApiError);
+
+    expect(getAdminToken()).toBe('new-secret');
+    expect(unauthorized).not.toHaveBeenCalled();
+    window.removeEventListener(ADMIN_UNAUTHORIZED_EVENT, unauthorized);
   });
 });

@@ -127,7 +127,7 @@ export function validatePreset(
 }
 
 /**
- * Turns the config currently being edited into a library entry, so "添加配置"
+ * Turns the config currently being edited into a library entry, so "存入模型库"
  * needs no second form.
  *
  * The id is derived from slot and model name and de-duplicated with a numeric

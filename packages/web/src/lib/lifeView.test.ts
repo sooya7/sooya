@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LifePanelData } from './features.js';
-import { formatGap, herClock, reachReasonText, slotProgress, sortedLog } from './lifeView.js';
+import { formatGap, herClock, proactiveReasonText, reachReasonText, slotProgress, sortedLog } from './lifeView.js';
 
 const settings: LifePanelData['settings'] = {
   reachOut: true,
@@ -30,6 +30,8 @@ describe('lifeView', () => {
       .toContain('00:00 – 09:00');
     expect(reachReasonText({ settings, reachOut: reachOut({ reason: 'daily_cap', sharedLastDay: 3 }) }))
       .toContain('3/3');
+    expect(reachReasonText({ settings, reachOut: reachOut({ reach: true, reason: 'share_candidate' }) }))
+      .toBe('有值得分享的新动态');
   });
 
   it('quotes the configured gap and how long ago you spoke', () => {
@@ -49,6 +51,14 @@ describe('lifeView', () => {
 
   it('falls back to the raw reason instead of showing nothing', () => {
     expect(reachReasonText({ settings, reachOut: reachOut({ reason: 'brand_new_reason' }) })).toBe('brand_new_reason');
+  });
+
+  it('translates every proactive result produced by the current server', () => {
+    expect(proactiveReasonText('share_candidate')).toBe('有值得分享的新动态');
+    expect(proactiveReasonText('compose_failed')).toBe('主动消息生成失败');
+    expect(proactiveReasonText('empty_text')).toBe('模型没有生成可发送文字');
+    expect(proactiveReasonText('media_failed')).toBe('附加媒体准备失败');
+    expect(proactiveReasonText('message_persist_failed: database busy')).toBe('消息保存失败');
   });
 
   it('formats gaps in the largest useful unit', () => {

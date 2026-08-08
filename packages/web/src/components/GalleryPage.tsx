@@ -219,7 +219,7 @@ export default function GalleryPage() {
   return (
     <main className="gallery-page">
       <header className="gallery-header">
-        <div><AppLink href="/admin/features" className="gallery-back">‹ 返回功能中心</AppLink><h1>{trash ? '回收站' : '图库'}</h1><p>{stats.count} 张 · {formatBytes(stats.bytes)} · 数据库共 {total} 个媒体记录</p></div>
+        <div><AppLink href="/" className="gallery-back">‹ 返回聊天</AppLink><h1>{trash ? '回收站' : '图库'}</h1><p>{stats.count} 张 · {formatBytes(stats.bytes)} · 数据库共 {total} 个媒体记录</p></div>
         <div className="gallery-header-actions"><button type="button" onClick={() => setTrash((value) => !value)}>{trash ? '返回普通图库' : '打开回收站'}</button><button type="button" onClick={() => void load(false)} disabled={loading}>刷新</button></div>
       </header>
 

@@ -1032,6 +1032,11 @@ button {
     width: 34px;
     height: 34px;
   }
+  .sticker-panel {
+    /* Four columns fit on a phone; keep three complete rows visible instead of
+       clipping the last row behind the composer controls. */
+    max-height: 264px;
+  }
 }
 
 @media (min-width: 900px) {

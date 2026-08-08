@@ -716,6 +716,147 @@
   text-align: center;
 }
 
+.admin-overview-state {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  padding: 24px;
+  color: var(--admin-muted);
+  background: var(--admin-surface);
+  border: 1px solid var(--admin-line);
+  border-radius: var(--admin-radius);
+  text-align: center;
+  box-shadow: var(--admin-sh-1);
+}
+
+.admin-overview-state p {
+  margin: 0;
+}
+
+.admin-overview-state button {
+  min-height: 38px;
+  margin-top: 10px;
+  padding: 0 14px;
+  color: var(--admin-on-primary);
+  background: var(--admin-grad);
+  border: 0;
+  border-radius: 9px;
+}
+
+.admin-avatar-preview,
+.admin-avatar-preview-skeleton,
+.admin-avatar-preview-placeholder {
+  display: block;
+  width: 88px;
+  height: 88px;
+  margin: 10px 0;
+  border-radius: 50%;
+}
+
+.admin-avatar-preview {
+  object-fit: cover;
+}
+
+.admin-avatar-preview-skeleton {
+  background: linear-gradient(90deg, var(--admin-surface-soft), var(--admin-primary-soft), var(--admin-surface-soft));
+  background-size: 200% 100%;
+  animation: admin-avatar-shimmer 1.2s ease-in-out infinite;
+}
+
+.admin-avatar-preview-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--admin-muted);
+  background: var(--admin-surface-soft);
+  border: 1px dashed var(--admin-line-strong);
+  font-size: 12px;
+}
+
+@keyframes admin-avatar-shimmer {
+  to { background-position: -200% 0; }
+}
+
+.admin-v2 .emotion-map-header,
+.admin-v2 .emotion-map-row {
+  display: grid;
+  grid-template-columns: minmax(56px, 0.65fr) minmax(0, 2fr) minmax(68px, 0.55fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-v2 .emotion-map-header {
+  min-height: 28px;
+  color: var(--admin-muted);
+}
+
+.admin-v2 .emotion-map-header > small {
+  white-space: normal;
+}
+
+.admin-v2 .emotion-map-row > input {
+  min-width: 0;
+}
+
+.admin-v2 .life-plan-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px auto;
+  align-items: center;
+}
+
+.admin-v2 .life-plan-create button {
+  white-space: nowrap;
+}
+
+.admin-v2 .life-rules {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  background: var(--admin-surface-soft);
+  border: 1px solid var(--admin-line);
+  border-radius: 12px;
+}
+
+.admin-v2 .life-rules > strong,
+.admin-v2 .life-rules > .admin-actions {
+  grid-column: 1 / -1;
+}
+
+.admin-v2 .life-rules > label {
+  align-content: start;
+  min-width: 0;
+}
+
+.admin-v2 .life-rule-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 10px;
+  background: var(--admin-surface);
+  border: 1px solid var(--admin-line-strong);
+  border-radius: 9px;
+}
+
+.admin-v2 .life-rule-toggle input {
+  width: 20px;
+  min-height: 20px;
+  accent-color: var(--admin-primary);
+}
+
+.admin-v2 .life-quiet-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-v2 .life-quiet-range > span {
+  color: var(--admin-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .admin-v2 .admin-upload {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1059,6 +1200,39 @@
   }
 }
 
+@media (max-width: 640px) {
+  .admin-v2 .life-rules {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-v2 .life-rules > label,
+  .admin-v2 .life-rules > strong,
+  .admin-v2 .life-rules > .admin-actions {
+    grid-column: 1;
+  }
+
+  .admin-v2 .life-plan-create {
+    grid-template-columns: minmax(0, 1fr) 96px;
+  }
+
+  .admin-v2 .life-plan-create button {
+    grid-column: 1 / -1;
+    min-height: 44px;
+  }
+
+  .admin-v2 .emotion-map-header,
+  .admin-v2 .emotion-map-row {
+    grid-template-columns: 52px minmax(0, 1fr) 68px;
+    gap: 6px;
+  }
+
+  .admin-v2 .emotion-map-row input,
+  .admin-v2 .life-rules input,
+  .admin-v2 .life-rules select {
+    min-height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .admin-v2 * {
     animation-duration: 0.01ms !important;
@@ -1134,7 +1308,7 @@
   border-color: transparent;
 }
 
-.admin-preset-actions button.danger {
+.admin-preset-actions button.admin-danger {
   color: var(--admin-danger);
 }
 

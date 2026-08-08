@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Composer, type ComposerSendPayload } from './Composer.js';
 import type { MediaRef, StickerInfo } from '../lib/types.js';
 import { composerDraftKey, writeComposerDraft } from '../lib/composerDraft.js';
+import { clearMediaCache } from '../lib/authenticatedMedia.js';
 
 /**
  * `Composer` 是聊天主路径上唯一没有测试的交互组件，而它握着几条最容易悄悄坏掉的规则：
@@ -217,6 +218,7 @@ beforeEach(() => {
   const urlCtor = URL as unknown as Record<string, unknown>;
   urlCtor.createObjectURL = vi.fn(() => 'blob:sooya/mock');
   urlCtor.revokeObjectURL = vi.fn();
+  clearMediaCache();
 });
 
 afterEach(async () => {
@@ -225,6 +227,7 @@ afterEach(async () => {
     entry.container.remove();
   }
   const urlCtor = URL as unknown as Record<string, unknown>;
+  clearMediaCache();
   delete urlCtor.createObjectURL;
   delete urlCtor.revokeObjectURL;
   vi.unstubAllGlobals();
@@ -612,6 +615,19 @@ describe('Composer 附件发送', () => {
     expect(sendBtn().disabled).toBe(false);
     expect(sentContents()).toEqual([[{ type: 'text', text: '带图的话' }, { type: 'image', mediaId: 'md_up' }]]);
     expect(strip()).not.toBeNull();
+  });
+
+  it('表情格只请求适配格子尺寸的缩略图并延迟加载', async () => {
+    await render();
+    await click(stickerBtn());
+    await flush();
+    await flush();
+
+    const mediaRequest = vi.mocked(fetch).mock.calls
+      .map(([input]) => String(input))
+      .find((url) => url.startsWith('/api/media/md_1'));
+    expect(mediaRequest).toMatch(/^\/api\/media\/md_1\?w=\d+$/);
+    expect(stickerChoices()[0]!.querySelector('img')?.getAttribute('loading')).toBe('lazy');
   });
 
   it('网络断开时仍可编辑，但发送按钮明确提示网络已断开', async () => {

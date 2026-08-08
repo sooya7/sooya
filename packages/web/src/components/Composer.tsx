@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { clearComposerDraft, readComposerDraft, writeComposerDraft } from '../lib/composerDraft.js';
 import type { ChatMessage, MediaRef, StickerInfo } from '../lib/types.js';
+import { mediaThumbnailPath } from '../lib/authenticatedMedia.js';
 import { AuthenticatedImage } from './AuthenticatedMedia.js';
 
 export interface PendingAttachment {
@@ -247,7 +248,7 @@ export function Composer({ disabled, disabledLabel, conversationId = 'main', rep
           {stickers.length === 0 && <div className="sticker-empty">还没有可用的表情包</div>}
           {stickers.map((s) => (
             <button key={s.id} type="button" className="sticker-choice" onClick={() => void sendSticker(s)} title={s.emotion}>
-              <AuthenticatedImage path={s.url} scope="user" alt={s.name} loading="lazy" />
+              <AuthenticatedImage path={mediaThumbnailPath(s.url, 96)} scope="user" alt={s.name} loading="lazy" />
             </button>
           ))}
         </div>

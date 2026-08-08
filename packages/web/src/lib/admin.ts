@@ -3,6 +3,7 @@ import { clearMediaCache } from './authenticatedMedia.js';
 import type { ModelPreset, ModelSlot } from './modelPresets.js';
 
 const ADMIN_TOKEN_KEY = 'sooya.admin-token';
+export const ADMIN_UNAUTHORIZED_EVENT = 'sooya:admin-unauthorized';
 
 export function getAdminToken(): string | null {
   try {
@@ -29,6 +30,18 @@ export function clearAdminToken(): void {
     /* private mode */
   }
   clearMediaCache('admin');
+}
+
+/**
+ * 任何管理接口发现令牌失效时都走同一个出口，让当前子页立即回到登录壳。
+ * 这不能依赖概览请求，因为头像、语音等子页会独立加载自己的数据。
+ */
+export function invalidateAdminSession(failedToken: string | null = getAdminToken()): boolean {
+  // 旧请求可能在用户重新登录后才返回；不能让旧 401 清掉刚换上的新令牌。
+  if (getAdminToken() !== failedToken) return false;
+  clearAdminToken();
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(ADMIN_UNAUTHORIZED_EVENT));
+  return true;
 }
 
 export type AdminFailureKind = 'unauthorized' | 'flag-disabled' | 'provider-unconfigured' | 'error';
@@ -80,6 +93,7 @@ async function adminRequest<T>(
       (responseBody as { message?: string; error?: string })?.message ??
       (responseBody as { error?: string })?.error ??
       `request failed (${res.status})`;
+    if (res.status === 401 || res.status === 403) invalidateAdminSession(token);
     throw new ApiError(message, res.status, responseBody);
   }
   return responseBody as T;

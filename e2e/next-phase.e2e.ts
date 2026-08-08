@@ -15,7 +15,7 @@ async function gotoAdmin(page: Page, path: string): Promise<void> {
 }
 
 /**
- * Next-phase surfaces (P0-P3): the world-context admin, voice preferences,
+ * Next-phase surfaces (P0-P3): the world-context admin and
  * metrics panels are reachable by exact
  * path, render against the live server, and their controls round-trip through
  * the admin API. The stable chat flows are covered by the other specs running
@@ -23,24 +23,19 @@ async function gotoAdmin(page: Page, path: string): Promise<void> {
  */
 test.describe('next-phase admin surfaces', () => {
   test('life admin shows overview and the location manager lists builtins', async ({ page }) => {
-    await gotoAdmin(page, '/admin/life');
+    await gotoAdmin(page, '/admin/life/console');
     await expect(page.getByTestId('life-admin-page')).toBeVisible();
     await expect(page.getByTestId('life-overview')).toBeVisible();
     await expect(page.getByText('在哪里')).toBeVisible();
     // Location model is enabled on the e2e server: the location manager
     // lists the seeded builtins including home.
-    await page.getByRole('tab', { name: 'Locations' }).click();
+    await page.getByRole('tab', { name: '地点' }).click();
     await expect(page.getByTestId('life-location-list')).toBeVisible();
     // Mobile card-list layout prepends the column label to each cell name
-    // ("名称 家 展开详情"), so match the home row without an exact cell-name.
-    const homeCell = page.getByTestId('life-location-list').getByRole('cell').filter({ hasText: '家' }).filter({ hasNotText: '附近' });
+    // ("名称 家 展开详情"), and the localized kind column also reads 家 for the
+    // home row, so take the first matching cell instead of a unique one.
+    const homeCell = page.getByTestId('life-location-list').getByRole('cell').filter({ hasText: '家' }).filter({ hasNotText: '附近' }).first();
     await expect(homeCell).toBeVisible();
-  });
-
-  test('voice preferences render quiet hours and capabilities', async ({ page }) => {
-    await gotoAdmin(page, '/settings/voice');
-    await expect(page.getByTestId('voice-preferences-page')).toBeVisible();
-    await expect(page.getByTestId('voice-quiet-hours')).toBeVisible();
   });
 
   test('overview embeds the base runtime metrics', async ({ page }) => {
@@ -105,7 +100,7 @@ test.describe('next-phase admin surfaces', () => {
     const travel = await request.get('/api/admin/life/travel', { headers: { 'x-admin-token': ADMIN_TOKEN } });
     expect((await travel.json() as { travel: unknown }).travel).toBeNull();
     // Restart keeps 杭州 (server restarts between specs; re-verify after reload).
-    await page.goto('/admin/life');
+    await page.goto('/admin/life/console');
     await expect(page.getByTestId('life-admin-page')).toBeVisible();
   });
 });

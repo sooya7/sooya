@@ -1,30 +1,36 @@
 import { useEffect, useMemo, useState } from 'react';
-import { adminApi, getAdminToken, type MetricAggregate, type MetricsDistribution } from '../lib/admin.js';
+import { adminApi, getAdminToken, type MetricAggregate } from '../lib/admin.js';
 import { AdminState } from './admin/AdminState.js';
 
 /**
- * MetricsSummary — 基础运行监控，嵌入 Admin「概览」。
- * 只展示运行指标（success/failure/latency、count/mean/p50/p95），
- * 不做独立分析平台（release comparison / export 已移除）。
+ * MetricsSummary — 嵌入 Admin「概览」的近 7 天体验摘要。
+ * 服务端记录的是英文指标键（reply.latency_ms 等）；这里不做监控面板，
+ * 只把它们折算成几个用户能直接感受到的数字：回复快不快、稳不稳、
+ * 语音靠不靠谱、她主动说了多少话。
  */
-const CATEGORY_LABELS: Record<string, string> = {
-  reply: '回复',
-  voice: '语音',
-  life: '生活',
-  proactive: '主动消息',
-  world: '世界'
-};
 
-function formatNumber(value: number): string {
-  if (!Number.isFinite(value)) return '—';
-  if (Math.abs(value) >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (Number.isInteger(value)) return String(value);
-  return value.toFixed(2);
+function sumOf(aggregates: MetricAggregate[], category: string, metric: string): number {
+  const row = aggregates.find((a) => a.category === category && a.metric === metric);
+  return row ? row.sum : 0;
+}
+
+function avgOf(aggregates: MetricAggregate[], category: string, metric: string): number | null {
+  const row = aggregates.find((a) => a.category === category && a.metric === metric);
+  return row && row.count > 0 ? row.avg : null;
+}
+
+function formatSeconds(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms)) return '—';
+  return ms < 1000 ? '1 秒内' : `${(ms / 1000).toFixed(1)} 秒`;
+}
+
+function formatRate(good: number, total: number): string {
+  if (total <= 0) return '—';
+  return `${Math.round((good / total) * 100)}%`;
 }
 
 export function MetricsSummary() {
   const [aggregates, setAggregates] = useState<MetricAggregate[] | null>(null);
-  const [distributions, setDistributions] = useState<MetricsDistribution[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
@@ -33,50 +39,44 @@ export function MetricsSummary() {
     if (!getAdminToken()) { setError('缺少管理令牌'); return; }
     setError(null);
     setAggregates(null);
-    setDistributions(null);
     void adminApi.metrics(7).then((body) => { if (alive) setAggregates(body.aggregates); }).catch((err: unknown) => { if (alive) setError(err instanceof Error ? err.message : String(err)); });
-    void adminApi.metricsDistributions(7).then((body) => { if (alive) setDistributions(body.distributions); }).catch(() => undefined);
     return () => { alive = false; };
   }, [nonce]);
 
-  const categories = useMemo(() => [...new Set((aggregates ?? []).map((a) => a.category))], [aggregates]);
+  const tiles = useMemo(() => {
+    if (!aggregates) return [];
+    const replyStart = sumOf(aggregates, 'reply', 'start');
+    const replySuccess = sumOf(aggregates, 'reply', 'success');
+    const firstVisible = avgOf(aggregates, 'reply', 'first_visible_ms');
+    const ttsSuccess = sumOf(aggregates, 'voice', 'tts_success');
+    const ttsFailure = sumOf(aggregates, 'voice', 'tts_failure');
+    const proactive = sumOf(aggregates, 'proactive', 'sent');
+    return [
+      { label: '开始回话', value: formatSeconds(firstVisible), detail: '从你发出到她开口的平均等待' },
+      { label: '回复成功率', value: formatRate(replySuccess, replyStart), detail: replyStart > 0 ? `共回复 ${replyStart.toLocaleString('en-US')} 次` : '还没有回复记录' },
+      { label: '语音成功率', value: formatRate(ttsSuccess, ttsSuccess + ttsFailure), detail: ttsSuccess + ttsFailure > 0 ? `合成 ${(ttsSuccess + ttsFailure).toLocaleString('en-US')} 段语音` : '还没有语音记录' },
+      { label: '主动找你', value: proactive > 0 ? `${proactive.toLocaleString('en-US')} 次` : '—', detail: '她主动发来的消息' }
+    ];
+  }, [aggregates]);
 
   if (error) return <AdminState kind="error" message={error} onRetry={() => setNonce((n) => n + 1)} />;
   if (!aggregates) return <AdminState kind="loading" />;
-  if (aggregates.length === 0 && !distributions?.length) {
-    return <AdminState kind="empty" message="暂无指标数据 — 开启 METRICS_DASHBOARD_ENABLED 后开始记录" />;
+  if (aggregates.length === 0) {
+    return <AdminState kind="empty" message="暂无体验数据 — 开启 METRICS_DASHBOARD_ENABLED 后开始记录" />;
   }
 
   return (
     <section className="metrics-summary" data-testid="metrics-summary" aria-labelledby="metrics-summary-title">
-      <h3 id="metrics-summary-title">运行指标（近 7 天）</h3>
-      {categories.length === 0 && <p className="muted">暂无聚合指标。</p>}
-      {categories.map((category) => (
-        <div className="metrics-summary-category" key={category}>
-          <strong>{CATEGORY_LABELS[category] ?? category}</strong>
-          <div className="metrics-summary-rows">
-            {aggregates!.filter((a) => a.category === category).map((a) => (
-              <span key={a.metric} className="metrics-summary-row" title={`${a.count} 次 · 均值 ${formatNumber(a.avg)}`}>
-                <span className="muted">{a.metric}</span>
-                <span>{formatNumber(a.sum)}<small className="muted">×{a.count}</small></span>
-              </span>
-            ))}
+      <h3 id="metrics-summary-title">最近 7 天的体验</h3>
+      <div className="admin-summary">
+        {tiles.map((tile) => (
+          <div className="admin-summary-tile" key={tile.label}>
+            <span>{tile.label}</span>
+            <strong>{tile.value}</strong>
+            <small>{tile.detail}</small>
           </div>
-        </div>
-      ))}
-      {distributions && distributions.length > 0 && (
-        <div className="metrics-summary-category">
-          <strong>分布（p50 / p95）</strong>
-          <div className="metrics-summary-rows">
-            {distributions.slice(0, 8).map((d) => (
-              <span key={`${d.category}-${d.metric}`} className="metrics-summary-row" title={`min ${formatNumber(d.min)} · max ${formatNumber(d.max)}`}>
-                <span className="muted">{CATEGORY_LABELS[d.category] ?? d.category} / {d.metric}</span>
-                <span>p50 {formatNumber(d.p50)} · p95 {formatNumber(d.p95)}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+        ))}
+      </div>
     </section>
   );
 }
