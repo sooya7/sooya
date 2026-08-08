@@ -72,6 +72,20 @@ export default async function globalSetup(): Promise<void> {
       ALLOW_PRIVATE_NETWORK_FETCH: 'true',
       WEB_CHAT_TOKEN: 'e2e-chat-token',
       ADMIN_API_TOKEN: 'e2e-admin-token',
+      // The next-phase specs expect the e2e server to run with all next-phase
+      // flags on (see next-phase.e2e.ts), proving the stable chat specs are
+      // unaffected by them. Default-off behaviour is covered by the unit suites.
+      WORLD_CONTEXT_ENABLED: 'true',
+      LOCATION_MODEL_ENABLED: 'true',
+      WEATHER_ENABLED: 'true',
+      LIFE_ADMIN_UI_ENABLED: 'true',
+      VOICE_PREFERENCES_UI_ENABLED: 'true',
+      METRICS_DASHBOARD_ENABLED: 'true',
+      SHADOW_MODE_ENABLED: 'true',
+      EXPERIMENTS_ENABLED: 'true',
+      VISIBLE_THOUGHTS_ENABLED: 'true',
+      VISIBLE_INNER_MONOLOGUE_ENABLED: 'true',
+      ADMIN_DECISION_TRACE_ENABLED: 'true',
       ENABLE_BACKGROUND_JOBS: 'true',
       BACKUP_INTERVAL_MS: '0'
     },

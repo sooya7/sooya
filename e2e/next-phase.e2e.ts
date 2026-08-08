@@ -29,9 +29,12 @@ test.describe('next-phase admin surfaces', () => {
     await expect(page.getByText('在哪里')).toBeVisible();
     // Location model is enabled on the e2e server: the location manager
     // lists the seeded builtins including home.
-    await page.getByRole('button', { name: 'Locations' }).click();
+    await page.getByRole('tab', { name: 'Locations' }).click();
     await expect(page.getByTestId('life-location-list')).toBeVisible();
-    await expect(page.getByTestId('life-location-list').getByRole('cell', { name: '家', exact: true })).toBeVisible();
+    // Mobile card-list layout prepends the column label to each cell name
+    // ("名称 家 展开详情"), so match the home row without an exact cell-name.
+    const homeCell = page.getByTestId('life-location-list').getByRole('cell').filter({ hasText: '家' }).filter({ hasNotText: '附近' });
+    await expect(homeCell).toBeVisible();
   });
 
   test('voice preferences render quiet hours and capabilities', async ({ page }) => {

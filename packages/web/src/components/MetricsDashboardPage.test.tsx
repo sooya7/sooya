@@ -19,9 +19,12 @@ const AGGREGATES = {
   ]
 };
 
+// Wire format matches the server route: `{ comparison: ReleaseMetricsComparison }`.
 const COMPARE = {
-  current: { from: '2026-08-01', to: '2026-08-07', aggregates: AGGREGATES.aggregates },
-  previous: { from: '2026-07-25', to: '2026-07-31', aggregates: [{ category: 'reply', metric: 'reply_count', sum: 6, count: 2, avg: 3 }] }
+  comparison: {
+    current: { from: '2026-08-01', to: '2026-08-07', aggregates: AGGREGATES.aggregates },
+    previous: { from: '2026-07-25', to: '2026-07-31', aggregates: [{ category: 'reply', metric: 'reply_count', sum: 6, count: 2, avg: 3 }] }
+  }
 };
 
 const DISTRIBUTIONS = {

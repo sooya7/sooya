@@ -469,8 +469,8 @@ export const adminApi = {
   metrics: (days: number) => adminRequest<{ aggregates: MetricAggregate[] }>(`/api/admin/metrics?days=${days}`),
   metricsDistributions: (days: number) =>
     adminRequest<{ distributions: MetricsDistribution[] }>(`/api/admin/metrics/distributions?days=${days}`),
-  metricsReleaseCompare: (from: string, to: string) =>
-    adminRequest<ReleaseMetricsComparison>(`/api/admin/metrics/release-compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  metricsReleaseCompare: async (from: string, to: string) =>
+    (await adminRequest<{ comparison: ReleaseMetricsComparison }>(`/api/admin/metrics/release-compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`)).comparison,
   /** Downloads the CSV/JSON export; returns the format when the file was saved. */
   metricsExport: async (format: 'csv' | 'json'): Promise<{ ok: true; format: 'csv' | 'json' }> => {
     const headers = new Headers();
