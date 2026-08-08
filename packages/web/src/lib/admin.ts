@@ -31,9 +31,27 @@ export function clearAdminToken(): void {
   clearMediaCache('admin');
 }
 
+export type AdminFailureKind = 'unauthorized' | 'flag-disabled' | 'provider-unconfigured' | 'error';
+
+/**
+ * UI convention for backend "not ready" states (see INTEGRATION-NOTES-ui.md):
+ * HTTP 401/403 → unauthorized; a message mentioning an ENABLED flag or
+ * "未启用" → flag-disabled; a message mentioning provider config or "未配置" →
+ * provider-unconfigured; everything else is a plain error.
+ */
+export function adminFailureKind(error: unknown): AdminFailureKind {
+  if (error instanceof ApiError) {
+    if (error.status === 401 || error.status === 403) return 'unauthorized';
+    const text = String(error.message ?? '');
+    if (/disabled|未启用|not enabled|ENABLED/i.test(text)) return 'flag-disabled';
+    if (/configured|未配置|no provider|provider/i.test(text)) return 'provider-unconfigured';
+  }
+  return 'error';
+}
+
 async function adminRequest<T>(
   path: string,
-  options: { method?: string; body?: unknown; headers?: HeadersInit } = {}
+  options: { method?: string; body?: unknown; headers?: HeadersInit; signal?: AbortSignal } = {}
 ): Promise<T> {
   const headers = new Headers(options.headers);
   const token = getAdminToken();
@@ -47,7 +65,7 @@ async function adminRequest<T>(
     body = JSON.stringify(options.body);
   }
 
-  const res = await fetch(path, { method: options.method ?? 'GET', headers, body });
+  const res = await fetch(path, { method: options.method ?? 'GET', headers, body, signal: options.signal });
   const text = await res.text();
   let responseBody: unknown = null;
   if (text) {
@@ -209,6 +227,156 @@ export interface AdminLifeOverview {
 export interface AdminLifeLocation { id: string; name: string; kind: string; tags: string[]; indoor: boolean; visitWeight: number; source: string; active: boolean; }
 export interface AdminProactiveAttempt { id: string; candidateId: string | null; status: string; blockedReason: string | null; messageId: string | null; requestedMode: string | null; createdAt: string; }
 
+/* ---- Next phase (frozen contract §1/§2): life cities, travel, weather, ---- */
+
+export type TravelMode = 'walk' | 'bike' | 'transit' | 'car' | 'unknown';
+
+export interface LifeCity {
+  id: string;
+  name: string;
+  region?: string | null;
+  country?: string | null;
+  timeZone: string;
+  active: boolean;
+}
+
+export interface TravelState {
+  fromLocationId: string;
+  toLocationId: string;
+  mode: TravelMode;
+  startedAt: string;
+  expectedArriveAt: string;
+}
+
+export type WeatherCondition = 'clear' | 'partly_cloudy' | 'cloudy' | 'rain' | 'drizzle' | 'snow' | 'storm' | 'fog' | 'haze' | 'extreme_heat' | 'extreme_cold' | 'unknown';
+
+export interface WeatherSnapshot {
+  observedAt: string;
+  condition: WeatherCondition;
+  temperatureC?: number;
+  feelsLikeC?: number;
+  humidity?: number;
+  precipitationMm?: number;
+  windKph?: number;
+  provider: string;
+  locationKey: string;
+  stale: boolean;
+}
+
+export interface WeatherForecastPeriod {
+  at: string;
+  condition: WeatherCondition;
+  temperatureC?: number;
+  precipitationMm?: number;
+  windKph?: number;
+}
+
+export interface WeatherForecastSummary {
+  generatedAt: string;
+  provider: string;
+  next12h: WeatherForecastPeriod[];
+  next3d: WeatherForecastPeriod[];
+  severe: boolean;
+}
+
+export interface DaylightSnapshot {
+  sunrise: string;
+  sunset: string;
+  isDaylight: boolean;
+}
+
+/** Response shape of GET /api/admin/weather/status (UI-level contract). */
+export interface WeatherStatus {
+  enabled: boolean;
+  provider: { name: string | null; configured: boolean; active: boolean };
+  lastSnapshot: WeatherSnapshot | null;
+  cacheAgeSec: number | null;
+  fallback: 'primary' | 'secondary' | 'cache' | 'unknown' | null;
+  daylight: DaylightSnapshot | null;
+  forecast: WeatherForecastSummary | null;
+}
+
+export interface GeocodeMatch {
+  name: string;
+  region?: string | null;
+  country?: string | null;
+  timeZone?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+}
+
+/* ---- Next phase: metrics ---- */
+
+export interface MetricsDistribution {
+  category: string;
+  metric: string;
+  count: number;
+  sum: number;
+  min: number;
+  max: number;
+  mean: number;
+  p50: number;
+  p95: number;
+}
+
+export interface MetricAggregate { category: string; metric: string; sum: number; count: number; avg: number; }
+
+export interface ReleaseMetricsComparison {
+  current: { from: string; to: string; aggregates: MetricAggregate[] };
+  previous: { from: string; to: string; aggregates: MetricAggregate[] };
+}
+
+/* ---- Next phase: experiments ---- */
+
+export interface ExperimentReport {
+  experimentId: string;
+  name: string;
+  samples: number;
+  control: number;
+  treatment: number;
+  observedDifference: Array<{ metric: string; control: number; treatment: number }>;
+}
+
+export interface ExperimentHistoryEntry {
+  id: string;
+  experimentId: string;
+  event: 'created' | 'shadow' | 'promoted' | 'paused' | 'resumed' | 'completed' | 'config_changed';
+  variant: string;
+  createdAt: string;
+}
+
+/* ---- Next phase: decision trace + visible thoughts ---- */
+
+export type VisibleThoughtKind = 'inner_monologue' | 'decision_summary';
+export type VisibleThoughtVisibility = 'user' | 'admin';
+export type VisibleThoughtStatus = 'generating' | 'completed' | 'cancelled' | 'failed';
+
+export interface VisibleThought {
+  id: string;
+  messageId: string;
+  batchId: string;
+  revision: number;
+  kind: VisibleThoughtKind;
+  text: string;
+  visibility: VisibleThoughtVisibility;
+  status: VisibleThoughtStatus;
+  createdAt: string;
+}
+
+export interface DecisionTrace {
+  batchId: string;
+  revision: number;
+  replyIntent?: string | null;
+  lifeContext?: string[] | null;
+  weather?: string | null;
+  memoryRecallCount?: number | null;
+  voiceMode?: string | null;
+  semanticGuard?: 'pass' | 'reject' | 'fallback' | null;
+  experimentVariant?: string | null;
+  proactive?: string | null;
+  createdAt: string;
+}
+
 export const adminApi = {
   system: () => adminRequest<AdminSystemStatus>('/api/admin/system'),
   capabilities: () => adminRequest<AdminCapabilities>('/api/admin/capabilities'),
@@ -283,5 +451,61 @@ export const adminApi = {
   restoreBackup: (name: string) =>
     adminRequest<Record<string, unknown>>(`/api/admin/backups/${encodeURIComponent(name)}/restore`, { method: 'POST' }),
   deleteBackup: (name: string) =>
-    adminRequest<{ deleted: boolean }>(`/api/admin/backups/${encodeURIComponent(name)}`, { method: 'DELETE' })
+    adminRequest<{ deleted: boolean }>(`/api/admin/backups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  /* ---- Next phase (frozen contract §2): life cities / travel / geocode ---- */
+  lifeCities: () => adminRequest<{ cities: LifeCity[] }>('/api/admin/life/cities'),
+  createCity: (input: { name: string; region?: string; country?: string; timeZone: string }) =>
+    adminRequest<{ city: LifeCity }>('/api/admin/life/cities', { method: 'POST', body: input }),
+  updateCity: (id: string, patch: Partial<Pick<LifeCity, 'name' | 'region' | 'country' | 'timeZone' | 'active'>>) =>
+    adminRequest<{ city: LifeCity }>(`/api/admin/life/cities/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
+  lifeTravel: () => adminRequest<{ travel: TravelState | null }>('/api/admin/life/travel'),
+  geocodeSearch: (query: string) =>
+    adminRequest<{ matches: GeocodeMatch[]; provider: string | null; configured: boolean }>('/api/admin/life/geocode/search', { method: 'POST', body: { query } }),
+  /* ---- Next phase: weather ---- */
+  weatherStatus: () => adminRequest<WeatherStatus>('/api/admin/weather/status'),
+  weatherForecast: () => adminRequest<{ forecast: WeatherForecastSummary | null }>('/api/admin/weather/forecast'),
+  weatherRefresh: () => adminRequest<{ snapshot: WeatherSnapshot | null }>('/api/admin/weather/refresh', { method: 'POST' }),
+  /* ---- Next phase: metrics ---- */
+  metrics: (days: number) => adminRequest<{ aggregates: MetricAggregate[] }>(`/api/admin/metrics?days=${days}`),
+  metricsDistributions: (days: number) =>
+    adminRequest<{ distributions: MetricsDistribution[] }>(`/api/admin/metrics/distributions?days=${days}`),
+  metricsReleaseCompare: (from: string, to: string) =>
+    adminRequest<ReleaseMetricsComparison>(`/api/admin/metrics/release-compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  /** Downloads the CSV/JSON export; returns the format when the file was saved. */
+  metricsExport: async (format: 'csv' | 'json'): Promise<{ ok: true; format: 'csv' | 'json' }> => {
+    const headers = new Headers();
+    const token = getAdminToken();
+    if (token) headers.set('X-Admin-Token', token);
+    const res = await fetch(`/api/admin/metrics/export?format=${format}`, { headers });
+    if (!res.ok) {
+      const text = await res.text();
+      const message = (() => { try { const parsed = JSON.parse(text) as { message?: string; error?: string }; return parsed?.message ?? parsed?.error ?? `request failed (${res.status})`; } catch { return text || `request failed (${res.status})`; } })();
+      throw new ApiError(message, res.status);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    try {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `sooya-metrics-export.${format}`;
+      link.click();
+    } finally {
+      window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+    return { ok: true, format };
+  },
+  /* ---- Next phase: experiment report / history ---- */
+  experimentReport: (id: string) =>
+    adminRequest<{ report: ExperimentReport | null }>(`/api/admin/experiments/${encodeURIComponent(id)}/report`),
+  experimentHistory: (id: string) =>
+    adminRequest<{ history: ExperimentHistoryEntry[] }>(`/api/admin/experiments/${encodeURIComponent(id)}/history`),
+  /* ---- Next phase: decision trace / visible thoughts ---- */
+  decisionTraces: (limit = 50) => adminRequest<{ traces: DecisionTrace[] }>(`/api/admin/decision-trace/recent?limit=${limit}`),
+  decisionTrace: (batchId: string, revision?: number) =>
+    adminRequest<{ trace: DecisionTrace }>(
+      `/api/admin/decision-trace?batchId=${encodeURIComponent(batchId)}${revision !== undefined ? `&revision=${revision}` : ''}`
+    ),
+  /** User-visible inner thought for a message (may 404 when none exists). */
+  visibleThought: (messageId: string, signal?: AbortSignal) =>
+    adminRequest<{ thought: VisibleThought | null }>(`/api/thoughts/${encodeURIComponent(messageId)}`, { signal })
 };

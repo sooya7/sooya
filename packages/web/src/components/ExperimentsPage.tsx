@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { shadowApi, type Experiment } from '../lib/shadowExperiments.js';
+import { adminApi, type ExperimentHistoryEntry, type ExperimentReport } from '../lib/admin.js';
+import { AdminNotice, AdminState, adminStateFromError } from './admin/AdminState.js';
+import { DataList } from './admin/DataList.js';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: '草稿',
@@ -64,6 +67,12 @@ export default function ExperimentsPage() {
     }
   };
 
+  /**
+   * Lifecycle transitions keep window.confirm for the danger ops (cancel /
+   * complete): the next-phase e2e drives them through Playwright's dialog
+   * handler. Buttons are grouped per row (.data-list-actions) with a visual
+   * separator before the destructive pair.
+   */
   const transition = async (experiment: Experiment, status: string, confirmText?: string) => {
     if (confirmText && !window.confirm(confirmText)) return;
     setBusy(true);
@@ -95,7 +104,7 @@ export default function ExperimentsPage() {
           <p>单用户实验框架：草稿 → Shadow 采样（只读对比，不改变行为）→ 正式运行（按天/会话/对话固定变体）→ 暂停（立即回滚到正式行为）→ 完成/取消。</p>
         </div>
       </div>
-      {notice && <div className={`admin-notice ${noticeKind === 'error' ? 'admin-notice-error' : ''}`} role="status">{notice}</div>}
+      {notice && <AdminNotice kind={noticeKind}>{notice}</AdminNotice>}
 
       <section className="admin-form-card">
         <h3>新建实验</h3>
@@ -115,38 +124,137 @@ export default function ExperimentsPage() {
             </select>
           </label>
         </div>
-        <button className="admin-button" disabled={busy} onClick={() => void create()}>创建草稿</button>
+        <div className="admin-actions">
+          <button className="admin-button primary" disabled={busy} onClick={() => void create()}>创建草稿</button>
+        </div>
       </section>
 
       <section className="admin-form-card">
         <h3>实验列表 {summary ? `（共 ${summary.total} · 运行 ${summary.running} · 采样 ${summary.shadow}）` : ''}</h3>
-        {!experiments ? <p>加载中…</p> : experiments.length === 0 ? <p>还没有实验。创建后会先以草稿状态出现。</p> : (
-          <table className="admin-table" data-testid="experiment-table">
-            <thead>
-              <tr><th>名称</th><th>子系统</th><th>变体</th><th>状态</th><th>当前变体</th><th>范围</th><th>操作</th></tr>
-            </thead>
-            <tbody>
-              {experiments.map((experiment) => (
-                <tr key={experiment.id}>
-                  <td>{experiment.name}</td>
-                  <td>{SUBSYSTEM_LABELS[experiment.subsystem] ?? experiment.subsystem}</td>
-                  <td>{experiment.variants?.join(' / ')}</td>
-                  <td>{STATUS_LABELS[experiment.status] ?? experiment.status}</td>
-                  <td>{experiment.currentVariant ?? '—'}</td>
-                  <td>{SCOPE_LABELS[experiment.assignment_scope] ?? experiment.assignment_scope}</td>
-                  <td>
-                    {experiment.status === 'draft' && <button className="admin-button" disabled={busy} onClick={() => void transition(experiment, 'shadow')}>开始 Shadow</button>}
-                    {experiment.status === 'shadow' && <button className="admin-button" disabled={busy} onClick={() => void transition(experiment, 'running', '正式运行后该子系统将消费实验变体，确认？')}>正式运行</button>}
-                    {(experiment.status === 'shadow' || experiment.status === 'running') && <button className="admin-button" disabled={busy} onClick={() => void transition(experiment, 'paused')}>暂停</button>}
-                    {(experiment.status === 'paused' || experiment.status === 'running') && <button className="admin-button" disabled={busy} onClick={() => void transition(experiment, 'completed', '完成后该实验结束，确认？')}>完成</button>}
-                    {(experiment.status === 'draft' || experiment.status === 'paused' || experiment.status === 'shadow') && <button className="admin-button" disabled={busy} onClick={() => void transition(experiment, 'cancelled', '取消后不可恢复，确认？')}>取消</button>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {!experiments ? <AdminState kind="loading" /> : experiments.length === 0 ? (
+          <AdminState kind="empty" message="还没有实验。创建后会先以草稿状态出现。" />
+        ) : (
+          <DataList<Experiment>
+            testId="experiment-table"
+            rows={experiments}
+            rowKey={(e) => e.id}
+            expandable
+            columns={[
+              { key: 'name', label: '名称', render: (e) => e.name },
+              { key: 'subsystem', label: '子系统', render: (e) => SUBSYSTEM_LABELS[e.subsystem] ?? e.subsystem },
+              { key: 'variants', label: '变体', mobileCollapsed: true, render: (e) => e.variants?.join(' / ') ?? '—' },
+              { key: 'status', label: '状态', render: (e) => STATUS_LABELS[e.status] ?? e.status },
+              { key: 'current', label: '当前变体', mobileCollapsed: true, render: (e) => e.currentVariant ?? '—' },
+              { key: 'scope', label: '范围', mobileCollapsed: true, render: (e) => SCOPE_LABELS[e.assignment_scope] ?? e.assignment_scope }
+            ]}
+            actions={(experiment) => (
+              <>
+                {experiment.status === 'draft' && <button className="admin-button" disabled={busy} onClick={() => void transition(experiment, 'shadow')}>开始 Shadow</button>}
+                {experiment.status === 'shadow' && <button className="admin-button" disabled={busy} onClick={() => void transition(experiment, 'running', '正式运行后该子系统将消费实验变体，确认？')}>正式运行</button>}
+                {(experiment.status === 'shadow' || experiment.status === 'running') && <button className="admin-button" disabled={busy} onClick={() => void transition(experiment, 'paused')}>暂停</button>}
+                {(experiment.status === 'paused' || experiment.status === 'running') && (
+                  <>
+                    <span className="danger-sep" aria-hidden="true" />
+                    <button className="admin-button admin-danger" disabled={busy} onClick={() => void transition(experiment, 'completed', '完成后该实验结束，确认？')}>完成</button>
+                  </>
+                )}
+                {(experiment.status === 'draft' || experiment.status === 'paused' || experiment.status === 'shadow') && (
+                  <>
+                    <span className="danger-sep" aria-hidden="true" />
+                    <button className="admin-button admin-danger" disabled={busy} onClick={() => void transition(experiment, 'cancelled', '取消后不可恢复，确认？')}>取消</button>
+                  </>
+                )}
+              </>
+            )}
+            expandedRow={(experiment) => <ExperimentDetails experiment={experiment} />}
+          />
         )}
       </section>
+    </div>
+  );
+}
+
+const HISTORY_EVENT_LABELS: Record<string, string> = {
+  created: '创建',
+  shadow: '进入 Shadow',
+  promoted: '正式运行',
+  paused: '暂停',
+  resumed: '恢复',
+  completed: '完成',
+  config_changed: '配置变更'
+};
+
+/**
+ * Report + audit timeline for one experiment (frozen contract §2). Loaded only
+ * when the row is expanded, so the list stays light.
+ */
+function ExperimentDetails({ experiment }: { experiment: Experiment }) {
+  const [report, setReport] = useState<ExperimentReport | null | undefined>(undefined);
+  const [history, setHistory] = useState<ExperimentHistoryEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void adminApi.experimentReport(experiment.id)
+      .then((body) => { if (alive) setReport(body.report); })
+      .catch((err: unknown) => { if (alive) setError(err instanceof Error ? err.message : String(err)); });
+    void adminApi.experimentHistory(experiment.id)
+      .then((body) => { if (alive) setHistory(body.history); })
+      .catch((err: unknown) => { if (alive) setError(err instanceof Error ? err.message : String(err)); });
+    return () => { alive = false; };
+  }, [experiment.id]);
+
+  if (error) {
+    const state = adminStateFromError(error);
+    return <AdminState kind={state.kind} message={error} />;
+  }
+  return (
+    <div className="experiment-details" data-testid={`experiment-details-${experiment.id}`}>
+      <div className="experiment-details-grid">
+        <div>
+          <h4>Report</h4>
+          {report === undefined ? <AdminState kind="loading" /> : report === null ? (
+            <AdminState kind="empty" message="暂无样本。进入 Shadow 采样后会积累对照数据。" />
+          ) : (
+            <dl className="weather-kv">
+              <dt>样本数</dt><dd>{report.samples}</dd>
+              <dt>Control</dt><dd>{report.control}</dd>
+              <dt>Treatment</dt><dd>{report.treatment}</dd>
+            </dl>
+          )}
+          {report && report.observedDifference.length > 0 && (
+            <table className="data-list experiment-diff-table">
+              <thead>
+                <tr><th>指标</th><th>Control</th><th>Treatment</th></tr>
+              </thead>
+              <tbody>
+                {report.observedDifference.map((row) => (
+                  <tr key={row.metric}>
+                    <td data-label="指标">{row.metric}</td>
+                    <td data-label="Control">{row.control}</td>
+                    <td data-label="Treatment">{row.treatment}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div>
+          <h4>历史（audit）</h4>
+          {history === null ? <AdminState kind="loading" /> : history.length === 0 ? (
+            <AdminState kind="empty" message="暂无审计事件" />
+          ) : (
+            <ol className="history-timeline" data-testid={`experiment-history-${experiment.id}`}>
+              {[...history].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((entry) => (
+                <li key={entry.id}>
+                  <span className="history-event">{HISTORY_EVENT_LABELS[entry.event] ?? entry.event}</span>
+                  <span className="muted">{entry.variant || '—'} · {new Date(entry.createdAt).toLocaleString()}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

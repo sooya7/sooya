@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { shadowApi, type ShadowRun } from '../lib/shadowExperiments.js';
+import { AdminNotice, AdminState } from './admin/AdminState.js';
+import { DataList } from './admin/DataList.js';
 
 const SUBSYSTEM_LABELS: Record<string, string> = {
   'life.activity_selector': '生活活动选择',
@@ -15,12 +17,12 @@ function diffLabel(run: ShadowRun): { equal: boolean; text: string } {
   }
 }
 
-function decisionPreview(decision: string): string {
+/** Pretty-printed JSON for reading; falls back to the raw text. */
+function prettyJson(raw: string): string {
   try {
-    const parsed = JSON.parse(decision) as Record<string, unknown>;
-    return JSON.stringify(parsed).slice(0, 140);
+    return JSON.stringify(JSON.parse(raw), null, 2);
   } catch {
-    return decision.slice(0, 140);
+    return raw;
   }
 }
 
@@ -62,7 +64,7 @@ export default function ShadowRunsPage() {
           <p>实验性候选与当前正式决策的只读对比。Shadow 永不写入状态，仅记录差异；关闭 SHADOW_MODE_ENABLED 后不再采样。</p>
         </div>
       </div>
-      {notice && <div className={`admin-notice ${noticeKind === 'error' ? 'admin-notice-error' : ''}`} role="status">{notice}</div>}
+      {notice && <AdminNotice kind={noticeKind}>{notice}</AdminNotice>}
       <section className="admin-form-card">
         <div className="admin-summary">
           <label className="admin-card">
@@ -80,48 +82,71 @@ export default function ShadowRunsPage() {
           </label>
         </div>
         {stats && stats.total > 0 && (
-          <table className="admin-table" data-testid="shadow-run-table">
-            <thead>
-              <tr><th>子系统</th><th>采样</th><th>有差异</th></tr>
-            </thead>
-            <tbody>
-              {[...stats.bySubsystem.entries()].map(([key, entry]) => (
-                <tr key={key}>
-                  <td>{SUBSYSTEM_LABELS[key] ?? key}</td>
-                  <td>{entry.total}</td>
-                  <td>{entry.diff}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataList<{ subsystem: string; total: number; diff: number }>
+            testId="shadow-run-stats"
+            rows={[...stats.bySubsystem.entries()].map(([key, entry]) => ({ subsystem: key, total: entry.total, diff: entry.diff }))}
+            rowKey={(entry) => entry.subsystem}
+            columns={[
+              { key: 'subsystem', label: '子系统', render: (entry) => SUBSYSTEM_LABELS[entry.subsystem] ?? entry.subsystem },
+              { key: 'total', label: '采样', render: (entry) => entry.total },
+              { key: 'diff', label: '有差异', render: (entry) => entry.diff }
+            ]}
+          />
         )}
       </section>
       <section className="admin-form-card">
         <h3>最近采样</h3>
-        {!runs ? <p>加载中…</p> : runs.length === 0 ? <p>暂无采样。开启 SHADOW_MODE_ENABLED 后，生活活动与位置选择会在这里留下对比记录。</p> : (
-          <table className="admin-table">
-            <thead>
-              <tr><th>时间</th><th>子系统</th><th>正式版</th><th>候选版</th><th>结果</th><th>正式决策</th><th>候选决策</th></tr>
-            </thead>
-            <tbody>
-              {runs.slice(0, 50).map((run) => {
+        {!runs ? <AdminState kind="loading" /> : runs.length === 0 ? (
+          <AdminState kind="empty" message="暂无采样。开启 SHADOW_MODE_ENABLED 后，生活活动与位置选择会在这里留下对比记录。" />
+        ) : (
+          <DataList<ShadowRun>
+            testId="shadow-run-table"
+            rows={runs.slice(0, 50)}
+            rowKey={(run) => run.id}
+            expandable
+            columns={[
+              { key: 'time', label: '时间', render: (run) => new Date(run.created_at).toLocaleString() },
+              { key: 'subsystem', label: '子系统', render: (run) => SUBSYSTEM_LABELS[run.subsystem] ?? run.subsystem },
+              { key: 'canonical', label: '正式版', mobileCollapsed: true, render: (run) => run.canonical_version },
+              { key: 'shadow', label: '候选版', mobileCollapsed: true, render: (run) => run.shadow_version },
+              { key: 'result', label: '结果', render: (run) => {
                 const diff = diffLabel(run);
-                return (
-                  <tr key={run.id}>
-                    <td>{new Date(run.created_at).toLocaleString()}</td>
-                    <td>{SUBSYSTEM_LABELS[run.subsystem] ?? run.subsystem}</td>
-                    <td>{run.canonical_version}</td>
-                    <td>{run.shadow_version}</td>
-                    <td className={diff.equal ? '' : 'text-danger'}>{diff.text}</td>
-                    <td title={run.canonical_decision}>{decisionPreview(run.canonical_decision)}</td>
-                    <td title={run.shadow_decision}>{decisionPreview(run.shadow_decision)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                return <span className={diff.equal ? '' : 'text-danger'}>{diff.text}</span>;
+              } }
+            ]}
+            expandedRow={(run) => <RunDiff run={run} />}
+          />
         )}
       </section>
+    </div>
+  );
+}
+
+/**
+ * Canonical vs shadow decisions. Desktop: side by side. Mobile: stacked
+ * (Canonical ↓ Shadow ↓ Diff) via .shadow-diff-grid. Long JSON lives in a
+ * locally scrolling code block so it can never stretch the viewport.
+ */
+function RunDiff({ run }: { run: ShadowRun }) {
+  const diff = diffLabel(run);
+  return (
+    <div data-testid={`run-diff-${run.id}`}>
+      <div className="shadow-diff-grid">
+        <div className="shadow-diff-col">
+          <h4>正式（canonical {run.canonical_version}）</h4>
+          <pre className="shadow-code" tabIndex={0}>{prettyJson(run.canonical_decision)}</pre>
+        </div>
+        <div className="shadow-diff-col">
+          <h4>候选（shadow {run.shadow_version}）</h4>
+          <pre className="shadow-code" tabIndex={0}>{prettyJson(run.shadow_decision)}</pre>
+        </div>
+      </div>
+      {!diff.equal && (
+        <div className="shadow-diff-verdict" data-testid={`run-diff-detail-${run.id}`}>
+          <h4>差异</h4>
+          <pre className="shadow-code" tabIndex={0}>{prettyJson(run.diff_json)}</pre>
+        </div>
+      )}
     </div>
   );
 }
