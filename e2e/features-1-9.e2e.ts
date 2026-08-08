@@ -266,7 +266,9 @@ test.describe('SOOYA 1-9 user flows', () => {
     }
     expect(await page.evaluate(() => history.length)).toBe(baseline + 1);
 
-    await page.goBack();
+    // Same-URL SPA entries make Playwright's goBack unreliable on headless
+    // linux; drive the history API directly so the entry switch always runs.
+    await page.evaluate(() => window.history.back());
     await expect(viewer).toBeHidden();
     // SPA history: the popstate round-trip is async, so wait for the state
     // to actually return to the baseline entry.
