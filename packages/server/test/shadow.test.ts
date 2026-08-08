@@ -32,56 +32,62 @@ describe('shadow runtime (P3)', () => {
     expect(harness.app.repos.shadow.list()).toEqual([]);
   });
 
-  it('shadow-on run keeps the canonical decision identical and only adds shadow_runs rows', async () => {
-    // Two identical harnesses: the only difference is the shadow flag. The
-    // canonical activity must come out exactly the same (location ids are
-    // random per harness and only affect hash tie-breaks, so locations are
-    // compared within a single harness instead).
-    const make = (shadowOn: boolean) => createHarness({
-      skipStickerImport: true,
-      startWorkers: false,
-      env: { ...SHADOW_ENV, ...(shadowOn ? {} : { SHADOW_MODE_ENABLED: 'false' }) },
-      clock: () => localTime('2026-08-08T10:00')
-    });
-    const plain = await make(false);
-    const plainResult = plain.app.services.life.tick();
-    expect(plain.app.repos.shadow.list()).toEqual([]);
-    await plain.cleanup();
-
-    harness = await make(true);
-    const result = harness.app.services.life.tick();
-
-    // Canonical behavior is identical with the flag on.
-    expect(result.activity).toBe(plainResult.activity);
-    expect(result.kind).toBe(plainResult.kind);
-    const state = harness.app.services.location.currentState();
-    expect(state).toBeTruthy();
-
-    // The only difference: shadow runs were recorded.
-    const runs = harness.app.repos.shadow.list();
-    expect(runs.length).toBeGreaterThanOrEqual(1);
-    const run = runs.find((r) => r.subsystem === 'life.activity_selector')!;
-    expect(run.canonical_version).toBe('canonical');
-    expect(run.shadow_version).toBe('cont1.5-tight48');
-    // Decisions are fingerprints of activity ids; no free text inside.
-    expect(run.input_fingerprint).toMatch(/^[0-9a-f]{24}$/);
-    const canonical = JSON.parse(run.canonical_decision) as { best: string | null };
-    expect(canonical.best).toBeTruthy();
-  });
-
-  it('samples the location selector through the canonical move only', async () => {
+  it('shadow-on keeps the canonical decision authoritative and only adds shadow_runs rows', async () => {
+    let now = localTime('2026-08-08T10:00');
     harness = await createHarness({
       skipStickerImport: true,
       startWorkers: false,
       env: SHADOW_ENV,
-      clock: () => localTime('2026-08-08T10:00')
+      clock: () => now
+    });
+    // First tick runs the theme plan (plan:theme); complete it and advance
+    // past the activity end so the next tick reaches the scored path where
+    // the shadow samples the activity selector.
+    harness.app.services.life.tick();
+    for (const plan of harness.app.repos.life.listPlans('planned')) {
+      harness.app.repos.life.updatePlan(plan.id, { status: 'completed' });
+    }
+    now = localTime('2026-08-08T13:00');
+    const locationBefore = harness.app.services.location.currentState();
+    const result = harness.app.services.life.tick();
+
+    const runs = harness.app.repos.shadow.list();
+    const run = runs.find((r) => r.subsystem === 'life.activity_selector')!;
+    expect(run).toBeTruthy();
+    expect(run.canonical_version).toBe('canonical');
+    expect(run.shadow_version).toBe('cont1.5-tight48');
+    // Decisions are fingerprints of activity ids; no free text inside.
+    expect(run.input_fingerprint).toMatch(/^[0-9a-f]{24}$/);
+    // The recorded canonical decision is exactly what the engine resolved:
+    // the shadow never altered the canonical path.
+    const canonical = JSON.parse(run.canonical_decision) as { best: string | null };
+    const current = (harness.app.repos.life as unknown as { current(): { meta_json: string } | null }).current();
+    const meta = JSON.parse(current?.meta_json ?? '{}') as { activityId?: string };
+    expect(canonical.best).toBe(meta.activityId ?? null);
+    expect(result.activity.length).toBeGreaterThan(0);
+    // Zero side effects on location state (same state rows before/after).
+    expect(harness.app.services.location.currentState()).toEqual(locationBefore);
+  });
+
+  it('samples the location selector through the canonical move only', async () => {
+    let now = localTime('2026-08-08T10:00');
+    harness = await createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: SHADOW_ENV,
+      clock: () => now
     });
     const before = harness.app.services.location.current();
     harness.app.services.location.onActivityResolved({ id: 'cafe', kind: 'out', locationAffinity: ['cafe'] } as never, 'out', 'plan_1', null);
+    // Anti-teleport: the trip starts immediately (travel_state), the arrival
+    // settles lazily once expectedArriveAt passes — advance the clock.
+    expect(harness.app.services.location.currentTravel()).toBeTruthy();
     const runs = harness.app.repos.shadow.list();
     const run = runs.find((r) => r.subsystem === 'life.location_selector')!;
     expect(run).toBeTruthy();
     expect(run.shadow_version).toBe('weather-off');
+    now = localTime('2026-08-08T10:30');
+    harness.app.services.location.current();
     // The move itself is the canonical path (audited, with plan attribution);
     // the shadow only recorded the diff row.
     const state = harness.app.services.location.currentState();

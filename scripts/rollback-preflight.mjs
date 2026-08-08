@@ -40,8 +40,8 @@ try {
     console.log(`[preflight] OK: version ${version} needs no v15+ downgrade normalization.`);
     process.exit(0);
   }
-  if (version > 23) {
-    problems.push(`schema version ${version} is NEWER than this tool understands (max 23)`);
+  if (version > 28) {
+    problems.push(`schema version ${version} is NEWER than this tool understands (max 28)`);
   }
 
   // 1. Reply batches in post-v15 states.

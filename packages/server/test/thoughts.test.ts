@@ -8,7 +8,6 @@ import { ThoughtPresenter } from '../src/core/thoughts/presenter.js';
 import { DecisionTraceService } from '../src/core/thoughts/trace.js';
 import { ThoughtsService, type ThoughtsServiceOptions } from '../src/core/thoughts/service.js';
 import { DEFAULT_THOUGHT_FLAGS, type ThoughtsFlags } from '../src/core/thoughts/flags.js';
-import { registerThoughtRoutes } from '../src/routes/thoughts.js';
 
 /**
  * End-to-end visible-thought tests: a real coordinator + real replier +
@@ -110,7 +109,6 @@ async function buildRig(opts: {
 
   // Stash the service where the routes look for it (Integration does the same).
   (h.app.services as unknown as { thoughts: ThoughtsService }).thoughts = thoughts;
-  registerThoughtRoutes(h.app);
 
   const coordinator = new ReplyCoordinator({
     messages: repos.messages,

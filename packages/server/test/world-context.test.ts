@@ -88,7 +88,8 @@ describe('WorldContextService snapshot（contract §1.3）', () => {
     expect(snapshot.forecast?.next12h).toHaveLength(1);
     expect(snapshot.daylight?.isDaylight).toBe(true);
     expect(snapshot.weatherCondition).toBe('clear');
-    expect(snapshot.city).toBeNull();                       // Agent A v25 落地后接入
+    // Agent A v25 集成后：默认城市真实播种，travel 在 override（瞬移）后为 null。
+    expect(snapshot.city?.name).toBe('默认城市');
     expect(snapshot.travel).toBeNull();
   });
 
@@ -124,7 +125,7 @@ describe('WorldContextService snapshot（contract §1.3）', () => {
       env: FLAGS,
       clock: () => now
     });
-    // app.ts 尚未注入 locationsRepo（Integration 接线），此处手动构造验证。
+    // 手动构造验证 previousLocation（app.ts 已注入 repos.locations，此处保持显式）。
     const world = new WorldContextService(
       harness.app.services.location,
       harness.app.services.weather,
@@ -134,15 +135,22 @@ describe('WorldContextService snapshot（contract §1.3）', () => {
     );
     const locations = harness.app.services.location.list();
     const park = locations.find((l) => l.kind === 'park')!;
+    const homeId = locations.find((l) => l.kind === 'home')!.id;
     const cafe = locations.find((l) => l.kind === 'cafe')!;
 
-    // 第一次移动：没有任何 visit 历史 → previousLocation null。
+    // 第一次移动：Agent A 集成后 onActivityResolved 只"出发"（防瞬移），
+    // 到达在 expectedArriveAt 到期后惰性结算——把时钟推进到行程到达。
+    // 新库基线：启用即落在家里（home state + home visit）。
     harness.app.services.location.onActivityResolved({ id: 'walk', kind: 'out', locationAffinity: ['park'] } as never, 'out', null, 'walk-activity');
+    now = new Date(now.getTime() + 30 * 60 * 1000);   // 步行 15min 兜底，推进 30min
+    harness.app.services.location.current();
     expect(harness.app.services.location.current()?.id).toBe(park.id);
-    expect(world.snapshot().previousLocation).toBeNull();
+    expect(world.snapshot().previousLocation?.id).toBe(homeId);
 
     // 第二次移动：真实 visit 记录里上一个位置是 park。
     harness.app.services.location.onActivityResolved({ id: 'cafe', kind: 'out', locationAffinity: ['cafe'] } as never, 'out', null, null);
+    now = new Date(now.getTime() + 30 * 60 * 1000);
+    harness.app.services.location.current();
     expect(harness.app.services.location.current()?.id).toBe(cafe.id);
     const previous = world.snapshot().previousLocation;
     expect(previous?.id).toBe(park.id);

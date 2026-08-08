@@ -8,7 +8,6 @@ import { ThoughtPresenter } from '../src/core/thoughts/presenter.js';
 import { DecisionTraceService } from '../src/core/thoughts/trace.js';
 import { ThoughtsService } from '../src/core/thoughts/service.js';
 import { DEFAULT_THOUGHT_FLAGS, type ThoughtsFlags } from '../src/core/thoughts/flags.js';
-import { registerThoughtRoutes } from '../src/routes/thoughts.js';
 
 const ADMIN_TOKEN = 'decision-trace-admin-token';
 const replyOptions = { recentMessages: 24, memoryLimit: 8 };
@@ -63,7 +62,6 @@ async function build(): Promise<void> {
   };
   const thoughts = new ThoughtsService({ flags, repo, presenter, traces, messages: repos.messages, errorLog: repos.errors });
   (h.app.services as unknown as { thoughts: ThoughtsService }).thoughts = thoughts;
-  registerThoughtRoutes(h.app);
   coordinator = new ReplyCoordinator({
     messages: repos.messages,
     batches: repos.replyBatches,
