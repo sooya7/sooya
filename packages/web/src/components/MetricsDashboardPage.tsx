@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { adminApi, adminFailureKind, getAdminToken, type MetricAggregate, type MetricsDistribution, type ReleaseMetricsComparison } from '../lib/admin.js';
+import { adminApi, getAdminToken, type MetricAggregate, type MetricsDistribution } from '../lib/admin.js';
 import { AppLink } from './AppLink.js';
 import { AdminState, adminStateFromError } from './admin/AdminState.js';
 import { DataList } from './admin/DataList.js';
@@ -24,8 +24,7 @@ function formatNumber(value: number): string {
  * message text, transcripts or addresses are ever shown. Charts are
  * container-driven percentage bars (never fixed px), the range selector is a
  * touch-friendly segmented control, legends wrap, and big numbers/labels
- * wrap instead of stretching the layout. Includes release compare + CSV/JSON
- * export (frozen contract §2).
+ * wrap instead of stretching the layout. Distributions (p50/p95) included.
  */
 export default function MetricsDashboardPage() {
   const [days, setDays] = useState(7);
@@ -34,10 +33,6 @@ export default function MetricsDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [errorKind, setErrorKind] = useState<'unauthorized' | 'flag-disabled' | 'provider-unconfigured' | 'error'>('error');
   const [nonce, setNonce] = useState(0);
-  const [compare, setCompare] = useState<ReleaseMetricsComparison | null>(null);
-  const [compareError, setCompareError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState<'csv' | 'json' | null>(null);
-  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [mobileSeries, setMobileSeries] = useState(true);
 
   useEffect(() => {
@@ -47,8 +42,6 @@ export default function MetricsDashboardPage() {
     setErrorKind('error');
     setData(null);
     setDistributions(null);
-    setCompare(null);
-    setCompareError(null);
     void adminApi.metrics(days).then((body) => { if (alive) setData(body.aggregates); }).catch((err: unknown) => {
       if (!alive) return;
       const state = adminStateFromError(err);
@@ -56,24 +49,10 @@ export default function MetricsDashboardPage() {
       setError(state.message);
     });
     void adminApi.metricsDistributions(days).then((body) => { if (alive) setDistributions(body.distributions); }).catch(() => undefined);
-    void adminApi.metricsReleaseCompare(localDateKey(new Date(Date.now() - days * 86_400_000)), localDateKey(new Date())).then((body) => { if (alive) setCompare(body); }).catch((err: unknown) => { if (alive) setCompareError(err instanceof Error ? err.message : String(err)); });
     return () => { alive = false; };
   }, [days, nonce]);
 
   const categories = useMemo(() => [...new Set((data ?? []).map((a) => a.category))], [data]);
-
-  const exportMetrics = async (format: 'csv' | 'json') => {
-    setExporting(format);
-    setExportNotice(null);
-    try {
-      await adminApi.metricsExport(format);
-      setExportNotice(`已导出 ${format.toUpperCase()}（只含指标，不含私人正文）`);
-    } catch (err) {
-      setExportNotice(err instanceof Error ? err.message : String(err));
-    } finally {
-      setExporting(null);
-    }
-  };
 
   const failure = error ? { kind: errorKind, message: error } : null;
 
@@ -100,86 +79,12 @@ export default function MetricsDashboardPage() {
           </div>
         </div>
       </header>
-      {exportNotice && <div className="admin-notice" role="status" data-testid="metrics-export-notice">{exportNotice}</div>}
       {failure && <AdminState kind={failure.kind} message={error!} onRetry={() => setNonce((n) => n + 1)} />}
       {!error && !data && <AdminState kind="loading" />}
       {data && data.length === 0 && <AdminState kind="empty" message="暂无指标数据 — 开启 METRICS_DASHBOARD_ENABLED 后开始记录" />}
       {categories.map((category) => (
         <MetricsCategory key={category} category={category} rows={data!.filter((a) => a.category === category)} mobileSeries={mobileSeries} onToggleSeries={() => setMobileSeries((v) => !v)} />
       ))}
-
-      <section className="metrics-category" aria-labelledby="metrics-compare-title">
-        <h2 id="metrics-compare-title">Release 对比</h2>
-        {compareError && <AdminState kind={adminFailureKind(compareError) === 'flag-disabled' ? 'flag-disabled' : 'error'} message={compareError} />}
-        {!compareError && compare === null && <AdminState kind="loading" />}
-        {compare && (
-          <div className="compare-grid" data-testid="metrics-compare">
-            <div className="compare-col">
-              <h3>当前区间（{compare.current.from} → {compare.current.to}）</h3>
-              <DataList<MetricAggregate>
-                rows={compare.current.aggregates}
-                rowKey={(a) => `${a.category}-${a.metric}`}
-                columns={[
-                  { key: 'metric', label: '指标', render: (a) => a.metric },
-                  { key: 'count', label: '次数', render: (a) => a.count },
-                  { key: 'sum', label: '总和', render: (a) => formatNumber(a.sum) }
-                ]}
-              />
-            </div>
-            <div className="compare-col">
-              <h3>上一区间（{compare.previous.from} → {compare.previous.to}）</h3>
-              <DataList<MetricAggregate>
-                rows={compare.previous.aggregates}
-                rowKey={(a) => `${a.category}-${a.metric}`}
-                columns={[
-                  { key: 'metric', label: '指标', render: (a) => a.metric },
-                  { key: 'count', label: '次数', render: (a) => a.count },
-                  { key: 'sum', label: '总和', render: (a) => formatNumber(a.sum) }
-                ]}
-              />
-            </div>
-            <div className="compare-col compare-col-wide">
-              <h3>差异</h3>
-              <DataList<{ metric: string; current: number; previous: number; delta: number }>
-                rows={compare.current.aggregates.map((a) => {
-                  const previous = compare.previous.aggregates.find((p) => p.category === a.category && p.metric === a.metric);
-                  const prevCount = previous?.count ?? 0;
-                  const delta = prevCount === 0 ? (a.count > 0 ? 1 : 0) : (a.count - prevCount) / prevCount;
-                  return { metric: `${CATEGORY_LABELS[a.category] ?? a.category} / ${a.metric}`, current: a.count, previous: prevCount, delta };
-                })}
-                rowKey={(r) => r.metric}
-                columns={[
-                  { key: 'metric', label: '指标', render: (r) => r.metric },
-                  { key: 'current', label: '当前', render: (r) => r.current },
-                  { key: 'previous', label: '上一区间', render: (r) => r.previous },
-                  {
-                    key: 'delta',
-                    label: '变化',
-                    render: (r) => {
-                      if (r.delta === 0) return <span>—</span>;
-                      const up = r.delta > 0;
-                      return <span className={up ? 'delta-up' : 'delta-down'}>{up ? '▲' : '▼'} {formatNumber(Math.abs(r.delta) * 100)}%</span>;
-                    }
-                  }
-                ]}
-              />
-            </div>
-          </div>
-        )}
-      </section>
-
-      <section className="metrics-category" aria-labelledby="metrics-export-title">
-        <h2 id="metrics-export-title">导出</h2>
-        <div className="admin-actions">
-          <button type="button" className="admin-button primary" disabled={exporting !== null} onClick={() => void exportMetrics('csv')}>
-            {exporting === 'csv' ? '导出中…' : '导出 CSV'}
-          </button>
-          <button type="button" className="admin-button" disabled={exporting !== null} onClick={() => void exportMetrics('json')}>
-            {exporting === 'json' ? '导出中…' : '导出 JSON'}
-          </button>
-          <span className="muted">只含指标，不含私人正文</span>
-        </div>
-      </section>
 
       {distributions && distributions.length > 0 && (
         <section className="metrics-category" aria-labelledby="metrics-dist-title">
@@ -243,9 +148,3 @@ function MetricsCategory({ category, rows, mobileSeries, onToggleSeries }: { cat
 }
 
 /** LIFE_TIME_ZONE 本地日期（归档键）：客户端用浏览器本地日期近似。 */
-function localDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}

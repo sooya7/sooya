@@ -321,31 +321,7 @@ export interface MetricsDistribution {
 
 export interface MetricAggregate { category: string; metric: string; sum: number; count: number; avg: number; }
 
-export interface ReleaseMetricsComparison {
-  current: { from: string; to: string; aggregates: MetricAggregate[] };
-  previous: { from: string; to: string; aggregates: MetricAggregate[] };
-}
-
-/* ---- Next phase: experiments ---- */
-
-export interface ExperimentReport {
-  experimentId: string;
-  name: string;
-  samples: number;
-  control: number;
-  treatment: number;
-  observedDifference: Array<{ metric: string; control: number; treatment: number }>;
-}
-
-export interface ExperimentHistoryEntry {
-  id: string;
-  experimentId: string;
-  event: 'created' | 'shadow' | 'promoted' | 'paused' | 'resumed' | 'completed' | 'config_changed';
-  variant: string;
-  createdAt: string;
-}
-
-/* ---- Next phase: decision trace + visible thoughts ---- */
+/* ---- Visible thoughts ---- */
 
 export type VisibleThoughtKind = 'inner_monologue' | 'decision_summary';
 export type VisibleThoughtVisibility = 'user' | 'admin';
@@ -363,19 +339,7 @@ export interface VisibleThought {
   createdAt: string;
 }
 
-export interface DecisionTrace {
-  batchId: string;
-  revision: number;
-  replyIntent?: string | null;
-  lifeContext?: string[] | null;
-  weather?: string | null;
-  memoryRecallCount?: number | null;
-  voiceMode?: string | null;
-  semanticGuard?: 'pass' | 'reject' | 'fallback' | null;
-  experimentVariant?: string | null;
-  proactive?: string | null;
-  createdAt: string;
-}
+
 
 export const adminApi = {
   system: () => adminRequest<AdminSystemStatus>('/api/admin/system'),
@@ -459,8 +423,6 @@ export const adminApi = {
   updateCity: (id: string, patch: Partial<Pick<LifeCity, 'name' | 'region' | 'country' | 'timeZone' | 'active'>>) =>
     adminRequest<{ city: LifeCity }>(`/api/admin/life/cities/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
   lifeTravel: () => adminRequest<{ travel: TravelState | null }>('/api/admin/life/travel'),
-  geocodeSearch: (query: string) =>
-    adminRequest<{ matches: GeocodeMatch[]; provider: string | null; configured: boolean }>('/api/admin/life/geocode/search', { method: 'POST', body: { query } }),
   /* ---- Next phase: weather ---- */
   weatherStatus: () => adminRequest<WeatherStatus>('/api/admin/weather/status'),
   weatherForecast: () => adminRequest<{ forecast: WeatherForecastSummary | null }>('/api/admin/weather/forecast'),
@@ -469,42 +431,7 @@ export const adminApi = {
   metrics: (days: number) => adminRequest<{ aggregates: MetricAggregate[] }>(`/api/admin/metrics?days=${days}`),
   metricsDistributions: (days: number) =>
     adminRequest<{ distributions: MetricsDistribution[] }>(`/api/admin/metrics/distributions?days=${days}`),
-  metricsReleaseCompare: async (from: string, to: string) =>
-    (await adminRequest<{ comparison: ReleaseMetricsComparison }>(`/api/admin/metrics/release-compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`)).comparison,
-  /** Downloads the CSV/JSON export; returns the format when the file was saved. */
-  metricsExport: async (format: 'csv' | 'json'): Promise<{ ok: true; format: 'csv' | 'json' }> => {
-    const headers = new Headers();
-    const token = getAdminToken();
-    if (token) headers.set('X-Admin-Token', token);
-    const res = await fetch(`/api/admin/metrics/export?format=${format}`, { headers });
-    if (!res.ok) {
-      const text = await res.text();
-      const message = (() => { try { const parsed = JSON.parse(text) as { message?: string; error?: string }; return parsed?.message ?? parsed?.error ?? `request failed (${res.status})`; } catch { return text || `request failed (${res.status})`; } })();
-      throw new ApiError(message, res.status);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    try {
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `sooya-metrics-export.${format}`;
-      link.click();
-    } finally {
-      window.setTimeout(() => URL.revokeObjectURL(url), 2000);
-    }
-    return { ok: true, format };
-  },
-  /* ---- Next phase: experiment report / history ---- */
-  experimentReport: (id: string) =>
-    adminRequest<{ report: ExperimentReport | null }>(`/api/admin/experiments/${encodeURIComponent(id)}/report`),
-  experimentHistory: (id: string) =>
-    adminRequest<{ history: ExperimentHistoryEntry[] }>(`/api/admin/experiments/${encodeURIComponent(id)}/history`),
-  /* ---- Next phase: decision trace / visible thoughts ---- */
-  decisionTraces: (limit = 50) => adminRequest<{ traces: DecisionTrace[] }>(`/api/admin/decision-trace/recent?limit=${limit}`),
-  decisionTrace: (batchId: string, revision?: number) =>
-    adminRequest<{ trace: DecisionTrace }>(
-      `/api/admin/decision-trace?batchId=${encodeURIComponent(batchId)}${revision !== undefined ? `&revision=${revision}` : ''}`
-    ),
+
   /** User-visible inner thought for a message (may 404 when none exists). */
   visibleThought: (messageId: string, signal?: AbortSignal) =>
     adminRequest<{ thought: VisibleThought | null }>(`/api/thoughts/${encodeURIComponent(messageId)}`, { signal })

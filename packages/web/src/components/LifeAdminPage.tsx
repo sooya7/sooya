@@ -4,13 +4,11 @@ import { useAutoNotice } from '../lib/autoNotice.js';
 import { AppLink } from './AppLink.js';
 import {
   adminApi,
-  adminFailureKind,
   type AdminLifeLocation,
   type AdminLifePlan,
   type AdminLifeThread,
   type AdminLifeVitals,
   type AdminProactiveAttempt,
-  type GeocodeMatch,
   type LifeCity,
   type TravelState,
   type WeatherCondition,
@@ -287,9 +285,6 @@ function LocationsSection() {
   const [pendingDelete, setPendingDelete] = useState<AdminLifeLocation | null>(null);
   const [pendingOverride, setPendingOverride] = useState<AdminLifeLocation | null>(null);
   const [busy, setBusy] = useState(false);
-  // Geocoding search (frozen contract §2). The server may answer "provider 未配置".
-  const [geoQuery, setGeoQuery] = useState('');
-  const [geoState, setGeoState] = useState<{ matches: GeocodeMatch[]; configured: boolean; provider: string | null; error: string | null }>({ matches: [], configured: true, provider: null, error: null });
 
   if (error) return <AdminState kind="error" message={error} onRetry={reload} />;
   if (!data) return <AdminState kind="loading" />;
@@ -302,24 +297,6 @@ function LocationsSection() {
       setNotice('地点已创建（写入审计）');
       reload();
     } catch (err) { setNotice(err instanceof ApiError ? err.message : String(err)); }
-  };
-
-  const search = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!geoQuery.trim()) return;
-    setGeoState((s) => ({ ...s, error: null }));
-    try {
-      const result = await adminApi.geocodeSearch(geoQuery.trim());
-      setGeoState({ matches: result.matches, configured: result.configured, provider: result.provider, error: null });
-    } catch (err) {
-      const kind = adminFailureKind(err);
-      setGeoState({
-        matches: [],
-        configured: kind !== 'provider-unconfigured',
-        provider: null,
-        error: err instanceof Error ? err.message : String(err)
-      });
-    }
   };
 
   const remove = async (location: AdminLifeLocation) => {
@@ -344,34 +321,7 @@ function LocationsSection() {
 
   return (
     <div>
-      <form className="admin-form" onSubmit={(e) => void search(e)} aria-label="地理搜索">
-        <input
-          value={geoQuery}
-          onChange={(e) => setGeoQuery(e.target.value)}
-          placeholder="搜索地点（geocode，需要已配置的 provider）"
-          aria-label="地理搜索关键词"
-        />
-        <button type="submit" disabled={!geoQuery.trim()}>搜索</button>
-      </form>
-      {geoState.error && !geoState.configured && <AdminState kind="provider-unconfigured" message={`${geoState.error}（Provider 未配置，跳过搜索可直接手填）`} />}
-      {geoState.error && geoState.configured && <AdminState kind="error" message={geoState.error} />}
-      {geoState.matches.length > 0 && (
-        <div className="geo-matches" data-testid="geo-matches" role="list" aria-label="地理搜索结果">
-          {geoState.matches.map((match) => (
-            <button
-              key={`${match.name}-${match.lat ?? ''}-${match.lng ?? ''}`}
-              type="button"
-              className="geo-match"
-              onClick={() => { setName(match.name); setNotice(`已填入：${match.name}`); }}
-            >
-              <strong>{match.name}</strong>
-              <span className="muted">{[match.region, match.country].filter(Boolean).join('，') || '—'}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <form className="admin-form" onSubmit={(e) => void create(e)} aria-label="新建地点">
+<form className="admin-form" onSubmit={(e) => void create(e)} aria-label="新建地点">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="新地点名称" required aria-label="新地点名称" />
         <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="地点类型">
           {LOCATION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}

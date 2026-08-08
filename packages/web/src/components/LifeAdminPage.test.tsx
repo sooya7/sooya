@@ -110,52 +110,7 @@ describe('LifeAdminPage tabs', () => {
   });
 });
 
-describe('LifeAdminPage locations + geocode', () => {
-  it('lists locations as key-value cells and confirms destructive actions in a dialog', async () => {
-    const calls = routeFetch((call) => {
-      if (call.url === '/api/admin/life/locations') {
-        return call.method === 'POST'
-          ? json({ location: {} })
-          : json({ locations: [{ id: 'l1', name: '家', kind: 'home', tags: ['常驻'], indoor: true, visitWeight: 5, source: 'builtin', active: true }] });
-      }
-      if (call.url === '/api/admin/life/locations/l1' && call.method === 'DELETE') return json({ ok: true });
-      if (call.url === '/api/admin/life/location/override') return json({ location: {} });
-      return json({ message: 'not found' }, 404);
-    });
-    void calls;
-    await render();
-    await clickTab('Locations');
-    const list = container!.querySelector('[data-testid="life-location-list"]')!;
-    expect(list.querySelector('td')?.getAttribute('data-label')).toBe('名称');
-    expect(list.textContent).toContain('家');
-    // Danger action opens the ConfirmDialog; confirm sends the DELETE.
-    const danger = [...list.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === '停用')!;
-    await act(async () => { danger.click(); });
-    expect(container!.querySelector('[data-testid="modal-confirm"]')).not.toBeNull();
-    expect(container!.textContent).toContain('停用「家」');
-    const confirmButton = [...container!.querySelectorAll<HTMLButtonElement>('.confirm-dialog-actions button')].find((b) => b.textContent === '停用')!;
-    await act(async () => { confirmButton.click(); });
-    expect(calls.some((c) => c.url === '/api/admin/life/locations/l1' && c.method === 'DELETE')).toBe(true);
-  });
 
-  it('shows the provider-unconfigured state when geocode search fails with that hint', async () => {
-    routeFetch((call) => {
-      if (call.url === '/api/admin/life/locations') return json({ locations: [] });
-      if (call.url === '/api/admin/life/geocode/search') return json({ message: 'geocode provider 未配置' }, 400);
-      return json({ message: 'not found' }, 404);
-    });
-    await render();
-    await clickTab('Locations');
-    const input = container!.querySelector<HTMLInputElement>('input[aria-label="地理搜索关键词"]')!;
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-    await act(async () => { setter.call(input, '上海'); input.dispatchEvent(new Event('input', { bubbles: true })); });
-    const form = input.closest('form')!;
-    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
-    const state = [...container!.querySelectorAll('[data-testid="admin-state"]')].find((s) => s.classList.contains('admin-state-provider-unconfigured'));
-    expect(state).not.toBeNull();
-    expect(state!.textContent).toContain('Provider 未配置');
-  });
-});
 
 describe('LifeAdminPage weather tab', () => {
   it('renders cities, travel state, weather status, daylight and forecast', async () => {

@@ -81,11 +81,8 @@ export default async function globalSetup(): Promise<void> {
       LIFE_ADMIN_UI_ENABLED: 'true',
       VOICE_PREFERENCES_UI_ENABLED: 'true',
       METRICS_DASHBOARD_ENABLED: 'true',
-      SHADOW_MODE_ENABLED: 'true',
-      EXPERIMENTS_ENABLED: 'true',
       VISIBLE_THOUGHTS_ENABLED: 'true',
       VISIBLE_INNER_MONOLOGUE_ENABLED: 'true',
-      ADMIN_DECISION_TRACE_ENABLED: 'true',
       ENABLE_BACKGROUND_JOBS: 'true',
       BACKUP_INTERVAL_MS: '0'
     },

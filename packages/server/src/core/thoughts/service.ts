@@ -4,8 +4,7 @@
  * Implements ThoughtsBridge for the ReplyCoordinator and exposes the read
  * surface used by the routes:
  *
- *   - beginForReply: after a reply is fully published, records the admin
- *     decision trace (ADMIN_DECISION_TRACE_ENABLED) and kicks off the
+ *   - beginForReply: after a reply is fully published, kicks off the
  *     user-visible inner monologue (VISIBLE_INNER_MONOLOGUE_ENABLED),
  *     fire-and-forget — a slow or failing thought model never delays or
  *     breaks the reply.

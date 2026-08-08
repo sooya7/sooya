@@ -84,10 +84,9 @@ describe('MetricsDashboardPage', () => {
     expect(fill?.style.width).toMatch(/%$/);
     // Category tables keep the .metrics-category table contract.
     expect(container!.querySelector('.metrics-category table')).not.toBeNull();
-    // Release compare renders current/previous/delta.
-    expect(container!.querySelector('[data-testid="metrics-compare"]')).not.toBeNull();
-    expect(container!.textContent).toContain('差异');
-    // Distributions render p50/p95.
+    // Release compare was removed in closure; distributions keep p50/p95.
+    expect(container!.querySelector('[data-testid="metrics-compare"]')).toBeNull();
+    expect(container!.textContent).not.toContain('差异');
     expect(container!.textContent).toContain('p50');
   });
 
@@ -111,22 +110,5 @@ describe('MetricsDashboardPage', () => {
     const state = container!.querySelector('.admin-state-flag-disabled');
     expect(state).not.toBeNull();
     expect(state!.textContent).toContain('METRICS_DASHBOARD_ENABLED');
-  });
-
-  it('exports CSV via the frozen export endpoint and reports the notice', async () => {
-    const calls = routeFetch((call) => {
-      if (call.url.startsWith('/api/admin/metrics?days=')) return json(AGGREGATES);
-      if (call.url.startsWith('/api/admin/metrics/distributions')) return json({ distributions: [] });
-      if (call.url.startsWith('/api/admin/metrics/release-compare')) return json(COMPARE);
-      if (call.url.startsWith('/api/admin/metrics/export?format=csv')) return new Response('a,b\n1,2', { status: 200, headers: { 'content-type': 'text/csv' } });
-      return json({ message: 'not found' }, 404);
-    });
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
-    await render();
-    const csvButton = [...container!.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === '导出 CSV')!;
-    await act(async () => { csvButton.click(); });
-    expect(calls.some((c) => c.url.startsWith('/api/admin/metrics/export?format=csv'))).toBe(true);
-    expect(container!.querySelector('[data-testid="metrics-export-notice"]')?.textContent).toContain('CSV');
-    clickSpy.mockRestore();
   });
 });
