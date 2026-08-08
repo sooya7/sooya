@@ -32,7 +32,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   fullyParallel: false,
   workers: 1,
-  retries: process.env.CI ? 1 : 0,
+  retries: 0,
   reporter: [['list']],
   globalSetup: path.join(HERE, 'global-setup.ts'),
   globalTeardown: path.join(HERE, 'global-teardown.ts'),
