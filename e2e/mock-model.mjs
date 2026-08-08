@@ -129,16 +129,19 @@ const server = http.createServer(async (req, res) => {
     const system = String(parsed.messages?.[0]?.content ?? '');
     const isExtraction = system.includes('记忆抽取器');
     const isSummary = system.includes('压缩成简洁');
+    const isThought = system.includes('可见想法');
 
     if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));
-    if (state.failChat && !isExtraction && !isSummary) {
+    if (state.failChat && !isExtraction && !isSummary && !isThought) {
       res.writeHead(503, { 'content-type': 'text/plain' });
       res.end('model unavailable');
       return;
     }
 
     let text;
-    if (isExtraction) {
+    if (isThought) {
+      text = '她好像有点在意这件事，想让我早点休息。';
+    } else if (isExtraction) {
       const userLine = String(parsed.messages?.[1]?.content ?? '');
       text = /名字|叫|喜欢|住在/.test(userLine)
         ? JSON.stringify({

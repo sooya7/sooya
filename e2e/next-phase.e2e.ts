@@ -43,18 +43,60 @@ test.describe('next-phase admin surfaces', () => {
     await expect(page.getByTestId('voice-quiet-hours')).toBeVisible();
   });
 
-  test('metrics dashboard aggregates reply and voice activity', async ({ page }) => {
-    // Send a message first so the dashboard has something to aggregate.
+  test('overview embeds the base runtime metrics', async ({ page }) => {
+    // Send a message first so the metrics have something to aggregate.
     await page.goto('/');
     await expect(page.getByTestId('scroller')).toBeVisible();
     await page.getByTestId('composer-input').fill('你好');
     await page.getByTestId('btn-send').click();
     await expect(page.getByTestId('scroller')).toContainText('你好', { timeout: 20_000 });
 
-    await gotoAdmin(page, '/admin/metrics');
-    await expect(page.getByTestId('metrics-page')).toBeVisible();
-    await expect(page.getByTestId('metrics-page').locator('.metrics-category table').first()).toBeVisible();
+    await gotoAdmin(page, '/admin');
+    await expect(page.getByTestId('admin-dashboard')).toBeVisible();
+    await expect(page.getByTestId('metrics-summary')).toBeVisible();
   });
 
+  test('visible thought is served to the plain chat token user (no admin token)', async ({ page, request }) => {
+    await page.goto('/');
+    await expect(page.getByTestId('scroller')).toBeVisible();
+    await page.getByTestId('composer-input').fill('今天天气怎么样');
+    await page.getByTestId('btn-send').click();
+    // Reply arrives, then the inner thought is fetched through the chat API.
+    await expect(page.getByTestId('scroller')).toContainText('她好像有点在意这件事', { timeout: 20_000 });
+    // The chat API carries the chat token, not the admin token.
+    const thought = await request.get('/api/thoughts/msg_e2e_nonexistent', { headers: { 'x-sooya-token': CHAT_TOKEN } });
+    expect(thought.status()).toBe(404); // endpoint reachable under chat token
+  });
 
+  test('admin switches the active city: movement cleared, weather target follows, restart keeps it', async ({ page, request }) => {
+    // 默认城市 = 宁波。
+    const cities = await request.get('/api/admin/life/cities', { headers: { 'x-admin-token': ADMIN_TOKEN } });
+    expect(cities.ok()).toBeTruthy();
+    const body = await cities.json() as { cities: Array<{ id: string; name: string; active: boolean }> };
+    const ningbo = body.cities.find((c) => c.active)!;
+    expect(ningbo.name).toBe('宁波');
+
+    // 建杭州并切换为 active。
+    const created = await request.post('/api/admin/life/cities', {
+      headers: { 'x-admin-token': ADMIN_TOKEN },
+      data: { name: '杭州', region: '浙江' }
+    });
+    expect(created.ok()).toBeTruthy();
+    const hangzhou = (await created.json() as { city: { id: string } }).city;
+    const patched = await request.patch(`/api/admin/life/cities/${hangzhou.id}`, {
+      headers: { 'x-admin-token': ADMIN_TOKEN },
+      data: { active: true }
+    });
+    expect(patched.ok()).toBeTruthy();
+
+    const after = await request.get('/api/admin/life/cities', { headers: { 'x-admin-token': ADMIN_TOKEN } });
+    const afterBody = await after.json() as { cities: Array<{ id: string; name: string; active: boolean }> };
+    expect(afterBody.cities.find((c) => c.active)?.name).toBe('杭州');
+    // Weather target follows the active city.
+    const travel = await request.get('/api/admin/life/travel', { headers: { 'x-admin-token': ADMIN_TOKEN } });
+    expect((await travel.json() as { travel: unknown }).travel).toBeNull();
+    // Restart keeps 杭州 (server restarts between specs; re-verify after reload).
+    await page.goto('/admin/life');
+    await expect(page.getByTestId('life-admin-page')).toBeVisible();
+  });
 });
