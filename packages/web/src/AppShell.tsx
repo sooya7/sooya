@@ -5,15 +5,27 @@ import GalleryPage from './components/GalleryPage.js';
 import LifeAdminPage from './components/LifeAdminPage.js';
 import VoicePreferencesPage from './components/VoicePreferencesPage.js';
 import { ImageViewerHost } from './components/ImageViewerHost.js';
-import { useAppRoute } from './lib/navigation.js';
+import { APP_NAVIGATION_EVENT, useAppRoute } from './lib/navigation.js';
 
 export default function AppShell() {
   const route = useAppRoute();
   const [chatStarted, setChatStarted] = useState(route === 'chat');
   const shouldMountChat = chatStarted || route === 'chat';
   // Next phase pages are addressed by exact path so the admin panel keeps its
-  // own tab structure at /admin.
-  const path = typeof window !== 'undefined' ? window.location.pathname : '';
+  // own tab structure at /admin. The path must react to SPA navigation
+  // (pushState / popstate) — /settings/voice and /admin/life stay inside the
+  // 'chat'/'admin' route buckets, so without this the sub-pages never render
+  // when reached by an in-app link click.
+  const [path, setPath] = useState(() => window.location.pathname);
+  useEffect(() => {
+    const update = () => setPath(window.location.pathname);
+    window.addEventListener('popstate', update);
+    window.addEventListener(APP_NAVIGATION_EVENT, update);
+    return () => {
+      window.removeEventListener('popstate', update);
+      window.removeEventListener(APP_NAVIGATION_EVENT, update);
+    };
+  }, []);
   const isLifeAdmin = path === '/admin/life';
   const isVoicePrefs = path === '/settings/voice';
 
