@@ -585,6 +585,28 @@ export function registerAdminRoutes(app: SooyaApp): void {
   });
 
   // 版本对比：currentDays 为当前窗口，previousDays 为其前等长基线窗口。
+  // Weather admin surface (restored: accidentally removed with the shadow/
+  // experiments cleanup). Weather identity is the active city.
+  server.get('/api/admin/weather/status', guard, async () => {
+    const snapshot = services.world.snapshot();
+    return {
+      enabled: services.weather.isEnabled,
+      provider: { name: services.weather.providerName, configured: services.weather.providerName !== null },
+      lastSnapshot: snapshot.weather ?? null,
+      forecast: snapshot.forecast ?? null,
+      daylight: snapshot.daylight ?? null,
+      location: snapshot.location ? { id: snapshot.location.id, name: snapshot.location.name, kind: snapshot.location.kind } : null
+    };
+  });
+  server.get('/api/admin/weather/forecast', guard, async () => {
+    const snapshot = services.world.snapshot();
+    return { forecast: snapshot.forecast ?? null, daylight: snapshot.daylight ?? null };
+  });
+  server.post('/api/admin/weather/refresh', guard, async () => {
+    await services.world.refreshAll();
+    return { ok: true };
+  });
+
   server.get('/api/admin/system', guard, async () => ({
     version: app.state.version,
     startedAt: app.state.startedAt,
