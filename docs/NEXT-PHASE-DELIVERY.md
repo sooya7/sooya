@@ -69,7 +69,7 @@ Phase 4  Visible Thoughts ON（先 inner monologue，安全过滤生效后）
 
 | 门禁 | 结果 |
 |---|---|
-| Server 全量测试 | ✅ 78 文件 / 737/737 |
+| Server 全量测试 | ✅ 78 文件 / 738/738 |
 | Web 全量测试 | ✅ 483/483 |
 | typecheck / build | ✅ 0 error |
 | E2E **retries=0**（本地 + CI 配置） | ✅ 98/98 |
