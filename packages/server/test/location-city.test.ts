@@ -32,7 +32,7 @@ describe('location cities (LifeCity)', () => {
     const cities = service.listCities();
     expect(cities.length).toBe(1);
     const city = service.activeCity()!;
-    expect(city.name).toBe('默认城市');
+    expect(city.name).toBe('宁波');
     expect(city.timeZone).toBe('Asia/Shanghai');
     expect(city.active).toBe(true);
     // 内置地点都挂在默认城市下。
@@ -59,7 +59,7 @@ describe('location cities (LifeCity)', () => {
     // 停用 active 城市 → 自动补位另一个。
     expect(service.deactivateCity(bj.id)).toBe(true);
     expect(activeCount()).toBe(1);
-    expect(service.activeCity()?.name).toBe('默认城市');
+    expect(service.activeCity()?.name).toBe('宁波');
   });
 
   it('refuses to deactivate the last remaining city (invariant guard)', async () => {
@@ -165,5 +165,39 @@ describe('location cities (LifeCity)', () => {
     expect(svc.current()?.name).toBe('东京咖啡店');
     expect(svc.current()?.cityId).toBe(tokyo.id);
     expect(svc.listCities().length).toBe(2);
+  });
+
+  it('切换城市：取消在途行程、迁移日常地点归属、current 保持有效、Weather 跟随', async () => {
+    let at = localTime('2026-08-08T10:00');
+    harness = await createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', WEATHER_ENABLED: 'true' },
+      clock: () => at
+    });
+    const service = harness.app.services.location;
+    const ningbo = service.activeCity()!;
+    expect(ningbo.name).toBe('宁波');
+    expect(ningbo.country).toBe('中国');
+    expect(ningbo.region).toBe('浙江');
+
+    // 在途行程（防瞬移）+ 管理端切换城市。
+    const cafe = service.list().find((l) => l.kind === 'cafe')!;
+    service.onActivityResolved({ id: 'cafe', kind: 'out', locationAffinity: ['cafe'] } as never, 'out', null, null);
+    expect(service.currentTravel()).toBeTruthy();
+
+    const hangzhou = service.createCity({ name: '杭州', region: '浙江', country: '中国', timeZone: 'Asia/Shanghai' });
+    service.setActiveCity(hangzhou.id);
+
+    // 在途行程被取消（不残留跨城移动）；地点归属迁移、key/id 稳定。
+    expect(service.currentTravel()).toBeNull();
+    const homeAfter = service.list().find((l) => l.key === 'home')!;
+    expect(homeAfter.cityId).toBe(hangzhou.id);
+    expect(homeAfter.id).toBe(service.list().find((l) => l.key === 'home')!.id);
+    // current 仍然有效（地点未删除）。
+    expect(service.current()).toBeTruthy();
+    // Weather 目标跟随新城市（WorldContext 的 weatherLocation 用 active city）。
+    const target = harness.app.services.world.weatherLocation();
+    expect(target?.city).toBe('杭州');
   });
 });

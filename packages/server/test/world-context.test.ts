@@ -88,8 +88,8 @@ describe('WorldContextService snapshot（contract §1.3）', () => {
     expect(snapshot.forecast?.next12h).toHaveLength(1);
     expect(snapshot.daylight?.isDaylight).toBe(true);
     expect(snapshot.weatherCondition).toBe('clear');
-    // Agent A v25 集成后：默认城市真实播种，travel 在 override（瞬移）后为 null。
-    expect(snapshot.city?.name).toBe('默认城市');
+    // 默认城市真实播种（宁波），travel 在 override（瞬移）后为 null。
+    expect(snapshot.city?.name).toBe('宁波');
     expect(snapshot.travel).toBeNull();
   });
 

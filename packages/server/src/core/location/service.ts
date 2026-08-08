@@ -164,10 +164,27 @@ export class LocationService {
     return this.cityRepo.deactivate(id);
   }
 
-  /** 显式激活某城市（管理端）。 */
+  /**
+   * 显式激活某城市（管理端）。城市切换的一致性：
+   * - 取消旧城市中未完成的地点移动（clearTravel，禁止跨城残留行程）；
+   * - 抽象日常地点（builtin/generated）归属迁移到新城市，保持稳定 key/id；
+   * - current location 保持有效（地点本身不删除）；
+   * - Weather / WorldContext 自动跟随 active city（weather target 读 activeCity）。
+   */
   setActiveCity(id: string): LifeCity | null {
-    const row = this.cityRepo.setActiveCity(id);
-    return row ? toLifeCity(row) : null;
+    const target = this.cityRepo.get(id);
+    if (!target) return null;
+    const previous = this.cityRepo.activeCity();
+    if (previous && previous.id !== id) {
+      this.repo.clearTravel();
+      for (const row of this.repo.list(true)) {
+        if (row.city_id === previous.id && (row.source === 'builtin' || row.source === 'generated')) {
+          this.repo.updateCityId(row.id, id);
+        }
+      }
+    }
+    this.cityRepo.setActiveCity(id);
+    return toLifeCity(this.cityRepo.get(id)!);
   }
 
   /**
@@ -262,11 +279,11 @@ export class LocationService {
     }
   }
 
-  /** 默认城市（key='default'），时区取构造注入的默认值。 */
+  /** 默认城市（key='default'）：宁波 / 浙江省 / 中国，时区取构造注入的默认值。 */
   private ensureDefaultCity(): LifeCityRow {
     const existing = this.cityRepo.getByKey('default');
     if (existing) return existing;
-    return this.cityRepo.create({ key: 'default', name: '默认城市', timeZone: this.defaultTimeZone, active: true });
+    return this.cityRepo.create({ key: 'default', name: '宁波', region: '浙江', country: '中国', timeZone: this.defaultTimeZone, active: true });
   }
 
   // ---- travel ----

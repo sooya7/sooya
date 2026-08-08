@@ -393,6 +393,11 @@ export class LifeLocationRepo {
     return this.currentTravel()!;
   }
 
+  /** 迁移地点的城市归属（保持 key/id 稳定；用于管理端切换城市）。 */
+  updateCityId(id: string, cityId: string): void {
+    this.db.prepare('UPDATE life_locations SET city_id = ?, updated_at = ? WHERE id = ?').run(cityId, nowIso(), id);
+  }
+
   clearTravel(): void {
     this.db.prepare('DELETE FROM travel_state WHERE id = 1').run();
   }
