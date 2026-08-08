@@ -141,7 +141,7 @@ c6bfae6 docs(qa): independent acceptance report
 
 ## 10. 状态
 
-> **READY TO MERGE**（最终 HEAD c6bfae6 全部门禁通过，待 GitHub CI 最终确认）
+> **READY TO MERGE**（最终 HEAD 全部门禁 + GitHub CI 4/4 通过）
 
 ## 7. 已知问题
 
@@ -163,6 +163,6 @@ c6bfae6 docs(qa): independent acceptance report
 | privacy | ✅ PASS | thoughts-safety 20/20、metrics-export 无私人正文、presenter 白名单审查 |
 | Shadow/Experiment 语义 | ✅ PASS | status=shadow 时 canonical 恒 control（byte-equivalent 用例） |
 | UI Compatibility Matrix | ✅ PASS | 8 页 × 9 维度（QA-REPORT.md 表格） |
-| GitHub CI | 待最终确认 | 本机已等价验证；CI 配置 retries=1 更宽松 |
+| GitHub CI | ✅ PASS | PR #83 四个 job 全绿（validation / e2e / audit / release）；audit 修复 nanoid→3.3.18（GHSA-2v37-7h3g-55p8） |
 
 > 独立 QA 结论（`QA-REPORT.md`）：**可以合入**。QA 阶段修复 4 个问题（D1 HIGH metrics 页契约白屏、D2 HIGH e2e CI flags 缺失、D3/D4 定位器适配）。
