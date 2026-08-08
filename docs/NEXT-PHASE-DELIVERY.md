@@ -141,7 +141,63 @@ c6bfae6 docs(qa): independent acceptance report
 
 ## 10. 状态
 
-> **READY TO MERGE**（最终 HEAD 全部门禁 + GitHub CI 4/4 通过）
+> **READY TO MERGE**（最终 HEAD 全部门禁 + GitHub CI 全绿，见 §11 收口记录）
+
+---
+
+# 11. 最终收口记录（《SOOYA最终收口实施方案-精简执行版》+ 历史完善项补全版）
+
+## 11.1 删除的系统（完整删除，无简化版）
+
+| 系统 | 代码 | 数据库 |
+|---|---|---|
+| Experiments | ExperimentService/Repo/API/UI、rollout/assignment/report/history、`EXPERIMENTS_ENABLED` | v29 DROP `experiments` / `experiment_assignments` / `experiment_events` |
+| Shadow Mode | ShadowService/Repo/API/UI/runtime、`SHADOW_MODE_ENABLED` | v29 DROP `shadow_runs` |
+| Geocoding | GeocodingProvider/service/API/Admin 搜索、GPS/经纬度管理 | —（无表） |
+| Decision Trace | Admin 页面/API/history/persistence、`ADMIN_DECISION_TRACE_ENABLED`；安全上下文抽为 `ThoughtContextProvider` | v29 DROP `decision_traces` |
+
+保留：Visible Thoughts（含 inner monologue + admin decision_summary thought）、Life V2、ReplyCoordinator、Voice V2、Metrics（count/mean/min/max/p50/p95）、Scroll anchor restore。
+
+## 11.2 城市与时区
+
+- fresh DB 默认 active city = **宁波 / 浙江 / 中国**，时区 `Asia/Shanghai`；restart 保持当前城市；管理端可修改
+- 城市切换一致性：取消在途行程、builtin/generated 地点归属迁移（key/id 稳定）、current 保持有效、Weather/WorldContext 自动跟随
+- `LIFE_TIME_ZONE` 显式注入 MetricsService/LocationService/WorldContextService
+
+## 11.3 Weather 城市化
+
+- 业务输入只允许 city + country；缓存按 `country|region|city` 隔离（旧城市缓存永不作新城市 fallback）
+- open-meteo adapter 内部解析城市→坐标（geocoding 端点，属 provider 内部实现，不扩散到 Location/WorldContext/DB/Admin）
+- 失败链：联网查询 → 同城市缓存 → unknown；不阻塞 Chat/Life/Proactive
+
+## 11.4 本轮补齐
+
+- **Proactive**：assistant 消息只经 `ReplyCoordinator.publishProactiveMessage` 持久化（sent-once 唯一索引语义保留）
+- **Memory**：admin 编辑（re-normalized + FTS 同步）、用户纠正 supersede 旧事实、删除后不再召回
+- **Metrics** 时区接线（`env.LIFE_TIME_ZONE`）
+
+## 11.5 门禁（最终 HEAD）
+
+| 门禁 | 结果 |
+|---|---|
+| server 全量 | ✅ 77 文件 / 725/725 |
+| web 全量 | ✅ 486/486 |
+| typecheck / build | ✅ 0 error |
+| E2E **retries=0**（本地 + CI 配置） | ✅ 94/94 |
+| migration fixture v14/v18/v23/v28 → v29 | ✅ 10/10（含 DROP 表断言、FK integrity、保留表断言） |
+| restart recovery / rollback preflight | ✅（preflight max v29） |
+| Playwright retries | `retries: 0`（playwright.config.ts，本地与 CI 一致） |
+
+## 11.6 回滚程序（首选）
+
+1. 首选路径：恢复升级前 DB backup + 旧 release（备份在 `data/backups/`，自动/手动可用）
+2. 次选：`npm run rollback:preflight` 检查 pending reply/voice/proactive；`npm run rollback:normalize` 规范化新状态后用旧代码启动
+3. v29 只删表不迁移数据；降级时被删系统的表不存在，旧代码访问会失败——必须走 backup 恢复
+
+## 11.7 Final SHA / CI
+
+- 最终提交：见本分支 HEAD（PR #83）
+- GitHub CI：validation / e2e / audit / release+container 全绿后 READY TO MERGE
 
 ## 7. 已知问题
 
