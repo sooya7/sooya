@@ -103,13 +103,16 @@ function rect(top: number, bottom: number, width: number): DOMRect {
 
 function installLayoutMock(): void {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const scroller = document.querySelector('[data-testid="scroller"]') as HTMLElement | null;
+    const scrollTop = scroller?.scrollTop ?? 0;
     if (this.getAttribute('data-testid') === 'scroller') return rect(0, 600, 800);
+    // 消息栈：内容顶部 13px（padding+sentinel）相对滚动容器，随 scrollTop 上移。
+    if (this.classList.contains('messages-stack')) return rect(13 - scrollTop, 600 - scrollTop, 800);
     const indexAttr = this.getAttribute('data-index');
     if (indexAttr !== null) {
       const item = virtualizerMock.items[Number(indexAttr)];
       if (!item) return rect(0, 0, 800);
-      const scroller = document.querySelector('[data-testid="scroller"]') as HTMLElement | null;
-      const top = item.start - (scroller?.scrollTop ?? 0);
+      const top = item.start - scrollTop;
       return rect(top, top + item.size, 800);
     }
     return realRect.call(this);
@@ -222,11 +225,11 @@ describe('ChatView 锚点恢复', () => {
     const scroller = scrollerOf();
     expect(scroller.scrollTop).toBe(160);
 
-    // 用户滚到 100（未贴底），锚点偏离目标偏移 → 解除锚定。
+    // 用户滚动（wheel 手势 → 解除锚定），随后位置不再被回拉。
     Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 520 });
     Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 200 });
     scroller.scrollTop = 100;
-    scroller.dispatchEvent(new Event('scroll'));
+    scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true }));
 
     // 之后前方条目高度变化不再回拉。
     virtualizerMock.rebuild([160, 100, 120, 90, 110]);
@@ -240,10 +243,10 @@ describe('ChatView 锚点恢复', () => {
     const viewStateRef: ChatViewStateRef = { current: { anchor: null, stickToBottom: false } };
     await act(async () => { root.render(<ChatView chat={chat} viewStateRef={viewStateRef} />); });
     const scroller = scrollerOf();
-    scroller.scrollTop = 140; // m0（0..100）完全滚出，m1 顶边在视口上方 40px。
+    scroller.scrollTop = 140; // m0（0..100）完全滚出，m1 顶边在视口上方 27px（含 13px 内容头）。
 
     await act(async () => { root.render(null); });
 
-    expect(viewStateRef.current).toEqual({ anchor: { messageId: 'm1', offsetFromViewportTop: -40 }, stickToBottom: false });
+    expect(viewStateRef.current).toEqual({ anchor: { messageId: 'm1', offsetFromViewportTop: -27 }, stickToBottom: false });
   });
 });
