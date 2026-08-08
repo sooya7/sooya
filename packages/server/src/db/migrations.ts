@@ -1088,15 +1088,44 @@ export const MIGRATIONS: Migration[] = [
     }
   },
   /*
-   * TMP_LOCAL（Agent A / location 模块，本地测试专用）：
-   * 临时追加 migration，供 location 完整实现的自测使用。
-   * 最终 DDL 见 INTEGRATION-NOTES-location.md 的 MIGRATION_NEEDS，
-   * 由 Integration 统一并入 v25（life_cities + city_id + travel_state），
-   * 本条目在合并时删除。
+   * v24 visible_thoughts (next phase final): public-safe visible inner
+   * thoughts + admin decision traces. Never holds hidden chain-of-thought.
    */
   {
-    version: 901,
-    name: 'tmp_location_full',
+    version: 24,
+    name: 'visible_thoughts',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE visible_thoughts (
+          id         TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL,
+          batch_id   TEXT NOT NULL,
+          revision   INTEGER NOT NULL,
+          kind       TEXT NOT NULL CHECK (kind IN ('inner_monologue','decision_summary')),
+          text       TEXT NOT NULL DEFAULT '',
+          visibility TEXT NOT NULL CHECK (visibility IN ('user','admin')),
+          status     TEXT NOT NULL CHECK (status IN ('generating','completed','cancelled','failed')),
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_thoughts_message ON visible_thoughts(message_id);
+        CREATE INDEX idx_thoughts_batch_rev ON visible_thoughts(batch_id, revision);
+        CREATE INDEX idx_thoughts_visibility ON visible_thoughts(visibility);
+        CREATE INDEX idx_thoughts_created ON visible_thoughts(created_at);
+
+        CREATE TABLE decision_traces (
+          batch_id     TEXT NOT NULL,
+          revision     INTEGER NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at   TEXT NOT NULL,
+          PRIMARY KEY (batch_id, revision)
+        );
+        CREATE INDEX idx_decision_traces_created ON decision_traces(created_at DESC);
+      `);
+    }
+  },
+  {
+    version: 25,
+    name: 'life_cities_travel',
     up: (db) => {
       db.exec(`
         CREATE TABLE life_cities (
@@ -1131,48 +1160,8 @@ export const MIGRATIONS: Migration[] = [
     }
   },
   {
-    /*
-     * 临时 migration（Agent B 本地测试用，最终 DDL 见 INTEGRATION-NOTES：
-     * MIGRATION_NEEDS，由 Integration 统一编号 v28 重写）。追加内容：
-     *   - weather_snapshots 增加 visibility_km / pressure_hpa 列
-     *   - weather_forecasts 表（forecast 持久化）
-     *   - weather_daylight 表（sunrise/sunset 持久化）
-     */
-    version: 902,
-    name: 'tmp_weather_full',
-    up: (db) => {
-      db.exec(`
-        ALTER TABLE weather_snapshots ADD COLUMN visibility_km REAL;
-        ALTER TABLE weather_snapshots ADD COLUMN pressure_hpa REAL;
-        CREATE TABLE weather_forecasts (
-          location_key TEXT NOT NULL,
-          generated_at TEXT NOT NULL,
-          provider     TEXT NOT NULL,
-          periods_json TEXT NOT NULL,
-          created_at   TEXT NOT NULL,
-          PRIMARY KEY (location_key, generated_at)
-        );
-        CREATE INDEX idx_weather_forecasts_key ON weather_forecasts(location_key, generated_at DESC);
-        CREATE TABLE weather_daylight (
-          location_key TEXT NOT NULL,
-          local_date   TEXT NOT NULL,
-          sunrise      TEXT NOT NULL,
-          sunset       TEXT NOT NULL,
-          provider     TEXT NOT NULL,
-          created_at   TEXT NOT NULL,
-          PRIMARY KEY (location_key, local_date)
-        );
-      `);
-    }
-  },
-  {
-    /*
-     * TEMP — Agent C (metrics/experiments full version), 本地测试用。
-     * 最终 DDL 由 Integration 统一重写为 v26/v27（见 INTEGRATION-NOTES-observability.md
-     * 的 MIGRATION_NEEDS 段）。版本号 903+ 为本地临时段，不与正式版本冲突。
-     */
-    version: 903,
-    name: 'tmp_observability_full',
+    version: 26,
+    name: 'metrics_distributions',
     up: (db) => {
       db.exec(`
         ALTER TABLE metric_daily ADD COLUMN min_value REAL;
@@ -1186,46 +1175,45 @@ export const MIGRATIONS: Migration[] = [
           count    INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (date, category, metric, bucket)
         );
-
+      `);
+    }
+  },
+  {
+    version: 27,
+    name: 'experiment_rollout',
+    up: (db) => {
+      db.exec(`
         ALTER TABLE experiments ADD COLUMN rollout_percent INTEGER NOT NULL DEFAULT 100 CHECK (rollout_percent IN (10, 25, 50, 100));
       `);
     }
   },
   {
-    /*
-     * TEMP (Agent D local only): visible thoughts / decision trace.
-     * Final DDL moves to Integration migration v24 (see
-     * INTEGRATION-NOTES-thoughts.md MIGRATION_NEEDS); version 904 lives in the
-     * 9xx band so it can never collide with Integration's numbered versions.
-     */
-    version: 904,
-    name: 'tmp_visible_thoughts',
+    version: 28,
+    name: 'weather_forecasts',
     up: (db) => {
       db.exec(`
-        CREATE TABLE visible_thoughts (
-          id         TEXT PRIMARY KEY,
-          message_id TEXT NOT NULL,
-          batch_id   TEXT NOT NULL,
-          revision   INTEGER NOT NULL,
-          kind       TEXT NOT NULL CHECK (kind IN ('inner_monologue','decision_summary')),
-          text       TEXT NOT NULL DEFAULT '',
-          visibility TEXT NOT NULL CHECK (visibility IN ('user','admin')),
-          status     TEXT NOT NULL CHECK (status IN ('generating','completed','cancelled','failed')),
-          created_at TEXT NOT NULL
-        );
-        CREATE INDEX idx_thoughts_message ON visible_thoughts(message_id);
-        CREATE INDEX idx_thoughts_batch_rev ON visible_thoughts(batch_id, revision);
-        CREATE INDEX idx_thoughts_visibility ON visible_thoughts(visibility);
-        CREATE INDEX idx_thoughts_created ON visible_thoughts(created_at);
+        ALTER TABLE weather_snapshots ADD COLUMN visibility_km REAL;
+        ALTER TABLE weather_snapshots ADD COLUMN pressure_hpa REAL;
 
-        CREATE TABLE decision_traces (
-          batch_id     TEXT NOT NULL,
-          revision     INTEGER NOT NULL,
-          payload_json TEXT NOT NULL,
+        CREATE TABLE weather_forecasts (
+          location_key TEXT NOT NULL,
+          generated_at TEXT NOT NULL,
+          provider     TEXT NOT NULL,
+          periods_json TEXT NOT NULL,
           created_at   TEXT NOT NULL,
-          PRIMARY KEY (batch_id, revision)
+          PRIMARY KEY (location_key, generated_at)
         );
-        CREATE INDEX idx_decision_traces_created ON decision_traces(created_at DESC);
+        CREATE INDEX idx_weather_forecasts_key ON weather_forecasts(location_key, generated_at DESC);
+
+        CREATE TABLE weather_daylight (
+          location_key TEXT NOT NULL,
+          local_date   TEXT NOT NULL,
+          sunrise      TEXT NOT NULL,
+          sunset       TEXT NOT NULL,
+          provider     TEXT NOT NULL,
+          created_at   TEXT NOT NULL,
+          PRIMARY KEY (location_key, local_date)
+        );
       `);
     }
   }
