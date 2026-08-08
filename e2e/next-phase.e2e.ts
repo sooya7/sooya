@@ -61,8 +61,11 @@ test.describe('next-phase admin surfaces', () => {
     await expect(page.getByTestId('scroller')).toBeVisible();
     await page.getByTestId('composer-input').fill('今天天气怎么样');
     await page.getByTestId('btn-send').click();
-    // Reply arrives, then the inner thought is fetched through the chat API.
-    await expect(page.getByTestId('scroller')).toContainText('她好像有点在意这件事', { timeout: 20_000 });
+    // The inner thought chip appears; it is collapsed by default, so expand it.
+    const chip = page.getByRole('button', { name: /她在想/ }).first();
+    await expect(chip).toBeVisible({ timeout: 20_000 });
+    await chip.click();
+    await expect(page.getByTestId('scroller')).toContainText('她好像有点在意这件事', { timeout: 10_000 });
     // The chat API carries the chat token, not the admin token.
     const thought = await request.get('/api/thoughts/msg_e2e_nonexistent', { headers: { 'x-sooya-token': CHAT_TOKEN } });
     expect(thought.status()).toBe(404); // endpoint reachable under chat token
@@ -72,9 +75,15 @@ test.describe('next-phase admin surfaces', () => {
     // 默认城市 = 宁波。
     const cities = await request.get('/api/admin/life/cities', { headers: { 'x-admin-token': ADMIN_TOKEN } });
     expect(cities.ok()).toBeTruthy();
-    const body = await cities.json() as { cities: Array<{ id: string; name: string; active: boolean }> };
-    const ningbo = body.cities.find((c) => c.active)!;
-    expect(ningbo.name).toBe('宁波');
+    let body = await cities.json() as { cities: Array<{ id: string; name: string; active: boolean }> };
+    // desktop 与 mobile 共享 e2e server：若前序项目已切换，先把宁波恢复为 active。
+    const ningbo = body.cities.find((c) => c.name === '宁波')!;
+    if (body.cities.find((c) => c.active)?.name !== '宁波') {
+      await request.patch(`/api/admin/life/cities/${ningbo.id}`, { headers: { 'x-admin-token': ADMIN_TOKEN }, data: { active: true } });
+      const refreshed = await request.get('/api/admin/life/cities', { headers: { 'x-admin-token': ADMIN_TOKEN } });
+      body = await refreshed.json() as { cities: Array<{ id: string; name: string; active: boolean }> };
+    }
+    expect(body.cities.find((c) => c.active)?.name).toBe('宁波');
 
     // 建杭州并切换为 active。
     const created = await request.post('/api/admin/life/cities', {
