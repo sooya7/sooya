@@ -62,8 +62,11 @@ test.describe('SOOYA 1-9 user flows', () => {
     await page.getByRole('button', { name: '情绪语音' }).click();
     await expect(page.getByTestId('voice-settings')).toBeVisible();
     await expect(page.getByText(/TTS 能力可用/)).toBeVisible();
-    await expect(page.getByLabel('音调')).toBeDisabled();
-    await expect(page.getByLabel('音量')).toBeDisabled();
+    // 音色/语速只属于「模型配置 → 语音合成模型」；这里不再重复出现，
+    // 曾经永久禁用的音调/音量死输入框也一并移除了。
+    await expect(page.getByLabel('音调')).toHaveCount(0);
+    await expect(page.getByLabel('音量')).toHaveCount(0);
+    await expect(page.getByText('默认音色')).toHaveCount(0);
     await page.getByRole('button', { name: '保存语音配置' }).click();
     await expect(page.getByText('情绪语音配置已保存并立即生效')).toBeVisible();
     await expect.poll(() => voiceStatusReads).toBeGreaterThanOrEqual(2);

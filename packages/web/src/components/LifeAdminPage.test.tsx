@@ -95,10 +95,10 @@ describe('LifeAdminPage tabs', () => {
     expect(tabs.length).toBe(8);
     expect(tabs[0]?.getAttribute('aria-selected')).toBe('true');
     expect(container!.querySelector('[role="tabpanel"]')).not.toBeNull();
-    await clickTab('Locations');
+    await clickTab('地点');
     expect(tabs[1]?.getAttribute('aria-selected')).toBe('false');
     expect(container!.querySelector('[data-testid="life-location-list"]')).not.toBeNull();
-    await clickTab('Weather');
+    await clickTab('天气');
     expect(container!.querySelector('[data-testid="weather-section"]')).not.toBeNull();
   });
 
@@ -122,7 +122,7 @@ describe('LifeAdminPage weather tab', () => {
       return json({ message: 'not found' }, 404);
     });
     await render();
-    await clickTab('Weather');
+    await clickTab('天气');
     const section = container!.querySelector('[data-testid="weather-section"]')!;
     expect(section.textContent).toContain('上海');
     expect(section.textContent).toContain('Asia/Shanghai');
@@ -146,7 +146,7 @@ describe('LifeAdminPage weather tab', () => {
       return json({ message: 'not found' }, 404);
     });
     await render();
-    await clickTab('Weather');
+    await clickTab('天气');
     const state = [...container!.querySelectorAll('[data-testid="admin-state"]')].find((s) => s.classList.contains('admin-state-flag-disabled'));
     expect(state).not.toBeNull();
     expect(state!.textContent).toContain('WEATHER_ENABLED 未开启');

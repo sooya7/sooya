@@ -280,7 +280,7 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
   return (
     <section className="admin-model-library" data-testid="admin-model-library">
       <PanelHeading title="模型库" description="保存任意多个模型预设，随时指派给某项能力。预设只记录密钥的环境变量名，不保存密钥本身。" />
-      {groups.length === 0 && <p className="admin-muted">还没有预设。把下面的配置填好后点「添加配置」，就能在不同模型之间随时切换。</p>}
+      {groups.length === 0 && <p className="admin-muted">还没有预设。把下面的配置填好后点「存入模型库」，就能在不同模型之间随时切换。</p>}
       {groups.map(([slot, items]) => (
         <div className="admin-preset-group" key={slot}>
           <h3>{SLOT_LABELS[slot]}</h3>
@@ -294,7 +294,7 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
               <div className="admin-preset-actions">
                 <button type="button" className="primary" disabled={busy} onClick={() => void apply(preset)}>指派</button>
                 <button type="button" disabled={busy} onClick={() => { setDraft(preset); setEditingId(preset.id); }}>编辑</button>
-                <button type="button" className="danger" disabled={busy} onClick={() => void commit(removePreset(presets, preset.id), '预设已删除')}>删除</button>
+                <button type="button" className="admin-danger" disabled={busy} onClick={() => void commit(removePreset(presets, preset.id), '预设已删除')}>删除</button>
               </div>
             </div>
           ))}
@@ -544,7 +544,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           {selected === 'image' && <small className="admin-muted">测试出图会真实调用图片服务并消耗一次额度。</small>}
           <button type="button" onClick={() => void save()}>保存模型配置</button>
           <button type="button" data-testid="admin-model-test" disabled={testing} onClick={() => void runTest()}>{testing ? '测试中…' : '测试连接'}</button>
-          <button type="button" data-testid="admin-model-add-preset" onClick={() => void addToLibrary()}>添加配置</button>
+          <button type="button" data-testid="admin-model-add-preset" onClick={() => void addToLibrary()}>存入模型库</button>
         </div>
         {testResult ? (
           <p className={testResult.ok ? 'admin-test-result ok' : 'admin-test-result fail'} data-testid="admin-model-test-result">{testResult.text}</p>
@@ -904,7 +904,7 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
         <section className="admin-main">
           <div className="admin-main-inner">
             {isMobile && <TabButtons tab={tab} setTab={navigateTab} mobile />}
-            {!isMobile && <header className="admin-content-header"><div className="admin-title-wrap"><span className="admin-eyebrow">SOOYA ADMIN</span><h1>{page.title}</h1><p>{page.description}</p></div><div className="admin-header-actions"><button type="button" className="admin-header-button" onClick={() => void loadOverview()}>刷新</button></div></header>}
+            {!isMobile && <header className="admin-content-header"><div className="admin-title-wrap"><span className="admin-eyebrow">SOOYA ADMIN</span><h1>{page.title}</h1><p>{page.description}</p></div></header>}
             <div className="admin-mobile-content">
               {isMobile && <div className="admin-mobile-title"><h1>{page.title}</h1><p>{page.description}</p></div>}
               <SectionNotice notice={notice} />

@@ -1134,7 +1134,7 @@
   border-color: transparent;
 }
 
-.admin-preset-actions button.danger {
+.admin-preset-actions button.admin-danger {
   color: var(--admin-danger);
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdminPersona } from '../lib/admin.js';
+import { AppLink } from './AppLink.js';
 import { adminMediaUrl, featureApi, type LifePanelData, type LifeSettings, type PersonaReference } from '../lib/features.js';
 import { formatGap, herClock, reachReasonText, slotProgress, sortedLog } from '../lib/lifeView.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
@@ -178,12 +179,9 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
       <label>发送频率<select value={String(policy.frequency ?? 'medium')} onChange={(event) => setPolicy('frequency', event.target.value)}><option value="never">从不</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
       <label>单段最大字符<input type="number" min={20} max={2000} value={Number(policy.maxCharsPerClip ?? 300)} onChange={(event) => setPolicy('maxCharsPerClip', Number(event.target.value))} /></label>
       <label><span>附带文字</span><input type="checkbox" checked={Boolean(policy.alwaysAttachTranscript)} onChange={(event) => setPolicy('alwaysAttachTranscript', event.target.checked)} /></label>
-      <label>默认音色<input value={String(model.voice ?? '')} onChange={(event) => setModel('voice', event.target.value)} disabled={supported.voice === false} /></label>
-      <label>默认语速<input type="number" min={0.25} max={4} step={0.05} value={Number(model.speed ?? 1)} onChange={(event) => setModel('speed', Number(event.target.value))} disabled={supported.speed === false} /></label>
+      <p className="admin-muted admin-form-wide">音色和语速属于接口配置，在「模型配置 → 语音合成模型」里设置；这里只管她什么时候说话、带什么情绪。</p>
       <label>表达模式<select value={String(model.instructionMode ?? 'auto')} onChange={(event) => setModel('instructionMode', event.target.value)} disabled={supported.instructions === false}><option value="on">始终使用情绪提示</option><option value="auto">自动</option><option value="off">关闭</option></select></label>
       <label>情绪强度<input type="number" min={0} max={1} step={0.05} value={Number(model.emotionIntensity ?? 0.7)} onChange={(event) => setModel('emotionIntensity', Number(event.target.value))} disabled={supported.instructions === false} /></label>
-      <label>音调<input aria-label="音调" value="当前供应商不支持" disabled /><small>当前 TTS 供应商没有可用的音调参数。</small></label>
-      <label>音量<input aria-label="音量" value="当前供应商不支持" disabled /><small>当前 TTS 供应商没有可用的音量参数。</small></label>
       <div className="admin-form-wide"><strong>情绪映射</strong>{EMOTIONS.map((key) => { const item = emotions[key] ?? { label: EMOTION_LABELS[key], instructions: '', speed: 1 }; return <div className="admin-list-row" key={key}><span>{item.label ?? EMOTION_LABELS[key]}</span><input aria-label={`${key}提示`} value={String(item.instructions ?? '')} onChange={(event) => setData({ ...data, emotions: { ...emotions, [key]: { ...item, instructions: event.target.value } } })} disabled={supported.instructions === false} /><input aria-label={`${key}语速`} type="number" step={0.05} min={0.25} max={4} value={Number(item.speed ?? 1)} onChange={(event) => setData({ ...data, emotions: { ...emotions, [key]: { ...item, speed: Number(event.target.value) } } })} disabled={supported.speed === false} /></div>; })}</div>
       <div className="admin-card"><strong>试听</strong><textarea value={text} onChange={(event) => setText(event.target.value)} /><select value={emotion} onChange={(event) => setEmotion(event.target.value)}>{EMOTIONS.map((key) => <option key={key} value={key}>{EMOTION_LABELS[key]}</option>)}</select><button type="button" disabled={!capability.ok && !capability.configured} onClick={() => void preview()}>试听</button><audio ref={audioRef} controls /></div>
       <div className="admin-actions"><button type="button" onClick={() => void save()}>保存语音配置</button></div>
@@ -200,8 +198,7 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
 export function LifeAdminLink() {
   return (
     <span className="admin-inline-links">
-      <a className="admin-inline-link" href="/admin/life" data-testid="life-admin-entry">Life 管理中心 ›</a>
-      <a className="admin-inline-link" href="/admin" data-testid="metrics-entry">系统概览（运行指标）›</a>
+      <AppLink className="admin-inline-link" href="/admin/life/console" data-testid="life-admin-entry">打开完整生活管理 ›</AppLink>
     </span>
   );
 }
