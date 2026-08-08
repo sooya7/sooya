@@ -257,7 +257,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     const region = city.region ?? null;
     return weather.cachedCondition({ key: `${country}|${region ?? ''}|${city.name}`, country, region, city: city.name });
   };
-  location = new LocationService(repos.locations, repos.audit, opts.clock, cityWeatherCondition);
+  location = new LocationService(repos.locations, repos.audit, opts.clock, cityWeatherCondition, { timeZone: env.LIFE_TIME_ZONE });
   location.setEnabled(env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED);
   const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
   weather.setEnabled(env.WORLD_CONTEXT_ENABLED && env.WEATHER_ENABLED);
@@ -272,7 +272,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const world = new WorldContextService(location, weather, opts.clock, env.LIFE_TIME_ZONE, repos.locations);
   // Thread location tags: real open threads feed the location selector.
   location.setThreadsProvider(() => repos.lifeV2.threads('open'));
-  const metrics = new MetricsService(repos.metrics, opts.clock);
+  const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
   metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
   const life = env.ENABLE_LIFE_V2
     ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics)

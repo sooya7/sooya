@@ -214,25 +214,40 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
   // Cities / travel (next phase final, v25).
   server.get('/api/admin/life/cities', { preHandler: guard }, async () => ({ cities: app.services.location.listCities() }));
   server.post('/api/admin/life/cities', { preHandler: guard }, async (req, reply) => {
-    const body = (req.body ?? {}) as { name?: string; region?: string; country?: string; timeZone?: string; active?: boolean };
-    if (!body.name || typeof body.name !== 'string') {
+    // 产品范围：中国城市、统一 Asia/Shanghai。country/timeZone 由服务端
+    // 固定（country=中国、timeZone=env.LIFE_TIME_ZONE），不作为用户可配置项。
+    const body = (req.body ?? {}) as { name?: string; region?: string };
+    if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
       reply.code(400);
       return { error: 'bad_request', message: 'name is required' };
     }
     const city = app.services.location.createCity({
-      name: body.name,
-      ...(body.region ? { region: body.region } : {}),
-      ...(body.country ? { country: body.country } : {}),
-      ...(body.timeZone ? { timeZone: body.timeZone } : {}),
-      ...(typeof body.active === 'boolean' ? { active: body.active } : {})
+      name: body.name.trim(),
+      ...(typeof body.region === 'string' && body.region.trim() ? { region: body.region.trim() } : {}),
+      country: '中国',
+      timeZone: app.env.LIFE_TIME_ZONE
     });
     repos.audit.add('life.city', 'created', city.id, { name: city.name });
     return { city };
   });
   server.patch('/api/admin/life/cities/:id', { preHandler: guard }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
-    const body = (req.body ?? {}) as { name?: string; region?: string | null; country?: string | null; timeZone?: string; active?: boolean };
-    const city = app.services.location.updateCity(id, body);
+    const body = (req.body ?? {}) as { name?: string; region?: string | null; active?: boolean };
+    // 设为当前城市必须走 canonical 切换（清 movement、迁移归属、Weather 跟随）。
+    if (body.active === true) {
+      const switched = app.services.location.setActiveCity(id);
+      if (!switched) {
+        reply.code(404);
+        return { error: 'not_found' };
+      }
+      repos.audit.add('life.city', 'activated', id);
+      return { city: switched };
+    }
+    const city = app.services.location.updateCity(id, {
+      ...(typeof body.name === 'string' && body.name.trim() ? { name: body.name.trim() } : {}),
+      ...(body.region !== undefined ? { region: body.region } : {}),
+      ...(body.active === false ? { active: false } : {})
+    });
     if (!city) {
       reply.code(404);
       return { error: 'not_found' };

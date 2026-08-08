@@ -135,6 +135,48 @@ describe('weather snapshot (P0)', () => {
     expect(events[0]!.event_type).toBe('weather.started_raining');
   });
 
+  it('caches are isolated per city: different city keys never share weather', async () => {
+    let now = localTime('2026-08-08T10:00');
+    harness = await createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', WEATHER_ENABLED: 'true' },
+      clock: () => now
+    });
+    const weather = harness.app.services.weather;
+    // City-aware provider: 杭州 clear、其他 rain。
+    weather.setProvider({
+      name: 'fake-city',
+      configured: true,
+      current: async (loc) => ({
+        observedAt: now.toISOString(),
+        condition: loc.city === '杭州' ? 'clear' : 'rain',
+        provider: 'fake-city',
+        locationKey: 'x',
+        stale: false
+      })
+    });
+    // 宁波天气：rain。
+    const ningbo = cityTarget(harness.app);
+    const ningboSnap = await weather.snapshotFor(ningbo);
+    expect(ningboSnap.condition).toBe('rain');
+    // 切换到杭州：同 provider 但不同城市键。
+    const hangzhou = { key: '中国|浙江|杭州', country: '中国', region: '浙江', city: '杭州' };
+    now = localTime('2026-08-08T12:00');
+    const hzSnap = await weather.snapshotFor(hangzhou);
+    // 杭州没有自己的缓存，provider 返回 clear；宁波缓存不受影响。
+    expect(hzSnap.condition).toBe('clear');
+    // 杭州 provider 挂掉 → 只回杭州自己的缓存（clear），绝不拿宁波的 rain。
+    now = localTime('2026-08-08T14:00');
+    weather.setProvider(fakeProvider('clear', true, () => now));
+    const hzStale = await weather.snapshotFor(hangzhou);
+    expect(hzStale.condition).toBe('clear');
+    expect(hzStale.stale).toBe(true);
+    // 宁波仍持有自己的 rain 缓存。
+    const ningboStill = weather.cachedCondition(ningbo);
+    expect(ningboStill).toBe('rain');
+  });
+
   it('rain suppresses outdoor scoring and favours cafe/library in the selector', async () => {
     let now = localTime('2026-08-08T10:00');
     harness = await createHarness({

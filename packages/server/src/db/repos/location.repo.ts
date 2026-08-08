@@ -133,8 +133,6 @@ export interface LifeLocation {
   region?: string | null;
   country?: string | null;
   timeZone?: string | null;
-  lat?: number | null;
-  lng?: number | null;
   tags: string[];
   indoor: boolean;
   visitWeight: number;
@@ -155,8 +153,6 @@ export function toLifeLocation(row: LifeLocationRow): LifeLocation {
     region: row.region,
     country: row.country,
     timeZone: row.time_zone,
-    lat: row.lat,
-    lng: row.lng,
     tags,
     indoor: row.indoor === 1,
     visitWeight: row.visit_weight,
@@ -391,6 +387,11 @@ export class LifeLocationRepo {
         created_at=excluded.created_at
     `).run(input.fromLocationId, input.toLocationId, input.mode, input.startedAt, input.expectedArriveAt, input.sourcePlanId ?? null, input.sourceActivityId ?? null, ts);
     return this.currentTravel()!;
+  }
+
+  /** 回填稳定 key（仅 normalization 用于可明确识别的旧 builtin/generated 地点）。 */
+  setKey(id: string, key: string): void {
+    this.db.prepare('UPDATE life_locations SET key = ?, updated_at = ? WHERE id = ?').run(key, nowIso(), id);
   }
 
   /** 迁移地点的城市归属（保持 key/id 稳定；用于管理端切换城市）。 */

@@ -45,13 +45,17 @@ async function buildRig(opts: {
   flags?: Partial<ThoughtsFlags>;
   thoughtText?: string;
   adminToken?: string;
+  chatToken?: string;
 } = {}): Promise<{ h: Harness; rig: ThoughtRig }> {
   let thoughtBehaviour: 'text' | 'slow' | 'error' | 'unsafe' | 'empty' = 'text';
   const thoughtCalls: string[] = [];
   const replyCalls: string[] = [];
   const h = await createHarness({
     skipStickerImport: true,
-    env: { ADMIN_API_TOKEN: opts.adminToken ?? 'test-admin-token' },
+    env: {
+      ADMIN_API_TOKEN: opts.adminToken ?? 'test-admin-token',
+      ...(opts.chatToken ? { WEB_CHAT_TOKEN: opts.chatToken } : {})
+    },
     chat: {
       script: [['好的，我记住了。']],
       // NOTE: the harness does NOT await `respond` — it must be synchronous.
@@ -239,6 +243,34 @@ describe('Visible thoughts — happy path', () => {
 
     const missing = await h.app.server.inject({ method: 'GET', url: '/api/thoughts/msg_does_not_exist_1' });
     expect(missing.statusCode).toBe(404);
+  });
+
+  it('serves the thought with ONLY the chat token (no admin token) when WEB_CHAT_TOKEN is set', async () => {
+    ({ harness, rig } = await buildRig({ chatToken: 'chat-secret-1', adminToken: 'admin-secret-1' }));
+    const h = harness!;
+    const { outcome } = await driveReply(h, '今天天气怎么样');
+    await waitFor(() => rig!.repo.getUserThought(outcome.messageId) !== undefined);
+
+    // 普通聊天用户：只有 chat token，没有 admin token。
+    const res = await h.app.server.inject({
+      method: 'GET',
+      url: `/api/thoughts/${outcome.messageId}`,
+      headers: { 'x-sooya-token': 'chat-secret-1' }
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { thought: { kind: string } }).thought.kind).toBe('inner_monologue');
+
+    // 缺失 chat token → 401（admin token 也不提供）。
+    const unauthorized = await h.app.server.inject({ method: 'GET', url: `/api/thoughts/${outcome.messageId}` });
+    expect(unauthorized.statusCode).toBe(401);
+
+    // 错误 chat token → 401。
+    const wrong = await h.app.server.inject({
+      method: 'GET',
+      url: `/api/thoughts/${outcome.messageId}`,
+      headers: { 'x-sooya-token': 'wrong-token' }
+    });
+    expect(wrong.statusCode).toBe(401);
   });
 });
 

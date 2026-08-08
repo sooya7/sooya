@@ -83,17 +83,17 @@ describe('location cities (LifeCity)', () => {
     });
     const service = harness.app.services.location;
     const homeCity = service.activeCity()!;
-    const tokyo = service.createCity({ name: '东京', country: '日本', timeZone: 'Asia/Tokyo' });
-    expect(tokyo.active).toBe(false); // 新建城市默认不激活
-    const tokyoCafe = harness.app.repos.locations.create({
-      name: '东京咖啡店',
+    const hangzhou = service.createCity({ name: '杭州', region: '浙江', country: '中国' });
+    expect(hangzhou.active).toBe(false); // 新建城市默认不激活（服务端固定中国/Asia/Shanghai）
+    const hangzhouCafe = harness.app.repos.locations.create({
+      name: '杭州咖啡店',
       kind: 'cafe',
-      cityId: tokyo.id,
-      tags: ['cafe', 'tokyo']
+      cityId: hangzhou.id,
+      tags: ['cafe', 'hangzhou']
     });
     const builtinCafe = service.list().find((l) => l.kind === 'cafe' && l.cityId === homeCity.id)!;
 
-    // 刚去过本城咖啡店（anti-repeat），东京咖啡店成为唯一选择。
+    // 刚去过本城咖啡店（anti-repeat），杭州咖啡店成为唯一选择。
     harness.app.repos.locations.recordVisit({ locationId: builtinCafe.id, enteredAt: at.toISOString() });
     const result = service.onActivityResolved(
       { id: 'cafe', kind: 'out', locationAffinity: ['cafe'] } as never,
@@ -101,38 +101,35 @@ describe('location cities (LifeCity)', () => {
       null,
       null
     );
-    expect(result?.locationId).toBe(tokyoCafe.id);
+    expect(result?.locationId).toBe(hangzhouCafe.id);
     // 途中：城市还没切（到达才切）。
     expect(service.activeCity()?.id).toBe(homeCity.id);
-    expect(service.current()?.id).not.toBe(tokyoCafe.id);
+    expect(service.current()?.id).not.toBe(hangzhouCafe.id);
 
-    // 到达 → 城市切换 + 时区切换。
+    // 到达 → 城市切换；时区恒为注入的 Asia/Shanghai（单时区运行语义）。
     at = localTime('2026-08-08T10:20');
-    expect(service.current()?.id).toBe(tokyoCafe.id);
-    expect(service.activeCity()?.id).toBe(tokyo.id);
-    expect(service.timeZoneFor(service.current())).toBe('Asia/Tokyo');
-    // 时区影响本地小时：10:20(+08) 在东京是 11:20。
+    expect(service.current()?.id).toBe(hangzhouCafe.id);
+    expect(service.activeCity()?.id).toBe(hangzhou.id);
+    expect(service.timeZoneFor(service.current())).toBe('Asia/Shanghai');
     const { localHourAt } = await import('../src/core/location/tz.js');
-    expect(localHourAt(at, service.timeZoneFor(service.current()))).toBe(11);
+    expect(localHourAt(at, service.timeZoneFor(service.current()))).toBe(10);
   });
 
-  it('resolves timezone by priority: location.timeZone > city.timeZone > default', async () => {
+  it('runtime timezone is always the injected Asia/Shanghai (single-timezone semantics)', async () => {
     harness = await enabledHarness();
     const service = harness.app.services.location;
-    const tokyo = service.createCity({ name: '东京', country: '日本', timeZone: 'Asia/Tokyo' });
-    const ny = harness.app.repos.locations.create({
-      name: '纽约分店',
+    const hangzhou = service.createCity({ name: '杭州', region: '浙江', country: '中国' });
+    // 历史 DB 时区字段可兼容保留，但不参与运行语义。
+    const legacyTz = harness.app.repos.locations.create({
+      name: '老分店',
       kind: 'cafe',
-      cityId: tokyo.id,
+      cityId: hangzhou.id,
       timeZone: 'America/New_York'
     });
-    // 地点自带时区 > 城市时区。
-    expect(service.timeZoneFor(service.get(ny.id)!)).toBe('America/New_York');
-    // 城市时区 > 默认。
-    const tokyoLoc = harness.app.repos.locations.create({ name: '东京公园', kind: 'park', cityId: tokyo.id });
-    expect(service.timeZoneFor(service.get(tokyoLoc.id)!)).toBe('Asia/Tokyo');
-    // 无城市 → 默认。
-    const solo = harness.app.repos.locations.create({ name: '孤岛', kind: 'other' });
+    expect(service.timeZoneFor(service.get(legacyTz.id)!)).toBe('Asia/Shanghai');
+    const hzLoc = harness.app.repos.locations.create({ name: '杭州公园', kind: 'park', cityId: hangzhou.id });
+    expect(service.timeZoneFor(service.get(hzLoc.id)!)).toBe('Asia/Shanghai');
+    const solo = harness.app.repos.locations.create({ name: '无主地点', kind: 'other' });
     expect(service.timeZoneFor(service.get(solo.id)!)).toBe('Asia/Shanghai');
   });
 

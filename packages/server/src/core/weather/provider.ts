@@ -69,6 +69,12 @@ function num(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+/** 中文国家名 → ISO 3166-1 alpha-2（仅 provider 内部使用的极简映射）。 */
+const CN_ISO_CODES = new Map<string, string>([
+  ['中国', 'CN'],
+  ['中华人民共和国', 'CN']
+]);
+
 /** WMO weather code → 语义 condition。 */
 export function wmoCondition(code: number | null | undefined): WeatherCondition {
   if (code == null) return 'unknown';
@@ -126,7 +132,10 @@ export class OpenMeteoWeatherProvider implements WeatherProviderFull {
     const cached = this.coordCache.get(key);
     if (cached) return cached;
     const name = encodeURIComponent(location.city || location.region || '');
-    const country = location.country ? `&countryCode=${encodeURIComponent(location.country)}` : '';
+    // countryCode 是 ISO 3166-1 alpha-2（中国 → CN）。当前产品范围只有中国，
+    // 这里做最小内部映射，不新增国家/Geocoding 系统。
+    const code = CN_ISO_CODES.get(String(location.country ?? '').trim());
+    const country = code ? `&countryCode=${code}` : '';
     const url = `https://geocoding-api.open-meteo.com/v1/search?name=${name}${country}&count=1&language=zh&format=json`;
     const json = await this.getJson(url, signal) as { results?: Array<{ latitude: number; longitude: number }> };
     const hit = json.results?.[0];

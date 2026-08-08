@@ -68,4 +68,18 @@ describe('metrics (P2)', () => {
     const body = res.json() as { aggregates: Array<{ category: string; metric: string }> };
     expect(body.aggregates.length).toBeGreaterThanOrEqual(4);
   });
+
+  it('archives by the injected LIFE_TIME_ZONE, not UTC and not a constructor default', async () => {
+    harness = await createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: { METRICS_DASHBOARD_ENABLED: 'true', LIFE_TIME_ZONE: 'Asia/Shanghai' },
+      clock: () => new Date('2026-08-08T16:30:00.000Z') // 16:30 UTC = 次日 00:30 (+08)
+    });
+    harness.app.services.metrics.record('reply', 'success', 1);
+    const rows = harness.app.repos.metrics.daily('2026-08-08', '2026-08-09');
+    // 16:30Z 在 Asia/Shanghai 是 08-09 00:30 → 归档到本地次日。
+    expect(rows.some((r) => r.date === '2026-08-09' && r.metric === 'success' && r.sum_value === 1)).toBe(true);
+    expect(rows.some((r) => r.date === '2026-08-08')).toBe(false);
+  });
 });

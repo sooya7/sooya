@@ -125,6 +125,69 @@ describe('Life Admin API (P1)', () => {
     expect(body.attempts.some((a) => a.candidateId === 'cand-1' && a.status === 'blocked')).toBe(true);
   });
 
+  it('creates cities with server-fixed country=中国 and LIFE_TIME_ZONE', async () => {
+    harness = await createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', ADMIN_API_TOKEN: 'admin-test-token' }
+    });
+    const res = await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/admin/life/cities',
+      headers: ADMIN,
+      payload: { name: '杭州', region: '浙江', country: '日本', timeZone: 'Asia/Tokyo' }
+    });
+    expect(res.statusCode).toBe(200);
+    const city = (res.json() as { city: { name: string; country: string; region: string; timeZone: string } }).city;
+    // 用户传入的国家/时区被忽略：服务端固定中国 + LIFE_TIME_ZONE。
+    expect(city.country).toBe('中国');
+    expect(city.region).toBe('浙江');
+    expect(city.timeZone).toBe('Asia/Shanghai');
+    expect(city.name).toBe('杭州');
+  });
+
+  it('PATCH active:true routes through the canonical setActiveCity switch', async () => {
+    let at = localTime('2026-08-08T10:00');
+    harness = await createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', WEATHER_ENABLED: 'true', ADMIN_API_TOKEN: 'admin-test-token' },
+      clock: () => at
+    });
+    const service = harness.app.services.location;
+    const ningbo = service.activeCity()!;
+    expect(ningbo.name).toBe('宁波');
+    // 造一个在途行程（防瞬移）。
+    const cafe = service.list().find((l) => l.kind === 'cafe')!;
+    service.onActivityResolved({ id: 'cafe', kind: 'out', locationAffinity: ['cafe'] } as never, 'out', null, null);
+    expect(service.currentTravel()).toBeTruthy();
+
+    const created = await harness.app.server.inject({
+      method: 'POST',
+      url: '/api/admin/life/cities',
+      headers: ADMIN,
+      payload: { name: '杭州', region: '浙江' }
+    });
+    const hangzhouId = (created.json() as { city: { id: string } }).city.id;
+
+    const patched = await harness.app.server.inject({
+      method: 'PATCH',
+      url: `/api/admin/life/cities/${hangzhouId}`,
+      headers: ADMIN,
+      payload: { active: true }
+    });
+    expect(patched.statusCode).toBe(200);
+    // canonical 切换语义：active=杭州、movement 清空、builtin 归属迁移、Weather 跟随。
+    expect(service.activeCity()?.id).toBe(hangzhouId);
+    expect(service.currentTravel()).toBeNull();
+    const homeAfter = service.list().find((l) => l.key === 'home')!;
+    expect(homeAfter.cityId).toBe(hangzhouId);
+    expect(harness.app.services.world.weatherLocation()?.city).toBe('杭州');
+    // 审计留痕。
+    const audit = harness.app.repos.audit.list(20) as Array<{ category: string; action: string }>;
+    expect(audit.some((a) => a.category === 'life.city' && a.action === 'activated')).toBe(true);
+  });
+
   it('keeps the admin life endpoints behind the guard', async () => {
     harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { ADMIN_API_TOKEN: 'admin-test-token' } });
     const res = await harness.app.server.inject({ method: 'GET', url: '/api/admin/life/overview' });
