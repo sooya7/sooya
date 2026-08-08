@@ -20,10 +20,10 @@ import { localDateOfIso } from '../../util/time-zone.js';
 
 export interface WeatherLocation {
   key: string;
-  city?: string | null;
+  /** 国家（业务输入只允许 city + country；例：中国 / 宁波）。 */
+  country: string;
   region?: string | null;
-  lat?: number | null;
-  lng?: number | null;
+  city: string;
 }
 
 export interface WeatherProvider {
@@ -173,7 +173,7 @@ export class WeatherService {
     const localDate = daylightLocalDate(at, timeZone);
     const cached = this.repo.daylightFor(key, localDate);
     if (cached) return daylightFromRow(cached, at);
-    if (!this.isEnabled) return astronomyDaylight(location.lat, location.lng, at, timeZone, localDate);
+    if (!this.isEnabled) return astronomyDaylight(undefined, undefined, at, timeZone, localDate);
     try {
       const daylight = await this.provider!.daylight?.(location, signal) ?? null;
       if (daylight) {
@@ -187,7 +187,7 @@ export class WeatherService {
         return { ...daylight, isDaylight: computeIsDaylight(daylight.sunrise, daylight.sunset, at.toISOString()) };
       }
     } catch { /* 降级到天文估算/缺省 */ }
-    return astronomyDaylight(location.lat, location.lng, at, timeZone, localDate);
+    return astronomyDaylight(undefined, undefined, at, timeZone, localDate);
   }
 
   /** Synchronous best-known daylight (life scoring path); never blocks. */
@@ -197,7 +197,7 @@ export class WeatherService {
     const localDate = daylightLocalDate(at, timeZone);
     const row = this.repo.daylightFor(key, localDate);
     if (row) return daylightFromRow(row, at);
-    return astronomyDaylight(location.lat, location.lng, at, timeZone, localDate);
+    return astronomyDaylight(undefined, undefined, at, timeZone, localDate);
   }
 
   // ------------------------------------------------------------ refresh

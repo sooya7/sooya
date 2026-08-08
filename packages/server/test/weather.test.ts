@@ -32,6 +32,15 @@ function fakeProvider(condition: 'clear' | 'rain', fail = false, clock: () => Da
   };
 }
 
+/** Weather target for the harness's default (seeded) city — mirrors the
+ * app.ts wiring so cache keys match the city identity. */
+function cityTarget(app: SooyaApp): { key: string; country: string; region: string | null; city: string } {
+  const city = app.services.location.activeCity()!;
+  const country = city.country ?? '中国';
+  const region = city.region ?? null;
+  return { key: `${country}|${region ?? ''}|${city.name}`, country, region, city: city.name };
+}
+
 function enableWorld(app: SooyaApp): void {
   app.services.weather.setProvider(fakeProvider('clear'));
 }
@@ -55,8 +64,7 @@ describe('weather snapshot (P0)', () => {
     const spy = vi.fn(provider.current);
     harness.app.services.weather.setProvider({ ...provider, current: spy });
 
-    const location = harness.app.services.location.list().find((l) => l.kind === 'home')!;
-    const target = { key: location.id, city: location.city, region: location.region, lat: location.lat, lng: location.lng };
+    const target = cityTarget(harness.app);
 
     const first = await harness.app.services.weather.snapshotFor(target);
     expect(first.condition).toBe('clear');
@@ -84,10 +92,9 @@ describe('weather snapshot (P0)', () => {
       env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', WEATHER_ENABLED: 'true' },
       clock: () => now
     });
-    const provider = fakeProvider('rain');
+    const provider = fakeProvider('rain', false, () => now);
     harness.app.services.weather.setProvider(provider);
-    const location = harness.app.services.location.list().find((l) => l.kind === 'home')!;
-    const target = { key: location.id, city: location.city, region: location.region, lat: location.lat, lng: location.lng };
+    const target = cityTarget(harness.app);
     await harness.app.services.weather.snapshotFor(target);
 
     now = localTime('2026-08-08T14:00');
@@ -105,7 +112,7 @@ describe('weather snapshot (P0)', () => {
     });
     harness.app.services.weather.setProvider(fakeProvider('clear', true));
     const location = harness.app.services.location.list().find((l) => l.kind === 'home')!;
-    const result = await harness.app.services.weather.snapshotFor({ key: location.id });
+    const result = await harness.app.services.weather.snapshotFor({ key: '中国|浙江省|测试市', country: '中国', region: '浙江省', city: '测试市' });
     expect(result.condition).toBe('unknown');
   });
 
@@ -118,8 +125,7 @@ describe('weather snapshot (P0)', () => {
       clock: () => now
     });
     harness.app.services.weather.setProvider(fakeProvider('rain'));
-    const location = harness.app.services.location.list().find((l) => l.kind === 'home')!;
-    const target = { key: location.id };
+    const target = cityTarget(harness.app);
     await harness.app.services.weather.snapshotFor(target);
     await harness.app.services.weather.snapshotFor(target); // same episode
     await harness.app.services.weather.snapshotFor(target);
@@ -139,8 +145,7 @@ describe('weather snapshot (P0)', () => {
     });
     const weather = harness.app.services.weather as WeatherService;
     weather.setProvider(fakeProvider('rain', false, () => localTime('2026-08-08T10:00')));
-    const location = harness.app.services.location.list().find((l) => l.kind === 'home')!;
-    await weather.snapshotFor({ key: location.id });
+    await weather.snapshotFor(cityTarget(harness.app));
 
     // Rain + a park-affinity walk: the selector should prefer a covered spot.
     const before = harness.app.services.location.onActivityResolved(

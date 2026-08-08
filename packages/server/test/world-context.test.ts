@@ -205,7 +205,12 @@ describe('WorldContextService weather 快照同步路径', () => {
     harness.app.services.weather.setProvider(provider);
     const home = harness.app.services.location.list().find((l) => l.kind === 'home')!;
     harness.app.services.location.override(home.id, 'test: 建立当前位置');
-    await harness.app.services.weather.snapshotFor({ key: home.id });
+    // Weather identity is the active city — cache the same city key the
+    // WorldContext queries.
+    const city = harness.app.services.location.activeCity()!;
+    const country = city.country ?? '中国';
+    const region = city.region ?? null;
+    await harness.app.services.weather.snapshotFor({ key: `${country}|${region ?? ''}|${city.name}`, country, region, city: city.name });
     const world = harness.app.services.world;
     expect(world.snapshot().weatherCondition).toBe('clear');
     expect(world.snapshot().weather?.condition).toBe('clear');

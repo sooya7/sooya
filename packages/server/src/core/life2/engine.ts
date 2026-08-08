@@ -340,9 +340,11 @@ export class LifeSimEngine {
     }
     const themeTags = JSON.parse(theme.tone_tags_json) as string[];
     // Next phase: cached weather condition modifiers (never blocks on fetch).
-    const weatherLocation = this.location?.isEnabled ? this.location.current() : null;
-    const weatherQuery = weatherLocation
-      ? { key: weatherLocation.id, city: weatherLocation.city, region: weatherLocation.region, lat: weatherLocation.lat, lng: weatherLocation.lng }
+    // Weather target is the active city (city + country only), never a
+    // location id — city switches immediately change the weather identity.
+    const city = this.location?.isEnabled ? this.location.activeCity() : null;
+    const weatherQuery = city
+      ? { key: `${city.country ?? '中国'}|${city.region ?? ''}|${city.name}`, country: city.country ?? '中国', region: city.region ?? null, city: city.name }
       : null;
     const weatherCondition = weatherQuery && this.weather?.isEnabled
       ? this.weather.cachedCondition(weatherQuery)

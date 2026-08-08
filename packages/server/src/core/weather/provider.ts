@@ -35,11 +35,10 @@ export interface WeatherProviderEnv {
 
 export const DEFAULT_WEATHER_TIMEOUT_MS = 5000;
 
-/** 规范化缓存 key（与 service 的 locationKeyFor 逻辑一致）。 */
+/** 规范化缓存 key：按城市隔离（country|region|city）。城市切换后 key 变化，
+ * 旧城市缓存永远不会作为新城市的 fallback。 */
 export function weatherLocationKey(location: WeatherLocation): string {
-  if (location.key) return location.key;
-  if (location.lat != null && location.lng != null) return `${Math.round(location.lat * 10)},${Math.round(location.lng * 10)}`;
-  return location.city ?? location.region ?? 'unknown';
+  return [location.country, location.region, location.city].filter(Boolean).join('|');
 }
 
 const NOOP_WEATHER_PROVIDER: WeatherProviderFull = {
@@ -115,11 +114,26 @@ export class OpenMeteoWeatherProvider implements WeatherProviderFull {
     this.clock = opts.clock ?? (() => new Date());
   }
 
-  private coords(location: WeatherLocation): { lat: number; lng: number } {
-    if (location.lat == null || location.lng == null) {
-      throw new Error('open-meteo: 需要坐标（lat/lng）才能查询');
-    }
-    return { lat: location.lat, lng: location.lng };
+  private readonly coordCache = new Map<string, { lat: number; lng: number }>();
+
+  /**
+   * Resolves city+country to coordinates through open-meteo's geocoding
+   * endpoint. This is an internal provider detail — the business surface
+   * (Location/WorldContext/DB/Admin) only ever sees city + country.
+   */
+  private async coords(location: WeatherLocation, signal?: AbortSignal): Promise<{ lat: number; lng: number }> {
+    const key = weatherLocationKey(location);
+    const cached = this.coordCache.get(key);
+    if (cached) return cached;
+    const name = encodeURIComponent(location.city || location.region || '');
+    const country = location.country ? `&countryCode=${encodeURIComponent(location.country)}` : '';
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${name}${country}&count=1&language=zh&format=json`;
+    const json = await this.getJson(url, signal) as { results?: Array<{ latitude: number; longitude: number }> };
+    const hit = json.results?.[0];
+    if (!hit) throw new Error(`open-meteo: 未找到城市 ${location.city}`);
+    const coords = { lat: hit.latitude, lng: hit.longitude };
+    this.coordCache.set(key, coords);
+    return coords;
   }
 
   private async getJson(url: string, signal?: AbortSignal): Promise<OpenMeteoResponse> {
@@ -139,7 +153,7 @@ export class OpenMeteoWeatherProvider implements WeatherProviderFull {
   }
 
   async current(location: WeatherLocation, signal?: AbortSignal): Promise<WeatherSnapshot> {
-    const { lat, lng } = this.coords(location);
+    const { lat, lng } = await this.coords(location, signal);
     const url = `${this.baseUrl}/v1/forecast?latitude=${lat}&longitude=${lng}` +
       '&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,visibility,pressure_msl&timezone=auto';
     const json = await this.getJson(url, signal);
@@ -163,7 +177,7 @@ export class OpenMeteoWeatherProvider implements WeatherProviderFull {
   }
 
   async forecast(location: WeatherLocation, signal?: AbortSignal): Promise<WeatherForecast | null> {
-    const { lat, lng } = this.coords(location);
+    const { lat, lng } = await this.coords(location, signal);
     const url = `${this.baseUrl}/v1/forecast?latitude=${lat}&longitude=${lng}` +
       '&hourly=temperature_2m,precipitation,weather_code,wind_speed_10m' +
       '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&forecast_days=3&timezone=auto';
@@ -199,7 +213,7 @@ export class OpenMeteoWeatherProvider implements WeatherProviderFull {
   }
 
   async daylight(location: WeatherLocation, signal?: AbortSignal): Promise<DaylightSnapshot | null> {
-    const { lat, lng } = this.coords(location);
+    const { lat, lng } = await this.coords(location, signal);
     const url = `${this.baseUrl}/v1/forecast?latitude=${lat}&longitude=${lng}` +
       '&daily=sunrise,sunset&forecast_days=1&timezone=auto';
     const json = await this.getJson(url, signal);

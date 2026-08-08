@@ -566,26 +566,6 @@ export function registerAdminRoutes(app: SooyaApp): void {
   });
 
   // 版本对比：currentDays 为当前窗口，previousDays 为其前等长基线窗口。
-  server.get('/api/admin/metrics/release-compare', guard, async (req) => {
-    const q = req.query as { currentDays?: string; previousDays?: string };
-    const currentDays = Math.max(1, Math.min(90, Number(q.currentDays ?? 7)));
-    const previousDays = Math.max(1, Math.min(90, Number(q.previousDays ?? 7)));
-    return { comparison: app.services.metrics.releaseComparisonDays(currentDays, previousDays) };
-  });
-
-  // 导出：只含指标名与数值，绝不包含私人正文。format=csv → text/csv；默认 json。
-  server.get('/api/admin/metrics/export', guard, async (req, reply) => {
-    const q = req.query as { format?: string; days?: string };
-    const days = Math.max(1, Math.min(90, Number(q.days ?? 7)));
-    const rows = app.services.metrics.exportRows(days);
-    if (q.format === 'csv') {
-      reply.header('content-type', 'text/csv; charset=utf-8');
-      reply.header('content-disposition', 'attachment; filename="metrics.csv"');
-      return app.services.metrics.toCsv(rows);
-    }
-    return { metrics: rows };
-  });
-
   server.get('/api/admin/system', guard, async () => ({
     version: app.state.version,
     startedAt: app.state.startedAt,

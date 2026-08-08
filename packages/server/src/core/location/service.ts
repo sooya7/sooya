@@ -84,8 +84,9 @@ export class LocationService {
     private readonly repo: LifeLocationRepo,
     private readonly audit: AuditRepo,
     private readonly clock: () => Date = () => new Date(),
-    /** Optional next-phase weather condition getter (cached, never blocks). */
-    private readonly weatherConditionFor?: (location: LifeLocation | null) => string | null,
+    /** Optional weather condition getter keyed on the ACTIVE CITY (cached,
+     * never blocks) — the weather identity is the city, not a location id. */
+    private readonly weatherConditionFor?: () => string | null,
     opts: LocationServiceOptions = {}
   ) {
     this.defaultTimeZone = opts.timeZone ?? DEFAULT_TIME_ZONE;
@@ -342,7 +343,7 @@ export class LocationService {
     this.settleTravelIfDue();
     const current = this.repo.currentState();
     const currentLocation = current ? this.get(current.location_id) ?? null : null;
-    const weatherCondition = this.weatherConditionFor?.(currentLocation ?? this.homeLocation()) ?? null;
+    const weatherCondition = this.weatherConditionFor?.() ?? null;
     const hour = localHourAt(now, this.timeZoneFor(currentLocation));
     const threadTags = this.threadsProvider ? this.threadLocationTags(this.threadsProvider()) : [];
     const selection = scoreLocationCandidates(

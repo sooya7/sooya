@@ -7,6 +7,7 @@ import { severeWeatherKinds } from '../src/core/weather/severe.js';
 import { astronomyDaylight, computeIsDaylight } from '../src/core/weather/daylight.js';
 import { scoreActivity, defById } from '../src/core/life2/activities.js';
 import type { WeatherProviderFull } from '../src/core/weather/service.js';
+import type { SooyaApp } from '../src/app.js';
 import type { WeatherSnapshot } from '../src/db/repos/weather.repo.js';
 import type { LifeV2Repo } from '../src/db/repos/life-v2.repo.js';
 import { zonedParts } from '../src/util/time-zone.js';
@@ -21,15 +22,32 @@ function localTime(iso: string): Date {
   return new Date(`${iso}+08:00`);
 }
 
-/** open-meteo 假响应 fetch。 */
+/** open-meteo 假响应 fetch：geocoding 端点返回坐标，其余返回天气 JSON。 */
 function omFetch(json: unknown): typeof fetch {
-  return (async () => new Response(JSON.stringify(json), {
-    status: 200,
-    headers: { 'content-type': 'application/json' }
-  })) as typeof fetch;
+  return (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('geocoding-api.open-meteo.com')) {
+      return new Response(JSON.stringify({ results: [{ latitude: 29.8683, longitude: 121.544 }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify(json), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  }) as typeof fetch;
 }
 
-const SHANGHAI = { key: 'shanghai', lat: 31.23, lng: 121.47 };
+const SHANGHAI = { key: '中国|上海市|上海', country: '中国', region: '上海市', city: '上海' };
+
+/** Weather target for the harness's seeded default city (mirrors app wiring). */
+function cityTarget(app: SooyaApp): { key: string; country: string; region: string | null; city: string } {
+  const city = app.services.location.activeCity()!;
+  const country = city.country ?? '中国';
+  const region = city.region ?? null;
+  return { key: `${country}|${region ?? ''}|${city.name}`, country, region, city: city.name };
+}
 
 /** 测试用的 LifeV2Repo 桩：无历史使用记录。 */
 function usageStub(): LifeV2Repo {
@@ -115,9 +133,13 @@ describe('provider factory + open-meteo adapter', () => {
     expect(snapshot.stale).toBe(false);
   });
 
-  it('open-meteo 缺坐标时抛错（链会继续降级，不炸出服务层）', async () => {
-    const provider = new OpenMeteoWeatherProvider({ fetchImpl: omFetch({ current: {} }) });
-    await expect(provider.current({ key: 'no-coords' })).rejects.toThrow(/坐标/);
+  it('open-meteo 城市解析失败时抛错（链会继续降级，不炸出服务层）', async () => {
+    const noResults: typeof fetch = (async () => new Response(JSON.stringify({ results: [] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    })) as typeof fetch;
+    const provider = new OpenMeteoWeatherProvider({ fetchImpl: noResults });
+    await expect(provider.current({ key: 'x', country: '中国', city: '不存在市' })).rejects.toThrow(/未找到城市/);
   });
 
   it('open-meteo forecast 返回 12 逐小时 + 3 每日，severe 判定正确', async () => {
@@ -194,7 +216,7 @@ describe('provider factory + open-meteo adapter', () => {
 
 describe('FallbackWeatherProvider 降级链', () => {
   const cache: WeatherCacheReader = {
-    latest: (key) => key === 'k'
+    latest: (key) => key === 'k' || key === '中国|测试'
       ? {
           location_key: 'k',
           observed_at: '2026-08-07T10:00:00.000Z',
@@ -226,7 +248,7 @@ describe('FallbackWeatherProvider 降级链', () => {
   it('primary/secondary 全失败 → 缓存快照（stale + degraded）', async () => {
     const fail: WeatherProviderFull = { name: 'p', configured: true, current: async () => { throw new Error('boom'); } };
     const chain = new FallbackWeatherProvider({ primary: fail, secondary: fail, cache });
-    const snapshot = await chain.current({ key: 'k' });
+    const snapshot = await chain.current({ key: 'k', country: '中国', city: '测试' });
     expect(snapshot.condition).toBe('rain');
     expect(snapshot.provider).toBe('cache');
     expect(snapshot.stale).toBe(true);
@@ -295,7 +317,7 @@ describe('WeatherService forecast / daylight（harness）', () => {
     const spyForecast = vi.fn(provider.forecast!);
     weather.setProvider({ ...provider, forecast: spyForecast });
     const location = harness.app.services.location.list().find((l) => l.kind === 'home')!;
-    const target = { key: location.id };
+    const target = cityTarget(harness.app);
 
     const first = await weather.forecastFor(target);
     expect(first).not.toBeNull();
@@ -329,7 +351,7 @@ describe('WeatherService forecast / daylight（harness）', () => {
     const weather = harness.app.services.weather;
     weather.setProvider(fakeFullProvider(() => now));
     const location = harness.app.services.location.list().find((l) => l.kind === 'home')!;
-    const target = { key: location.id };
+    const target = cityTarget(harness.app);
 
     const first = await weather.daylightFor(target, now, 'Asia/Shanghai');
     expect(first).not.toBeNull();
@@ -344,12 +366,9 @@ describe('WeatherService forecast / daylight（harness）', () => {
     const sync = weather.cachedDaylight(target, now, 'Asia/Shanghai');
     expect(sync).not.toBeNull();
 
-    // 无缓存 + 有坐标 → 天文估算（上海 2026-08-08 日出约 05:12，容差 ±20 分钟）。
-    const astro = weather.cachedDaylight({ key: 'astro', lat: 31.23, lng: 121.47 }, now, 'Asia/Shanghai');
-    expect(astro).not.toBeNull();
-    const rise = zonedParts(new Date(astro!.sunrise), 'Asia/Shanghai');
-    expect(rise.hour * 60 + rise.minute).toBeGreaterThanOrEqual(4 * 60 + 52);
-    expect(rise.hour * 60 + rise.minute).toBeLessThanOrEqual(5 * 60 + 32);
+    // 无缓存 + 无 provider：business 面没有坐标 → daylight 为 null（不编造）。
+    const astro = weather.cachedDaylight({ key: '中国|上海市|上海', country: '中国', region: '上海市', city: '上海' }, now, 'Asia/Shanghai');
+    expect(astro).toBeNull();
   });
 });
 
@@ -410,7 +429,7 @@ describe('语义事件 episode 去重（含 typo 修复与温度事件）', () =
     });
     const weather = harness.app.services.weather;
     const location = harness.app.services.location.list().find((l) => l.kind === 'home')!;
-    const target = { key: location.id };
+    const target = cityTarget(harness.app);
     // 每次快照间隔推进 >120 分钟（超过 stale 窗口），强制 await refresh。
     const advance = (minutes: number): void => { now = new Date(now.getTime() + minutes * 60_000); };
     const providerFor = (condition: WeatherSnapshot['condition'], temp?: number): WeatherProviderFull => ({
@@ -486,7 +505,7 @@ describe('provider 故障不影响 chat', () => {
     const weather = harness.app.services.weather;
     weather.setProvider({ name: 'boom', configured: true, current: async () => { throw new Error('x'); } });
     const location = harness.app.services.location.list().find((l) => l.kind === 'home')!;
-    const snapshot = await weather.snapshotFor({ key: location.id });
+    const snapshot = await weather.snapshotFor(cityTarget(harness.app));
     expect(snapshot.condition).toBe('unknown');
     expect(snapshot.stale).toBe(true);
 

@@ -248,10 +248,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       proactiveMode: policy.proactiveMode ?? DEFAULT_LIFE_CONFIG.proactiveMode
     };
   };
-  const location = new LocationService(repos.locations, repos.audit, opts.clock, (loc) => {
-    if (!loc) return null;
-    return weather.cachedCondition({ key: loc.id, city: loc.city, region: loc.region, lat: loc.lat, lng: loc.lng });
-  });
+  // Weather identity is the active city (city + country), never a location id.
+  let location: LocationService;
+  const cityWeatherCondition = (): string | null => {
+    const city = location.activeCity();
+    if (!city) return null;
+    const country = city.country ?? '中国';
+    const region = city.region ?? null;
+    return weather.cachedCondition({ key: `${country}|${region ?? ''}|${city.name}`, country, region, city: city.name });
+  };
+  location = new LocationService(repos.locations, repos.audit, opts.clock, cityWeatherCondition);
   location.setEnabled(env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED);
   const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
   weather.setEnabled(env.WORLD_CONTEXT_ENABLED && env.WEATHER_ENABLED);

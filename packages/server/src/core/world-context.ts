@@ -51,9 +51,7 @@ export class WorldContextService {
     const now = this.clock();
     const current = this.location.isEnabled ? this.location.current() : null;
     const timeZone = this.location.timeZoneFor(current) ?? this.defaultTimeZone;
-    const weatherLocation: WeatherLocation | null = current
-      ? { key: current.id, city: current.city, region: current.region, lat: current.lat, lng: current.lng }
-      : null;
+    const weatherLocation: WeatherLocation | null = this.weatherTarget();
     const condition = weatherLocation ? this.weather.cachedCondition(weatherLocation) : null;
 
     let weather: WeatherSnapshot | null = null;
@@ -96,12 +94,22 @@ export class WorldContextService {
     } catch { return null; }
   }
 
-  /** The current location as a weather query target, when known. */
+  /**
+   * Weather target: the ACTIVE CITY (city + country only) — never a location
+   * id. City switches immediately change the weather identity; caches are
+   * isolated per city key so the old city is never a fallback.
+   */
   weatherLocation(): WeatherLocation | null {
-    const current = this.location.isEnabled ? this.location.current() : null;
-    return current
-      ? { key: current.id, city: current.city, region: current.region, lat: current.lat, lng: current.lng }
-      : null;
+    return this.weatherTarget();
+  }
+
+  private weatherTarget(): WeatherLocation | null {
+    if (!this.location.isEnabled) return null;
+    const city = this.location.activeCity();
+    if (!city) return null;
+    const country = city.country ?? '中国';
+    const region = city.region ?? null;
+    return { key: `${country}|${region ?? ''}|${city.name}`, country, region, city: city.name };
   }
 
   /** Refreshes the weather for the current location (never blocks callers). */
