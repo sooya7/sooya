@@ -55,7 +55,7 @@ describe('metrics (P2)', () => {
     expect(serialized).not.toContain('晚安');
     expect(serialized).not.toContain('msg_');
     for (const row of daily) {
-      expect(Object.keys(row).sort()).toEqual(['category', 'count', 'date', 'last_updated', 'metric', 'sum_value']);
+      expect(Object.keys(row).sort()).toEqual(['category', 'count', 'date', 'last_updated', 'max_value', 'metric', 'min_value', 'sum_value']);
     }
 
     // Admin endpoint exposes the aggregates.

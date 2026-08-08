@@ -1164,6 +1164,32 @@ export const MIGRATIONS: Migration[] = [
         );
       `);
     }
+  },
+  {
+    /*
+     * TEMP — Agent C (metrics/experiments full version), 本地测试用。
+     * 最终 DDL 由 Integration 统一重写为 v26/v27（见 INTEGRATION-NOTES-observability.md
+     * 的 MIGRATION_NEEDS 段）。版本号 903+ 为本地临时段，不与正式版本冲突。
+     */
+    version: 903,
+    name: 'tmp_observability_full',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE metric_daily ADD COLUMN min_value REAL;
+        ALTER TABLE metric_daily ADD COLUMN max_value REAL;
+
+        CREATE TABLE metric_distributions (
+          date     TEXT NOT NULL,
+          category TEXT NOT NULL,
+          metric   TEXT NOT NULL,
+          bucket   REAL NOT NULL,
+          count    INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (date, category, metric, bucket)
+        );
+
+        ALTER TABLE experiments ADD COLUMN rollout_percent INTEGER NOT NULL DEFAULT 100 CHECK (rollout_percent IN (10, 25, 50, 100));
+      `);
+    }
   }
 ];
 

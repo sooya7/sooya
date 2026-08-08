@@ -126,4 +126,37 @@ describe('shadow runtime (P3)', () => {
     expect(body.runs.length).toBeGreaterThanOrEqual(1);
     expect(body.runs.some((r) => r.subsystem === 'life.location_selector')).toBe(true);
   });
+
+  it('status=shadow 时 canonical 决策与无实验完全一致（byte-equivalent）', async () => {
+    // 两个 harness 的唯一差异：B 存在一个 status=shadow 的实验。
+    // 修复前 variantForSubsystem 在 shadow 状态会给 canonical 返回实验变体
+    // （bug）；修复后 canonicalVariantForSubsystem 永远 'control'，
+    // 因此 canonical 决策必须字节级一致。
+    const make = () => createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: { ...SHADOW_ENV, EXPERIMENTS_ENABLED: 'true' },
+      clock: () => localTime('2026-08-08T10:00')
+    });
+    const plain = await make();
+    const plainResult = plain.app.services.life.tick();
+    await plain.cleanup();
+
+    harness = await make();
+    const experiments = harness.app.services.experiments;
+    const created = experiments.create('连续性权重', 'life.continuity_weight', ['x1', 'x1.5'], 'day');
+    expect(experiments.setStatus(created.id, 'shadow').ok).toBe(true);
+
+    // Canonical 隔离：canonical 永远 'control'；shadow 采样才拿实验变体。
+    expect(experiments.canonicalVariantForSubsystem('life.continuity_weight')).toBe('control');
+    expect(experiments.variantForSubsystem('life.continuity_weight')).toBe('control');
+    const sampled = experiments.shadowVariantForSubsystem('life.continuity_weight');
+    expect(['x1', 'x1.5']).toContain(sampled);
+
+    const result = harness.app.services.life.tick();
+    // 字节级一致：整个 tick 结果 JSON 完全相等。
+    expect(JSON.stringify(result)).toBe(JSON.stringify(plainResult));
+    // 同时直接对比 engine 消费点（canonical 变体消费）的取值。
+    expect(experiments.canonicalVariantFor(created.id)).toBe('control');
+  });
 });
