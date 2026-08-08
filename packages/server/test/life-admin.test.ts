@@ -93,10 +93,20 @@ describe('Life Admin API (P1)', () => {
       env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', WEATHER_ENABLED: 'true', ENABLE_LIFE_ENGINE: 'true', ADMIN_API_TOKEN: 'admin-test-token' },
       clock: () => localTime('2026-08-08T10:00')
     });
-    // Move her somewhere first so the overview has a location to report.
+    // Move her somewhere first so the overview has a location to report
+    // (anti-teleport: the trip settles once expectedArriveAt passes).
+    let now = localTime('2026-08-08T10:00');
+    harness = await createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', WEATHER_ENABLED: 'true', ENABLE_LIFE_ENGINE: 'true', ADMIN_API_TOKEN: 'admin-test-token' },
+      clock: () => now
+    });
     const locations = harness.app.services.location.list();
     const cafe = locations.find((l) => l.kind === 'cafe')!;
     harness.app.services.location.onActivityResolved({ id: 'cafe', kind: 'out', locationAffinity: ['cafe'] } as never, 'out', null, null);
+    now = localTime('2026-08-08T10:30');
+    harness.app.services.location.current();
     expect(harness.app.services.location.current()?.id).toBe(cafe.id);
     const res = await harness.app.server.inject({ method: 'GET', url: '/api/admin/life/overview', headers: ADMIN });
     expect(res.statusCode).toBe(200);
