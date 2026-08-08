@@ -1,4 +1,5 @@
 import { FormEvent, Fragment, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { MetricsSummary } from './MetricsSummary.js';
 import { ApiError } from '../lib/api.js';
 import { useAutoNotice } from '../lib/autoNotice.js';
 import { navigate } from '../lib/navigation.js';
@@ -739,6 +740,7 @@ function Overview({ data, counts, onRefresh }: { data: Dashboard; counts: { avai
     <section className="admin-summary">
       {tiles.map((tile) => <div className="admin-summary-tile" key={tile.label}><div className="admin-summary-top"><span>{tile.label}</span><span className="admin-summary-icon"><Icon name={tile.icon} /></span></div><strong>{tile.value}</strong><small>{tile.detail}</small></div>)}
     </section>
+    <MetricsSummary />
   </>;
 }
 

@@ -36,6 +36,18 @@ export interface MessageContext { target: ChatMessage; messages: ChatMessage[]; 
 export interface MessageSearchHit { message: ChatMessage; snippet: string; matchedPartId: string | null; }
 /** 首屏一次性载荷：会话 + 最新一页消息 + 贴纸 + 她正在做什么。 */
 export interface BootstrapInfo { conversation: ConversationInfo; messages: { messages: ChatMessage[]; hasMore: boolean; lastEventSeq: number; lastMessageSeq: number; oldestSeq: number | null }; stickers: StickerInfo[]; life: LifeState; }
+export interface VisibleThought {
+  id: string;
+  messageId: string;
+  batchId: string;
+  revision: number;
+  kind: 'inner_monologue' | 'decision_summary';
+  text: string;
+  visibility: 'user' | 'admin';
+  status: 'generating' | 'completed' | 'cancelled' | 'failed';
+  createdAt: string;
+}
+
 export const api = {
   bootstrap: () => request<BootstrapInfo>('/api/bootstrap'),
   messages: (opts: { limit?: number; before?: number; since?: number } = {}) => { const params = new URLSearchParams(); if (opts.limit) params.set('limit', String(opts.limit)); if (opts.before !== undefined) params.set('before', String(opts.before)); if (opts.since !== undefined) params.set('since', String(opts.since)); return request<{ messages: ChatMessage[]; hasMore: boolean; nextSince?: number; lastEventSeq: number; lastMessageSeq: number; oldestSeq: number | null }>(`/api/messages?${params.toString()}`); },
@@ -49,7 +61,9 @@ export const api = {
   upload: async (files: Array<{ file: File | Blob; field: 'image' | 'file'; name?: string }>, options: { signal?: AbortSignal } = {}) => { const form = new FormData(); for (const f of files) form.append(f.field, f.file, f.name ?? (f.file instanceof File ? f.file.name : 'upload')); return request<{ media: MediaRef[]; failed: Array<{ filename: string; error: string; code?: string }> }>('/api/media', { method: 'POST', body: form, signal: options.signal }); },
   capabilities: () => request<{ capabilities: Record<string, { configured: boolean; ok: boolean; detail?: string }>; stickers: { available: number; total: number } }>('/api/capabilities'),
   life: () => request<{ activity: string; kind: string; mood: string; startedAt: string; endsAt: string; recent: Array<{ activity: string; startedAt: string; endedAt: string }> }>('/api/life'),
-  events: (since: number) => request<{ events: Array<Record<string, unknown>>; lastEventSeq: number }>(`/api/events?since=${since}`)
+  events: (since: number) => request<{ events: Array<Record<string, unknown>>; lastEventSeq: number }>(`/api/events?since=${since}`),
+  /** User-visible inner thought for a message — chat token auth, may 404. */
+  visibleThought: (messageId: string, signal?: AbortSignal) => request<{ thought: VisibleThought | null }>(`/api/thoughts/${encodeURIComponent(messageId)}`, { signal })
 };
 /** @deprecated Render protected media through useAuthenticatedMedia instead. */
 export function mediaUrl(url: string): string { return credentialFreeMediaPath(url); }

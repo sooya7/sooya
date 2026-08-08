@@ -452,7 +452,8 @@ function WeatherSection() {
   const { data: weatherData, error: weatherError, reload: reloadWeather } = useAdmin(useCallback(() => adminApi.weatherStatus(), []));
   const { data: forecastData, error: forecastError, reload: reloadForecast } = useAdmin(useCallback(() => adminApi.weatherForecast(), []));
   const [, setNotice] = useAutoNotice();
-  const [newCity, setNewCity] = useState({ name: '', region: '', country: '', timeZone: 'Asia/Shanghai' });
+  // 产品范围：中国城市、统一 Asia/Shanghai——国家/时区由服务端固定。
+  const [newCity, setNewCity] = useState({ name: '', region: '' });
   const [refreshing, setRefreshing] = useState(false);
 
   const status = weatherData;
@@ -463,14 +464,14 @@ function WeatherSection() {
 
   const createCity = async (event: FormEvent) => {
     event.preventDefault();
-    if (!newCity.name.trim() || !newCity.timeZone.trim()) {
-      setNotice('城市名称与时区必填');
+    if (!newCity.name.trim()) {
+      setNotice('城市名称必填');
       return;
     }
     try {
-      await adminApi.createCity({ name: newCity.name.trim(), region: newCity.region.trim() || undefined, country: newCity.country.trim() || undefined, timeZone: newCity.timeZone.trim() });
-      setNewCity({ name: '', region: '', country: '', timeZone: 'Asia/Shanghai' });
-      setNotice('城市已创建（写入审计）');
+      await adminApi.createCity({ name: newCity.name.trim(), region: newCity.region.trim() || undefined });
+      setNewCity({ name: '', region: '' });
+      setNotice('城市已创建（中国 · 北京时间，写入审计）');
       reloadCities();
     } catch (err) { setNotice(err instanceof ApiError ? err.message : String(err)); }
   };
@@ -507,8 +508,7 @@ function WeatherSection() {
         <form className="admin-form" onSubmit={(e) => void createCity(e)} aria-label="新建城市">
           <input value={newCity.name} onChange={(e) => setNewCity((c) => ({ ...c, name: e.target.value }))} placeholder="城市名（如 上海）" required aria-label="城市名" />
           <input value={newCity.region} onChange={(e) => setNewCity((c) => ({ ...c, region: e.target.value }))} placeholder="地区（可选）" aria-label="地区" />
-          <input value={newCity.country} onChange={(e) => setNewCity((c) => ({ ...c, country: e.target.value }))} placeholder="国家（可选）" aria-label="国家" />
-          <input value={newCity.timeZone} onChange={(e) => setNewCity((c) => ({ ...c, timeZone: e.target.value }))} placeholder="时区（IANA）" required aria-label="时区" />
+          <span className="muted">固定：中国 · 北京时间（Asia/Shanghai）</span>
           <button type="submit">新建</button>
         </form>
         {citiesError && <AdminState kind="error" message={citiesError} onRetry={reloadCities} />}
@@ -534,7 +534,7 @@ function WeatherSection() {
       </section>
 
       <section className="weather-card" aria-labelledby="weather-travel-title">
-        <h3 id="weather-travel-title">行程</h3>
+        <h3 id="weather-travel-title">移动中</h3>
         {travelError && <AdminState kind="error" message={travelError} onRetry={reloadTravel} />}
         {!travelError && travelData === null && <AdminState kind="loading" />}
         {!travelError && travelData !== null && !travel && <AdminState kind="empty" message="当前没有行程。" />}

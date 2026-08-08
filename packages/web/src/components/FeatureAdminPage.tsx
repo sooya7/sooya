@@ -201,7 +201,7 @@ export function LifeAdminLink() {
   return (
     <span className="admin-inline-links">
       <a className="admin-inline-link" href="/admin/life" data-testid="life-admin-entry">Life 管理中心 ›</a>
-      <a className="admin-inline-link" href="/admin/metrics" data-testid="metrics-entry">Metrics 仪表盘 ›</a>
+      <a className="admin-inline-link" href="/admin" data-testid="metrics-entry">系统概览（运行指标）›</a>
     </span>
   );
 }

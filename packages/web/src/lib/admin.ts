@@ -301,8 +301,6 @@ export interface GeocodeMatch {
   region?: string | null;
   country?: string | null;
   timeZone?: string | null;
-  lat?: number | null;
-  lng?: number | null;
 }
 
 /* ---- Next phase: metrics ---- */
@@ -418,9 +416,10 @@ export const adminApi = {
     adminRequest<{ deleted: boolean }>(`/api/admin/backups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   /* ---- Next phase (frozen contract §2): life cities / travel / geocode ---- */
   lifeCities: () => adminRequest<{ cities: LifeCity[] }>('/api/admin/life/cities'),
-  createCity: (input: { name: string; region?: string; country?: string; timeZone: string }) =>
+  // 产品范围：中国城市、统一 Asia/Shanghai——country/timeZone 由服务端固定。
+  createCity: (input: { name: string; region?: string }) =>
     adminRequest<{ city: LifeCity }>('/api/admin/life/cities', { method: 'POST', body: input }),
-  updateCity: (id: string, patch: Partial<Pick<LifeCity, 'name' | 'region' | 'country' | 'timeZone' | 'active'>>) =>
+  updateCity: (id: string, patch: Partial<Pick<LifeCity, 'name' | 'region' | 'active'>>) =>
     adminRequest<{ city: LifeCity }>(`/api/admin/life/cities/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
   lifeTravel: () => adminRequest<{ travel: TravelState | null }>('/api/admin/life/travel'),
   /* ---- Next phase: weather ---- */
