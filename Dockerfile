@@ -9,7 +9,7 @@
 # npm only installs workspace dependencies reliably here when `--workspaces` is
 # explicit. Preserve both the hoisted root tree and the server-local tree so
 # Node resolves packages exactly as it did during installation.
-FROM node:20-bookworm-slim AS prod-deps
+FROM node:22-bookworm-slim AS prod-deps
 WORKDIR /prod
 
 RUN apt-get update \
@@ -25,11 +25,11 @@ RUN npm ci --omit=dev --workspaces --include-workspace-root --build-from-source=
   && npm cache clean --force
 
 # ----------------------------------------------------------------- builder --
-FROM node:20-bookworm-slim AS builder
+FROM node:22-bookworm-slim AS builder
 WORKDIR /build
 
 # better-sqlite3 is compiled from source so tests/builds use the same ABI as the
-# final Node 20 runtime image.
+# final Node 22 runtime image.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
   && rm -rf /var/lib/apt/lists/*
@@ -48,7 +48,7 @@ RUN npm run build -w @sooya/server \
   && npm run build -w @sooya/web
 
 # ----------------------------------------------------------------- runtime --
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update \

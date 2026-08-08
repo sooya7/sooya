@@ -22,6 +22,7 @@ export default defineConfig({
   plugins: [stripShebang()],
   test: {
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.ts'],
-    environment: 'node'
+    environment: 'node',
+    setupFiles: ['src/test/setup.ts']
   }
 });
