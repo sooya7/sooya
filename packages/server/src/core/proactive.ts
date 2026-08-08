@@ -189,40 +189,35 @@ export class ProactiveComposer {
         const parts: CreatePartInput[] = [{ type: 'text', text, status: 'sent' }];
         if (prepared.part) parts.push(prepared.part);
         try {
-          // P1-4: the attempt is marked 'sent' in the SAME transaction as the
-          // message; the partial unique index on (candidate_id) WHERE
-          // status='sent' rejects a concurrent sender, rolling the message
-          // back with it.
-          const persisted = this.deps.messages.inTransaction(() => {
-            const created = this.deps.messages.createInTransaction({
-              role: 'assistant',
-              status: 'sent',
-              parts,
-              meta: {
-                proactive: true,
-                proactiveAttemptId: attempt.id,
-                proactiveCandidateId: candidate.id,
-                lifeLogId: candidate.id,
-                activity: candidate.activity,
-                proactiveMode: prepared.finalMode,
-                ...(prepared.fallbackReason ? { fallbackReason: prepared.fallbackReason } : {})
-              }
-            });
-            if (!created.created) throw new Error('proactive message unexpectedly duplicated');
-            this.deps.attempts.update(attempt.id, {
-              status: 'sent',
-              blockedReason: null,
-              finalMode: prepared.finalMode,
-              fallbackReason: prepared.fallbackReason,
-              messageId: created.message.id,
-              sendSuccess: true,
-              detail: { mediaPersisted: Boolean(prepared.part), pushEnqueued: false }
-            });
-            return {
-              message: created.message,
-              event: this.deps.bus.persist('message.received', { message: created.message })
-            };
+          // P1-4: proactive messages are persisted ONLY through the reply
+          // coordinator (publishProactiveMessage): the attempt is marked
+          // 'sent' in the SAME transaction as the message, and the partial
+          // unique index on (candidate_id) WHERE status='sent' rejects a
+          // concurrent sender, rolling the message back with it.
+          const persisted = this.deps.coordinator.publishProactiveMessage({
+            parts,
+            meta: {
+              proactive: true,
+              proactiveAttemptId: attempt.id,
+              proactiveCandidateId: candidate.id,
+              lifeLogId: candidate.id,
+              activity: candidate.activity,
+              proactiveMode: prepared.finalMode,
+              ...(prepared.fallbackReason ? { fallbackReason: prepared.fallbackReason } : {})
+            },
+            onPersisted: (message) => {
+              this.deps.attempts.update(attempt.id, {
+                status: 'sent',
+                blockedReason: null,
+                finalMode: prepared.finalMode,
+                fallbackReason: prepared.fallbackReason,
+                messageId: message.id,
+                sendSuccess: true,
+                detail: { mediaPersisted: Boolean(prepared.part), pushEnqueued: false }
+              });
+            }
           });
+          if (!persisted) throw new Error('proactive message unexpectedly duplicated');
           if (prepared.stickerId) this.deps.stickers.markUsed(prepared.stickerId);
           this.deps.life.markShared(candidate.id);
           this.deps.bus.fanout(persisted.event);

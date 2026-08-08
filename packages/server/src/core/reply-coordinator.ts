@@ -1,9 +1,11 @@
 import type { EventBus } from '../events/bus.js';
+import type { StreamEvent } from './types.js';
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { DbLike } from '../db/handle.js';
 import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { ReplyBatchRepo, ReplyBatchRow, AppendAction } from '../db/repos/reply-batch.repo.js';
 import type { ChatMessage, ReplyFailure } from './types.js';
+import type { CreatePartInput } from '../db/repos/message.repo.js';
 import type { ReplyOptions, ReplyOutcome, Replier } from './replier.js';
 import type { ThoughtsBridge } from './thoughts/bridge.js';
 import { redactDiagnostic, type PublicFailure } from './public-error.js';
@@ -216,6 +218,38 @@ export class ReplyCoordinator {
     this.deps.bus.publish('reply.batch.queued', { batchId, revision: batch.revision });
     this.schedule(batch, false);
     return batch;
+  }
+
+  /**
+   * P0-1: the ONLY place a proactive assistant message may be persisted.
+   * The proactive task composes content and media; the coordinator owns the
+   * atomic write (message + attempt callback + event in one transaction) so
+   * Proactive/Life services never write assistant messages directly.
+   */
+  publishProactiveMessage(input: {
+    parts: CreatePartInput[];
+    meta: Record<string, unknown>;
+    /** Runs inside the same transaction (attempt bookkeeping, sent-once). */
+    onPersisted(message: ChatMessage): void;
+  }): { message: ChatMessage; event: StreamEvent } | null {
+    try {
+      return this.deps.messages.inTransaction(() => {
+        const created = this.deps.messages.createInTransaction({
+          role: 'assistant',
+          status: 'sent',
+          parts: input.parts,
+          meta: input.meta
+        });
+        if (!created.created) throw new Error('proactive message unexpectedly duplicated');
+        input.onPersisted(created.message);
+        return {
+          message: created.message,
+          event: this.deps.bus.persist('message.received', { message: created.message })
+        };
+      });
+    } catch {
+      return null;
+    }
   }
 
   /**
