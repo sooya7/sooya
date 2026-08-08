@@ -88,7 +88,9 @@ test('sends text and receives a streamed reply', async ({ page }) => {
 });
 
 test('连续发三条消息只收到一条回复（可打断合并）', async ({ page }) => {
-  await control({ queue: ['第一条', '第二条', '第三条'] });
+  // 可打断回复：每条新消息都可能打断在飞的生成并重新生成，mock queue 按生成
+  // 次数消耗。让每次生成都返回同一条文本，断言只关注"合并成一条回复"本身。
+  await control({ queue: ['第一条', '第一条', '第一条'], fallback: '第一条', delayMs: 0 });
   await page.goto('/');
   await send(page, '第一条消息');
   await send(page, '第二条消息');
