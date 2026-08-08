@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { featureApi } from './features.js';
 import { ApiError } from './api.js';
-import { clearAdminToken, setAdminToken } from './admin.js';
+import { ADMIN_UNAUTHORIZED_EVENT, clearAdminToken, getAdminToken, setAdminToken } from './admin.js';
 
 interface Call {
   url: string;
@@ -40,6 +40,36 @@ afterEach(() => {
 });
 
 describe('features request() 鉴权与请求体', () => {
+  it('子页接口鉴权失效时清除令牌并发出统一通知', async () => {
+    setAdminToken('expired-secret');
+    const unauthorized = vi.fn();
+    window.addEventListener(ADMIN_UNAUTHORIZED_EVENT, unauthorized);
+    recording({ message: '令牌已过期' }, 403);
+
+    await expect(featureApi.life()).rejects.toThrow('令牌已过期');
+
+    expect(getAdminToken()).toBeNull();
+    expect(unauthorized).toHaveBeenCalledTimes(1);
+    window.removeEventListener(ADMIN_UNAUTHORIZED_EVENT, unauthorized);
+  });
+
+  it('子页旧请求的 403 不会清除刚换上的新令牌', async () => {
+    let respond!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { respond = resolve; })));
+    const unauthorized = vi.fn();
+    window.addEventListener(ADMIN_UNAUTHORIZED_EVENT, unauthorized);
+    setAdminToken('old-secret');
+
+    const pending = featureApi.life();
+    setAdminToken('new-secret');
+    respond(json({ message: 'old token expired' }, 403));
+    await expect(pending).rejects.toBeInstanceOf(ApiError);
+
+    expect(getAdminToken()).toBe('new-secret');
+    expect(unauthorized).not.toHaveBeenCalled();
+    window.removeEventListener(ADMIN_UNAUTHORIZED_EVENT, unauthorized);
+  });
+
   it('有 admin 令牌时带 x-admin-token', async () => {
     setAdminToken('admin-secret');
     const calls = recording();

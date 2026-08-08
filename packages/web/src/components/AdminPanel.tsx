@@ -4,7 +4,8 @@ import { ApiError } from '../lib/api.js';
 import { useAutoNotice } from '../lib/autoNotice.js';
 import { navigate } from '../lib/navigation.js';
 import { AppLink } from './AppLink.js';
-import { AvatarEditor, LifeAdminLink, LifePanel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
+import { formatAdminDateTime } from '../lib/adminDisplay.js';
+import { AvatarEditor, emotionLabel, LifeAdminLink, LifePanel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
 import {
   interfaceOptions,
   MODEL_SLOTS,
@@ -21,6 +22,7 @@ import {
 } from '../lib/modelPresets.js';
 import {
   adminApi,
+  ADMIN_UNAUTHORIZED_EVENT,
   clearAdminToken,
   getAdminToken,
   setAdminToken,
@@ -129,6 +131,53 @@ function formatUptime(seconds: number): string {
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : '操作失败';
+}
+
+const RECALL_STRATEGY_LABELS: Record<string, string> = {
+  none: '未召回',
+  embedding: '语义向量',
+  fts: '关键词检索'
+};
+const RECALL_FALLBACK_LABELS: Record<string, string> = {
+  'no memories stored': '尚未存储记忆',
+  'memory disabled': '记忆功能未启用',
+  'embedding provider not configured': '未配置向量模型',
+  'no memories carry embeddings of the current dimension': '现有记忆没有可用的同维度向量'
+};
+const MEMORY_KIND_LABELS: Record<string, string> = {
+  fact: '事实', preference: '偏好', event: '事件', relationship: '关系', summary: '摘要'
+};
+const MEDIA_KIND_LABELS: Record<string, string> = {
+  image: '图片', sticker: '表情包', audio: '语音', file: '文件'
+};
+const RECALL_DROP_LABELS: Record<string, string> = {
+  deduplicated_persona: '与人设重复',
+  deduplicated_summary: '与阶段摘要重复',
+  deduplicated_recent: '与近期对话重复',
+  budget: '超出上下文预算'
+};
+
+function recallStrategyLabel(value: string): string {
+  return RECALL_STRATEGY_LABELS[value] ?? value;
+}
+
+function recallFallbackLabel(value: string): string {
+  if (RECALL_FALLBACK_LABELS[value]) return RECALL_FALLBACK_LABELS[value]!;
+  if (value.startsWith('embedding dimension mismatch')) return '向量维度不匹配';
+  if (value.startsWith('embedding provider failed')) return '向量服务调用失败';
+  return value;
+}
+
+function recallDropLabel(value: string | undefined): string {
+  if (!value) return '未知';
+  return RECALL_DROP_LABELS[value] ?? value;
+}
+
+function recallMatchReasonLabel(value: string): string {
+  if (value === 'FTS lexical match') return '关键词匹配';
+  const embedding = value.match(/^embedding cosine ([\d.]+)(, reranked)?$/);
+  if (embedding) return `语义相似度 ${embedding[1]}${embedding[2] ? '，经重排' : ''}`;
+  return value;
 }
 
 function capabilityCounts(c: Record<string, unknown>) {
@@ -585,26 +634,26 @@ function ContentPanel({ onNotice }: { onNotice: (v: string) => void }) {
       </article>
 
       {recall && <article className="admin-card" data-testid="admin-memory-recall">
-        <div className="admin-card-subtitle"><h2>最近一次记忆召回</h2><span>{recall.strategy}</span></div>
+        <div className="admin-card-subtitle"><h2>最近一次记忆召回</h2><span>{recallStrategyLabel(recall.strategy)}</span></div>
         <p>查询：{recall.query || '（无）'}</p>
         <p>候选 {recall.stats.recalled} · 纳入 {recall.stats.included} · 去重 {recall.stats.deduplicated} · 超预算 {recall.stats.budgetDropped}</p>
-        {recall.fallbackReason && <p>回退原因：{recall.fallbackReason}</p>}
+        {recall.fallbackReason && <p>回退原因：{recallFallbackLabel(recall.fallbackReason)}</p>}
         {recall.entries.slice(0, 8).map((entry) => <div className="admin-list-row" key={entry.id}>
-          <span>{entry.included ? '已纳入' : `已丢弃（${entry.droppedReason ?? '未知'}）`} · {entry.kind} · {entry.content}</span>
-          <small>{entry.strategy} · {entry.reason}</small>
+          <span>{entry.included ? '已纳入' : `已丢弃（${recallDropLabel(entry.droppedReason)}）`} · {MEMORY_KIND_LABELS[entry.kind] ?? entry.kind} · {entry.content}</span>
+          <small>{recallStrategyLabel(entry.strategy)} · {recallMatchReasonLabel(entry.reason)}</small>
         </div>)}
         {!recall.entries.length && <EmptyState>最近一次没有召回记忆</EmptyState>}
       </article>}
 
       <article className="admin-card" data-testid="admin-sticker-list">
         <div className="admin-card-subtitle"><h2>表情包</h2><span className="admin-count-badge">{stickers.length}</span></div>
-        {stickers.length ? stickers.slice(0, 8).map((s) => <div className="admin-list-row" key={s.id}><span>{s.name} · {s.emotion}</span><button type="button" onClick={() => { if (confirmAction(`删除表情包“${s.name}”？`)) void adminApi.deleteSticker(s.id).then(load).catch((e) => onNotice(errorText(e))); }}>删除</button></div>) : <EmptyState>暂无表情包</EmptyState>}
+        {stickers.length ? stickers.slice(0, 8).map((s) => <div className="admin-list-row" key={s.id}><span>{s.name} · {emotionLabel(s.emotion)}</span><button type="button" onClick={() => { if (confirmAction(`删除表情包“${s.name}”？`)) void adminApi.deleteSticker(s.id).then(load).catch((e) => onNotice(errorText(e))); }}>删除</button></div>) : <EmptyState>暂无表情包</EmptyState>}
         <StickerUpload onDone={load} onNotice={onNotice} />
       </article>
 
       <article className="admin-card" data-testid="admin-media-list">
         <div className="admin-card-subtitle"><h2>媒体文件</h2><span className="admin-count-badge">{media.length}</span></div>
-        {media.length ? media.slice(0, 8).map((m) => <div className="admin-list-row" key={m.id}><span>{m.kind} · {formatBytes(m.bytes)}</span><button type="button" onClick={() => { if (confirmAction('删除该媒体文件？')) void adminApi.deleteMedia(m.id).then(load).catch((e) => onNotice(errorText(e))); }}>删除</button></div>) : <EmptyState>暂无媒体文件</EmptyState>}
+        {media.length ? media.slice(0, 8).map((m) => <div className="admin-list-row" key={m.id}><span>{MEDIA_KIND_LABELS[m.kind] ?? m.kind} · {m.id.slice(-8)} · {formatBytes(m.bytes)}</span><button type="button" onClick={() => { if (confirmAction(`删除媒体 ${m.id.slice(-8)}？`)) void adminApi.deleteMedia(m.id).then(load).catch((e) => onNotice(errorText(e))); }}>删除</button></div>) : <EmptyState>暂无媒体文件</EmptyState>}
       </article>
 
       <article className="admin-card">
@@ -669,7 +718,7 @@ function OperationsPanel({ onNotice }: { onNotice: (v: string) => void }) {
     <section className="admin-operations">
       <article className="admin-card" data-testid="admin-error-list">
         <div className="admin-card-subtitle"><h2>最近错误</h2><span className="admin-count-badge">{errors.length}</span></div>
-        {errors.length ? errors.map((e) => <div className="admin-list-row" key={e.id}><span>{e.scope} · {e.message}</span><small>{new Date(e.createdAt).toLocaleString()}</small></div>) : <EmptyState>暂无错误记录</EmptyState>}
+        {errors.length ? errors.map((e) => <div className="admin-list-row" key={e.id}><span>{e.scope} · {e.message}</span><small>{formatAdminDateTime(e.createdAt)}</small></div>) : <EmptyState>暂无错误记录</EmptyState>}
         <div className="admin-actions"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('确认清空错误记录？')) void run(() => adminApi.clearErrors(), '错误记录已清空'); }}>清空错误记录</button></div>
       </article>
 
@@ -755,6 +804,16 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
   const [loading, setLoading] = useState(false);
   const isMobile = useIsMobile();
 
+  useEffect(() => {
+    const onUnauthorized = () => {
+      clearAdminToken();
+      setToken(null);
+      setData(null);
+    };
+    window.addEventListener(ADMIN_UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(ADMIN_UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
+
   const setDirtyState = useCallback((value: boolean) => {
     dirtyRef.current = value;
     setDirty(value);
@@ -820,7 +879,10 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
     }
   }, [token]);
 
-  useEffect(() => { void loadOverview(); }, [loadOverview]);
+  // 子页各自加载自己的数据；不能为了头像/语音页先阻塞等待三项概览请求。
+  useEffect(() => {
+    if (tab === 'overview' && !data) void loadOverview();
+  }, [data, loadOverview, tab]);
 
   const submitToken = (e: FormEvent) => {
     e.preventDefault();
@@ -856,17 +918,11 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
     return <main className="admin-page admin-v2 admin-lock-page" data-testid="admin-lock"><form className="admin-lock-card" onSubmit={submitToken}><span className="admin-lock-icon"><Icon name="lock" /></span><span className="admin-eyebrow">SOOYA 管理中心</span><h1>输入管理令牌</h1><p>令牌只保存在当前设备，用于访问管理接口。</p><label htmlFor="admin-token">管理令牌</label><input id="admin-token" type="password" autoComplete="current-password" value={tokenInput} onChange={(e) => setTokenInput(e.target.value)} /><button type="submit" disabled={!tokenInput.trim()}>进入管理中心</button></form></main>;
   }
 
-  if (loading && !data) {
-    return <main className="admin-page admin-v2 admin-loading"><div className="admin-loading-card"><div className="admin-spinner" />正在读取系统状态…</div></main>;
-  }
-
-  if (!data) {
-    return <main className="admin-page admin-v2 admin-error"><div className="admin-error-card"><p>{notice ?? '无法加载管理信息'}</p><button type="button" onClick={() => void loadOverview()}>重试</button></div></main>;
-  }
-
   const page = PAGE_COPY[tab];
   const content = tab === 'overview'
-    ? <Overview data={data} counts={counts} onRefresh={() => void loadOverview()} />
+    ? data
+      ? <Overview data={data} counts={counts} onRefresh={() => void loadOverview()} />
+      : <section className="admin-overview-state" aria-live="polite">{loading ? <><div className="admin-spinner" />正在读取系统状态…</> : <><p>{notice ?? '无法加载管理信息'}</p><button type="button" onClick={() => void loadOverview()}>重试</button></>}</section>
     : tab === 'persona'
       ? <><PersonaPanel onNotice={setNotice} /><ReferencesEditor onNotice={setNotice} /></>
       : tab === 'avatar'

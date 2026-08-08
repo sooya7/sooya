@@ -1,5 +1,5 @@
 import { ApiError } from './api.js';
-import { getAdminToken } from './admin.js';
+import { getAdminToken, invalidateAdminSession } from './admin.js';
 import { credentialFreeMediaPath } from './authenticatedMedia.js';
 
 export interface FeatureMedia {
@@ -145,6 +145,7 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
   }
   if (!response.ok) {
     const message = (parsed as { message?: string; error?: string })?.message ?? (parsed as { error?: string })?.error ?? `request failed (${response.status})`;
+    if (response.status === 401 || response.status === 403) invalidateAdminSession(token);
     throw new ApiError(message, response.status, parsed);
   }
   return parsed as T;

@@ -55,6 +55,10 @@ describe('shared colour tokens', () => {
     expect(CHAT).toMatch(/\.send-btn \{[^}]*color: var\(--ink-soft\);/);
   });
 
+  it('keeps three complete sticker rows visible on phone widths', () => {
+    expect(CHAT).toMatch(/@media \(max-width:\s*560px\)[\s\S]*\.sticker-panel\s*\{[^}]*max-height:\s*264px/s);
+  });
+
   it('keeps enhanced chat/gallery surfaces free of literal colours', () => {
     expect(FEATURE).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
   });
@@ -67,5 +71,16 @@ describe('shared colour tokens', () => {
   it('does not leave hard-coded light cards or the retired admin blue palette', () => {
     expect(ADMIN).not.toMatch(/background:\s*(?:#fff(?:fff)?\b|rgba\(255,\s*255,\s*255,\s*0\.9[47]\))/i);
     expect(ADMIN).not.toMatch(/#398fe6|#2377ca|#1b5fa5|#eaf4ff|#4c5fd7|#7a8cff/i);
+  });
+
+  it('keeps life rules and plan creation readable on phone widths', () => {
+    expect(ADMIN).toMatch(/\.life-rules\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
+    expect(ADMIN).toMatch(/\.life-plan-create\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+\d+px\s+auto/s);
+    expect(ADMIN).toMatch(/\.life-plan-create button\s*\{[^}]*white-space:\s*nowrap/s);
+    expect(ADMIN).toMatch(/@media \(max-width:\s*640px\)[\s\S]*\.life-rules\s*\{[^}]*grid-template-columns:\s*1fr/s);
+  });
+
+  it('aligns emotion mapping labels with both inputs', () => {
+    expect(ADMIN).toMatch(/\.emotion-map-(?:header|row)[^{]*\{[^}]*grid-template-columns:/s);
   });
 });

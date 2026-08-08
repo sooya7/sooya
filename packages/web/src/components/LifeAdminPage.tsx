@@ -18,6 +18,10 @@ import {
 import { AdminState, adminStateFromError } from './admin/AdminState.js';
 import { ConfirmDialog } from './admin/ConfirmDialog.js';
 import { DataList } from './admin/DataList.js';
+import { formatAdminClock, formatAdminDateTime } from '../lib/adminDisplay.js';
+import { lifeEventText, proactiveReasonText, shareModeText } from '../lib/lifeView.js';
+
+export { formatAdminClock, formatAdminDateTime } from '../lib/adminDisplay.js';
 
 type Section = 'overview' | 'vitals' | 'plans' | 'threads' | 'events' | 'locations' | 'proactive' | 'weather';
 
@@ -106,7 +110,7 @@ function OverviewSection() {
       <div className="overview-card">
         <h3>她现在的状态</h3>
         <dl>
-          <dt>在干嘛</dt><dd>{data.snapshot.activity}（{labelOf(PLAN_KIND_LABELS, data.snapshot.kind)}，心情 {data.snapshot.mood}）</dd>
+          <dt>在干嘛</dt><dd>{data.snapshot.activity}（{labelOf(PLAN_KIND_LABELS, data.snapshot.kind)}，心情 {labelOf(MOOD_LABELS, data.snapshot.mood)}）</dd>
           <dt>在哪里</dt><dd>{data.location ? `${data.location.name}（${labelOf(LOCATION_KIND_LABELS, data.location.kind)}）` : '（未启用地点模型）'}</dd>
           <dt>天气</dt><dd>{data.weather ? `当前：${data.weather}` : '（未启用或未知）'}</dd>
           <dt>今日主题</dt><dd>{data.snapshot.theme ?? '—'}</dd>
@@ -120,7 +124,7 @@ function OverviewSection() {
         <h3>最近事件</h3>
         <ul>
           {data.recentEvents.slice(0, 6).map((e) => (
-            <li key={e.id}><span className="event-type">{e.eventType}</span> {e.description}</li>
+            <li key={e.id}><span className="event-type">{lifeEventText(e.eventType)}</span> {e.description}</li>
           ))}
         </ul>
       </div>
@@ -188,7 +192,14 @@ const PLAN_ACTIONS: Array<{ status: string; label: string }> = [
   { status: 'skipped', label: '跳过' }
 ];
 
-const PLAN_KIND_LABELS: Record<string, string> = { chore: '家务', out: '出门', play: '玩耍', meal: '吃饭', rest: '休息' };
+const PLAN_KIND_LABELS: Record<string, string> = {
+  chore: '家务', out: '出门', play: '玩耍', meal: '吃饭', rest: '休息',
+  sleep: '睡觉', study: '学习', work: '工作', wake: '起床', wind_down: '睡前放松', reading: '阅读', task: '任务'
+};
+const MOOD_LABELS: Record<string, string> = {
+  calm: '安静', neutral: '平静', happy: '开心', sleepy: '困倦', tired: '疲倦',
+  focused: '专注', relaxed: '放松', excited: '兴奋', sad: '难过', anxious: '焦虑', lonely: '孤单'
+};
 const PLAN_STATUS_LABELS: Record<string, string> = { planned: '待办', active: '进行中', paused: '已暂停', completed: '已完成', cancelled: '已取消', skipped: '已跳过' };
 const PLAN_SOURCE_LABELS: Record<string, string> = { admin: '管理员', conversation: '对话建议', generated: '自动生成', routine: '日常作息', builtin: '内置', persona_seed: '人设种子', activity_outcome: '活动延伸' };
 const THREAD_STATUS_LABELS: Record<string, string> = { open: '进行中', paused: '已暂停', resolved: '已完成', abandoned: '已归档' };
@@ -220,7 +231,7 @@ function PlansSection() {
         { key: 'kind', label: '类型', mobileCollapsed: true, render: (plan) => labelOf(PLAN_KIND_LABELS, plan.kind) },
         { key: 'source', label: '来源', mobileCollapsed: true, render: (plan) => labelOf(PLAN_SOURCE_LABELS, plan.source) },
         { key: 'status', label: '状态', render: (plan) => labelOf(PLAN_STATUS_LABELS, plan.status) },
-        { key: 'time', label: '时间', mobileCollapsed: true, render: (plan) => plan.planned_start ? new Date(plan.planned_start).toLocaleString() : '—' }
+        { key: 'time', label: '时间', mobileCollapsed: true, render: (plan) => plan.planned_start ? formatAdminDateTime(plan.planned_start) : '—' }
       ]}
       expandable
       actions={(plan) => plan.status !== 'completed'
@@ -276,9 +287,9 @@ function EventsSection() {
     <ul className="event-list">
       {data.events.map((e) => (
         <li key={e.id}>
-          <span className="event-type">{e.eventType}</span>
+          <span className="event-type">{lifeEventText(e.eventType)}</span>
           <span>{e.description}</span>
-          <span className="muted">{new Date(e.happenedAt).toLocaleString()}</span>
+          <span className="muted">{formatAdminDateTime(e.happenedAt)}</span>
         </li>
       ))}
     </ul>
@@ -401,10 +412,10 @@ function ProactiveSection() {
       columns={[
         { key: 'candidate', label: '候选', render: (a) => a.candidateId ?? '—' },
         { key: 'status', label: '状态', render: (a) => labelOf(ATTEMPT_STATUS_LABELS, a.status) },
-        { key: 'reason', label: '原因', mobileCollapsed: true, render: (a) => a.blockedReason ?? '—' },
-        { key: 'mode', label: '模式', mobileCollapsed: true, render: (a) => a.requestedMode ?? '—' },
+        { key: 'reason', label: '原因', mobileCollapsed: true, render: (a) => proactiveReasonText(a.blockedReason) ?? '—' },
+        { key: 'mode', label: '模式', mobileCollapsed: true, render: (a) => shareModeText(a.requestedMode) ?? '—' },
         { key: 'message', label: '消息', mobileCollapsed: true, render: (a) => a.messageId ?? '—' },
-        { key: 'time', label: '时间', render: (a) => new Date(a.createdAt).toLocaleString() }
+        { key: 'time', label: '时间', render: (a) => formatAdminDateTime(a.createdAt) }
       ]}
     />
   );
@@ -418,12 +429,6 @@ const CONDITION_LABELS: Record<string, string> = {
 };
 
 const TRAVEL_MODE_LABELS: Record<string, string> = { walk: '步行', bike: '骑行', transit: '公共交通', car: '汽车', unknown: '未知' };
-
-function formatClock(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false, hourCycle: 'h23' }).format(d);
-}
 
 function formatCacheAge(seconds: number | null): string {
   if (seconds === null) return '—';
@@ -448,7 +453,7 @@ function ForecastList({ periods, testId }: { periods: WeatherForecastPeriod[]; t
     <div className="forecast-list" data-testid={testId}>
       {periods.map((p) => (
         <div className="forecast-row" key={p.at}>
-          <span className="forecast-time">{formatClock(p.at)}</span>
+          <span className="forecast-time">{formatAdminClock(p.at)}</span>
           <span className="forecast-track" aria-hidden="true">
             <i style={{ width: temperatureWidth(p.temperatureC, min, max) }} />
           </span>
@@ -557,8 +562,8 @@ function WeatherSection() {
             <dt>从</dt><dd>{travel.fromLocationId}</dd>
             <dt>到</dt><dd>{travel.toLocationId}</dd>
             <dt>方式</dt><dd>{TRAVEL_MODE_LABELS[travel.mode] ?? travel.mode}</dd>
-            <dt>出发</dt><dd>{new Date(travel.startedAt).toLocaleString()}</dd>
-            <dt>预计到达</dt><dd>{new Date(travel.expectedArriveAt).toLocaleString()}</dd>
+            <dt>出发</dt><dd>{formatAdminDateTime(travel.startedAt)}</dd>
+            <dt>预计到达</dt><dd>{formatAdminDateTime(travel.expectedArriveAt)}</dd>
           </dl>
         )}
       </section>
@@ -584,7 +589,7 @@ function WeatherSection() {
                   : '—'}
               </dd>
               <dt>观测时间</dt>
-              <dd>{status.lastSnapshot ? new Date(status.lastSnapshot.observedAt).toLocaleString() : '—'}</dd>
+              <dd>{status.lastSnapshot ? formatAdminDateTime(status.lastSnapshot.observedAt) : '—'}</dd>
               <dt>缓存年龄</dt>
               <dd>{formatCacheAge(status.cacheAgeSec)}</dd>
               <dt>回退链路</dt>
@@ -592,7 +597,7 @@ function WeatherSection() {
               <dt>日出 / 日落</dt>
               <dd>
                 {daylight
-                  ? `${formatClock(daylight.sunrise)} / ${formatClock(daylight.sunset)}${daylight.isDaylight ? ' · 白天' : ' · 夜间'}`
+                  ? `${formatAdminClock(daylight.sunrise)} / ${formatAdminClock(daylight.sunset)}${daylight.isDaylight ? ' · 白天' : ' · 夜间'}`
                   : '—'}
               </dd>
             </dl>
@@ -612,7 +617,7 @@ function WeatherSection() {
         {!forecastError && forecast === null && !weatherError && !(weatherData === null && forecastData === null) && <AdminState kind="empty" message="暂无预报数据（未启用或尚未生成）" />}
         {!forecastError && forecast && (
           <>
-            {forecast.severe && <AdminState kind="error" message="检测到恶劣天气（storm / heavy_rain / extreme_heat / extreme_cold / snow / strong_wind）。" />}
+            {forecast.severe && <AdminState kind="error" message="检测到恶劣天气，请留意预报中的暴雨、高温、严寒、大雪或强风提醒。" />}
             <div className="forecast-columns">
               <div>
                 <h4>未来 12 小时</h4>
@@ -623,7 +628,7 @@ function WeatherSection() {
                 <ForecastList periods={forecast.next3d} testId="forecast-3d" />
               </div>
             </div>
-            <p className="muted">预报来源：{forecast.provider} · 生成于 {new Date(forecast.generatedAt).toLocaleString()}</p>
+            <p className="muted">预报来源：{forecast.provider} · 生成于 {formatAdminDateTime(forecast.generatedAt)}</p>
           </>
         )}
       </section>

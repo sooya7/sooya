@@ -2,7 +2,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import LifeAdminPage from './LifeAdminPage.js';
+import LifeAdminPage, { formatAdminClock, formatAdminDateTime } from './LifeAdminPage.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,7 +24,7 @@ function routeFetch(handler: (call: Call) => Response): Call[] {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 const OVERVIEW = {
-  snapshot: { activity: '看书', kind: 'reading', mood: 'calm', theme: '慢生活', vitals: ['精力充沛'] },
+  snapshot: { activity: '抱着被子睡', kind: 'sleep', mood: 'calm', theme: '慢生活', vitals: ['精力充沛'] },
   location: { id: 'l1', name: '家', kind: 'home' },
   weather: '晴 22°C',
   vitals: { energy: 70, hunger: 40, stress: 20, social_need: 30, loneliness: 10, curiosity: 50, comfort: 60, focus: 45, sleep_debt: 1 },
@@ -105,8 +105,39 @@ describe('LifeAdminPage tabs', () => {
   it('shows overview data with a retry-able error state', async () => {
     routeFetch(() => json(OVERVIEW));
     await render();
-    expect(container!.textContent).toContain('看书');
+    expect(container!.textContent).toContain('抱着被子睡（睡觉，心情 安静）');
+    expect(container!.textContent).not.toContain('sleep');
+    expect(container!.textContent).not.toContain('calm');
     expect(container!.textContent).toContain('家');
+  });
+
+  it('uses a fixed Chinese 24-hour date format instead of AM/PM', () => {
+    const text = formatAdminDateTime('2026-08-07T09:00:00Z');
+    expect(text).toBe('2026/08/07 17:00');
+    expect(text).not.toMatch(/AM|PM/i);
+    expect(formatAdminClock('2026-08-07T09:00:00Z')).toBe('17:00');
+  });
+
+  it('renders event, proactive reason and share mode enums in Chinese', async () => {
+    routeFetch((call) => {
+      if (call.url === '/api/admin/life/overview') return json(OVERVIEW);
+      if (call.url.startsWith('/api/admin/life/events')) return json({ events: [{ id: 'e2', eventType: 'activity.finished', description: '读完一本书', happenedAt: '2026-08-07T09:00:00Z' }] });
+      if (call.url === '/api/admin/life/proactive') return json({ attempts: [{ id: 'a1', candidateId: 'c1', status: 'blocked', blockedReason: 'reply_in_progress', messageId: null, requestedMode: 'text_sticker', createdAt: '2026-08-07T09:00:00Z' }] });
+      return json({ message: 'not found' }, 404);
+    });
+    await render();
+    expect(container!.textContent).toContain('地点变化');
+    expect(container!.textContent).not.toContain('location.change');
+
+    await clickTab('事件');
+    expect(container!.textContent).toContain('活动完成');
+    expect(container!.textContent).not.toContain('activity.finished');
+
+    await clickTab('主动开口');
+    expect(container!.textContent).toContain('正在回复中');
+    expect(container!.textContent).toContain('文字＋表情包');
+    expect(container!.textContent).not.toContain('reply_in_progress');
+    expect(container!.textContent).not.toContain('text_sticker');
   });
 });
 

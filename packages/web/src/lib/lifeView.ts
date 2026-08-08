@@ -15,8 +15,63 @@ export const REACH_REASON_LABELS: Record<string, string> = {
   user_was_recently_here: '你刚说过话，她要等满安静间隔',
   already_spoke: '上一条还是她说的，不叠着发',
   daily_cap: '今天的主动条数已经用完',
-  nothing_worth_saying: '还没有做完、且没跟你说过的事'
+  nothing_worth_saying: '还没有做完、且没跟你说过的事',
+  share_candidate: '有值得分享的新动态'
 };
+
+export const PROACTIVE_REASON_LABELS: Record<string, string> = {
+  ...REACH_REASON_LABELS,
+  reply_in_progress: '正在回复中',
+  recent_topic: '近期已经聊过这个话题',
+  chat_unavailable: '聊天服务暂不可用',
+  candidate_already_sent: '这件事已经分享过',
+  candidate_already_queued: '这件事已经在发送队列中',
+  user_appeared: '你刚刚回来了，已取消主动消息',
+  stopped: '回复服务已停止',
+  discarded: '候选内容已取消',
+  text_sticker_failed: '表情包准备失败，已回退为文字',
+  voice_unavailable: '语音能力不可用，已回退为文字',
+  voice_failed: '语音生成失败，已回退为文字',
+  image_unavailable: '图片能力不可用，已回退为文字',
+  image_failed: '图片生成失败，已回退为文字',
+  aborted: '任务已取消',
+  compose_failed: '主动消息生成失败',
+  empty_text: '模型没有生成可发送文字',
+  media_failed: '附加媒体准备失败',
+  message_persist_failed: '消息保存失败'
+};
+
+export function proactiveReasonText(value: string | null | undefined): string | null {
+  if (!value) return null;
+  if (value.startsWith('message_persist_failed:')) return PROACTIVE_REASON_LABELS.message_persist_failed!;
+  return PROACTIVE_REASON_LABELS[value] ?? value;
+}
+
+const SHARE_MODE_LABELS: Record<string, string> = {
+  auto: '自动', text: '文字', text_sticker: '文字＋表情包', voice: '语音', image: '图片', sticker: '表情包'
+};
+
+export function shareModeText(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return SHARE_MODE_LABELS[value] ?? value;
+}
+
+const LIFE_EVENT_LABELS: Record<string, string> = {
+  'location.change': '地点变化',
+  'activity.completed': '活动完成',
+  'activity.finished': '活动完成',
+  'incident.tiny': '生活小插曲',
+  'weather.started_raining': '开始下雨',
+  'weather.rain_stopped': '雨停了',
+  'weather.first_snow': '初雪',
+  'weather.storm': '暴风雨',
+  'weather.heat_wave': '高温天气',
+  'weather.cold_snap': '寒潮'
+};
+
+export function lifeEventText(value: string): string {
+  return LIFE_EVENT_LABELS[value] ?? value;
+}
 
 export function reachReasonText(data: Pick<LifePanelData, 'reachOut' | 'settings'>): string {
   const { reachOut, settings } = data;
