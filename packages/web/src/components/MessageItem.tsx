@@ -3,7 +3,7 @@ import { getToken } from '../lib/api.js';
 import { BUBBLE_IMAGE_CSS_WIDTH, fetchAuthenticatedMedia, mediaThumbnailPath, releaseMediaUrl, safeDownloadName } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
 import { api } from '../lib/api.js';
-import type { VisibleThought } from '../lib/admin.js';
+import type { VisibleThought } from '../lib/api.js';
 import { getInnerThoughtMode, limitToThreeSentences, nextInnerThoughtMode, setInnerThoughtMode, INNER_THOUGHT_MODES, type InnerThoughtMode } from '../lib/innerThought.js';
 import type { ChatMessage, MessagePart } from '../lib/types.js';
 import { isReplayableUserMessage, isRetryableFailedMessage } from '../lib/useChat.js';

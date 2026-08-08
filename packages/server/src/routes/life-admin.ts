@@ -233,7 +233,9 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
   server.patch('/api/admin/life/cities/:id', { preHandler: guard }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const body = (req.body ?? {}) as { name?: string; region?: string | null; active?: boolean };
-    // 设为当前城市必须走 canonical 切换（清 movement、迁移归属、Weather 跟随）。
+    // 所有 active city 变化只能走 canonical setActiveCity（清 movement、迁移归属、
+    // Weather 跟随）。active:false 不再接受——停用唯一 active city 会让底层 repo
+    // 自行找另一个城市激活，绕过 canonical 切换。
     if (body.active === true) {
       const switched = app.services.location.setActiveCity(id);
       if (!switched) {
@@ -243,10 +245,13 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
       repos.audit.add('life.city', 'activated', id);
       return { city: switched };
     }
+    if (body.active === false) {
+      reply.code(400);
+      return { error: 'bad_request', message: 'active=false is not supported; switch cities via active=true' };
+    }
     const city = app.services.location.updateCity(id, {
       ...(typeof body.name === 'string' && body.name.trim() ? { name: body.name.trim() } : {}),
-      ...(body.region !== undefined ? { region: body.region } : {}),
-      ...(body.active === false ? { active: false } : {})
+      ...(body.region !== undefined ? { region: body.region } : {})
     });
     if (!city) {
       reply.code(404);

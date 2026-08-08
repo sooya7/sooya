@@ -188,6 +188,32 @@ describe('Life Admin API (P1)', () => {
     expect(audit.some((a) => a.category === 'life.city' && a.action === 'activated')).toBe(true);
   });
 
+  it('rejects active:false on city PATCH — city changes only via canonical switch', async () => {
+    harness = await createHarness({
+      skipStickerImport: true,
+      startWorkers: false,
+      env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', ADMIN_API_TOKEN: 'admin-test-token' }
+    });
+    const cities = await harness.app.server.inject({
+      method: 'GET',
+      url: '/api/admin/life/cities',
+      headers: ADMIN
+    });
+    const ningboId = (cities.json() as { cities: Array<{ id: string }> }).cities[0]!.id;
+    const res = await harness.app.server.inject({
+      method: 'PATCH',
+      url: `/api/admin/life/cities/${ningboId}`,
+      headers: ADMIN,
+      payload: { active: false }
+    });
+    expect(res.statusCode).toBe(400);
+    // 宁波仍是 active（未发生绕过 canonical 的停用）。
+    const after = await harness.app.server.inject({ method: 'GET', url: '/api/admin/life/cities', headers: ADMIN });
+    const active = (after.json() as { cities: Array<{ id: string; active: boolean }> }).cities.filter((c) => c.active);
+    expect(active).toHaveLength(1);
+    expect(active[0]!.id).toBe(ningboId);
+  });
+
   it('keeps the admin life endpoints behind the guard', async () => {
     harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { ADMIN_API_TOKEN: 'admin-test-token' } });
     const res = await harness.app.server.inject({ method: 'GET', url: '/api/admin/life/overview' });

@@ -537,7 +537,7 @@ function WeatherSection() {
         <h3 id="weather-travel-title">移动中</h3>
         {travelError && <AdminState kind="error" message={travelError} onRetry={reloadTravel} />}
         {!travelError && travelData === null && <AdminState kind="loading" />}
-        {!travelError && travelData !== null && !travel && <AdminState kind="empty" message="当前没有行程。" />}
+        {!travelError && travelData !== null && !travel && <AdminState kind="empty" message="当前没有移动。" />}
         {!travelError && travel && (
           <dl className="weather-kv">
             <dt>从</dt><dd>{travel.fromLocationId}</dd>

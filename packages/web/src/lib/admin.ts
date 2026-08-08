@@ -296,12 +296,6 @@ export interface WeatherStatus {
   forecast: WeatherForecastSummary | null;
 }
 
-export interface GeocodeMatch {
-  name: string;
-  region?: string | null;
-  country?: string | null;
-  timeZone?: string | null;
-}
 
 /* ---- Next phase: metrics ---- */
 
@@ -318,26 +312,6 @@ export interface MetricsDistribution {
 }
 
 export interface MetricAggregate { category: string; metric: string; sum: number; count: number; avg: number; }
-
-/* ---- Visible thoughts ---- */
-
-export type VisibleThoughtKind = 'inner_monologue' | 'decision_summary';
-export type VisibleThoughtVisibility = 'user' | 'admin';
-export type VisibleThoughtStatus = 'generating' | 'completed' | 'cancelled' | 'failed';
-
-export interface VisibleThought {
-  id: string;
-  messageId: string;
-  batchId: string;
-  revision: number;
-  kind: VisibleThoughtKind;
-  text: string;
-  visibility: VisibleThoughtVisibility;
-  status: VisibleThoughtStatus;
-  createdAt: string;
-}
-
-
 
 export const adminApi = {
   system: () => adminRequest<AdminSystemStatus>('/api/admin/system'),
@@ -414,7 +388,7 @@ export const adminApi = {
     adminRequest<Record<string, unknown>>(`/api/admin/backups/${encodeURIComponent(name)}/restore`, { method: 'POST' }),
   deleteBackup: (name: string) =>
     adminRequest<{ deleted: boolean }>(`/api/admin/backups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  /* ---- Next phase (frozen contract §2): life cities / travel / geocode ---- */
+  /* ---- Next phase (frozen contract §2): life cities / travel ---- */
   lifeCities: () => adminRequest<{ cities: LifeCity[] }>('/api/admin/life/cities'),
   // 产品范围：中国城市、统一 Asia/Shanghai——country/timeZone 由服务端固定。
   createCity: (input: { name: string; region?: string }) =>
@@ -431,7 +405,4 @@ export const adminApi = {
   metricsDistributions: (days: number) =>
     adminRequest<{ distributions: MetricsDistribution[] }>(`/api/admin/metrics/distributions?days=${days}`),
 
-  /** User-visible inner thought for a message (may 404 when none exists). */
-  visibleThought: (messageId: string, signal?: AbortSignal) =>
-    adminRequest<{ thought: VisibleThought | null }>(`/api/thoughts/${encodeURIComponent(messageId)}`, { signal })
 };
