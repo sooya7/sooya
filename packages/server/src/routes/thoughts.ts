@@ -1,6 +1,6 @@
 import type { SooyaApp } from '../app.js';
-import { requireAdminToken, requireChatToken } from './auth.js';
-import type { DecisionTrace, VisibleThought } from '../core/thoughts/types.js';
+import { requireChatToken } from './auth.js';
+import type { VisibleThought } from '../core/thoughts/types.js';
 
 /**
  * Read surface for the visible-thoughts layer. The ThoughtsService is wired
@@ -11,8 +11,6 @@ import type { DecisionTrace, VisibleThought } from '../core/thoughts/types.js';
 export interface ThoughtsApi {
   getUserThought(messageId: string): VisibleThought | null;
   getThoughtsForMessage(messageId: string): VisibleThought[];
-  getTrace(batchId: string, revision: number): DecisionTrace | null;
-  recentTraces(limit?: number): DecisionTrace[];
 }
 
 function thoughtsOf(app: SooyaApp): ThoughtsApi | null {
@@ -51,34 +49,5 @@ export function registerThoughtRoutes(app: SooyaApp): void {
       return { error: 'not_found', message: '该消息没有可见想法' };
     }
     return { thought };
-  });
-
-  const admin = requireAdminToken(app);
-  const guard = { preHandler: admin };
-
-  /** Admin decision trace for one batch revision. */
-  server.get('/api/admin/decision-trace', guard, async (req, reply) => {
-    const query = (req.query ?? {}) as { batchId?: unknown; revision?: unknown };
-    const batchId = typeof query.batchId === 'string' ? query.batchId : '';
-    const revision = typeof query.revision === 'string' ? Number(query.revision) : Number.NaN;
-    if (!BATCH_ID_RE.test(batchId) || !Number.isInteger(revision) || revision < 1) {
-      reply.code(400);
-      return { error: 'bad_request', message: 'batchId 与 revision 均为必填' };
-    }
-    const thoughts = thoughtsOf(app);
-    const trace = thoughts ? thoughts.getTrace(batchId, revision) : null;
-    if (!trace) {
-      reply.code(404);
-      return { error: 'not_found' };
-    }
-    return { trace };
-  });
-
-  /** Admin decision traces, newest first. */
-  server.get('/api/admin/decision-trace/recent', guard, async (req) => {
-    const query = (req.query ?? {}) as { limit?: unknown };
-    const limit = typeof query.limit === 'string' ? Math.min(Math.max(Number(query.limit) || 50, 1), 200) : 50;
-    const thoughts = thoughtsOf(app);
-    return { traces: thoughts ? thoughts.recentTraces(limit) : [] };
   });
 }

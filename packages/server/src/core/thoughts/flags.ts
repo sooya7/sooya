@@ -8,12 +8,10 @@
  */
 
 export interface ThoughtsFlags {
-  /** Master switch: gates the whole layer (thoughts + traces). */
+  /** Master switch: gates the whole layer. */
   visibleThoughtsEnabled: boolean;
   /** Gates the inner-monologue model call specifically. */
   innerMonologueEnabled: boolean;
-  /** Gates decision-trace persistence (admin-only surface). */
-  adminDecisionTraceEnabled: boolean;
   /** Model-call budget for a single thought. */
   thoughtTimeoutMs: number;
 }
@@ -21,7 +19,6 @@ export interface ThoughtsFlags {
 export const DEFAULT_THOUGHT_FLAGS: ThoughtsFlags = {
   visibleThoughtsEnabled: false,
   innerMonologueEnabled: false,
-  adminDecisionTraceEnabled: false,
   thoughtTimeoutMs: 8_000
 };
 
@@ -40,7 +37,6 @@ export function readThoughtsFlags(env: NodeJS.ProcessEnv): ThoughtsFlags {
   return {
     visibleThoughtsEnabled: boolish(env.VISIBLE_THOUGHTS_ENABLED),
     innerMonologueEnabled: boolish(env.VISIBLE_INNER_MONOLOGUE_ENABLED),
-    adminDecisionTraceEnabled: boolish(env.ADMIN_DECISION_TRACE_ENABLED),
     thoughtTimeoutMs: intish(env.VISIBLE_THOUGHTS_TIMEOUT_MS, DEFAULT_THOUGHT_FLAGS.thoughtTimeoutMs)
   };
 }

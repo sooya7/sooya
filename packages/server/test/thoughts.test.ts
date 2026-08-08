@@ -4,8 +4,9 @@ import { createHarness } from './helpers/harness.js';
 import { ReplyCoordinator } from '../src/core/reply-coordinator.js';
 import { ThoughtRepo } from '../src/db/repos/thought.repo.js';
 import { ThoughtSafetyFilter } from '../src/core/thoughts/safety.js';
+import type { ThoughtContextProvider } from '../src/core/thoughts/context.js';
 import { ThoughtPresenter } from '../src/core/thoughts/presenter.js';
-import { DecisionTraceService } from '../src/core/thoughts/trace.js';
+
 import { ThoughtsService, type ThoughtsServiceOptions } from '../src/core/thoughts/service.js';
 import { DEFAULT_THOUGHT_FLAGS, type ThoughtsFlags } from '../src/core/thoughts/flags.js';
 
@@ -77,17 +78,15 @@ async function buildRig(opts: {
   const { repos, services, config } = h.app;
   const repo = new ThoughtRepo(h.app.db);
   const safety = new ThoughtSafetyFilter();
-  const traces = new DecisionTraceService({
-    repo,
-    world: () => services.world.snapshot(),
-    life: () => {
+  const context: ThoughtContextProvider = {
+    worldSnapshot: () => services.world.snapshot(),
+    lifeSummary: () => {
       const s = services.life.snapshot();
       return { activity: s.activity, mood: s.mood };
     },
-    context: () => services.context,
-    voice: (id) => repos.voice.latestForMessage(id),
-    experiments: { canonicalVariantForSubsystem: () => null }
-  });
+    memoryRecallStats: () => { try { return services.context.memoryRecallTrace(); } catch { return null; } },
+    voiceRowFor: (id) => repos.voice.latestForMessage(id)
+  };
   const presenter = new ThoughtPresenter({
     repo,
     chat: () => services.capabilities.chatProvider(),
@@ -101,10 +100,9 @@ async function buildRig(opts: {
     ...DEFAULT_THOUGHT_FLAGS,
     visibleThoughtsEnabled: true,
     innerMonologueEnabled: true,
-    adminDecisionTraceEnabled: true,
     ...(opts.flags ?? {})
   };
-  const thoughtsOptions: ThoughtsServiceOptions = { flags, repo, presenter, traces, messages: repos.messages, errorLog: repos.errors };
+  const thoughtsOptions: ThoughtsServiceOptions = { flags, repo, presenter, context, messages: repos.messages, errorLog: repos.errors };
   const thoughts = new ThoughtsService(thoughtsOptions);
 
   // Stash the service where the routes look for it (Integration does the same).
@@ -354,7 +352,7 @@ describe('Visible thoughts — failures never touch the reply', () => {
 describe('Visible thoughts — flags OFF means zero behaviour', () => {
   it('produces no thought rows, no traces and no extra model calls when all flags are off', async () => {
     ({ harness, rig } = await buildRig({
-      flags: { visibleThoughtsEnabled: false, innerMonologueEnabled: false, adminDecisionTraceEnabled: false }
+      flags: { visibleThoughtsEnabled: false, innerMonologueEnabled: false }
     }));
     const h = harness!;
     const { outcome, batchId } = await driveReply(h, '你好');
@@ -365,21 +363,19 @@ describe('Visible thoughts — flags OFF means zero behaviour', () => {
     expect(rig!.replyCalls()).toBe(1);
     const thoughts = rig!.repo.listAdmin({ limit: 100 });
     expect(thoughts).toHaveLength(0);
-    expect(rig!.repo.countTraces()).toBe(0);
     const res = await h.app.server.inject({ method: 'GET', url: `/api/thoughts/${outcome.messageId}` });
     expect(res.statusCode).toBe(404);
   });
 
-  it('inner monologue off (trace on) still writes the trace without any thought model call', async () => {
+  it('inner monologue off writes no thoughts and no model calls', async () => {
     ({ harness, rig } = await buildRig({
-      flags: { visibleThoughtsEnabled: true, innerMonologueEnabled: false, adminDecisionTraceEnabled: true }
+      flags: { visibleThoughtsEnabled: true, innerMonologueEnabled: false }
     }));
     const h = harness!;
     const { batchId } = await driveReply(h, '今天好累啊');
     await waitFor(() => h.app.repos.replyBatches.get(batchId)?.status === 'completed');
 
     expect(rig!.thoughtCalls()).toBe(0);
-    expect(rig!.repo.countTraces()).toBe(1);
     expect(rig!.repo.listAdmin({ limit: 100 })).toHaveLength(0);
   });
 });

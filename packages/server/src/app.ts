@@ -43,7 +43,6 @@ import { ThoughtRepo } from './db/repos/thought.repo.js';
 import { ThoughtsService } from './core/thoughts/service.js';
 import { ThoughtPresenter } from './core/thoughts/presenter.js';
 import { ThoughtSafetyFilter } from './core/thoughts/safety.js';
-import { DecisionTraceService } from './core/thoughts/trace.js';
 import { readThoughtsFlags } from './core/thoughts/flags.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
@@ -304,16 +303,15 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
 
   const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED });
   const thoughtFlags = readThoughtsFlags(process.env);
-  const traces = new DecisionTraceService({
-    repo: repos.thoughts,
-    world: () => world.snapshot(),
-    life: () => { const snap = life.snapshot(); return { activity: snap.activity, mood: snap.mood }; },
-    context: () => context,
-    voice: (messageId) => repos.voice.latestForMessage(messageId),
-  });
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
     repo: repos.thoughts,
+    context: {
+      worldSnapshot: () => world.snapshot(),
+      lifeSummary: () => { const snap = life.snapshot(); return { activity: snap.activity, mood: snap.mood }; },
+      memoryRecallStats: () => { try { return context.memoryRecallTrace(); } catch { return null; } },
+      voiceRowFor: (messageId: string) => repos.voice.latestForMessage(messageId)
+    },
     presenter: new ThoughtPresenter({
       repo: repos.thoughts,
       chat: () => capabilities.chatProvider(),
@@ -323,7 +321,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       safetyRefs: { personaName: config.getPersona().name },
       timeoutMs: thoughtFlags.thoughtTimeoutMs
     }),
-    traces,
     messages: repos.messages,
     errorLog: repos.errors
   });

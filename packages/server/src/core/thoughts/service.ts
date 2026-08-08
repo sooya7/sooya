@@ -21,17 +21,17 @@ import type { ThoughtsBridge } from './bridge.js';
 import type { ThoughtsFlags } from './flags.js';
 import type { ThoughtRepo } from '../../db/repos/thought.repo.js';
 import type { ThoughtPresenter, ThoughtPrepareInput } from './presenter.js';
-import type { DecisionTraceService, TraceInput } from './trace.js';
 import type { MessageRepo } from '../../db/repos/message.repo.js';
 import type { ErrorLogRepo } from '../../db/repos/misc.repo.js';
-import type { DecisionTrace, VisibleThought } from './types.js';
-import { classifyReplyIntent, semanticGuardFrom } from './trace.js';
+import type { VisibleThought } from './types.js';
+import { classifyReplyIntent, semanticGuardFrom, type ThoughtContextProvider } from './context.js';
 
 export interface ThoughtsServiceOptions {
   flags: ThoughtsFlags;
   repo: ThoughtRepo;
   presenter: ThoughtPresenter;
-  traces: DecisionTraceService;
+  /** Whitelist of safe context the thought may read (world/life/voice/memory stats). */
+  context: ThoughtContextProvider;
   messages?: MessageRepo | null;
   errorLog?: ErrorLogRepo;
 }
@@ -47,13 +47,6 @@ export class ThoughtsService implements ThoughtsBridge {
     if (!this.deps.flags.visibleThoughtsEnabled) return;
     const key = `${input.batchId}:${input.revision}`;
     try {
-      if (this.deps.flags.adminDecisionTraceEnabled) {
-        const traceInput: TraceInput = {
-          ...input,
-          voiceFallbackReason: this.voiceFallbackReason(input.messageId)
-        };
-        this.deps.traces.record(traceInput);
-      }
       if (!this.deps.flags.innerMonologueEnabled) return;
       const controller = new AbortController();
       this.active.set(key, controller);
@@ -118,18 +111,10 @@ export class ThoughtsService implements ThoughtsBridge {
     return this.deps.repo.getByMessage(messageId);
   }
 
-  getTrace(batchId: string, revision: number): DecisionTrace | null {
-    return this.deps.repo.getTrace(batchId, revision) ?? null;
-  }
-
-  recentTraces(limit = 50): DecisionTrace[] {
-    return this.deps.repo.recentTraces(limit);
-  }
-
   // ---- context gathering (whitelist only) ----
 
   private safeWorldContext(): string[] {
-    const world = this.deps.traces.worldSnapshot();
+    const world = this.deps.context.worldSnapshot();
     if (!world) return [];
     const lines: string[] = [];
     if (world.timeZone) lines.push(`timeZone: ${world.timeZone}`);
@@ -140,7 +125,7 @@ export class ThoughtsService implements ThoughtsBridge {
   }
 
   private safeLifeContext(): string[] {
-    const life = this.deps.traces.lifeSummary();
+    const life = this.deps.context.lifeSummary();
     if (!life) return [];
     const lines: string[] = [];
     if (life.activity) lines.push(`activity: ${life.activity}`);
@@ -149,12 +134,12 @@ export class ThoughtsService implements ThoughtsBridge {
   }
 
   private voiceMode(messageId: string): string | null {
-    return this.deps.traces.voiceRowFor(messageId)?.mode ?? null;
+    return this.deps.context.voiceRowFor(messageId)?.mode ?? null;
   }
 
   private decisionMetadata(input: { batchId: string; revision: number; messageId: string; degraded: string[] }): ThoughtPrepareInput['decisionMetadata'] {
-    const memoryRecallCount = this.deps.traces.memoryRecallStats()?.recalled;
-    const voiceRow = this.deps.traces.voiceRowFor(input.messageId);
+    const memoryRecallCount = this.deps.context.memoryRecallStats()?.stats.recalled;
+    const voiceRow = this.deps.context.voiceRowFor(input.messageId);
     const semanticGuard = semanticGuardFrom(
       { ...input, voiceFallbackReason: this.voiceFallbackReason(input.messageId) },
       voiceRow

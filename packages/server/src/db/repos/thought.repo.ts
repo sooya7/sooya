@@ -1,7 +1,6 @@
 import type { DbLike } from '../handle.js';
 import { nowIso, sortableId } from '../../util/ids.js';
 import type {
-  DecisionTrace,
   VisibleThought,
   VisibleThoughtKind,
   VisibleThoughtStatus,
@@ -17,13 +16,6 @@ interface ThoughtRow {
   text: string;
   visibility: string;
   status: string;
-  created_at: string;
-}
-
-interface TraceRow {
-  batch_id: string;
-  revision: number;
-  payload_json: string;
   created_at: string;
 }
 
@@ -49,14 +41,8 @@ export interface ThoughtCreateInput {
   visibility: VisibleThoughtVisibility;
 }
 
-export interface DecisionTraceSaveInput {
-  batchId: string;
-  revision: number;
-  trace: Omit<DecisionTrace, 'batchId' | 'revision' | 'createdAt'>;
-}
-
 /**
- * Visible thoughts + decision traces persistence.
+ * Visible thoughts persistence.
  *
  * The `status` transition is the publish barrier for thoughts, exactly like
  * `visible_at` is for replies: a thought only becomes visible when
@@ -178,45 +164,5 @@ export class ThoughtRepo {
 
   countGenerating(): number {
     return (this.db.prepare(`SELECT COUNT(*) c FROM visible_thoughts WHERE status = 'generating'`).get() as { c: number }).c;
-  }
-
-  // ---- decision traces ----
-
-  saveTrace(input: DecisionTraceSaveInput): DecisionTrace {
-    const createdAt = nowIso();
-    this.db.prepare(
-      `INSERT INTO decision_traces(batch_id, revision, payload_json, created_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(batch_id, revision) DO UPDATE SET
-         payload_json = excluded.payload_json, created_at = excluded.created_at`
-    ).run(input.batchId, input.revision, JSON.stringify(input.trace), createdAt);
-    return { batchId: input.batchId, revision: input.revision, ...input.trace, createdAt };
-  }
-
-  getTrace(batchId: string, revision: number): DecisionTrace | undefined {
-    const row = this.db.prepare(
-      `SELECT * FROM decision_traces WHERE batch_id = ? AND revision = ?`
-    ).get(batchId, revision) as TraceRow | undefined;
-    if (!row) return undefined;
-    return { batchId: row.batch_id, revision: row.revision, ...safeParse(row.payload_json), createdAt: row.created_at } as DecisionTrace;
-  }
-
-  recentTraces(limit = 50): DecisionTrace[] {
-    const rows = this.db.prepare(
-      `SELECT * FROM decision_traces ORDER BY created_at DESC LIMIT ?`
-    ).all(Math.min(Math.max(limit, 1), 200)) as TraceRow[];
-    return rows.map((row) => ({ batchId: row.batch_id, revision: row.revision, ...safeParse(row.payload_json), createdAt: row.created_at }) as DecisionTrace);
-  }
-
-  countTraces(): number {
-    return (this.db.prepare(`SELECT COUNT(*) c FROM decision_traces`).get() as { c: number }).c;
-  }
-}
-
-function safeParse(json: string): Record<string, unknown> {
-  try {
-    return JSON.parse(json) as Record<string, unknown>;
-  } catch {
-    return {};
   }
 }

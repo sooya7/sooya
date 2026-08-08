@@ -1,5 +1,5 @@
 /**
- * Visible Thoughts / Decision Trace — frozen types (docs/NEXT-PHASE-CONTRACTS.md §1.6).
+ * Visible Thoughts — frozen types (docs/NEXT-PHASE-CONTRACTS.md §1.6).
  *
  * These types are NOT the character's hidden reasoning. They are short,
  * safe, public-facing summaries produced from a strict input whitelist:
@@ -26,16 +26,3 @@ export interface VisibleThought {
   createdAt: string;
 }
 
-export interface DecisionTrace {
-  batchId: string;
-  revision: number;
-  replyIntent?: string;          // 如 emotional_support
-  lifeContext?: string[];        // 安全摘要，如 ['location: cafe']
-  weather?: string | null;
-  memoryRecallCount?: number;
-  voiceMode?: string | null;
-  semanticGuard?: 'pass' | 'reject' | 'fallback';
-  experimentVariant?: string | null;
-  proactive?: string | null;
-  createdAt: string;
-}
