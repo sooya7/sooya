@@ -96,7 +96,7 @@ interface WebSearchResult {
 
 ### 5.3 回退
 
-`SOOYA_WEB_SEARCH_PROVIDERS` 是逗号分隔的有序列表，默认 `doubao,tavily`。未配置 Key 的适配器视为不可用而跳过。401/403、429、超时、5xx 和无结果都会尝试下一个提供商；诊断写入错误日志时必须脱敏。
+`SOOYA_WEB_SEARCH_PROVIDERS` 是 `doubao`、`tavily`、`responses` 的逗号分隔有序子集，默认 `doubao,tavily,responses`。只写一个值时不会隐式回退；写多个值时按配置顺序回退。未配置 Key 或不满足 Responses 工具条件的适配器视为不可用而跳过。401/403、429、超时、5xx 和无结果都会尝试下一个提供商；诊断写入错误日志时必须脱敏。
 
 ## 6. 搜索策略与城市
 
@@ -142,7 +142,7 @@ meta: {
 
 ```env
 SOOYA_WEB_SEARCH_ENABLED=true
-SOOYA_WEB_SEARCH_PROVIDERS=doubao,tavily
+SOOYA_WEB_SEARCH_PROVIDERS=doubao,tavily,responses
 SOOYA_WEB_SEARCH_MAX_RESULTS=5
 SOOYA_WEB_SEARCH_TIMEOUT_MS=15000
 

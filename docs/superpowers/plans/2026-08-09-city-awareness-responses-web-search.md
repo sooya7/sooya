@@ -50,7 +50,7 @@
 
 - [ ] **Step 1: 写策略和环境配置失败测试**
 
-测试实时事实、本地推荐触发；问候、情绪和内部状态不触发。测试 `loadEnv()` 默认提供商顺序为 `doubao,tavily`，最大结果为 5，默认豆包版本为 `custom`。
+测试实时事实、本地推荐触发；问候、情绪和内部状态不触发。测试 `loadEnv()` 默认提供商顺序为 `doubao,tavily,responses`，也允许选择任意单个或有序子集；最大结果为 5，默认豆包版本为 `custom`。
 
 - [ ] **Step 2: 运行并确认 RED**
 
@@ -344,7 +344,7 @@ git diff --stat main...HEAD
 
 ```env
 SOOYA_WEB_SEARCH_ENABLED=true
-SOOYA_WEB_SEARCH_PROVIDERS=doubao,tavily
+SOOYA_WEB_SEARCH_PROVIDERS=doubao,tavily,responses
 SOOYA_DOUBAO_SEARCH_EDITION=custom
 SOOYA_DOUBAO_SEARCH_API_KEY=[REDACTED_SECRET]
 SOOYA_TAVILY_API_KEY=[REDACTED_SECRET]

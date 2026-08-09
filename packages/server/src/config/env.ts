@@ -37,6 +37,23 @@ const originList = z
     return [...new Set(value.split(',').map((origin) => origin.trim()).filter(Boolean))];
   });
 
+const webSearchProviders = z
+  .string()
+  .optional()
+  .transform((value, ctx): Array<'doubao' | 'tavily' | 'responses'> => {
+    const raw = value?.trim() || 'doubao,tavily,responses';
+    const providers = [...new Set(raw.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean))];
+    const invalid = providers.filter((item) => item !== 'doubao' && item !== 'tavily' && item !== 'responses');
+    if (invalid.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `unknown web search provider: ${invalid.join(', ')}`
+      });
+      return [];
+    }
+    return providers as Array<'doubao' | 'tavily' | 'responses'>;
+  });
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('production'),
   HOST: z.string().default('0.0.0.0'),
@@ -127,6 +144,17 @@ const EnvSchema = z.object({
   WEATHER_BASE_URL: z.string().default(''),
   WEATHER_API_KEY: z.string().default(''),
   WEATHER_TIMEOUT_MS: intish(5000),
+
+  /* City-aware web search. Disabled until at least one server-side key is set. */
+  SOOYA_WEB_SEARCH_ENABLED: boolish(false),
+  SOOYA_WEB_SEARCH_PROVIDERS: webSearchProviders,
+  SOOYA_WEB_SEARCH_MAX_RESULTS: intish(5),
+  SOOYA_WEB_SEARCH_TIMEOUT_MS: intish(15_000),
+  SOOYA_DOUBAO_SEARCH_EDITION: z.enum(['custom', 'global']).default('custom'),
+  SOOYA_DOUBAO_SEARCH_BASE_URL: z.string().default('https://open.feedcoopapi.com/search_api/web_search'),
+  SOOYA_DOUBAO_SEARCH_API_KEY: z.string().default(''),
+  SOOYA_TAVILY_BASE_URL: z.string().default('https://api.tavily.com/search'),
+  SOOYA_TAVILY_API_KEY: z.string().default(''),
 
   /* Visible thoughts layer (next phase): safe public thought summaries +
      admin decision traces. All off by default. */
