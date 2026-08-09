@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DoubaoSearchProvider } from '../src/core/web-search/doubao.js';
 import { TavilySearchProvider } from '../src/core/web-search/tavily.js';
+import { WebSearchService, formatWebSearchContext } from '../src/core/web-search/service.js';
+import type { WebSearchProvider, WebSearchRequest, WebSearchResult } from '../src/core/web-search/types.js';
 
 interface CapturedRequest {
   url: string;
@@ -142,5 +144,146 @@ describe('TavilySearchProvider', () => {
     expect(fake.requests[0]!.body.time_range).toBe('week');
     expect(result.citations[0]!.title).toBe('example.com');
     expect(result.citations[0]!.snippet).toHaveLength(1_200);
+  });
+});
+
+function fakeProvider(
+  name: 'doubao' | 'tavily',
+  implementation: (request: WebSearchRequest) => Promise<WebSearchResult>,
+  configured = true
+): WebSearchProvider & { calls: number } {
+  return {
+    name,
+    configured,
+    calls: 0,
+    async search(request) {
+      this.calls++;
+      return implementation(request);
+    }
+  };
+}
+
+describe('WebSearchService', () => {
+  it('falls through the selected order including the Responses candidate', async () => {
+    const doubao = fakeProvider('doubao', async () => {
+      throw new Error('doubao search failed with status 429');
+    });
+    const tavily = fakeProvider('tavily', async (request) => ({
+      provider: 'tavily',
+      query: request.query,
+      citations: [{ title: 'fallback', url: 'https://example.com/fallback', snippet: 'ok' }]
+    }));
+    let responsesCalls = 0;
+    const errors: string[] = [];
+    const service = new WebSearchService({
+      order: ['doubao', 'tavily', 'responses'],
+      providers: [doubao, tavily],
+      maxResults: 5,
+      timeoutMs: 1_000,
+      onError: (_provider, error) => errors.push(error.message)
+    });
+
+    const result = await service.resolve(
+      { query: 'latest', maxResults: 50 },
+      async () => {
+        responsesCalls++;
+        return { provider: 'responses', query: 'latest', citations: [], answer: 'native' };
+      }
+    );
+
+    expect(result?.provider).toBe('tavily');
+    expect(doubao.calls).toBe(1);
+    expect(tavily.calls).toBe(1);
+    expect(responsesCalls).toBe(0);
+    expect(errors).toEqual(['doubao search failed with status 429']);
+  });
+
+  it('uses Responses first when selected and does not call later providers after success', async () => {
+    const tavily = fakeProvider('tavily', async () => ({ provider: 'tavily', query: 'q', citations: [] }));
+    const service = new WebSearchService({
+      order: ['responses', 'tavily'],
+      providers: [tavily],
+      maxResults: 5,
+      timeoutMs: 1_000
+    });
+
+    const result = await service.resolve(
+      { query: 'q', maxResults: 5 },
+      async () => ({ provider: 'responses', query: 'q', citations: [], answer: 'native answer' })
+    );
+
+    expect(result).toMatchObject({ provider: 'responses', answer: 'native answer' });
+    expect(tavily.calls).toBe(0);
+  });
+
+  it('does not add an implicit fallback when only one provider is selected', async () => {
+    const doubao = fakeProvider('doubao', async () => {
+      throw new Error('down');
+    });
+    const tavily = fakeProvider('tavily', async () => ({
+      provider: 'tavily',
+      query: 'q',
+      citations: [{ title: 'unused', url: 'https://example.com' }]
+    }));
+    const service = new WebSearchService({
+      order: ['doubao'],
+      providers: [doubao, tavily],
+      maxResults: 5,
+      timeoutMs: 1_000
+    });
+
+    expect(await service.resolve({ query: 'q', maxResults: 5 })).toBeNull();
+    expect(tavily.calls).toBe(0);
+  });
+
+  it('aborts a timed-out provider request before falling back', async () => {
+    let aborted = false;
+    const doubao = fakeProvider('doubao', async (request) => {
+      await new Promise<never>((_resolve, reject) => {
+        request.signal?.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+            reject(request.signal?.reason);
+          },
+          { once: true }
+        );
+      });
+      throw new Error('unreachable');
+    });
+    const tavily = fakeProvider('tavily', async () => ({
+      provider: 'tavily',
+      query: 'q',
+      citations: [{ title: 'fallback', url: 'https://example.com' }]
+    }));
+    const service = new WebSearchService({
+      order: ['doubao', 'tavily'],
+      providers: [doubao, tavily],
+      maxResults: 5,
+      timeoutMs: 5
+    });
+
+    const result = await service.resolve({ query: 'q', maxResults: 5 });
+
+    expect(aborted).toBe(true);
+    expect(result?.provider).toBe('tavily');
+  });
+
+  it('deduplicates and bounds the untrusted context sent to the chat model', () => {
+    const context = formatWebSearchContext({
+      provider: 'doubao',
+      query: 'q',
+      citations: [
+        { title: 'A', url: 'https://example.com/a', snippet: 'x'.repeat(3_000), siteName: 'Example' },
+        { title: 'duplicate', url: 'https://example.com/a', snippet: 'ignored' },
+        { title: 'B', url: 'https://example.com/b', snippet: 'short' }
+      ]
+    });
+
+    expect(context).toContain('外部不可信内容');
+    expect(context).toContain('[1] A | Example | https://example.com/a');
+    expect(context).toContain('[2] B | https://example.com/b');
+    expect(context).not.toContain('duplicate');
+    expect(context.length).toBeLessThanOrEqual(7_000);
   });
 });

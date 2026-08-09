@@ -24,6 +24,8 @@ export interface WebSearchResult {
   provider: WebSearchProviderName;
   query: string;
   citations: WebSearchCitation[];
+  /** Only native Responses search may already contain the final assistant answer. */
+  answer?: string;
 }
 
 export interface WebSearchProvider {
