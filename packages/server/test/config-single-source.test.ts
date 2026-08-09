@@ -17,6 +17,21 @@ function configDir(): string {
   return dir;
 }
 
+async function eventually(assertion: () => void, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last: unknown;
+  while (Date.now() < deadline) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      last = error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw last;
+}
+
 describe('models.json single source', () => {
   it('migrates the effective legacy model and search environment into version 2 once', () => {
     const dir = configDir();
@@ -110,5 +125,37 @@ describe('models.json single source', () => {
     expect(JSON.stringify(store.safeModels())).not.toContain('doubao-secret');
     expect(JSON.stringify(store.safeModels())).not.toContain('tavily-secret');
     expect((store.getModels() as any).webSearch.doubao.apiKey).toBe('doubao-secret');
+  });
+
+  it('keeps the last valid configuration when a server-side edit is invalid', () => {
+    const dir = configDir();
+    const logs: string[] = [];
+    const store = new ConfigStore({ configDir: dir, env: {} as NodeJS.ProcessEnv, onLog: (_level, message) => logs.push(message) });
+    store.setModels({ chat: { provider: 'openai-compatible', model: 'known-good' } });
+    fs.writeFileSync(store.modelsPath, '{not json');
+
+    expect((store as any).reloadModelsFromDisk()).toBe(false);
+    expect(store.getModels().chat.model).toBe('known-good');
+    expect(logs.some((line) => line.includes('models.json'))).toBe(true);
+  });
+
+  it('hot-loads a valid external edit and stops watching cleanly', async () => {
+    const dir = configDir();
+    const store = new ConfigStore({ configDir: dir, env: {} as NodeJS.ProcessEnv });
+    let changes = 0;
+    const stop = (store as any).watchModels(() => { changes += 1; });
+    const file = JSON.parse(fs.readFileSync(store.modelsPath, 'utf8'));
+    file.chat.model = 'edited-on-server';
+    fs.writeFileSync(store.modelsPath, JSON.stringify(file, null, 2));
+
+    await eventually(() => expect(store.getModels().chat.model).toBe('edited-on-server'));
+    expect(changes).toBe(1);
+
+    stop();
+    file.chat.model = 'after-stop';
+    fs.writeFileSync(store.modelsPath, JSON.stringify(file, null, 2));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(store.getModels().chat.model).toBe('edited-on-server');
+    expect(changes).toBe(1);
   });
 });

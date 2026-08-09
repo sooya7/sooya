@@ -142,9 +142,54 @@ export class ConfigStore {
     return redactApiKeys(JSON.parse(JSON.stringify(this.models))) as Record<string, unknown>;
   }
 
+  /** Load an operator edit only when the complete file is valid. */
+  reloadModelsFromDisk(): boolean {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.modelsPath, 'utf8')) as unknown;
+      if (!isVersionTwo(raw)) {
+        this.onLog?.('warn', 'models.json external edit is missing storageVersion 2');
+        return false;
+      }
+      const parsed = ModelsConfigSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.onLog?.('warn', 'models.json external edit rejected', { issues: parsed.error.issues.length });
+        return false;
+      }
+      this.models = parsed.data;
+      this.onLog?.('info', 'models.json external edit loaded');
+      return true;
+    } catch (error) {
+      this.onLog?.('error', 'failed to reload models.json; keeping the last valid configuration', {
+        error: (error as Error).message
+      });
+      return false;
+    }
+  }
+
+  /** Watch the containing directory so atomic file replacement is observed. */
+  watchModels(onChange: () => void): () => void {
+    const expected = path.basename(this.modelsPath);
+    let timer: NodeJS.Timeout | null = null;
+    let closed = false;
+    const watcher = fs.watch(path.dirname(this.modelsPath), (_event, filename) => {
+      if (closed || (filename && filename.toString() !== expected)) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        if (!closed && this.reloadModelsFromDisk()) onChange();
+      }, 100);
+    });
+    watcher.on('error', (error) => this.onLog?.('error', 'models.json watcher failed', { error: error.message }));
+    return () => {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      watcher.close();
+    };
+  }
+
   reload(): void {
     this.persona = this.loadPersona();
-    this.models = this.loadModels();
+    this.reloadModelsFromDisk();
   }
 }
 
