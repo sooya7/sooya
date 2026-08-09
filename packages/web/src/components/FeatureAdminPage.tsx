@@ -1,23 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdminPersona } from '../lib/admin.js';
-import { AppLink } from './AppLink.js';
-import { featureApi, type LifePanelData, type LifeSettings, type PersonaReference } from '../lib/features.js';
+import { featureApi, type PersonaReference } from '../lib/features.js';
 import { mediaThumbnailPath } from '../lib/authenticatedMedia.js';
-import { formatGap, herClock, proactiveReasonText, reachReasonText, shareModeText, slotProgress, sortedLog } from '../lib/lifeView.js';
 import { useAuthenticatedMedia, type AuthenticatedMediaState } from '../lib/useAuthenticatedMedia.js';
 
 const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'gentle'] as const;
 const EMOTION_LABELS: Record<string, string> = { neutral: '中性', happy: '开心', sad: '难过', angry: '生气', gentle: '温柔', sleepy: '困倦', confused: '疑惑' };
 export function emotionLabel(value: string): string {
   return EMOTION_LABELS[value] ?? value;
-}
-/** 计划与活动共用一套 kind 词表（服务端还会产出 sleep/work 等作息类）。 */
-const LIFE_KIND_LABELS: Record<string, string> = {
-  chore: '家务', out: '出门', play: '玩耍', meal: '吃饭', rest: '休息',
-  sleep: '睡觉', study: '学习', work: '工作', wake: '起床', wind_down: '睡前放松', reading: '阅读', task: '任务'
-};
-export function lifeKindLabel(value: string): string {
-  return LIFE_KIND_LABELS[value] ?? value;
 }
 function bytes(value: unknown): string {
   const n = Number(value ?? 0);
@@ -211,175 +201,6 @@ export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
       <div className="admin-actions"><button type="button" onClick={() => void save()}>保存语音配置</button></div>
     </section>
   );
-}
-
-/*
- * 她的生活。这页存在的理由是「她为什么没说话」只有服务端知道：被上限挡住、在静默
- * 时段、还是没有做完的事可说，从外面看全都是一片安静。所以状态、日志、原因、以及能
- * 改的那几个阈值放在同一屏，看到原因就能直接改旁边的设置。
- */
-/** Entry into the full Life Admin console (next phase). */
-export function LifeAdminLink() {
-  return (
-    <span className="admin-inline-links">
-      <AppLink className="admin-inline-link" href="/admin/life/console" data-testid="life-admin-entry">打开完整生活管理 ›</AppLink>
-    </span>
-  );
-}
-
-export function LifePanel({ onNotice }: { onNotice: (s: string) => void }) {
-  const [data, setData] = useState<LifePanelData | null>(null);
-  const [form, setForm] = useState<LifeSettings | null>(null);
-  const [planTitle, setPlanTitle] = useState('');
-  const [planKind, setPlanKind] = useState('chore');
-  const [busy, setBusy] = useState(false);
-  const load = () => featureApi.life().then((result) => { setData(result); setForm(result.settings); }).catch((error) => onNotice(errorText(error)));
-  useEffect(() => {
-    void load();
-    // 她的状态每 5 分钟才推进一次，30 秒刷新足够跟上，又不会把面板变成轮询机器
-    const timer = setInterval(() => { void load(); }, 30_000);
-    return () => clearInterval(timer);
-  }, []);
-  const save = async () => {
-    if (!form) return;
-    setBusy(true);
-    try {
-      await featureApi.updateLifeSettings({
-        reachOut: form.reachOut,
-        quietGapMinutes: form.quietGapMinutes,
-        maxReachOutsPerDay: form.maxReachOutsPerDay,
-        silentFrom: form.silentFrom,
-        silentTo: form.silentTo,
-        proactiveMode: form.proactiveMode
-      });
-      await load();
-      onNotice('生活设置已保存');
-    } catch (error) {
-      onNotice(errorText(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const addPlan = async () => {
-    if (!planTitle.trim()) return;
-    setBusy(true);
-    try {
-      await featureApi.createLifePlan({ title: planTitle.trim(), kind: planKind });
-      setPlanTitle('');
-      await load();
-      onNotice('生活计划已加入');
-    } catch (error) {
-      onNotice(errorText(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-  if (!data || !form) return <section className="admin-form-card" data-testid="life-settings"><div className="admin-empty">读取中…</div></section>;
-  const tz = data.settings.tzOffsetMinutes;
-  const progress = slotProgress(data.snapshot);
-  const log = sortedLog(data.log);
-  return (
-    <section className="admin-form-card" data-testid="life-settings">
-      <div className="admin-card life-now">
-        <div className="admin-card-subtitle"><h2>此刻</h2><span className="admin-count-badge">{herClock(new Date().toISOString(), tz)}</span></div>
-        <p className="life-activity">正在<strong>{data.snapshot.activity}</strong>，心情{data.snapshot.mood}</p>
-        <div className="life-progress"><i style={{ width: `${progress.percent}%` }} /></div>
-        <small>已经 {progress.intoIt}，还有 {progress.left} 换下一件事（{herClock(data.snapshot.startedAt, tz)} – {herClock(data.snapshot.endsAt, tz)}）</small>
-        <div className="admin-actions">
-          <button type="button" disabled={busy} onClick={() => void featureApi.tickLife().then(() => load()).then(() => onNotice('已推进她的状态')).catch((error) => onNotice(errorText(error)))}>立即推进</button>
-        </div>
-      </div>
-
-      <div className="admin-card" data-testid="life-reach-out">
-        <div className="admin-card-subtitle"><h2>主动开口</h2><span className={`admin-count-badge ${data.reachOut.reach ? 'life-ok' : ''}`}>{data.reachOut.reach ? '就绪' : '暂不'}</span></div>
-        <p>{reachReasonText(data)}</p>
-        <small>今天已主动 {data.reachOut.sharedLastDay} / {data.settings.maxReachOutsPerDay} 条 · 你上次说话 {data.reachOut.lastUserAt ? `${formatGap(Date.now() - Date.parse(data.reachOut.lastUserAt))}前` : '无记录'}</small>
-        {data.reachOut.candidate ? <small>准备说的是：{data.reachOut.candidate.activity}</small> : null}
-      </div>
-
-      <div className="admin-card" data-testid="life-plans">
-        <div className="admin-card-subtitle"><h2>接下来要做的事</h2><span className="admin-count-badge">{data.plans.length}</span></div>
-        <div className="admin-list-row life-plan-create">
-          <input aria-label="生活计划" placeholder="例如：整理书桌" value={planTitle} onChange={(event) => setPlanTitle(event.target.value)} />
-          <select aria-label="生活计划类型" value={planKind} onChange={(event) => setPlanKind(event.target.value)}>
-            <option value="chore">家务</option><option value="out">出门</option><option value="play">玩耍</option><option value="meal">吃饭</option><option value="rest">休息</option>
-          </select>
-          <button type="button" disabled={busy || !planTitle.trim()} onClick={() => void addPlan()}>加入计划</button>
-        </div>
-        {data.plans.length === 0 ? <div className="admin-empty">还没有排好的计划。</div> : data.plans.slice(0, 12).map((plan) => (
-          <div className="admin-list-row" key={plan.id}>
-            <span><strong>{plan.title}</strong><small> · {lifeKindLabel(plan.kind)} · {lifePlanStatusText(plan.status)}</small></span>
-            <span className="admin-actions">
-              {plan.status === 'planned' && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'active' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>开始</button>}
-              {plan.status === 'active' && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'paused' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>暂停</button>}
-              {plan.status === 'paused' && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'active' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>继续</button>}
-              {(plan.status === 'active' || plan.status === 'paused') && <button type="button" onClick={() => void featureApi.updateLifePlan(plan.id, { status: 'completed' }).then(() => load()).catch((error) => onNotice(errorText(error)))}>完成</button>}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div className="admin-form-wide life-rules" data-testid="life-rules">
-        <strong>规则</strong>
-        <label className="life-rule-toggle"><span>允许主动开口</span><input aria-label="允许主动开口" type="checkbox" checked={form.reachOut} onChange={(event) => setForm({ ...form, reachOut: event.target.checked })} /></label>
-        <label>安静间隔（分钟）——你多久没说话后她才可能开口<input aria-label="安静间隔" type="number" min={5} max={1440} value={form.quietGapMinutes} onChange={(event) => setForm({ ...form, quietGapMinutes: Number(event.target.value) })} /></label>
-        <label>每天最多主动几条<input aria-label="每天最多几条" type="number" min={0} max={20} value={form.maxReachOutsPerDay} onChange={(event) => setForm({ ...form, maxReachOutsPerDay: Number(event.target.value) })} /></label>
-        <label>
-          静默时段（这段时间她不会主动说话）
-          <span className="life-quiet-range">
-            <input aria-label="静默开始" type="number" min={0} max={23} value={form.silentFrom} onChange={(event) => setForm({ ...form, silentFrom: Number(event.target.value) })} />
-            <span aria-hidden="true">点 至</span>
-            <input aria-label="静默结束" type="number" min={0} max={23} value={form.silentTo} onChange={(event) => setForm({ ...form, silentTo: Number(event.target.value) })} />
-            <span aria-hidden="true">点</span>
-          </span>
-        </label>
-        <label>主动分享模式
-          <select aria-label="主动分享模式" value={form.proactiveMode ?? 'auto'} onChange={(event) => setForm({ ...form, proactiveMode: event.target.value as LifeSettings['proactiveMode'] })}>
-            <option value="auto">自动（默认文字优先）</option><option value="text">文字</option><option value="text_sticker">文字＋表情包</option><option value="voice">语音</option><option value="image">图片</option>
-          </select>
-        </label>
-        <div className="admin-actions"><button type="button" disabled={busy} onClick={() => void save()}>保存生活设置</button></div>
-      </div>
-
-      <div className="admin-card" data-testid="life-proactive-attempts">
-        <div className="admin-card-subtitle"><h2>主动分享记录</h2><span className="admin-count-badge">{data.proactive.length}</span></div>
-        {data.proactive.length === 0 ? <div className="admin-empty">还没有主动分享尝试。</div> : data.proactive.slice(0, 12).map((attempt) => (
-          <div className="admin-list-row" key={attempt.id}>
-            <span><strong>{attempt.candidateActivity ?? '无候选'}</strong><small> · {shareModeText(attempt.requestedMode) ?? '未选模式'} → {shareModeText(attempt.finalMode) ?? '未发送'}</small></span>
-            <small>{attempt.status === 'blocked' ? `阻断：${proactiveReasonText(attempt.blockedReason) ?? '未知'}` : attempt.status === 'failed' ? `失败：${proactiveReasonText(attempt.blockedReason ?? attempt.fallbackReason) ?? '未知'}` : `${attempt.sendSuccess ? '已发送' : '未发送'} · ${attempt.userResponseMessageId ? '用户已响应' : '未响应'}`}</small>
-          </div>
-        ))}
-      </div>
-
-      <div className="admin-card">
-        <div className="admin-card-subtitle"><h2>做过的事</h2><span className="admin-count-badge">{log.length}</span></div>
-        {log.length === 0
-          ? <EmptyLife />
-          : log.map((row) => (
-            <div className="admin-list-row" key={row.id}>
-              <span>{herClock(row.started_at, tz)}–{herClock(row.ended_at, tz)} · {row.activity}<small> {row.mood}</small></span>
-              <small>{row.shared ? '已跟你说过' : '还没说'}</small>
-            </div>
-          ))}
-      </div>
-
-      <div className="admin-card" data-testid="life-events">
-        <div className="admin-card-subtitle"><h2>生活事件</h2><span className="admin-count-badge">{data.events.length}</span></div>
-        {data.events.length === 0 ? <div className="admin-empty">推进生活状态后，完成的事情会留在这里。</div> : data.events.slice(0, 12).map((event) => (
-          <div className="admin-list-row" key={event.id}><span>{event.description}<small> · {lifeKindLabel(event.kind)} · {herClock(event.happened_at, tz)}</small></span><small>{event.shareable ? (event.shared_at ? '已分享' : '可分享') : '仅记录'}</small></div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function lifePlanStatusText(status: string): string {
-  return ({ planned: '待办', active: '进行中', paused: '已暂停', completed: '已完成', cancelled: '已取消', skipped: '已跳过' } as Record<string, string>)[status] ?? status;
-}
-
-/** 一条都没有通常不是坏了：只有换时段那一刻才落一条，睡整夜就是空的。 */
-function EmptyLife() {
-  return <div className="admin-empty">还没有记录。她每换一件事才记一条，所以刚重启或整夜睡觉时这里是空的。</div>;
 }
 
 const CLEANUP_PAGE_SIZE = 50;
