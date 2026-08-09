@@ -49,6 +49,12 @@ vi.mock('../../lib/admin.js', async (importOriginal) => {
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+function setNumberValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 const panelData: LifePanelData = {
   snapshot: {
     activity: '在沙发上打盹',
@@ -207,6 +213,25 @@ describe('LifeObservationPanel', () => {
 
     expect(apiMocks.life).toHaveBeenCalledTimes(2);
     expect(apiMocks.lifeOverview).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves an unsaved boundary draft across a 30-second refresh', async () => {
+    await renderPanel();
+
+    const boundaries = container!.querySelector('[data-testid="life-boundaries"]')!;
+    await act(async () => {
+      boundaries.querySelector<HTMLButtonElement>('.life-disclosure-toggle')!.click();
+    });
+    const gap = boundaries.querySelector<HTMLInputElement>('input[name="quietGapMinutes"]')!;
+    expect(gap.value).toBe('90');
+    await act(async () => { setNumberValue(gap, '240'); });
+
+    const refreshed = structuredClone(panelData);
+    refreshed.settings = { ...panelData.settings, quietGapMinutes: 30 };
+    apiMocks.life.mockResolvedValueOnce(refreshed);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+
+    expect(gap.value).toBe('240');
   });
 
   it('keeps the newest response when two polls overlap in the same lifecycle', async () => {
