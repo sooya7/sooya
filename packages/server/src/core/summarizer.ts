@@ -1,7 +1,7 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { SummaryRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { CapabilityRegistry } from './capabilities.js';
-import type { ChatMessage } from './types.js';
+import { renderMessageForSummary } from './web-search/isolation.js';
 
 const SUMMARY_PROMPT = `把下面这段聊天压缩成简洁的中文要点，保留：用户说过的事实、约定、情绪走向、未完成的事。
 不要复述寒暄，不要加入你的评价，不超过 200 字。直接输出要点文字。`;
@@ -55,7 +55,7 @@ export class Summarizer {
         this.summaries.create({ fromSeq, toSeq, content: '（该段没有可用消息）', model: null });
         return { created: true, fromSeq, toSeq };
       }
-      const transcript = range.map(renderMessage).filter(Boolean).join('\n').slice(0, 12000);
+      const transcript = range.map(renderMessageForSummary).filter(Boolean).join('\n').slice(0, 12000);
       const result = await provider.complete({
         system: SUMMARY_PROMPT,
         messages: [{ role: 'user', content: [{ type: 'text', text: transcript }] }],
@@ -76,17 +76,3 @@ export class Summarizer {
   }
 }
 
-function renderMessage(msg: ChatMessage): string {
-  const who = msg.role === 'assistant' ? 'SOOYA' : '用户';
-  const bits: string[] = [];
-  for (const p of msg.content) {
-    if (p.status === 'failed') continue;
-    if (p.type === 'text' && p.text) bits.push(p.text);
-    else if (p.type === 'audio') bits.push(p.transcript ? `(语音)${p.transcript}` : '(语音)');
-    else if (p.type === 'sticker') bits.push('(表情包)');
-    else if (p.type === 'image') bits.push('(图片)');
-    else if (p.type === 'file') bits.push('(文件)');
-  }
-  if (bits.length === 0) return '';
-  return `${who}: ${bits.join(' ')}`;
-}

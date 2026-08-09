@@ -17,6 +17,7 @@ import type { StorageService } from './storage.js';
 import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
 import { extractText } from '../media/text-extractor.js';
 import { cleanupTempFiles } from '../util/fsx.js';
+import { textForMemoryExtraction } from './web-search/isolation.js';
 
 export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
 
@@ -136,8 +137,8 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const assistantMessageId = payload.assistantMessageId ? String(payload.assistantMessageId) : null;
     const userMessages = userMessageIds.map((id) => deps.messages.get(id)).filter((message): message is NonNullable<typeof message> => Boolean(message));
     if (userMessages.length === 0) return;
-    const userText = userMessages.map(textOf).filter(Boolean).join('\n');
-    const assistantText = assistantMessageId ? textOf(deps.messages.get(assistantMessageId)) : '';
+    const userText = userMessages.map(textForMemoryExtraction).filter(Boolean).join('\n');
+    const assistantText = assistantMessageId ? textForMemoryExtraction(deps.messages.get(assistantMessageId)) : '';
     const candidates = await deps.memory.extractCandidates(userText, assistantText);
     if (candidates.length === 0) return;
     const result = await deps.memory.remember(candidates, userMessageId);
