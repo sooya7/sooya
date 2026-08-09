@@ -5,7 +5,8 @@ import { useAutoNotice } from '../lib/autoNotice.js';
 import { navigate } from '../lib/navigation.js';
 import { AppLink } from './AppLink.js';
 import { formatAdminDateTime } from '../lib/adminDisplay.js';
-import { AvatarEditor, emotionLabel, LifeAdminLink, LifePanel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
+import { AvatarEditor, emotionLabel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
+import { LifeObservationPanel } from './life/LifeObservationPanel.js';
 import { WebSearchModelEditor } from './WebSearchModelEditor.js';
 import {
   interfaceOptions,
@@ -948,7 +949,7 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
         : tab === 'voice'
           ? <VoiceEditor onNotice={setNotice} />
           : tab === 'life'
-            ? <><LifeAdminLink /><LifePanel onNotice={setNotice} /></>
+            ? <LifeObservationPanel onNotice={setNotice} />
             : tab === 'models'
                 ? <ModelsPanel onNotice={setNotice} />
                 : tab === 'content'

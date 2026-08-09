@@ -111,4 +111,12 @@ describe('AppShell route lifecycle', () => {
     expect(host.querySelector('[data-testid="admin"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="chat"]')).toBeNull();
   });
+
+  it('serves the old /admin/life/console address through the single admin shell', async () => {
+    const host = await mount('/admin/life/console');
+
+    expect(host.querySelector('[data-testid="admin"]')).not.toBeNull();
+    expect(lifecycle.adminMounts).toBe(1);
+    expect(lifecycle.chatMounts).toBe(0);
+  });
 });

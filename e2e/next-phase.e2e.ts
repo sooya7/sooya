@@ -22,20 +22,13 @@ async function gotoAdmin(page: Page, path: string): Promise<void> {
  * against the same server with these flags on.
  */
 test.describe('next-phase admin surfaces', () => {
-  test('life admin shows overview and the location manager lists builtins', async ({ page }) => {
+  test('old /admin/life/console canonicalizes to the autonomous observation page', async ({ page }) => {
     await gotoAdmin(page, '/admin/life/console');
-    await expect(page.getByTestId('life-admin-page')).toBeVisible();
-    await expect(page.getByTestId('life-overview')).toBeVisible();
-    await expect(page.getByText('在哪里')).toBeVisible();
-    // Location model is enabled on the e2e server: the location manager
-    // lists the seeded builtins including home.
-    await page.getByRole('tab', { name: '地点' }).click();
-    await expect(page.getByTestId('life-location-list')).toBeVisible();
-    // Mobile card-list layout prepends the column label to each cell name
-    // ("名称 家 展开详情"), and the localized kind column also reads 家 for the
-    // home row, so take the first matching cell instead of a unique one.
-    const homeCell = page.getByTestId('life-location-list').getByRole('cell').filter({ hasText: '家' }).filter({ hasNotText: '附近' }).first();
-    await expect(homeCell).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/life$/);
+    await expect(page.getByTestId('life-observation')).toBeVisible();
+    // The environment section is lazy: opening it loads location/weather data.
+    await page.getByRole('button', { name: /地点与天气/ }).click();
+    await expect(page.getByTestId('life-environment-detail')).toContainText('家');
   });
 
   test('overview embeds the base runtime metrics', async ({ page }) => {
@@ -101,6 +94,7 @@ test.describe('next-phase admin surfaces', () => {
     expect((await travel.json() as { travel: unknown }).travel).toBeNull();
     // Restart keeps 杭州 (server restarts between specs; re-verify after reload).
     await page.goto('/admin/life/console');
-    await expect(page.getByTestId('life-admin-page')).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/life$/);
+    await expect(page.getByTestId('life-observation')).toBeVisible();
   });
 });

@@ -37,16 +37,26 @@ describe('merged admin console', () => {
   });
 
   it('renders each feature section from the shared editors', () => {
-    for (const editor of ['AvatarEditor', 'LifePanel', 'VoiceEditor', 'StorageEditor']) {
+    for (const editor of ['AvatarEditor', 'VoiceEditor', 'StorageEditor']) {
       expect(EDITORS).toContain(`export function ${editor}(`);
     }
+    expect(EDITORS).not.toContain('export function LifePanel(');
+    expect(EDITORS).not.toContain('export function LifeAdminLink(');
     const featureImports = PANEL.match(/import \{([^}]+)\} from '\.\/FeatureAdminPage\.js';/)?.[1];
-    for (const imported of ['AvatarEditor', 'emotionLabel', 'LifeAdminLink', 'LifePanel', 'ReferencesEditor', 'StorageEditor', 'VoiceEditor']) {
+    for (const imported of ['AvatarEditor', 'emotionLabel', 'ReferencesEditor', 'StorageEditor', 'VoiceEditor']) {
       expect(featureImports).toContain(imported);
     }
     for (const branch of ["tab === 'avatar'", "tab === 'voice'", "tab === 'life'", "tab === 'storage'"]) {
       expect(PANEL).toContain(branch);
     }
+  });
+
+  it('renders the life tab as the autonomous observation panel only', () => {
+    expect(PANEL).toContain("import { LifeObservationPanel } from './life/LifeObservationPanel.js'");
+    expect(PANEL).toContain('<LifeObservationPanel onNotice={setNotice} />');
+    expect(PANEL).not.toContain('LifeAdminLink');
+    expect(SHELL).not.toContain('LifeAdminPage');
+    expect(SHELL).not.toContain('isLifeConsole');
   });
 
   it('keeps a single page shell so the duplicate console cannot come back', () => {

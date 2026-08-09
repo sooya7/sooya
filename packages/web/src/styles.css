@@ -1302,15 +1302,6 @@ button {
   text-align: center;
 }
 
-.admin-tabs {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  margin: 0 0 14px;
-  padding-bottom: 2px;
-}
-
-.admin-tabs button,
 .admin-actions button,
 .admin-list-row button,
 .admin-card button,
@@ -1327,11 +1318,6 @@ button {
   cursor: pointer;
 }
 
-.admin-tabs button {
-  flex: 0 0 auto;
-}
-
-.admin-tabs button.active,
 .admin-actions button:not(.admin-danger),
 .admin-card-heading button {
   color: var(--accent-ink);
@@ -1972,35 +1958,7 @@ button {
   border-color: color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
-/* Tab strip: wraps on desktop; on small screens it becomes a sticky,
-   horizontally scrolling strip (active tab is scrolled into view by the page). */
-.admin-page .admin-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 0 14px;
-  padding: 2px 0;
-}
-
-.admin-page .admin-tabs button {
-  flex: 0 0 auto;
-  min-height: 40px;
-  padding: 8px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  color: var(--accent-deep);
-  background: var(--panel);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.admin-page .admin-tabs button.active {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
-}
+/* Tab strip removed: the admin console uses the side/bottom nav, not a tab strip. */
 
 .admin-page .admin-summary {
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2123,154 +2081,6 @@ button {
   display: none;
 }
 
-/* ---- Life admin: overview / vitals / events ---- */
-
-.admin-page .life-overview {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-
-.admin-page .overview-card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 14px;
-  box-shadow: var(--shadow-soft);
-}
-
-.admin-page .overview-card h3 {
-  margin: 0 0 6px;
-  font-size: 15px;
-}
-
-.admin-page .overview-card dl {
-  margin: 6px 0;
-  display: grid;
-  gap: 4px;
-}
-
-.admin-page .overview-card dt {
-  font-weight: 600;
-  margin-top: 6px;
-  font-size: 13px;
-  color: var(--ink-soft);
-}
-
-.admin-page .overview-card dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.admin-page .overview-card ul {
-  margin: 6px 0 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 8px;
-}
-
-.admin-page .overview-card li {
-  font-size: 13.5px;
-  overflow-wrap: anywhere;
-}
-
-.admin-page .overview-card button {
-  min-height: 40px;
-  padding: 0 14px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--accent-deep);
-  font: inherit;
-  font-weight: 600;
-}
-
-.admin-page .vitals-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
-}
-
-.admin-page .vital-card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px;
-  text-align: center;
-}
-
-.admin-page .vital-label {
-  display: block;
-  font-size: 12px;
-  color: var(--ink-soft);
-}
-
-.admin-page .vital-card strong {
-  font-size: 18px;
-}
-
-.admin-page .vital-actions {
-  margin-top: 8px;
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-}
-
-.admin-page .vital-actions button,
-.admin-page .vitals-footer button {
-  min-height: 44px;
-  min-width: 44px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--accent-deep);
-  font: inherit;
-  font-weight: 600;
-}
-
-.admin-page .vitals-footer {
-  grid-column: 1 / -1;
-  text-align: right;
-}
-
-.admin-page .vitals-footer button {
-  border-color: var(--danger);
-  color: var(--danger-ink);
-  background: var(--danger-soft);
-}
-
-.admin-page .event-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.admin-page .event-list li {
-  padding: 9px 0;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  flex-wrap: wrap;
-  font-size: 13.5px;
-  overflow-wrap: anywhere;
-}
-
-.admin-page .event-list li:last-child {
-  border-bottom: 0;
-}
-
-.admin-page .event-type {
-  color: var(--warning);
-  background: var(--warning-soft);
-  border-radius: 999px;
-  padding: 2px 10px;
-  white-space: nowrap;
-  font-size: 12px;
-  flex: 0 0 auto;
-}
 
 .admin-page .muted {
   color: var(--ink-faint);
@@ -2769,170 +2579,6 @@ button {
   padding: 10px 0;
 }
 
-/* ---- Weather / cities / travel (Life Admin Weather tab) ---- */
-
-.admin-page .weather-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  align-items: start;
-}
-
-.admin-page .weather-card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 14px;
-  box-shadow: var(--shadow-soft);
-  min-width: 0;
-}
-
-.admin-page .weather-card-wide {
-  grid-column: 1 / -1;
-}
-
-.admin-page .weather-card h3 {
-  margin: 0 0 8px;
-  font-size: 15px;
-}
-
-.admin-page .weather-card h4 {
-  margin: 0 0 6px;
-  font-size: 13px;
-  color: var(--ink-soft);
-}
-
-.admin-page .weather-kv {
-  margin: 8px 0 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 6px 14px;
-  font-size: 13.5px;
-}
-
-.admin-page .weather-kv dt {
-  color: var(--ink-soft);
-  font-weight: 600;
-}
-
-.admin-page .weather-kv dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.admin-page .weather-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.admin-page .geo-matches {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 0 10px;
-}
-
-.admin-page .geo-match {
-  display: grid;
-  gap: 2px;
-  text-align: left;
-  min-height: 44px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  max-width: 100%;
-}
-
-.admin-page .geo-match:hover {
-  border-color: var(--accent-line);
-  background: var(--accent-tint);
-}
-
-.admin-page .geo-match strong {
-  overflow-wrap: anywhere;
-}
-
-.admin-page .forecast-columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-
-.admin-page .forecast-list {
-  display: grid;
-  gap: 4px;
-}
-
-.admin-page .forecast-row {
-  display: grid;
-  grid-template-columns: 52px minmax(48px, 1fr) 44px minmax(0, auto);
-  gap: 8px;
-  align-items: center;
-  font-size: 12.5px;
-  min-width: 0;
-}
-
-.admin-page .forecast-time {
-  color: var(--ink-soft);
-  font-variant-numeric: tabular-nums;
-}
-
-.admin-page .forecast-track {
-  position: relative;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--surface-hover);
-  overflow: hidden;
-  min-width: 0;
-}
-
-.admin-page .forecast-track > i {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  border-radius: 4px;
-  background: var(--accent);
-}
-
-.admin-page .forecast-temp {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.admin-page .forecast-condition {
-  color: var(--ink-soft);
-  overflow-wrap: anywhere;
-}
-
-@media (max-width: 680px) {
-  .admin-page .weather-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .admin-page .weather-card-wide {
-    grid-column: 1;
-  }
-
-  .admin-page .forecast-columns {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 560px) {
-  .admin-page .weather-kv {
-    grid-template-columns: 1fr;
-    gap: 2px 0;
-  }
-}
-
 /* ---- Modal / bottom sheet + confirm dialog ---- */
 
 .modal-backdrop {
@@ -3234,33 +2880,6 @@ button {
 }
 
 @media (max-width: 680px) {
-  .admin-page .admin-tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: var(--surface-glass);
-    backdrop-filter: blur(12px);
-    margin: 0 -16px 12px;
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .admin-page .admin-tabs::-webkit-scrollbar {
-    display: none;
-  }
-
-  .admin-page .admin-tabs button {
-    min-height: 44px;
-  }
-
-  .admin-page .life-overview {
-    grid-template-columns: 1fr;
-  }
-
   .admin-page .shadow-diff-grid {
     grid-template-columns: 1fr;
   }

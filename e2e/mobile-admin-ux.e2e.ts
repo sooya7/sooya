@@ -48,17 +48,14 @@ test('375px 下管理子页与表情面板保持可读且按需加载', async ({
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
   await page.goto('/admin/life');
-  const rules = page.getByTestId('life-rules');
-  await expect(rules).toBeVisible();
-  expect(await rules.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
-  const narrowLabel = await rules.locator('label').evaluateAll((labels) => Math.min(...labels.map((label) => label.getBoundingClientRect().width)));
-  expect(narrowLabel).toBeGreaterThan(280);
-  const addPlan = page.getByRole('button', { name: '加入计划' });
-  expect(await addPlan.evaluate((button) => getComputedStyle(button).whiteSpace)).toBe('nowrap');
-  const addPlanBox = await addPlan.boundingBox();
-  expect(addPlanBox).not.toBeNull();
-  expect(addPlanBox!.x).toBeGreaterThanOrEqual(0);
-  expect(addPlanBox!.x + addPlanBox!.width).toBeLessThanOrEqual(375);
+  const observation = page.getByTestId('life-observation');
+  await expect(observation).toBeVisible();
+  await expect(page.getByRole('button', { name: '添加计划' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '立即推进' })).toHaveCount(0);
+  await page.getByRole('button', { name: /联系边界/ }).click();
+  const boundaries = page.getByTestId('life-boundaries');
+  await expect(boundaries.getByRole('button', { name: '保存联系边界' })).toBeVisible();
+  expect(await observation.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
   await page.goto('/admin/voice');

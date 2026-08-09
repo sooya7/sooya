@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdminPersona } from '../lib/admin.js';
-import { AvatarEditor, emotionLabel, lifeKindLabel } from './FeatureAdminPage.js';
+import { AvatarEditor, emotionLabel } from './FeatureAdminPage.js';
 
 const mediaMock = vi.hoisted(() => ({
   paths: [] as string[],
@@ -86,12 +86,8 @@ describe('AvatarEditor 渐进预览', () => {
 });
 
 describe('管理面板中文数据值', () => {
-  it('翻译生活类型和表情情绪，同时保留未知扩展值便于排查', () => {
-    expect(lifeKindLabel('out')).toBe('出门');
-    expect(lifeKindLabel('sleep')).toBe('睡觉');
-    expect(lifeKindLabel('reading')).toBe('阅读');
+  it('翻译表情情绪', () => {
     expect(emotionLabel('neutral')).toBe('中性');
     expect(emotionLabel('sleepy')).toBe('困倦');
-    expect(lifeKindLabel('future_kind')).toBe('future_kind');
   });
 });
