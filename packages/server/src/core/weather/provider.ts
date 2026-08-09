@@ -114,7 +114,7 @@ export class OpenMeteoWeatherProvider implements WeatherProviderFull {
   private readonly clock: () => Date;
 
   constructor(opts: { baseUrl?: string; timeoutMs?: number; fetchImpl?: typeof fetch; clock?: () => Date } = {}) {
-    this.baseUrl = String(opts.baseUrl ?? 'https://api.open-meteo.com').replace(/\/+$/, '');
+    this.baseUrl = String(opts.baseUrl?.trim() || 'https://api.open-meteo.com').replace(/\/+$/, '');
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_WEATHER_TIMEOUT_MS;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     this.clock = opts.clock ?? (() => new Date());

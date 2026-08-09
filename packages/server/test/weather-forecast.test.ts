@@ -89,6 +89,19 @@ describe('provider factory + open-meteo adapter', () => {
     expect(provider.name).toBe('open-meteo');
   });
 
+  it('空 baseUrl 回退到官方默认地址而不是拼出相对 URL', async () => {
+    const provider = new OpenMeteoWeatherProvider({ fetchImpl: async (url) => {
+      if (String(url).includes('geocoding-api')) {
+        return new Response(JSON.stringify({ results: [{ latitude: 29.87, longitude: 121.55 }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      expect(String(url)).toMatch(/^https:\/\/api\.open-meteo\.com\/v1\/forecast\?/);
+      return new Response(JSON.stringify({ timezone: 'Asia/Shanghai', utc_offset_seconds: 28800, current: { time: '2026-08-08T10:00', temperature_2m: 31.2, weather_code: 95 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    } });
+    const snapshot = await provider.current({ key: 'k', country: '中国', region: '浙江', city: '宁波' });
+    expect(snapshot.condition).toBe('storm');
+    expect(snapshot.provider).toBe('open-meteo');
+  });
+
   it('wmoCondition 映射六类严重天气与常见 code', () => {
     expect(wmoCondition(0)).toBe('clear');
     expect(wmoCondition(3)).toBe('cloudy');
