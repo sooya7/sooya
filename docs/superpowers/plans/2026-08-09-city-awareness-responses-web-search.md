@@ -254,7 +254,7 @@ npm run test -w @sooya/server -- test/provider-responses.test.ts
 
 - [ ] **Step 3: 实现通用请求/结果字段和 Responses 解析**
 
-只有外部搜索全部失败且 provider 为 `openai-responses`、`supportsTools=true` 时发送原生搜索；联网请求使用完整响应缓冲，普通聊天仍流式。
+当有序列表轮到 `responses`，且 provider 为 `openai-responses`、`supportsTools=true` 时发送原生搜索；它既可排在首位，也可作为外部搜索失败后的回退。联网请求使用完整响应缓冲，普通聊天仍流式。
 
 - [ ] **Step 4: 运行测试确认 GREEN 并提交**
 

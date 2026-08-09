@@ -127,6 +127,20 @@ SOOYA_IMAGE_MODEL=gpt-image-1          # 让 SOOYA 能发图片
 SOOYA_EMBEDDING_MODEL=text-embedding-3-small   # 更好的长期记忆召回
 ```
 
+### 联网搜索（可选）
+
+联网搜索可自由选择豆包、Tavily、Responses 原生搜索，逗号顺序就是失败回退顺序；只写一个值时不会自动调用其他服务。豆包的 `custom` / `global` 也可单独切换：
+
+```bash
+SOOYA_WEB_SEARCH_ENABLED=true
+SOOYA_WEB_SEARCH_PROVIDERS=doubao,tavily,responses
+SOOYA_DOUBAO_SEARCH_EDITION=custom  # 可改为 global
+SOOYA_DOUBAO_SEARCH_API_KEY=...
+SOOYA_TAVILY_API_KEY=...
+```
+
+要使用 `responses`，聊天模型需配置为 `openai-responses`，并在 `config/models.json` 的 chat 项中启用 `"supportsTools": true`。所有 Key 仅放在服务器环境变量中，不会随引用元数据返回前端。
+
 ### 方式二：`config/models.json`（可配置项更全）
 
 首次启动会自动生成。支持 `openai-chat` / `openai-responses` / `anthropic-messages` /

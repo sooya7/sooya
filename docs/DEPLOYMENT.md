@@ -95,6 +95,20 @@ SOOYA_IMAGE_MODEL=gpt-image-1
 SOOYA_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
+可选的联网搜索配置：
+
+```bash
+SOOYA_WEB_SEARCH_ENABLED=true
+# 有序子集；仅配置一个值时不回退
+SOOYA_WEB_SEARCH_PROVIDERS=doubao,tavily,responses
+# custom / global 可切换
+SOOYA_DOUBAO_SEARCH_EDITION=custom
+SOOYA_DOUBAO_SEARCH_API_KEY=...
+SOOYA_TAVILY_API_KEY=...
+```
+
+`responses` 仅在 chat 使用 `openai-responses` 且模型配置声明 `supportsTools=true` 时可用。密钥应保留在 `/opt/sooya/shared/.env`，不要写入仓库或发布包。
+
 ```bash
 sudo systemctl restart sooya
 curl -fsS http://127.0.0.1:8788/health/ready

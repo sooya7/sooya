@@ -12,7 +12,6 @@ export interface SummaryOutcome {
   fromSeq?: number;
   toSeq?: number;
 }
-
 /**
  * Segmented, versioned conversation summaries.
  * A range is summarized at most once (`coveredUpTo` moves forward monotonically),
@@ -75,4 +74,3 @@ export class Summarizer {
     }
   }
 }
-
