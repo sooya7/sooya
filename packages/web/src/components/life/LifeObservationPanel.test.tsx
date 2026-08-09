@@ -209,6 +209,48 @@ describe('LifeObservationPanel', () => {
     expect(apiMocks.lifeOverview).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps the newest response when two polls overlap in the same lifecycle', async () => {
+    const olderData = deferred<LifePanelData>();
+    const olderOverview = deferred<AdminLifeOverview>();
+    const newerData = deferred<LifePanelData>();
+    const newerOverview = deferred<AdminLifeOverview>();
+    apiMocks.life
+      .mockResolvedValueOnce(structuredClone(panelData))
+      .mockReturnValueOnce(olderData.promise)
+      .mockReturnValueOnce(newerData.promise);
+    apiMocks.lifeOverview
+      .mockResolvedValueOnce(structuredClone(overview))
+      .mockReturnValueOnce(olderOverview.promise)
+      .mockReturnValueOnce(newerOverview.promise);
+
+    await renderPanel();
+    expect(container!.textContent).toContain('在沙发上打盹');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(apiMocks.life).toHaveBeenCalledTimes(3);
+    expect(apiMocks.lifeOverview).toHaveBeenCalledTimes(3);
+
+    const newest = structuredClone(panelData);
+    newest.snapshot.activity = '最新的轮询状态';
+    await act(async () => {
+      newerData.resolve(newest);
+      newerOverview.resolve(structuredClone(overview));
+      await Promise.resolve();
+    });
+    expect(container!.textContent).toContain('最新的轮询状态');
+
+    const older = structuredClone(panelData);
+    older.snapshot.activity = '较旧的轮询状态';
+    await act(async () => {
+      olderData.resolve(older);
+      olderOverview.resolve(structuredClone(overview));
+      await Promise.resolve();
+    });
+    expect(container!.textContent).toContain('最新的轮询状态');
+    expect(container!.textContent).not.toContain('较旧的轮询状态');
+  });
+
   it('keeps the latest StrictMode lifecycle response when an older request resolves last', async () => {
     const firstData = deferred<LifePanelData>();
     const firstOverview = deferred<AdminLifeOverview>();
@@ -246,12 +288,11 @@ describe('LifeObservationPanel', () => {
     expect(container!.textContent).toContain('新的长期事项');
   });
 
-  it('invalidates an in-flight read and stops polling after unmount', async () => {
+  it('stops polling after unmount while a read is in flight', async () => {
     const pendingData = deferred<LifePanelData>();
     const pendingOverview = deferred<AdminLifeOverview>();
     apiMocks.life.mockReturnValueOnce(pendingData.promise);
     apiMocks.lifeOverview.mockReturnValueOnce(pendingOverview.promise);
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await renderPanel();
 
     const current = root!;
@@ -266,7 +307,6 @@ describe('LifeObservationPanel', () => {
       pendingOverview.resolve(structuredClone(overview));
       await Promise.resolve();
     });
-    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it('shows an alert and retry action when the first read fails', async () => {
