@@ -188,8 +188,12 @@ export class Replier {
         contextWindow,
         maxOutputTokens
       });
+      const provider = allowVision && built.visionUsed ? caps.visionProvider()! : caps.chatProvider();
+      const selectedModel = built.visionUsed ? visionModel : chatModel;
+      const requestMaxTokens = Math.min(selectedModel.maxTokens, maxOutputTokens);
       let requestSystem = built.system;
       let webSearchResult: WebSearchResult | undefined;
+      let nativeSearchAnswer: string | undefined;
       const searchDecision = decideWebSearch(userText);
       if (searchDecision.offer && this.deps.webSearch) {
         const city = this.deps.worldSnapshot?.().city ?? null;
@@ -197,7 +201,7 @@ export class Replier {
           ? [city.country ?? '中国', city.region, city.name].filter(Boolean).join('')
           : '';
         const query = localPrefix && !userText.includes(city!.name) ? `${localPrefix} ${userText}` : userText;
-        const result = await this.deps.webSearch.resolve({
+        const searchRequest = {
           query,
           maxResults: 5,
           ...(city?.name ? { city: city.name } : {}),
@@ -205,19 +209,46 @@ export class Replier {
           ...(city?.country ? { country: city.country } : {}),
           ...(searchDecision.freshness ? { freshness: searchDecision.freshness } : {}),
           signal
-        });
-        if (result && result.provider !== 'responses') {
+        };
+        const nativeSearch = provider.name === 'openai-responses' && selectedModel.supportsTools
+          ? async (nativeSignal: AbortSignal): Promise<WebSearchResult | null> => {
+              const native = await provider.complete({
+                system: built.system,
+                messages: built.turns,
+                maxTokens: requestMaxTokens,
+                temperature: undefined,
+                signal: nativeSignal,
+                webSearch: {
+                  enabled: true,
+                  userLocation: {
+                    ...(webSearchCountryCode(city?.country) ? { countryCode: webSearchCountryCode(city?.country)! } : {}),
+                    ...(city?.region ? { region: city.region } : {}),
+                    ...(city?.name ? { city: city.name } : {})
+                  }
+                }
+              });
+              if (!native.webSearch?.used || !native.text.trim()) return null;
+              return {
+                provider: 'responses',
+                query,
+                answer: native.text,
+                citations: native.webSearch.citations
+              };
+            }
+          : undefined;
+        const result = await this.deps.webSearch.resolve(searchRequest, nativeSearch);
+        if (result) {
           webSearchResult = result;
-          requestSystem = `${requestSystem}\n\n${formatWebSearchContext(result)}\n回答涉及上述材料的事实时使用 [1] 这样的编号标注来源；不要声称读取了未提供的网页正文。`;
+          if (result.provider === 'responses') {
+            nativeSearchAnswer = result.answer;
+          } else {
+            requestSystem = `${requestSystem}\n\n${formatWebSearchContext(result)}\n回答涉及上述材料的事实时使用 [1] 这样的编号标注来源；不要声称读取了未提供的网页正文。`;
+          }
         } else {
           degraded.push('web-search:unavailable');
           requestSystem = `${requestSystem}\n\n联网搜索当前不可用。不要声称已经核实实时信息；请诚实说明无法可靠确认，并继续完成不依赖实时事实的部分。`;
         }
       }
-      const requestMaxTokens = Math.min(
-        built.visionUsed ? visionModel.maxTokens : chatModel.maxTokens,
-        maxOutputTokens
-      );
       const contextBudget = {
         inputBudget: built.inputBudget,
         estimatedInputTokens: built.estimatedInputTokens,
@@ -228,7 +259,6 @@ export class Replier {
         droppedRecentMessages: built.droppedRecentMessages
       };
 
-      const provider = allowVision && built.visionUsed ? caps.visionProvider()! : caps.chatProvider();
       let rawText = '';
       let visibleText = '';
       const filter = new StreamingDirectiveFilter();
@@ -311,7 +341,8 @@ export class Replier {
           degraded.push('chat:not-configured');
         } else {
           try {
-            await streamTurns(built.turns);
+            if (nativeSearchAnswer) pushDelta(nativeSearchAnswer);
+            else await streamTurns(built.turns);
           } catch (err) {
             let streamError: Error | null = err as Error;
             if (built.visionUsed && isImageInputRejection(streamError)) {
@@ -962,6 +993,14 @@ function webSearchPartMeta(result?: WebSearchResult): Record<string, unknown> | 
     webSearchProvider: result.provider,
     webCitations: citations
   };
+}
+
+function webSearchCountryCode(country?: string | null): string | undefined {
+  const normalized = country?.trim();
+  if (!normalized) return undefined;
+  if (/^[a-z]{2}$/i.test(normalized)) return normalized.toUpperCase();
+  if (/^(中国|中华人民共和国|china)$/i.test(normalized)) return 'CN';
+  return undefined;
 }
 
 function mergeDirectives(parsed: UserDirectives, explicit?: UserDirectives): UserDirectives {

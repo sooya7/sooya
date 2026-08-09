@@ -60,6 +60,10 @@ export interface HarnessOptions {
   };
   /** Declare vision support on the chat model (default true). */
   vision?: boolean;
+  /** Exercise the native Responses adapter instead of Chat Completions. */
+  chatProvider?: 'openai-chat' | 'openai-responses';
+  /** Declare hosted-tool support on the configured chat model. */
+  chatSupportsTools?: boolean;
   skipStickerImport?: boolean;
   startWorkers?: boolean;
   /** Reply for GET <baseUrl>/models, used by the model-discovery route. */
@@ -183,7 +187,7 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       });
     }
 
-    if (url.includes('/chat/completions')) {
+    if (url.includes('/chat/completions') || url.endsWith('/responses')) {
       state.chatCalls.push({ body, url });
       if (opts.chat?.delayMs) await new Promise((r) => setTimeout(r, opts.chat!.delayMs));
       if (opts.chat?.respond) {
@@ -205,6 +209,14 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       }
       const chunks = script[Math.min(callIndex++, script.length - 1)] ?? ['好的。'];
       const isStream = (body as { stream?: boolean } | null)?.stream === true;
+      if (url.endsWith('/responses') && !isStream) {
+        return new Response(JSON.stringify({
+          output: [{
+            type: 'message', status: 'completed', role: 'assistant',
+            content: [{ type: 'output_text', text: chunks.join(''), annotations: [] }]
+          }]
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
       if (!isStream) {
         return new Response(JSON.stringify({ choices: [{ message: { content: chunks.join('') } }] }), {
           status: 200,
@@ -262,11 +274,12 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
 
   const models = {
     chat: {
-      provider: 'openai-chat',
+      provider: opts.chatProvider ?? 'openai-chat',
       baseUrl: 'https://fake.example.com/v1',
       apiKey: 'sk-test-key-000000',
       model: 'fake-chat',
       supportsVision: opts.vision ?? true,
+      supportsTools: opts.chatSupportsTools ?? false,
       supportsStreaming: true,
       maxRetries: 0,
       timeoutMs: 5000

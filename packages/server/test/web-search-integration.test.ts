@@ -72,4 +72,47 @@ describe('city-aware web search integration', () => {
     expect(body.reply.content[0].meta?.webSearchUsed).not.toBe(true);
     expect(body.outcome.degraded).toContain('web-search:unavailable');
   });
+
+  it('uses native Responses search as the final answer when selected and supported', async () => {
+    h = await createHarness({
+      env: {
+        ...SEARCH_ENV,
+        SOOYA_WEB_SEARCH_PROVIDERS: 'responses'
+      },
+      chatProvider: 'openai-responses',
+      chatSupportsTools: true,
+      chat: {
+        respond: ({ body }) => {
+          const request = body as { tools?: unknown[] };
+          if (!request.tools) return null;
+          return new Response(JSON.stringify({
+            output: [
+              { type: 'web_search_call', status: 'completed', action: { type: 'search', query: '宁波天气' } },
+              {
+                type: 'message', status: 'completed', role: 'assistant',
+                content: [{
+                  type: 'output_text', text: '宁波今天晴朗。',
+                  annotations: [{ type: 'url_citation', title: '宁波天气', url: 'https://weather.example.com/ningbo' }]
+                }]
+              }
+            ]
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+      }
+    });
+
+    const { body } = await sendText(h.app, '帮我查宁波今天的天气');
+
+    expect(h.state.chatCalls).toHaveLength(1);
+    const request = h.state.chatCalls[0]!.body as { tools?: Array<Record<string, unknown>> };
+    expect(request.tools?.[0]).toMatchObject({ type: 'web_search' });
+    expect(body.reply.content[0]).toMatchObject({
+      text: '宁波今天晴朗。',
+      meta: {
+        webSearchUsed: true,
+        webSearchProvider: 'responses',
+        webCitations: [{ title: '宁波天气', url: 'https://weather.example.com/ningbo' }]
+      }
+    });
+  });
 });

@@ -27,14 +27,14 @@ export class WebSearchService {
 
   async resolve(
     request: WebSearchRequest,
-    nativeSearch?: () => Promise<WebSearchResult | null>
+    nativeSearch?: (signal: AbortSignal) => Promise<WebSearchResult | null>
   ): Promise<WebSearchResult | null> {
     for (const name of this.options.order) {
       try {
         let result: WebSearchResult | null;
         if (name === 'responses') {
           if (!nativeSearch) continue;
-          result = await this.withTimeout(() => nativeSearch(), request.signal);
+          result = await this.withTimeout((timeoutSignal) => nativeSearch(timeoutSignal), request.signal);
         } else {
           const provider = this.providers.get(name);
           if (!provider?.configured) continue;

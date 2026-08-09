@@ -34,6 +34,15 @@ export interface ChatRequest {
   signal?: AbortSignal;
   /** Ask provider to return strict JSON when supported. */
   jsonMode?: boolean;
+  /** Enable the Responses API hosted web-search tool for this request. */
+  webSearch?: {
+    enabled: true;
+    userLocation?: {
+      countryCode?: string;
+      region?: string;
+      city?: string;
+    };
+  };
 }
 
 export interface ChatChunk {
@@ -51,6 +60,12 @@ export interface ChatResult {
    * parsing rather than being trusted as strict JSON.
    */
   jsonModeDegraded?: boolean;
+  /** Present only when native Responses web search was requested. */
+  webSearch?: {
+    used: boolean;
+    callCount: number;
+    citations: Array<{ title: string; url: string }>;
+  };
 }
 
 export interface ChatProvider {

@@ -156,6 +156,67 @@ describe('openai-responses 适配器：output_text 解析', () => {
     const { p } = provider(() => json({ id: 'resp_1', status: 'completed' }));
     expect((await p.complete(TEXT_REQ)).text).toBe('');
   });
+
+  it('启用原生联网搜索时发送 web_search 工具与近似位置', async () => {
+    const { p, sent } = provider(() => json({ output_text: '已核实' }));
+    await p.complete({
+      ...TEXT_REQ,
+      webSearch: {
+        enabled: true,
+        userLocation: { countryCode: 'CN', region: '北京市', city: '北京' }
+      }
+    });
+
+    expect(sent[0].body.tools).toEqual([{
+      type: 'web_search',
+      user_location: { type: 'approximate', country: 'CN', region: '北京市', city: '北京' }
+    }]);
+  });
+
+  it('只取最终 completed assistant message，并返回去重后的安全引用', async () => {
+    const { p } = provider(() => json({
+      output: [
+        { type: 'web_search_call', status: 'completed', action: { type: 'search', query: '北京天气' } },
+        {
+          type: 'message', status: 'in_progress', role: 'assistant',
+          content: [{ type: 'output_text', text: '中间草稿', annotations: [] }]
+        },
+        {
+          type: 'message', status: 'completed', role: 'assistant',
+          content: [{
+            type: 'output_text', text: '北京今天晴朗。', annotations: [
+              { type: 'url_citation', title: '天气来源', url: 'https://weather.example.com/today' },
+              { type: 'url_citation', title: '重复来源', url: 'https://weather.example.com/today' },
+              { type: 'url_citation', title: '危险来源', url: 'javascript:alert(1)' }
+            ]
+          }]
+        }
+      ]
+    }));
+
+    const result = await p.complete({ ...TEXT_REQ, webSearch: { enabled: true } });
+    expect(result.text).toBe('北京今天晴朗。');
+    expect(result.webSearch).toEqual({
+      used: true,
+      callCount: 1,
+      citations: [{ title: '天气来源', url: 'https://weather.example.com/today' }]
+    });
+  });
+
+  it('模型未调用 web_search 时明确返回 used=false', async () => {
+    const { p } = provider(() => json({
+      output: [{
+        type: 'message', status: 'completed', role: 'assistant',
+        content: [{ type: 'output_text', text: '无需搜索', annotations: [] }]
+      }]
+    }));
+
+    expect((await p.complete({ ...TEXT_REQ, webSearch: { enabled: true } })).webSearch).toEqual({
+      used: false,
+      callCount: 0,
+      citations: []
+    });
+  });
 });
 
 describe('openai-responses 适配器：流式增量', () => {

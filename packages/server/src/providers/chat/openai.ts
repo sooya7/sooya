@@ -309,6 +309,23 @@ export class OpenAIResponsesProvider implements ChatProvider {
       stream
     };
     if (req.system) body.instructions = req.system;
+    if (req.webSearch?.enabled) {
+      const location = req.webSearch.userLocation;
+      const approximate = location
+        ? Object.fromEntries(
+            Object.entries({
+              type: 'approximate',
+              country: location.countryCode?.trim().toUpperCase(),
+              region: location.region?.trim(),
+              city: location.city?.trim()
+            }).filter(([, value]) => Boolean(value))
+          )
+        : null;
+      body.tools = [{
+        type: 'web_search',
+        ...(approximate && Object.keys(approximate).length > 1 ? { user_location: approximate } : {})
+      }];
+    }
     return body;
   }
 
@@ -332,7 +349,11 @@ export class OpenAIResponsesProvider implements ChatProvider {
           if (!res.ok)
             throw new ProviderRequestError(`responses request failed with status ${res.status}: ${await safeText(res)}`, res.status);
           const json = (await res.json()) as ResponsesPayload;
-          return { text: extractResponsesText(json), model: this.cfg.model };
+          return {
+            text: extractResponsesText(json),
+            model: this.cfg.model,
+            ...(req.webSearch?.enabled ? { webSearch: extractResponsesWebSearch(json) } : {})
+          };
         } catch (err) {
           throw normalizeAbort(err, this.cfg.timeoutMs);
         } finally {
@@ -376,21 +397,31 @@ export class OpenAIResponsesProvider implements ChatProvider {
       if (!res.ok)
         throw new ProviderRequestError(`responses stream failed with status ${res.status}: ${await safeText(res)}`, res.status);
       let text = '';
+      let completedResponse: ResponsesPayload | undefined;
       await readSse(res, (data) => {
         try {
           const evt = JSON.parse(data) as { type?: string; delta?: string; response?: ResponsesPayload };
           if (evt.type === 'response.output_text.delta' && typeof evt.delta === 'string') {
             text += evt.delta;
             emit({ delta: evt.delta });
-          } else if (evt.type === 'response.completed' && evt.response && !text) {
-            text = extractResponsesText(evt.response);
-            if (text) emit({ delta: text });
+          } else if (evt.type === 'response.completed' && evt.response) {
+            completedResponse = evt.response;
+            if (!text) {
+              text = extractResponsesText(evt.response);
+              if (text) emit({ delta: text });
+            }
           }
         } catch {
           /* ignore */
         }
       });
-      return { text, model: this.cfg.model };
+      return {
+        text,
+        model: this.cfg.model,
+        ...(req.webSearch?.enabled
+          ? { webSearch: extractResponsesWebSearch(completedResponse ?? { output_text: text }) }
+          : {})
+      };
     } catch (err) {
       throw normalizeAbort(err, this.cfg.timeoutMs);
     } finally {
@@ -413,12 +444,32 @@ export class OpenAIResponsesProvider implements ChatProvider {
 
 interface ResponsesPayload {
   output_text?: string | string[];
-  output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+  output?: Array<{
+    type?: string;
+    status?: string;
+    role?: string;
+    action?: { type?: string; url?: string };
+    content?: Array<{
+      type?: string;
+      text?: string;
+      annotations?: Array<{ type?: string; title?: string; url?: string }>;
+    }>;
+  }>;
 }
 
 function extractResponsesText(json: ResponsesPayload): string {
   if (typeof json.output_text === 'string') return json.output_text;
   if (Array.isArray(json.output_text)) return json.output_text.join('');
+  const finalMessages = (json.output ?? []).filter(
+    (item) => item.type === 'message' && item.role === 'assistant' && item.status === 'completed'
+  );
+  if (finalMessages.length > 0) {
+    const final = finalMessages[finalMessages.length - 1]!;
+    return (final.content ?? [])
+      .filter((content) => content.type === 'output_text' && typeof content.text === 'string')
+      .map((content) => content.text!)
+      .join('');
+  }
   const parts: string[] = [];
   for (const item of json.output ?? []) {
     for (const c of item.content ?? []) {
@@ -426,6 +477,37 @@ function extractResponsesText(json: ResponsesPayload): string {
     }
   }
   return parts.join('');
+}
+
+function extractResponsesWebSearch(json: ResponsesPayload): NonNullable<ChatResult['webSearch']> {
+  const callCount = (json.output ?? []).filter((item) => item.type === 'web_search_call').length;
+  const finalMessages = (json.output ?? []).filter(
+    (item) => item.type === 'message' && item.role === 'assistant' && item.status === 'completed'
+  );
+  const final = finalMessages[finalMessages.length - 1];
+  const seen = new Set<string>();
+  const citations: Array<{ title: string; url: string }> = [];
+  for (const content of final?.content ?? []) {
+    for (const annotation of content.annotations ?? []) {
+      if (annotation.type !== 'url_citation' || !annotation.url) continue;
+      const url = safeCitationUrl(annotation.url);
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      citations.push({ title: annotation.title?.trim() || new URL(url).hostname, url });
+      if (citations.length >= 5) break;
+    }
+    if (citations.length >= 5) break;
+  }
+  return { used: callCount > 0, callCount, citations };
+}
+
+function safeCitationUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Anthropic Messages API adapter. */
