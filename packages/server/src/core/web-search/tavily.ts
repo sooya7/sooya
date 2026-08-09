@@ -29,7 +29,7 @@ export class TavilySearchProvider implements WebSearchProvider {
     if (!this.configured) throw new Error('tavily search is not configured');
     const country = request.country ? COUNTRY_NAMES[request.country.trim().toLowerCase()] : undefined;
     const body = {
-      query: request.query,
+      query: tavilyQuery(request.query),
       search_depth: 'basic',
       include_answer: false,
       include_raw_content: false,
@@ -55,6 +55,12 @@ export class TavilySearchProvider implements WebSearchProvider {
       .slice(0, body.max_results);
     return { provider: this.name, query: request.query, citations };
   }
+}
+
+/** Tavily currently rejects CJK-only queries as invalid; a neutral ASCII prefix preserves the query semantics. */
+function tavilyQuery(query: string): string {
+  const trimmed = query.trim();
+  return /[a-z0-9]/iu.test(trimmed) ? trimmed : `web search: ${trimmed}`;
 }
 
 function normalizeTavilyCitation(item: Record<string, unknown>): WebSearchCitation | null {

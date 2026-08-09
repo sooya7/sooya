@@ -145,6 +145,15 @@ describe('TavilySearchProvider', () => {
     expect(result.citations[0]!.title).toBe('example.com');
     expect(result.citations[0]!.snippet).toHaveLength(1_200);
   });
+
+  it('adds a neutral ASCII prefix when Tavily rejects a CJK-only query', async () => {
+    const fake = capture({ results: [] });
+    const provider = new TavilySearchProvider({ apiKey: 'key', baseUrl: 'https://api.tavily.com/search', fetchImpl: fake.fetchImpl });
+
+    await provider.search({ query: '宁波今天有什么活动', maxResults: 3, country: '中国' });
+
+    expect(fake.requests[0]!.body.query).toBe('web search: 宁波今天有什么活动');
+  });
 });
 
 function fakeProvider(
