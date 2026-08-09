@@ -101,7 +101,7 @@ curl http://127.0.0.1:8788/health/ready
 
 ```bash
 sudo ./deploy/install.sh          # 安装到 /opt/sooya 并注册 systemd
-sudo nano /opt/sooya/shared/.env  # 填入 API Key
+sudo systemctl restart sooya
 sudo systemctl restart sooya
 ```
 
@@ -109,49 +109,22 @@ sudo systemctl restart sooya
 
 ---
 
-## 配置模型
+## 配置模型与联网搜索
 
-两种方式，环境变量优先于配置文件。
+打开 `/admin/models`（管理后台 → 模型配置）即可管理聊天、视觉、总结、Embedding、图片、语音、Rerank 和联网搜索。API Key 只提交给服务端，读取页面时仅返回“已配置”状态，不会回传明文。
 
-### 方式一：环境变量（最省事）
+联网搜索就在同一能力列表中，可自由选择并排序豆包、Tavily、Responses；只选择一个提供方时不会隐式回退。豆包支持 `custom` / `global` 切换，每个提供方都可在保存后直接测试连接。Responses 复用聊天模型，要求聊天协议为 `openai-responses` 且启用工具能力。
 
-```bash
-SOOYA_CHAT_PROVIDER=openai-chat
-SOOYA_CHAT_BASE_URL=https://api.openai.com/v1
-SOOYA_CHAT_MODEL=gpt-4o-mini
-SOOYA_CHAT_API_KEY=sk-...
+页面配置保存在 `config/models.json`。运维也可以直接编辑服务器上的这同一份文件，完整校验通过后会自动热加载；无效编辑不会覆盖上一次有效配置。旧版模型/搜索环境变量只在首次升级迁移时读取，迁移后不再覆盖页面或文件。
 
-# 下面都是可选的，不填就是对应能力不可用
-SOOYA_TTS_MODEL=gpt-4o-mini-tts        # 让 SOOYA 能发语音
-SOOYA_IMAGE_MODEL=gpt-image-1          # 让 SOOYA 能发图片
-SOOYA_EMBEDDING_MODEL=text-embedding-3-small   # 更好的长期记忆召回
-```
-
-### 联网搜索（可选）
-
-联网搜索可自由选择豆包、Tavily、Responses 原生搜索，逗号顺序就是失败回退顺序；只写一个值时不会自动调用其他服务。豆包的 `custom` / `global` 也可单独切换：
-
-```bash
-SOOYA_WEB_SEARCH_ENABLED=true
-SOOYA_WEB_SEARCH_PROVIDERS=doubao,tavily,responses
-SOOYA_DOUBAO_SEARCH_EDITION=custom  # 可改为 global
-SOOYA_DOUBAO_SEARCH_API_KEY=...
-SOOYA_TAVILY_API_KEY=...
-```
-
-要使用 `responses`，聊天模型需配置为 `openai-responses`，并在 `config/models.json` 的 chat 项中启用 `"supportsTools": true`。所有 Key 仅放在服务器环境变量中，不会随引用元数据返回前端。
-
-### 方式二：`config/models.json`（可配置项更全）
-
-首次启动会自动生成。支持 `openai-chat` / `openai-responses` / `anthropic-messages` /
-`openai-compatible` 四种协议，每项能力都可以指向不同的服务商：
+`models.json` 支持 `openai-chat` / `openai-responses` / `anthropic-messages` / `openai-compatible` 等协议，例如：
 
 ```jsonc
 {
   "chat": {
     "provider": "openai-chat",
     "baseUrl": "https://api.openai.com/v1",
-    "apiKey": "",              // 建议留空，用环境变量注入
+    "apiKey": "",              // 也可直接在管理页面安全保存
     "model": "gpt-4o-mini",
     "timeoutMs": 60000,
     "maxTokens": 1024,

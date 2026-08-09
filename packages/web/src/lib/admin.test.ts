@@ -262,6 +262,17 @@ describe('adminRequest 请求体与默认 method', () => {
     expect((error as ApiError).status).toBe(502);
   });
 
+  it('testWebSearch 只发送提供方和测试查询，不发送密钥', async () => {
+    const calls = recording({ ok: true, provider: 'doubao', latencyMs: 88, resultCount: 3 });
+
+    const result = await adminApi.testWebSearch('doubao', 'OpenAI');
+
+    expect(calls[0]!.url).toBe('/api/admin/models/web-search/test');
+    expect(calls[0]!.method).toBe('POST');
+    expect(calls[0]!.body).toBe(JSON.stringify({ provider: 'doubao', query: 'OpenAI' }));
+    expect(result.resultCount).toBe(3);
+  });
+
   it('saveModelPresets 把数组包进 { presets }', async () => {
     const preset: ModelPreset = {
       id: 'p1',
@@ -270,7 +281,6 @@ describe('adminRequest 请求体与默认 method', () => {
       provider: 'openai-chat',
       model: 'gpt-4o',
       baseUrl: '',
-      apiKeyEnv: 'OPENAI_API_KEY',
       notes: ''
     };
     const calls = recording({ presets: [preset] });

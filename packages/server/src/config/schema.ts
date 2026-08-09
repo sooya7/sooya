@@ -165,9 +165,9 @@ export type ModelSlot = z.infer<typeof ModelSlotSchema>;
 /**
  * A named model the operator saved for reuse. The slots above are fixed, so
  * without this a panel user cannot "add a model" at all — only overwrite one of
- * seven. A preset deliberately holds no secret: only the name of the env var
- * that carries the key, so the library can be listed, exported and diffed
- * without spreading credentials into settings rows.
+ * seven. A preset deliberately holds no secret or key reference, so the
+ * library can be listed, exported and diffed without spreading credentials.
+ * Applying it leaves the target slot's existing key untouched.
  */
 export const ModelPresetSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, 'id 只能包含字母、数字、下划线和连字符'),
@@ -176,7 +176,6 @@ export const ModelPresetSchema = z.object({
   provider: z.string().min(1).max(64),
   model: z.string().min(1).max(200),
   baseUrl: z.string().max(300).default(''),
-  apiKeyEnv: z.string().max(120).default(''),
   notes: z.string().max(300).default('')
 });
 export type ModelPreset = z.infer<typeof ModelPresetSchema>;

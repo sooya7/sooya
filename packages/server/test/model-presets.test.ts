@@ -27,7 +27,6 @@ const preset = {
   provider: 'openai-compatible',
   model: 'glm-4.6',
   baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-  apiKeyEnv: 'GLM_API_KEY',
   notes: '长上下文，日常对话'
 };
 
@@ -85,17 +84,17 @@ describe('model preset library', () => {
       provider: 'openai-compatible',
       model: 'glm-4.6',
       baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-      configSource: 'panel'
     });
   });
 
-  it('never stores a secret, only the env var name', async () => {
+  it('never stores a secret or an environment variable reference', async () => {
     h = await withAdmin();
-    const withSecret = { ...preset, apiKey: 'sk-should-be-dropped' };
+    const withSecret = { ...preset, apiKey: 'sk-should-be-dropped', apiKeyEnv: 'LEGACY_API_KEY' };
     await api('PUT', '/api/admin/model-presets', { presets: [withSecret] });
     const { res, body } = await api('GET', '/api/admin/model-presets');
     expect(res.body).not.toContain('sk-should-be-dropped');
-    expect(body.presets[0].apiKeyEnv).toBe('GLM_API_KEY');
+    expect(res.body).not.toContain('LEGACY_API_KEY');
+    expect(body.presets[0].apiKeyEnv).toBeUndefined();
     expect(body.presets[0].apiKey).toBeUndefined();
   });
 

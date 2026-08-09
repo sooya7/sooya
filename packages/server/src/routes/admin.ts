@@ -114,11 +114,9 @@ export function registerAdminRoutes(app: SooyaApp): void {
     try {
       config.setModels({
         [preset.slot]: {
-          configSource: 'panel',
           provider: preset.provider,
           model: preset.model,
-          ...(preset.baseUrl ? { baseUrl: preset.baseUrl } : {}),
-          ...(preset.apiKeyEnv ? { apiKeyEnv: preset.apiKeyEnv } : {})
+          ...(preset.baseUrl ? { baseUrl: preset.baseUrl } : {})
         }
       });
     } catch (err) {
@@ -196,7 +194,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
    * picked instead of typed from memory.
    *
    * The key never leaves the server: the panel sends at most a base URL, and the
-   * credential is taken from the saved config (or its env var). `baseUrl` is
+   * credential is taken from the saved config. `baseUrl` is
    * accepted so the list can be pulled for an address that is still unsaved in
    * the form, which is exactly when you need it.
    */

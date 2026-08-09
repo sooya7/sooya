@@ -141,7 +141,34 @@ export interface AdminPersona {
   imagePolicy: Record<string, unknown>;
 }
 
-export type AdminModels = Record<string, Record<string, unknown> | undefined>;
+export type AdminWebSearchProvider = 'doubao' | 'tavily' | 'responses';
+
+export interface AdminWebSearchConfig {
+  enabled: boolean;
+  providers: AdminWebSearchProvider[];
+  maxResults: number;
+  timeoutMs: number;
+  doubao: {
+    edition: 'custom' | 'global';
+    baseUrl: string;
+    apiKeyConfigured?: boolean;
+    apiKey?: string;
+  };
+  tavily: {
+    baseUrl: string;
+    apiKeyConfigured?: boolean;
+    apiKey?: string;
+  };
+}
+
+export interface WebSearchTestResult {
+  ok: true;
+  provider: AdminWebSearchProvider;
+  latencyMs: number;
+  resultCount: number;
+}
+
+export type AdminModels = Record<string, Record<string, unknown> | AdminWebSearchConfig | number | undefined>;
 
 export interface AdminMemory {
   id: string;
@@ -376,6 +403,8 @@ export const adminApi = {
     ),
   testModel: (slot: ModelSlot, forceImage = false) =>
     adminRequest<ModelTestResult>(`/api/admin/models/${encodeURIComponent(slot)}/test`, { method: 'POST', body: forceImage ? { force: true } : {} }),
+  testWebSearch: (provider: AdminWebSearchProvider, query: string) =>
+    adminRequest<WebSearchTestResult>('/api/admin/models/web-search/test', { method: 'POST', body: { provider, query } }),
   saveModelPresets: (presets: ModelPreset[]) =>
     adminRequest<{ presets: ModelPreset[] }>('/api/admin/model-presets', { method: 'PUT', body: { presets } }),
   applyModelPreset: (id: string) =>

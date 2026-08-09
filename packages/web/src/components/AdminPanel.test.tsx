@@ -32,6 +32,27 @@ const adminMocks = vi.hoisted(() => ({
   })),
   stickers: vi.fn(async () => ({ stickers: [] })),
   media: vi.fn(async () => ({ media: [] })),
+  models: vi.fn(async () => ({
+    models: {
+      storageVersion: 2,
+      chat: { provider: 'openai-responses', model: 'deepseek-chat', supportsTools: true, apiKeyConfigured: true },
+      webSearch: {
+        enabled: true,
+        providers: ['doubao', 'tavily', 'responses'],
+        maxResults: 5,
+        timeoutMs: 15000,
+        doubao: { edition: 'custom', baseUrl: 'https://open.feedcoopapi.com/search_api/web_search', apiKeyConfigured: true },
+        tavily: { baseUrl: 'https://api.tavily.com/search', apiKeyConfigured: true }
+      }
+    }
+  })),
+  updateModels: vi.fn(async (patch: Record<string, unknown>) => ({ models: patch })),
+  modelPresets: vi.fn(async () => ({ presets: [], slots: [] })),
+  saveModelPresets: vi.fn(async () => ({ presets: [] })),
+  applyModelPreset: vi.fn(async () => ({ applied: 'chat', models: {} })),
+  discoverModels: vi.fn(async () => ({ models: [], source: 'test' })),
+  testModel: vi.fn(async () => ({ ok: true, provider: 'test', latencyMs: 1, detail: 'ok' })),
+  testWebSearch: vi.fn(async (provider: string) => ({ ok: true, provider, latencyMs: 1, resultCount: 1 })),
 }));
 
 vi.mock('../lib/admin.js', () => ({
@@ -72,6 +93,10 @@ beforeEach(() => {
   adminMocks.memories.mockClear();
   adminMocks.stickers.mockClear();
   adminMocks.media.mockClear();
+  adminMocks.models.mockClear();
+  adminMocks.updateModels.mockClear();
+  adminMocks.modelPresets.mockClear();
+  adminMocks.testWebSearch.mockClear();
 });
 
 afterEach(async () => {
@@ -136,5 +161,24 @@ describe('AdminPanel 子页首屏', () => {
     expect(recall.textContent).toContain('关键词匹配');
     expect(recall.textContent).not.toContain('deduplicated_recent');
     expect(recall.textContent).not.toContain('FTS lexical match');
+  });
+
+  it('联网搜索位于现有模型配置的能力列表中', async () => {
+    window.history.replaceState(null, '', '/admin/models');
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<AdminPanel initialTab="models" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const button = [...container.querySelectorAll('button')].find((item) => item.textContent?.includes('联网搜索'));
+    expect(button).toBeTruthy();
+    await act(async () => button!.click());
+
+    expect(container.querySelector('[data-testid="admin-web-search-editor"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="admin-dashboard"]')).toHaveLength(1);
   });
 });

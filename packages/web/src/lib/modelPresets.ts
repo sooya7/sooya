@@ -75,7 +75,6 @@ export interface ModelPreset {
   provider: string;
   model: string;
   baseUrl: string;
-  apiKeyEnv: string;
   notes: string;
 }
 
@@ -83,7 +82,7 @@ export const MAX_PRESETS = 60;
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 
 export function emptyPreset(slot: ModelSlot = 'chat'): ModelPreset {
-  return { id: '', name: '', slot, provider: SLOT_PROVIDERS[slot][0] ?? '', model: '', baseUrl: '', apiKeyEnv: '', notes: '' };
+  return { id: '', name: '', slot, provider: SLOT_PROVIDERS[slot][0] ?? '', model: '', baseUrl: '', notes: '' };
 }
 
 /**
@@ -160,8 +159,6 @@ export function presetFromConfig(
     provider,
     model: model.slice(0, 200),
     baseUrl: String(config.baseUrl ?? '').trim().slice(0, 300),
-    // Only the variable name travels — the key itself stays on the server.
-    apiKeyEnv: String(config.apiKeyEnv ?? '').trim().slice(0, 120),
     notes: ''
   };
 }
@@ -175,7 +172,6 @@ export function normalizePreset(draft: ModelPreset): ModelPreset {
     provider: draft.provider.trim(),
     model: draft.model.trim(),
     baseUrl: draft.baseUrl.trim(),
-    apiKeyEnv: draft.apiKeyEnv.trim(),
     notes: draft.notes.trim()
   };
 }

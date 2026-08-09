@@ -74,43 +74,13 @@ sudo ./deploy/install.sh
 
 ### 3. 配置
 
-```bash
-sudo nano /opt/sooya/shared/.env
-```
+安装脚本生成管理令牌后，打开 `/admin/models`（管理后台 → 模型配置）配置所有模型和联网搜索。联网搜索作为现有能力列表的一项，支持豆包 Custom/Global、Tavily 与 Responses 的自由启用和排序回退。模型与搜索密钥由页面安全提交，GET 接口和页面都不会拿到明文。
 
-至少填好聊天模型：
+唯一持久化文件为 `/opt/sooya/shared/config/models.json`。运维可以直接编辑它；合法配置会自动热加载，非法配置保留上一次有效运行状态。旧版 `.env` 中的模型和搜索变量只在首次升级到 `storageVersion: 2` 时迁移一次，之后不再参与运行时覆盖。
 
-```bash
-SOOYA_CHAT_PROVIDER=openai-chat
-SOOYA_CHAT_BASE_URL=https://api.openai.com/v1
-SOOYA_CHAT_MODEL=gpt-4o-mini
-SOOYA_CHAT_API_KEY=sk-...
-
-# 公网暴露时务必设置
-WEB_CHAT_TOKEN=$(openssl rand -hex 32)
-
-# 可选能力
-SOOYA_TTS_MODEL=gpt-4o-mini-tts
-SOOYA_IMAGE_MODEL=gpt-image-1
-SOOYA_EMBEDDING_MODEL=text-embedding-3-small
-```
-
-可选的联网搜索配置：
+`responses` 仅在 chat 使用 `openai-responses` 且模型配置声明 `supportsTools=true` 时可用。`.env` 继续保留端口、目录、代理、管理令牌和聊天访问令牌等部署参数。
 
 ```bash
-SOOYA_WEB_SEARCH_ENABLED=true
-# 有序子集；仅配置一个值时不回退
-SOOYA_WEB_SEARCH_PROVIDERS=doubao,tavily,responses
-# custom / global 可切换
-SOOYA_DOUBAO_SEARCH_EDITION=custom
-SOOYA_DOUBAO_SEARCH_API_KEY=...
-SOOYA_TAVILY_API_KEY=...
-```
-
-`responses` 仅在 chat 使用 `openai-responses` 且模型配置声明 `supportsTools=true` 时可用。密钥应保留在 `/opt/sooya/shared/.env`，不要写入仓库或发布包。
-
-```bash
-sudo systemctl restart sooya
 curl -fsS http://127.0.0.1:8788/health/ready
 curl -fsS http://127.0.0.1:8788/api/capabilities | jq .capabilities
 ```

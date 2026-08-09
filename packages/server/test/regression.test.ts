@@ -45,11 +45,11 @@ afterEach(() => {
 });
 
 /* ========================================================================== */
-/* Defect 1: environment API keys leaked into models.json and backups         */
+/* Defect 1: legacy environment keys migrate once into the single source     */
 /* ========================================================================== */
 
-describe('defect 1: environment API keys must never be persisted to models.json', () => {
-  it('does not write an env-injected key when saving unrelated settings', () => {
+describe('defect 1: legacy environment keys migrate once into models.json', () => {
+  it('persists the migrated key when saving unrelated settings', () => {
     const configDir = makeTempDir('sooya-cfg-env-');
     const store = new ConfigStore({
       configDir,
@@ -66,8 +66,8 @@ describe('defect 1: environment API keys must never be persisted to models.json'
 
     const onDiskText = fs.readFileSync(path.join(configDir, 'models.json'), 'utf8');
     const onDisk = JSON.parse(onDiskText);
-    expect(onDiskText).not.toContain('sk-env-supplied-secret-000000000000');
-    expect(onDisk.chat.apiKey).toBe('');
+    expect(onDisk.chat.apiKey).toBe('sk-env-supplied-secret-000000000000');
+    expect(onDisk.storageVersion).toBe(2);
     expect(onDisk.chat.temperature).toBe(0.4);
     expect(store.getModels().chat.apiKey).toBe('sk-env-supplied-secret-000000000000');
   });
@@ -88,7 +88,7 @@ describe('defect 1: environment API keys must never be persisted to models.json'
     expect(onDisk.chat.apiKey).toBe('sk-explicit-file-key-1234567890');
   });
 
-  it('does not replace a file-owned key on disk with an environment key', () => {
+  it('preserves the legacy effective key after migration and ignores later env changes', () => {
     const configDir = makeTempDir('sooya-cfg-mixed-');
     fs.writeFileSync(
       path.join(configDir, 'models.json'),
@@ -110,8 +110,14 @@ describe('defect 1: environment API keys must never be persisted to models.json'
 
     store.setModels({ chat: { temperature: 0.9 } });
     const onDisk = JSON.parse(fs.readFileSync(path.join(configDir, 'models.json'), 'utf8'));
-    expect(onDisk.chat.apiKey).toBe('sk-file-original-key-000000');
+    expect(onDisk.chat.apiKey).toBe('sk-env-override-key-111111');
     expect(onDisk.chat.temperature).toBe(0.9);
+
+    const reloaded = new ConfigStore({
+      configDir,
+      env: { SOOYA_CHAT_API_KEY: 'sk-later-env-change-222222' } as NodeJS.ProcessEnv
+    });
+    expect(reloaded.getModels().chat.apiKey).toBe('sk-env-override-key-111111');
   });
 
   it('redacts configured keys from the admin response', async () => {

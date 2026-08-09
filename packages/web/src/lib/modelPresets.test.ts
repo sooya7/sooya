@@ -23,7 +23,6 @@ const chatPreset: ModelPreset = {
   provider: 'openai-compatible',
   model: 'glm-4.6',
   baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-  apiKeyEnv: 'GLM_API_KEY',
   notes: '日常对话'
 };
 
@@ -63,8 +62,9 @@ describe('model preset validation', () => {
 
 describe('model preset editing', () => {
   it('trims every field before sending', () => {
-    const messy = { ...chatPreset, id: ' glm-4-6 ', name: '  主聊  ', model: ' glm-4.6 ', apiKeyEnv: ' KEY ' };
-    expect(normalizePreset(messy)).toMatchObject({ id: 'glm-4-6', name: '主聊', model: 'glm-4.6', apiKeyEnv: 'KEY' });
+    const messy = { ...chatPreset, id: ' glm-4-6 ', name: '  主聊  ', model: ' glm-4.6 ', apiKeyEnv: ' LEGACY_KEY ' };
+    expect(normalizePreset(messy as ModelPreset)).toMatchObject({ id: 'glm-4-6', name: '主聊', model: 'glm-4.6' });
+    expect(normalizePreset(messy as ModelPreset)).not.toHaveProperty('apiKeyEnv');
   });
 
   it('appends a new preset and replaces an edited one in place', () => {
@@ -156,8 +156,8 @@ describe('presetFromConfig（把当前配置存进模型库）', () => {
       provider: 'openai-compatible',
       model: 'deepseek-v4-flash',
       baseUrl: 'https://api.sooya.icu/v1',
-      apiKeyEnv: 'SOOYA_CHAT_API_KEY'
     });
+    expect(preset).not.toHaveProperty('apiKeyEnv');
     expect((preset as ModelPreset).name).toContain('deepseek-v4-flash');
   });
 

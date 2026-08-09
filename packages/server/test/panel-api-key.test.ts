@@ -26,16 +26,17 @@ describe('面板里直接填 API Key', () => {
     expect(h.app.config.getModels().image.apiKey).toBe('sk-typed-in-panel-1234');
   });
 
-  it('still falls back to the environment when no key is stored', async () => {
+  it('treats an empty key from the panel as an explicit deletion', async () => {
     h = await boot({ OPENAI_API_KEY: 'sk-from-env-00000000' });
     await put({ image: { provider: 'openai-images', baseUrl: 'https://api.example.com/v1', model: 'gpt-image-2', apiKey: '' } });
-    expect(h.app.config.getModels().image.apiKey).toBe('sk-from-env-00000000');
+    expect(h.app.config.getModels().image.apiKey).toBe('');
   });
 
-  it('honours the named variable when it is the one that is set', async () => {
+  it('drops the legacy apiKeyEnv field instead of resolving it at runtime', async () => {
     h = await boot({ SOOYA_IMAGE_API_KEY: 'sk-named-var-9999' });
     await put({ image: { provider: 'openai-images', baseUrl: 'https://api.example.com/v1', model: 'gpt-image-2', apiKey: '', apiKeyEnv: 'SOOYA_IMAGE_API_KEY' } });
-    expect(h.app.config.getModels().image.apiKey).toBe('sk-named-var-9999');
+    expect(h.app.config.getModels().image.apiKey).toBe('');
+    expect(h.app.config.getModels().image).not.toHaveProperty('apiKeyEnv');
   });
 
   it('never sends the key back to the panel, only whether one exists', async () => {
@@ -56,13 +57,12 @@ describe('面板里直接填 API Key', () => {
     expect(tts.voice).toBe('nova');
   });
 
-  it('leaves the environment authoritative for config the panel never touched', async () => {
-    // A deployment must still be able to rotate a stale key in a hand-written
-    // models.json; only a key the operator saved deliberately outranks the env.
+  it('migrates the environment once and removes the old source marker', async () => {
     h = await boot({ SOOYA_CHAT_API_KEY: 'sk-env-rotated-2222' });
     const models = h.app.config.getModels();
-    expect(models.chat.configSource).toBe('environment');
     expect(models.chat.apiKey).toBe('sk-env-rotated-2222');
+    expect(models.chat).not.toHaveProperty('configSource');
+    expect(models.storageVersion).toBe(2);
   });
 
   it('survives a reload, so the key really is on disk', async () => {

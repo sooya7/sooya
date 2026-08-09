@@ -91,7 +91,7 @@ export interface TextGenerationResult {
 }
 
 const NO_MODEL_FALLBACK =
-  '（SOOYA 还没有配置聊天模型，所以现在只能给你这句占位回复。在 config/models.json 或环境变量里填好模型后我就能正常说话了。）';
+  '（SOOYA 还没有配置聊天模型，所以现在只能给你这句占位回复。请在管理后台的“模型配置”中填好聊天模型。）';
 
 /**
  * Two-phase multimedia replier.

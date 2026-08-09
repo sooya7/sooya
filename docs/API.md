@@ -362,10 +362,13 @@ v1 提供管理面板网页（`/admin/features` 进入功能管理，`/admin` �
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/api/admin/models` | 模型配置（**apiKey 已脱敏**） |
-| `PUT` | `/api/admin/models` | 深度合并更新并热重建能力 |
+| `PUT` | `/api/admin/models` | 深度合并更新，持久化并热重建模型与搜索能力 |
+| `POST` | `/api/admin/models/web-search/test` | 测试已保存的联网搜索提供方（不接收/返回密钥） |
 | `GET` | `/api/admin/capabilities` | 能力状态 + 当前 embedding 维度 |
 | `PUT` | `/api/admin/tts` | 便捷接口：`{ model, policy }` |
 | `PUT` | `/api/admin/image` | 便捷接口：`{ model, policy }` |
+
+模型和联网搜索共用 `config/models.json` 作为单一来源。页面保存和服务器直接编辑该文件都会热生效；所有层级的 `apiKey` 在响应中递归脱敏。
 
 ### 表情包
 

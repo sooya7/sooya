@@ -6,6 +6,7 @@ import { navigate } from '../lib/navigation.js';
 import { AppLink } from './AppLink.js';
 import { formatAdminDateTime } from '../lib/adminDisplay.js';
 import { AvatarEditor, emotionLabel, LifeAdminLink, LifePanel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
+import { WebSearchModelEditor } from './WebSearchModelEditor.js';
 import {
   interfaceOptions,
   MODEL_SLOTS,
@@ -36,7 +37,8 @@ import {
   type AdminModels,
   type AdminPersona,
   type AdminSticker,
-  type AdminSystemStatus
+  type AdminSystemStatus,
+  type AdminWebSearchConfig
 } from '../lib/admin.js';
 
 export type Tab =
@@ -59,8 +61,10 @@ const CAPABILITIES = [
   ['embedding', '向量模型'],
   ['rerank', '记忆重排模型'],
   ['image', '图片生成模型'],
-  ['tts', '语音合成模型']
+  ['tts', '语音合成模型'],
+  ['webSearch', '联网搜索']
 ] as const;
+type ModelPanelSelection = ModelSlot | 'webSearch';
 
 /** Nav groups, so nine sections read as a structure instead of a list. */
 const NAV_GROUPS = ['运行状态', '助手与表达', '内容与系统'] as const;
@@ -328,7 +332,7 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
 
   return (
     <section className="admin-model-library" data-testid="admin-model-library">
-      <PanelHeading title="模型库" description="保存任意多个模型预设，随时指派给某项能力。预设只记录密钥的环境变量名，不保存密钥本身。" />
+      <PanelHeading title="模型库" description="保存任意多个模型预设，随时指派给某项能力。预设不保存或修改密钥，指派后沿用该能力当前的密钥。" />
       {groups.length === 0 && <p className="admin-muted">还没有预设。把下面的配置填好后点「存入模型库」，就能在不同模型之间随时切换。</p>}
       {groups.map(([slot, items]) => (
         <div className="admin-preset-group" key={slot}>
@@ -337,7 +341,7 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
             <div className={editingId === preset.id ? 'admin-preset-row active' : 'admin-preset-row'} key={preset.id} data-testid={`admin-preset-${preset.id}`}>
               <div className="admin-preset-copy">
                 <strong>{preset.name}</strong>
-                <small>{preset.model} · {preset.provider}{preset.baseUrl ? ` · ${preset.baseUrl}` : ''}{preset.apiKeyEnv ? ` · 密钥取自 ${preset.apiKeyEnv}` : ''}</small>
+                <small>{preset.model} · {preset.provider}{preset.baseUrl ? ` · ${preset.baseUrl}` : ''}</small>
                 {preset.notes && <small>{preset.notes}</small>}
               </div>
               <div className="admin-preset-actions">
@@ -365,7 +369,6 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
           </select></label>
           <label>模型名<input value={draft.model} onChange={(e) => update({ model: e.target.value })} /></label>
           <label>接口地址<input value={draft.baseUrl} placeholder="留空则用默认地址" onChange={(e) => update({ baseUrl: e.target.value })} /></label>
-          <label>密钥环境变量<input value={draft.apiKeyEnv} placeholder="例如 GLM_API_KEY" onChange={(e) => update({ apiKeyEnv: e.target.value })} /></label>
           <label>备注<input value={draft.notes} onChange={(e) => update({ notes: e.target.value })} /></label>
           <div className="admin-preset-form-actions">
             <button type="button" className="admin-primary" disabled={busy} onClick={submit}>{editingId ? '保存修改' : '添加到模型库'}</button>
@@ -379,7 +382,7 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
 
 function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [models, setModels] = useState<AdminModels | null>(null);
-  const [selected, setSelected] = useState<ModelSlot>('chat');
+  const [selected, setSelected] = useState<ModelPanelSelection>('chat');
   const [available, setAvailable] = useState<string[] | null>(null);
   const [keyDraft, setKeyDraft] = useState('');
   const [pulling, setPulling] = useState(false);
@@ -399,7 +402,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   }));
 
   const save = async () => {
-    if (!models) return;
+    if (!models || selected === 'webSearch') return;
     try {
       const typed = keyDraft.trim();
       const r = await adminApi.updateModels({ [selected]: { ...config, ...(typed ? { apiKey: typed } : {}) } });
@@ -415,6 +418,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
 
   /** Asks the endpoint what it serves. The key stays server-side. */
   const pull = async () => {
+    if (selected === 'webSearch') return;
     if (discoveryUnsupported) {
       onNotice('Anuma 不提供模型列表，请手动填写模型名');
       return;
@@ -441,6 +445,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
    * apart from "actually works". Unsaved form edits are not part of the probe.
    */
   const runTest = async () => {
+    if (selected === 'webSearch') return;
     if (selected === 'image' && !confirmAction('测试出图会真实调用图片服务并消耗一次额度，确定继续吗？')) return;
     setTesting(true);
     setTestResult(null);
@@ -460,6 +465,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
 
   /** Saves what is on screen into the library as a new entry. */
   const addToLibrary = async () => {
+    if (selected === 'webSearch') return;
     try {
       const current = await adminApi.modelPresets();
       const draft = presetFromConfig(selected, config, current.presets);
@@ -484,11 +490,22 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         {CAPABILITIES.map(([key, label]) => (
           <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); setKeyDraft(''); setTestResult(null); }}>
             <span>{label}</span>
-            <small>{String((models[key] as Record<string, unknown> | undefined)?.model ?? '未独立配置')}</small>
+            <small>{key === 'webSearch'
+              ? ((models.webSearch as AdminWebSearchConfig | undefined)?.enabled ? (models.webSearch as AdminWebSearchConfig).providers.join(' → ') : '已关闭')
+              : String((models[key] as Record<string, unknown> | undefined)?.model ?? '未独立配置')}</small>
           </button>
         ))}
       </aside>
       <div className="admin-form-card">
+        {selected === 'webSearch' ? <>
+          <PanelHeading title="联网搜索" description="配置聊天需要外部实时信息时使用的搜索提供方。" />
+          <WebSearchModelEditor
+            config={models.webSearch as AdminWebSearchConfig}
+            responsesAvailable={String((models.chat as Record<string, unknown> | undefined)?.provider ?? '') === 'openai-responses' && (models.chat as Record<string, unknown> | undefined)?.supportsTools === true}
+            onSaved={setModels}
+            onNotice={onNotice}
+          />
+        </> : <>
         <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description="编辑当前能力使用的真实服务端配置。" />
         <ModelLibrary onNotice={onNotice} onApplied={setModels} reloadKey={libraryKey} />
         <label>接口协议<select value={String(config.provider ?? 'none')} onChange={(e) => update('provider', e.target.value)}>
@@ -600,6 +617,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         ) : (
           <small className="admin-muted">「测试连接」会用已保存的配置真发一次最小请求。改了表单要先保存再测。</small>
         )}
+        </>}
       </div>
     </section>
   );
