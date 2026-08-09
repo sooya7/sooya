@@ -39,14 +39,33 @@ export function lifePlanStatusText(value: string): string {
   return LIFE_PLAN_STATUS_TEXT[value] ?? value;
 }
 
+function safeTimeKey(...values: Array<string | null | undefined>): number | null {
+  for (const value of values) {
+    if (!value?.trim()) continue;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function compareTimeKeys(left: number | null, right: number | null, direction: 'ascending' | 'descending'): number {
+  if (left === null) return right === null ? 0 : 1;
+  if (right === null) return -1;
+  return direction === 'ascending' ? left - right : right - left;
+}
+
 export function previewPlans(plans: LifePlanRow[]): LifePlanRow[] {
   return plans
     .filter(({ status }) => status === 'active' || status === 'planned' || status === 'paused')
     .sort((left, right) => {
+      const leftTime = safeTimeKey(left.planned_start, left.created_at);
+      const rightTime = safeTimeKey(right.planned_start, right.created_at);
+      const validTimeOrder = compareTimeKeys(leftTime, rightTime, 'ascending');
+      if ((leftTime === null) !== (rightTime === null)) return validTimeOrder;
       const activeOrder = Number(right.status === 'active') - Number(left.status === 'active');
       if (activeOrder !== 0) return activeOrder;
       if (left.priority !== right.priority) return right.priority - left.priority;
-      return Date.parse(left.planned_start ?? left.created_at) - Date.parse(right.planned_start ?? right.created_at);
+      return validTimeOrder;
     })
     .slice(0, 3);
 }
@@ -89,7 +108,7 @@ export function mergeLifeHistory(
     }))
   ];
 
-  return items.sort((left, right) => Date.parse(right.at) - Date.parse(left.at));
+  return items.sort((left, right) => compareTimeKeys(safeTimeKey(left.at), safeTimeKey(right.at), 'descending'));
 }
 
 export function contactBoundaryPayload(settings: LifeSettings): Partial<LifePanelData['settings']> {

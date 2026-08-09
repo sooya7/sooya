@@ -81,6 +81,35 @@ describe('previewPlans', () => {
     ]);
     expect(plans).toEqual(before);
   });
+
+  it('falls back to created_at when planned_start is empty', () => {
+    const plans = [
+      plan({ id: 'later', status: 'planned', priority: 1, planned_start: '', created_at: '2026-08-09T10:00:00.000Z' }),
+      plan({ id: 'earlier', status: 'planned', priority: 1, planned_start: '', created_at: '2026-08-09T08:00:00.000Z' })
+    ];
+
+    expect(previewPlans(plans).map(({ id }) => id)).toEqual(['earlier', 'later']);
+  });
+
+  it('places plans without any valid time after valid plans so they cannot displace the preview', () => {
+    const plans = [
+      plan({ id: 'invalid', status: 'planned', priority: 99, planned_start: 'not-a-date', created_at: '' }),
+      plan({ id: 'valid-3', status: 'planned', priority: 1, planned_start: '2026-08-09T10:00:00.000Z' }),
+      plan({ id: 'valid-1', status: 'planned', priority: 1, planned_start: '2026-08-09T08:00:00.000Z' }),
+      plan({ id: 'valid-2', status: 'planned', priority: 1, planned_start: '2026-08-09T09:00:00.000Z' })
+    ];
+
+    expect(previewPlans(plans).map(({ id }) => id)).toEqual(['valid-1', 'valid-2', 'valid-3']);
+  });
+
+  it('preserves source order when plan sorting keys are equal', () => {
+    const plans = [
+      plan({ id: 'first', status: 'planned', priority: 1, planned_start: '2026-08-09T08:00:00.000Z' }),
+      plan({ id: 'second', status: 'planned', priority: 1, planned_start: '2026-08-09T08:00:00.000Z' })
+    ];
+
+    expect(previewPlans(plans).map(({ id }) => id)).toEqual(['first', 'second']);
+  });
 });
 
 describe('mergeLifeHistory', () => {
@@ -136,6 +165,32 @@ describe('mergeLifeHistory', () => {
       { title: '分享读书心得', detail: '已经发送' },
       { title: '分享读书心得', detail: '发送失败' },
       { title: '读书', detail: '专注' }
+    ]);
+  });
+
+  it('places invalid history times after valid times and preserves source order for equal keys', () => {
+    const activity = (id: string, endedAt: string): LifeLogRow => ({
+      id,
+      activity: id,
+      kind: 'task',
+      mood: '平静',
+      started_at: '2026-08-09T07:00:00.000Z',
+      ended_at: endedAt,
+      shared: 0
+    });
+
+    expect(mergeLifeHistory([
+      activity('invalid-first', 'not-a-date'),
+      activity('equal-first', '2026-08-09T10:00:00.000Z'),
+      activity('equal-second', '2026-08-09T10:00:00.000Z'),
+      activity('older', '2026-08-09T09:00:00.000Z'),
+      activity('invalid-second', '')
+    ], [], []).map(({ id }) => id)).toEqual([
+      'equal-first',
+      'equal-second',
+      'older',
+      'invalid-first',
+      'invalid-second'
     ]);
   });
 });
