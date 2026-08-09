@@ -7,6 +7,7 @@ import { MODEL_SLOTS, ModelPresetsSchema, PersonaSchema, type ModelPreset, type 
 import { assertSafeUrl, HttpTimeoutError, SsrfError } from '../util/http.js';
 import { ProviderNotConfiguredError, ProviderRequestError } from '../providers/types.js';
 import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
+import { redactDiagnostic } from '../core/public-error.js';
 
 function modelRows(payload: unknown): unknown[] {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
@@ -133,10 +134,60 @@ export function registerAdminRoutes(app: SooyaApp): void {
     try {
       config.setModels(req.body);
       services.capabilities.rebuild();
+      services.webSearch.rebuild(config.getModels().webSearch);
       return { models: config.safeModels() };
     } catch (err) {
       reply.code(400);
       return { error: 'invalid_models', message: (err as Error).message.slice(0, 500) };
+    }
+  });
+
+  const WebSearchTestSchema = z.object({
+    provider: z.enum(['doubao', 'tavily', 'responses']),
+    query: z.string().trim().min(1).max(300)
+  });
+  server.post('/api/admin/models/web-search/test', guard, async (req, reply) => {
+    const parsed = WebSearchTestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'bad_request', issues: parsed.error.issues };
+    }
+    const { provider, query } = parsed.data;
+    const chatConfig = config.getModels().chat;
+    if (provider === 'responses' && (chatConfig.provider !== 'openai-responses' || !chatConfig.supportsTools)) {
+      reply.code(409);
+      return { error: 'responses_search_unavailable', message: '当前聊天模型未启用 Responses 原生搜索能力' };
+    }
+    const started = Date.now();
+    try {
+      const nativeSearch = provider === 'responses'
+        ? async (signal: AbortSignal) => {
+            const result = await services.capabilities.chatProvider().complete({
+              messages: [{ role: 'user', content: [{ type: 'text', text: query }] }],
+              maxTokens: 256,
+              signal,
+              webSearch: { enabled: true }
+            });
+            if (!result.webSearch?.used) return null;
+            return {
+              provider: 'responses' as const,
+              query,
+              answer: result.text,
+              citations: result.webSearch.citations
+            };
+          }
+        : undefined;
+      const search = config.getModels().webSearch;
+      const result = await services.webSearch.test(provider, { query, maxResults: search.maxResults }, nativeSearch);
+      if (!result) {
+        reply.code(502);
+        return { error: 'search_test_failed', provider, message: '没有获得可用搜索结果' };
+      }
+      return { ok: true, provider, latencyMs: Date.now() - started, resultCount: result.citations.length };
+    } catch (error) {
+      repos.errors.add('web-search.test', `${provider}:failed`, { diagnostic: redactDiagnostic(error) });
+      reply.code(502);
+      return { error: 'search_test_failed', provider, message: '搜索连接测试失败' };
     }
   });
 

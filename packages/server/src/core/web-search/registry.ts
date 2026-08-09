@@ -19,6 +19,7 @@ export interface WebSearchResolver {
 /** A stable dependency whose internal provider chain can be replaced live. */
 export class WebSearchRegistry implements WebSearchResolver {
   private service: WebSearchService | null = null;
+  private config: WebSearchConfig | null = null;
 
   constructor(private readonly options: WebSearchRegistryOptions = {}) {}
 
@@ -31,12 +32,26 @@ export class WebSearchRegistry implements WebSearchResolver {
   }
 
   rebuild(config: WebSearchConfig): void {
+    this.config = config;
     if (!config.enabled) {
       this.service = null;
       return;
     }
-    this.service = new WebSearchService({
-      order: config.providers,
+    this.service = this.buildService(config, config.providers);
+  }
+
+  async test(
+    provider: WebSearchProviderName,
+    request: WebSearchRequest,
+    nativeSearch?: (signal: AbortSignal) => Promise<WebSearchResult | null>
+  ): Promise<WebSearchResult | null> {
+    if (!this.config) return null;
+    return await this.buildService(this.config, [provider]).resolve(request, nativeSearch);
+  }
+
+  private buildService(config: WebSearchConfig, order: WebSearchProviderName[]): WebSearchService {
+    return new WebSearchService({
+      order,
       providers: [
         new DoubaoSearchProvider({
           apiKey: config.doubao.apiKey,
