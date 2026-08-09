@@ -73,11 +73,12 @@ describe('shared colour tokens', () => {
     expect(ADMIN).not.toMatch(/#398fe6|#2377ca|#1b5fa5|#eaf4ff|#4c5fd7|#7a8cff/i);
   });
 
-  it('keeps life rules and plan creation readable on phone widths', () => {
-    expect(ADMIN).toMatch(/\.life-rules\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
-    expect(ADMIN).toMatch(/\.life-plan-create\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+\d+px\s+auto/s);
-    expect(ADMIN).toMatch(/\.life-plan-create button\s*\{[^}]*white-space:\s*nowrap/s);
-    expect(ADMIN).toMatch(/@media \(max-width:\s*640px\)[\s\S]*\.life-rules\s*\{[^}]*grid-template-columns:\s*1fr/s);
+  it('keeps the autonomous life observation page flat and readable on phone widths', () => {
+    expect(ADMIN).toMatch(/\.life-observation\s*\{[^}]*max-width:\s*880px/s);
+    expect(ADMIN).toMatch(/\.life-preview li\s*\{[^}]*border-bottom:/s);
+    expect(ADMIN).toMatch(/\.life-disclosure-toggle\s*\{[^}]*min-height:\s*44px/s);
+    expect(ADMIN).toMatch(/@media \(max-width:\s*640px\)[\s\S]*\.life-boundary-form/s);
+    expect(ADMIN).not.toMatch(/\.life-observation[^}]*box-shadow:/s);
   });
 
   it('aligns emotion mapping labels with both inputs', () => {

@@ -122,6 +122,7 @@ export function DisclosureSection({ id, title, summary, onFirstOpen, children }:
       <button
         id={toggleId}
         type="button"
+        className="life-disclosure-toggle"
         aria-expanded={open}
         aria-controls={id}
         onClick={toggle}
@@ -223,7 +224,7 @@ function EnvironmentDetails({ environment, overview }: {
   if (!hasDetails) return <p>暂无地点、城市、出行或天气信息。</p>;
 
   return (
-    <div className="life-environment-readonly">
+    <div className="life-environment-readonly" data-testid="life-environment-detail">
       <dl>
         <div><dt>当前地点</dt><dd>{overview.location?.name ?? activeLocation?.name ?? '暂无'}</dd></div>
         <div><dt>活动地点</dt><dd>{activeLocation?.name ?? '暂无'}</dd></div>
