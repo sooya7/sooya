@@ -22,35 +22,46 @@ export function LifeObservationPanel({ onNotice: _onNotice }: LifeObservationPan
   const [overview, setOverview] = useState<AdminLifeOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const mountedRef = useRef(false);
+  const lifecycleGenerationRef = useRef(0);
+  const requestGenerationRef = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (lifecycleGeneration: number) => {
+    const requestGeneration = ++requestGenerationRef.current;
     try {
       const [nextData, nextOverview] = await Promise.all([
         featureApi.life(),
         adminApi.lifeOverview()
       ]);
-      if (!mountedRef.current) return;
+      if (
+        lifecycleGenerationRef.current !== lifecycleGeneration
+        || requestGenerationRef.current !== requestGeneration
+      ) return;
       setData(nextData);
       setOverview(nextOverview);
       setUpdatedAt(new Date().toISOString());
       setError(null);
     } catch (loadError) {
-      if (mountedRef.current) setError(errorText(loadError));
+      if (
+        lifecycleGenerationRef.current === lifecycleGeneration
+        && requestGenerationRef.current === requestGeneration
+      ) setError(errorText(loadError));
     }
   }, []);
 
   useEffect(() => {
-    mountedRef.current = true;
-    void load();
-    const interval = window.setInterval(() => { void load(); }, 30_000);
+    const lifecycleGeneration = ++lifecycleGenerationRef.current;
+    void load(lifecycleGeneration);
+    const interval = window.setInterval(() => { void load(lifecycleGeneration); }, 30_000);
     return () => {
-      mountedRef.current = false;
       window.clearInterval(interval);
+      if (lifecycleGenerationRef.current === lifecycleGeneration) {
+        lifecycleGenerationRef.current += 1;
+        requestGenerationRef.current += 1;
+      }
     };
   }, [load]);
 
-  const retry = () => { void load(); };
+  const retry = () => { void load(lifecycleGenerationRef.current); };
 
   if (!data || !overview) {
     return (
@@ -80,7 +91,10 @@ export function LifeObservationPanel({ onNotice: _onNotice }: LifeObservationPan
       {updatedAt && <small>{updatedText(updatedAt, timezone)}</small>}
       {error && (
         <div role="alert">
-          <span>更新失败，正在显示上次成功读取的状态。</span>
+          <span>
+            更新失败，正在显示上次成功读取的状态。
+            {updatedAt && `上次成功更新于 ${herClock(updatedAt, timezone)}。`}
+          </span>
           <button type="button" onClick={retry}>重试</button>
         </div>
       )}
@@ -90,8 +104,14 @@ export function LifeObservationPanel({ onNotice: _onNotice }: LifeObservationPan
         <p>{data.snapshot.activity}</p>
         <p>{lifeKindLabel(data.snapshot.kind)} · 心情{data.snapshot.mood}</p>
         <p>已经 {progress.intoIt}，还有 {progress.left}</p>
-        <progress value={progress.percent} max={100}>{progress.percent}%</progress>
+        <progress
+          value={progress.percent}
+          max={100}
+          role="progressbar"
+          aria-label={`当前活动进度 ${progress.percent}%`}
+        >{progress.percent}%</progress>
         <p>{reachReasonText(data)}</p>
+        <p>今日已主动联系 {data.reachOut.sharedLastDay} 次（每日上限 {data.settings.maxReachOutsPerDay} 次）</p>
       </div>
 
       <div className="life-preview" data-testid="life-preview">

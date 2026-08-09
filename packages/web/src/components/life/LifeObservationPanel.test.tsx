@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdminLifeOverview } from '../../lib/admin.js';
@@ -107,11 +107,23 @@ const overview: AdminLifeOverview = {
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
-async function renderPanel(): Promise<void> {
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((fulfill) => { resolve = fulfill; });
+  return { promise, resolve };
+}
+
+async function renderPanel({ strict = false }: { strict?: boolean } = {}): Promise<void> {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  await act(async () => { root!.render(<LifeObservationPanel onNotice={vi.fn()} />); });
+  const panel = <LifeObservationPanel onNotice={vi.fn()} />;
+  await act(async () => { root!.render(strict ? <StrictMode>{panel}</StrictMode> : panel); });
 }
 
 async function flushPromises(): Promise<void> {
@@ -126,7 +138,7 @@ function setSuccessfulReads(): void {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-08-09T05:00:00.000Z'));
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   setSuccessfulReads();
 });
 
@@ -139,6 +151,7 @@ afterEach(async () => {
   container?.remove();
   container = null;
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('LifeObservationPanel', () => {
@@ -154,6 +167,10 @@ describe('LifeObservationPanel', () => {
     expect(panel?.textContent).toContain('心情困倦');
     expect(panel?.textContent).toContain('已经 1 小时，还有 1 小时');
     expect(panel?.textContent).toContain('她在睡觉');
+    expect(panel?.textContent).toContain('今日已主动联系 0 次');
+    const progress = panel?.querySelector('[role="progressbar"][aria-label="当前活动进度 50%"]');
+    expect(progress).not.toBeNull();
+    expect(progress?.getAttribute('value')).toBe('50');
     expect(panel?.querySelector('[data-testid="life-preview"]')?.textContent).toContain('今天可能会做');
     expect(panel?.textContent).toContain('由她自行决定');
     expect(panel?.textContent).toContain('读完手边这本书');
@@ -169,7 +186,9 @@ describe('LifeObservationPanel', () => {
 
     const forbiddenLabels = ['立即推进', '添加计划', '开始', '暂停', '完成', '调整', '重置', '切换地点'];
     const buttons = Array.from(container!.querySelectorAll('button')).map((button) => button.textContent?.trim());
-    for (const label of forbiddenLabels) expect(buttons).not.toContain(label);
+    for (const label of forbiddenLabels) {
+      expect(buttons.some((text) => text?.includes(label))).toBe(false);
+    }
     expect(apiMocks.tickLife).not.toHaveBeenCalled();
     expect(apiMocks.createLifePlan).not.toHaveBeenCalled();
     expect(apiMocks.updateLifePlan).not.toHaveBeenCalled();
@@ -188,6 +207,66 @@ describe('LifeObservationPanel', () => {
 
     expect(apiMocks.life).toHaveBeenCalledTimes(2);
     expect(apiMocks.lifeOverview).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the latest StrictMode lifecycle response when an older request resolves last', async () => {
+    const firstData = deferred<LifePanelData>();
+    const firstOverview = deferred<AdminLifeOverview>();
+    const secondData = deferred<LifePanelData>();
+    const secondOverview = deferred<AdminLifeOverview>();
+    apiMocks.life
+      .mockReturnValueOnce(firstData.promise)
+      .mockReturnValueOnce(secondData.promise);
+    apiMocks.lifeOverview
+      .mockReturnValueOnce(firstOverview.promise)
+      .mockReturnValueOnce(secondOverview.promise);
+
+    await renderPanel({ strict: true });
+    expect(apiMocks.life).toHaveBeenCalledTimes(2);
+
+    const newestData = structuredClone(panelData);
+    newestData.snapshot.activity = '正在准备晚饭';
+    const newestOverview = structuredClone(overview);
+    newestOverview.openThreads = [{ id: 'new-thread', title: '新的长期事项', progress: 64 }];
+    await act(async () => {
+      secondData.resolve(newestData);
+      secondOverview.resolve(newestOverview);
+      await Promise.resolve();
+    });
+    expect(container!.textContent).toContain('正在准备晚饭');
+    expect(container!.textContent).toContain('新的长期事项');
+
+    await act(async () => {
+      firstData.resolve(structuredClone(panelData));
+      firstOverview.resolve(structuredClone(overview));
+      await Promise.resolve();
+    });
+    expect(container!.textContent).toContain('正在准备晚饭');
+    expect(container!.textContent).not.toContain('在沙发上打盹');
+    expect(container!.textContent).toContain('新的长期事项');
+  });
+
+  it('invalidates an in-flight read and stops polling after unmount', async () => {
+    const pendingData = deferred<LifePanelData>();
+    const pendingOverview = deferred<AdminLifeOverview>();
+    apiMocks.life.mockReturnValueOnce(pendingData.promise);
+    apiMocks.lifeOverview.mockReturnValueOnce(pendingOverview.promise);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await renderPanel();
+
+    const current = root!;
+    await act(async () => { current.unmount(); });
+    root = null;
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(apiMocks.life).toHaveBeenCalledTimes(1);
+    expect(apiMocks.lifeOverview).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pendingData.resolve(structuredClone(panelData));
+      pendingOverview.resolve(structuredClone(overview));
+      await Promise.resolve();
+    });
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it('shows an alert and retry action when the first read fails', async () => {
@@ -211,6 +290,7 @@ describe('LifeObservationPanel', () => {
 
     expect(container!.textContent).toContain('在沙发上打盹');
     expect(container!.textContent).toContain('更新失败，正在显示上次成功读取的状态。');
+    expect(container!.textContent).toContain('上次成功更新于 13:00');
     expect(Array.from(container!.querySelectorAll('button')).some((button) => button.textContent === '重试')).toBe(true);
   });
 });
