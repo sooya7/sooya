@@ -31,7 +31,8 @@ import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
 import { decideWebSearch } from './web-search/policy.js';
-import { formatWebSearchContext, type WebSearchService } from './web-search/service.js';
+import { formatWebSearchContext } from './web-search/service.js';
+import type { WebSearchResolver } from './web-search/registry.js';
 import type { WebSearchResult } from './web-search/types.js';
 import type { WorldSnapshot } from './world-context.js';
 
@@ -122,7 +123,7 @@ export class Replier {
       /** Independent voice system (Part 4); null when VOICE_V2_ENABLED=false. */
       voice?: VoiceService | null;
       voiceV2Enabled?: boolean;
-      webSearch?: WebSearchService | null;
+      webSearch?: WebSearchResolver | null;
       worldSnapshot?: () => WorldSnapshot;
     }
   ) {}

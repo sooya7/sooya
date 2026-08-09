@@ -54,9 +54,7 @@ import { PushService } from './core/push.js';
 import { ProactiveComposer } from './core/proactive.js';
 import { StorageService } from './core/storage.js';
 import { maintenanceCoordinator } from './core/maintenance.js';
-import { DoubaoSearchProvider } from './core/web-search/doubao.js';
-import { TavilySearchProvider } from './core/web-search/tavily.js';
-import { WebSearchService } from './core/web-search/service.js';
+import { WebSearchRegistry } from './core/web-search/registry.js';
 import { EventBus } from './events/bus.js';
 import { JobWorker, registerDefaultJobs } from './core/jobs.js';
 import { BackupService } from './backup/service.js';
@@ -124,6 +122,7 @@ export interface SooyaApp {
     mediaVariants: ImageVariantService;
     stickerLibrary: StickerLibrary;
     capabilities: CapabilityRegistry;
+    webSearch: WebSearchRegistry;
     memory: MemoryService;
     life: LifeRuntime;
     proactive: ProactiveComposer;
@@ -273,28 +272,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     timeoutMs: env.WEATHER_TIMEOUT_MS
   }, repos.weather));
   const world = new WorldContextService(location, weather, opts.clock, env.LIFE_TIME_ZONE, repos.locations);
-  const webSearch = env.SOOYA_WEB_SEARCH_ENABLED
-    ? new WebSearchService({
-        order: env.SOOYA_WEB_SEARCH_PROVIDERS,
-        providers: [
-          new DoubaoSearchProvider({
-            apiKey: env.SOOYA_DOUBAO_SEARCH_API_KEY,
-            baseUrl: env.SOOYA_DOUBAO_SEARCH_BASE_URL,
-            edition: env.SOOYA_DOUBAO_SEARCH_EDITION,
-            fetchImpl: opts.fetchImpl
-          }),
-          new TavilySearchProvider({
-            apiKey: env.SOOYA_TAVILY_API_KEY,
-            baseUrl: env.SOOYA_TAVILY_BASE_URL,
-            fetchImpl: opts.fetchImpl
-          })
-        ],
-        maxResults: env.SOOYA_WEB_SEARCH_MAX_RESULTS,
-        timeoutMs: env.SOOYA_WEB_SEARCH_TIMEOUT_MS,
-        onError: (provider, error) =>
-          repos.errors.add('web-search', `${provider}:unavailable`, { diagnostic: redactDiagnostic(error) })
-      })
-    : null;
+  const webSearch = new WebSearchRegistry({
+    fetchImpl: opts.fetchImpl,
+    onError: (provider, error) =>
+      repos.errors.add('web-search', `${provider}:unavailable`, { diagnostic: redactDiagnostic(error) })
+  });
+  webSearch.rebuild(config.getModels().webSearch);
   // Thread location tags: real open threads feed the location selector.
   location.setThreadsProvider(() => repos.lifeV2.threads('open'));
   const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
@@ -565,13 +548,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   // resume 排空。文件数上限由业务计数接管；请求总大小仍受 bodyLimit 与 fileSize 双重约束。
   await server.register(multipart, { limits: { fileSize: env.MAX_UPLOAD_BYTES, fields: 20, fieldSize: 64 * 1024 } });
 
+  let stopModelWatcher: (() => void) | null = null;
   const app: SooyaApp = {
     server,
     env,
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, webSearch, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl: opts.fetchImpl,
     recurringTimers: [],
@@ -582,6 +566,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       dbHandle.swap(reopened.db);
     },
     close: async () => {
+      stopModelWatcher?.();
+      stopModelWatcher = null;
       for (const timer of app.recurringTimers.splice(0)) clearInterval(timer);
       await replyCoordinator.stop();
       await worker.stop();
@@ -589,6 +575,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       closeDatabase(dbHandle.raw);
     }
   };
+  stopModelWatcher = config.watchModels(() => {
+    capabilities.rebuild();
+    webSearch.rebuild(config.getModels().webSearch);
+  });
 
   repos.voice.recoverInFlight();
   replyCoordinator.recover({ recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });

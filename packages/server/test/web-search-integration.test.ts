@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, sendText, type Harness } from './helpers/harness.js';
 
@@ -16,7 +17,28 @@ const SEARCH_ENV = {
   LOCATION_MODEL_ENABLED: 'true'
 };
 
+async function eventually(assertion: () => void): Promise<void> {
+  const deadline = Date.now() + 2000;
+  let last: unknown;
+  while (Date.now() < deadline) {
+    try { assertion(); return; } catch (error) { last = error; }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw last;
+}
+
 describe('city-aware web search integration', () => {
+  it('hot-rebuilds search when models.json is edited on the server', async () => {
+    h = await createHarness({ env: SEARCH_ENV });
+    expect((h.app.services as any).webSearch.order).toEqual(['doubao']);
+    const file = JSON.parse(fs.readFileSync(h.app.config.modelsPath, 'utf8'));
+    file.webSearch.providers = ['tavily', 'doubao'];
+    file.webSearch.tavily.apiKey = 'test-tavily-key';
+    fs.writeFileSync(h.app.config.modelsPath, JSON.stringify(file, null, 2));
+
+    await eventually(() => expect((h!.app.services as any).webSearch.order).toEqual(['tavily', 'doubao']));
+  });
+
   it('searches local intent with the active city and persists bounded citations', async () => {
     h = await createHarness({
       env: SEARCH_ENV,
