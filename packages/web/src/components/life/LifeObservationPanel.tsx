@@ -3,6 +3,7 @@ import { adminApi, type AdminLifeOverview } from '../../lib/admin.js';
 import { featureApi, type LifePanelData } from '../../lib/features.js';
 import { lifeKindLabel, lifePlanStatusText, previewPlans } from '../../lib/lifeObservation.js';
 import { herClock, reachReasonText, slotProgress } from '../../lib/lifeView.js';
+import { LifeObservationDetails } from './LifeObservationDetails.js';
 
 interface LifeObservationPanelProps {
   onNotice: (message: string) => void;
@@ -139,6 +140,7 @@ export function LifeObservationPanel({ onNotice: _onNotice }: LifeObservationPan
           </ul>
         ) : <p>暂时没有持续发展的事。</p>}
       </div>
+      <LifeObservationDetails data={data} overview={overview} />
     </section>
   );
 }
