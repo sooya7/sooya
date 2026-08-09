@@ -10,6 +10,7 @@ import type { LifeRuntime } from './life.js';
 import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
 import { formatZonedDateTime } from '../util/time-zone.js';
 import { prepareVisionInput } from '../media/vision-input.js';
+import type { WorldSnapshot } from './world-context.js';
 
 export interface BuiltContext {
   system: string;
@@ -75,7 +76,8 @@ export class ContextBuilder {
     private readonly mediaStore: MediaStore,
     private readonly mediaText: MediaTextRepo,
     private readonly life?: LifeRuntime,
-    private readonly timeZone = 'Asia/Shanghai'
+    private readonly timeZone = 'Asia/Shanghai',
+    private readonly worldSnapshot?: () => WorldSnapshot
   ) {}
 
   memoryRecallTrace(): MemoryRecallTrace {
@@ -95,6 +97,11 @@ export class ContextBuilder {
     // 这是一对一私聊。上下文里的摘要是 `用户: …` 这种转录格式，模型看了会跟着
     // 在回复开头加名牌，所以明确禁掉一次；万一还是加了，replier 会再剥一层。
     systemParts.push('你们是一对一私聊，不是群聊。直接说话，回复开头不要加「名字：」这类前缀，也不要复述对方的名字当标签。');
+    const city = this.worldSnapshot?.().city;
+    if (city?.name) {
+      const place = [city.country ?? '中国', city.region, city.name].filter(Boolean).join('');
+      systemParts.push(`你当前所在城市是${place}。涉及“附近”“当地”“今天去哪”等本地问题时，以该城市为范围；不要编造具体地址。`);
+    }
 
     const batchIds = new Set(opts.batchMessageIds ?? []);
     const convertedEntries: Array<{ message: ChatMessage; content: ChatContentPart[] }> = [];

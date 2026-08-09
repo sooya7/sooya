@@ -30,6 +30,10 @@ import { parseVoiceIntent } from './voice/intent.js';
 import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
+import { decideWebSearch } from './web-search/policy.js';
+import { formatWebSearchContext, type WebSearchService } from './web-search/service.js';
+import type { WebSearchResult } from './web-search/types.js';
+import type { WorldSnapshot } from './world-context.js';
 
 export interface ReplyOptions {
   recentMessages: number;
@@ -81,6 +85,8 @@ export interface TextGenerationResult {
    * only after TTS finishes.
    */
   hiddenDraft?: boolean;
+  /** Bounded citation metadata only; raw provider payloads never enter this object. */
+  webSearch?: WebSearchResult;
 }
 
 const NO_MODEL_FALLBACK =
@@ -116,6 +122,8 @@ export class Replier {
       /** Independent voice system (Part 4); null when VOICE_V2_ENABLED=false. */
       voice?: VoiceService | null;
       voiceV2Enabled?: boolean;
+      webSearch?: WebSearchService | null;
+      worldSnapshot?: () => WorldSnapshot;
     }
   ) {}
 
@@ -180,6 +188,32 @@ export class Replier {
         contextWindow,
         maxOutputTokens
       });
+      let requestSystem = built.system;
+      let webSearchResult: WebSearchResult | undefined;
+      const searchDecision = decideWebSearch(userText);
+      if (searchDecision.offer && this.deps.webSearch) {
+        const city = this.deps.worldSnapshot?.().city ?? null;
+        const localPrefix = searchDecision.reason === 'local' && city?.name
+          ? [city.country ?? '中国', city.region, city.name].filter(Boolean).join('')
+          : '';
+        const query = localPrefix && !userText.includes(city!.name) ? `${localPrefix} ${userText}` : userText;
+        const result = await this.deps.webSearch.resolve({
+          query,
+          maxResults: 5,
+          ...(city?.name ? { city: city.name } : {}),
+          ...(city?.region ? { region: city.region } : {}),
+          ...(city?.country ? { country: city.country } : {}),
+          ...(searchDecision.freshness ? { freshness: searchDecision.freshness } : {}),
+          signal
+        });
+        if (result && result.provider !== 'responses') {
+          webSearchResult = result;
+          requestSystem = `${requestSystem}\n\n${formatWebSearchContext(result)}\n回答涉及上述材料的事实时使用 [1] 这样的编号标注来源；不要声称读取了未提供的网页正文。`;
+        } else {
+          degraded.push('web-search:unavailable');
+          requestSystem = `${requestSystem}\n\n联网搜索当前不可用。不要声称已经核实实时信息；请诚实说明无法可靠确认，并继续完成不依赖实时事实的部分。`;
+        }
+      }
       const requestMaxTokens = Math.min(
         built.visionUsed ? visionModel.maxTokens : chatModel.maxTokens,
         maxOutputTokens
@@ -225,7 +259,12 @@ export class Replier {
         );
         shell = created;
         if (visibleText) {
-          textPartId = this.deps.messages.appendPart(created.id, { type: 'text', text: visibleText, status: 'pending' });
+          textPartId = this.deps.messages.appendPart(created.id, {
+            type: 'text',
+            text: visibleText,
+            status: 'pending',
+            meta: webSearchPartMeta(webSearchResult)
+          });
         }
         return created;
       };
@@ -254,7 +293,7 @@ export class Replier {
       const streamTurns = async (turns: ChatTurn[]): Promise<void> => {
         await provider.stream(
           {
-            system: built.system,
+            system: requestSystem,
             messages: turns,
             maxTokens: requestMaxTokens,
             temperature: undefined,
@@ -327,7 +366,11 @@ export class Replier {
       const modelDirectives = stripped.directives;
       const finalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
       if (textPartId) {
-        if (finalText) this.deps.messages.updatePart(textPartId, { text: finalText, status: 'sent' });
+        if (finalText) this.deps.messages.updatePart(textPartId, {
+          text: finalText,
+          status: 'sent',
+          meta: webSearchPartMeta(webSearchResult)
+        });
         else {
           this.deps.messages.deletePart(textPartId);
           textPartId = null;
@@ -340,7 +383,12 @@ export class Replier {
         const currentShell = shell as ChatMessage | null;
         const created = published ? currentShell : await openBarrier();
         if (created) {
-          textPartId = this.deps.messages.appendPart(created.id, { type: 'text', text: finalText, status: 'sent' });
+          textPartId = this.deps.messages.appendPart(created.id, {
+            type: 'text',
+            text: finalText,
+            status: 'sent',
+            meta: webSearchPartMeta(webSearchResult)
+          });
         }
       }
       if (textPartId) {
@@ -357,7 +405,8 @@ export class Replier {
         firstTokenAt,
         published,
         interrupted,
-        hiddenDraft
+        hiddenDraft,
+        webSearch: webSearchResult
       };
     } finally {
       this.active = false;
@@ -408,7 +457,12 @@ export class Replier {
         messageId: shell.id
       });
       if (generated.text) {
-        textPartId = this.deps.messages.appendPart(shell.id, { type: 'text', text: generated.text, status: 'sent' });
+        textPartId = this.deps.messages.appendPart(shell.id, {
+          type: 'text',
+          text: generated.text,
+          status: 'sent',
+          meta: webSearchPartMeta(generated.webSearch)
+        });
         producedParts.push('text');
       }
     } else if (!hiddenReplace) {
@@ -641,7 +695,12 @@ export class Replier {
           messageId: shell.id
         });
         if (generated.text) {
-          textPartId = this.deps.messages.appendPart(shell.id, { type: 'text', text: generated.text, status: 'sent' });
+          textPartId = this.deps.messages.appendPart(shell.id, {
+            type: 'text',
+            text: generated.text,
+            status: 'sent',
+            meta: webSearchPartMeta(generated.webSearch)
+          });
           producedParts.push('text');
         }
       }
@@ -883,6 +942,26 @@ export class Replier {
 
     return { sticker, stickerHint, stickerRequired, stickerOnly, forceDifferent, imagePrompt, selfImagePrompt, voice, voiceOnly };
   }
+}
+
+function webSearchPartMeta(result?: WebSearchResult): Record<string, unknown> | undefined {
+  if (!result) return undefined;
+  const seen = new Set<string>();
+  const citations = result.citations.flatMap((citation) => {
+    try {
+      const url = new URL(citation.url);
+      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || seen.has(url.toString())) return [];
+      seen.add(url.toString());
+      return [{ title: citation.title.trim() || url.hostname, url: url.toString() }];
+    } catch {
+      return [];
+    }
+  }).slice(0, 5);
+  return {
+    webSearchUsed: true,
+    webSearchProvider: result.provider,
+    webCitations: citations
+  };
 }
 
 function mergeDirectives(parsed: UserDirectives, explicit?: UserDirectives): UserDirectives {

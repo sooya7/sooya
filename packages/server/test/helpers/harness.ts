@@ -28,6 +28,7 @@ export interface FakeChatOptions {
 
 export interface FakeProviderState {
   chatCalls: Array<{ body: unknown; url: string }>;
+  webSearchCalls: Array<{ provider: 'doubao' | 'tavily'; body: Record<string, unknown>; url: string }>;
   discoverCalls: string[];
   discoverHeaders: Array<Record<string, string>>;
   imageCalls: number;
@@ -52,6 +53,11 @@ export interface HarnessOptions {
   rerank?: 'ok' | 'fail' | 'off';
   /** Custom rerank ordering: indexes into the request's documents array. */
   rerankOrder?: (documents: string[]) => number[];
+  /** Fake payloads for the server-side web search adapters. */
+  webSearch?: {
+    doubao?: unknown | { status?: number; payload?: unknown };
+    tavily?: unknown | { status?: number; payload?: unknown };
+  };
   /** Declare vision support on the chat model (default true). */
   vision?: boolean;
   skipStickerImport?: boolean;
@@ -135,7 +141,7 @@ function sseResponse(chunks: string[]): Response {
 
 export async function createHarness(opts: HarnessOptions = {}): Promise<Harness> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sooya-test-'));
-  const state: FakeProviderState = { chatCalls: [], discoverCalls: [], discoverHeaders: [], imageCalls: 0, imageRequests: [], ttsCalls: 0, embedCalls: 0, rerankCalls: 0, rerankRequests: [] };
+  const state: FakeProviderState = { chatCalls: [], webSearchCalls: [], discoverCalls: [], discoverHeaders: [], imageCalls: 0, imageRequests: [], ttsCalls: 0, embedCalls: 0, rerankCalls: 0, rerankRequests: [] };
 
   let script = opts.chat?.script ?? [['好的。']];
   let chatError: Error | null = opts.chat?.chatError ?? null;
@@ -149,6 +155,20 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const body = init?.body && typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : null;
+
+    if (url.includes('feedcoopapi.com') || url.includes('tavily.com/search')) {
+      const provider = url.includes('feedcoopapi.com') ? 'doubao' : 'tavily';
+      state.webSearchCalls.push({ provider, body: (body ?? {}) as Record<string, unknown>, url });
+      const configured = opts.webSearch?.[provider];
+      if (configured === undefined) return new Response('unexpected web search call', { status: 404 });
+      const wrapped = configured && typeof configured === 'object' && ('status' in configured || 'payload' in configured)
+        ? configured as { status?: number; payload?: unknown }
+        : { payload: configured };
+      return new Response(JSON.stringify(wrapped.payload ?? {}), {
+        status: wrapped.status ?? 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
 
     if (url.endsWith('/models')) {
       const index = state.discoverCalls.push(url) - 1;

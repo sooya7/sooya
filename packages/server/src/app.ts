@@ -54,6 +54,9 @@ import { PushService } from './core/push.js';
 import { ProactiveComposer } from './core/proactive.js';
 import { StorageService } from './core/storage.js';
 import { maintenanceCoordinator } from './core/maintenance.js';
+import { DoubaoSearchProvider } from './core/web-search/doubao.js';
+import { TavilySearchProvider } from './core/web-search/tavily.js';
+import { WebSearchService } from './core/web-search/service.js';
 import { EventBus } from './events/bus.js';
 import { JobWorker, registerDefaultJobs } from './core/jobs.js';
 import { BackupService } from './backup/service.js';
@@ -270,6 +273,28 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     timeoutMs: env.WEATHER_TIMEOUT_MS
   }, repos.weather));
   const world = new WorldContextService(location, weather, opts.clock, env.LIFE_TIME_ZONE, repos.locations);
+  const webSearch = env.SOOYA_WEB_SEARCH_ENABLED
+    ? new WebSearchService({
+        order: env.SOOYA_WEB_SEARCH_PROVIDERS,
+        providers: [
+          new DoubaoSearchProvider({
+            apiKey: env.SOOYA_DOUBAO_SEARCH_API_KEY,
+            baseUrl: env.SOOYA_DOUBAO_SEARCH_BASE_URL,
+            edition: env.SOOYA_DOUBAO_SEARCH_EDITION,
+            fetchImpl: opts.fetchImpl
+          }),
+          new TavilySearchProvider({
+            apiKey: env.SOOYA_TAVILY_API_KEY,
+            baseUrl: env.SOOYA_TAVILY_BASE_URL,
+            fetchImpl: opts.fetchImpl
+          })
+        ],
+        maxResults: env.SOOYA_WEB_SEARCH_MAX_RESULTS,
+        timeoutMs: env.SOOYA_WEB_SEARCH_TIMEOUT_MS,
+        onError: (provider, error) =>
+          repos.errors.add('web-search', `${provider}:unavailable`, { diagnostic: redactDiagnostic(error) })
+      })
+    : null;
   // Thread location tags: real open threads feed the location selector.
   location.setThreadsProvider(() => repos.lifeV2.threads('open'));
   const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
@@ -299,7 +324,17 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   voiceService.dailyAutoCap = env.VOICE_DAILY_AUTO_CAP;
 
-  const context = new ContextBuilder(repos.messages, repos.summaries, memory, repos.media, mediaStore, repos.mediaText, env.ENABLE_LIFE_ENGINE ? life : undefined, env.LIFE_TIME_ZONE);
+  const context = new ContextBuilder(
+    repos.messages,
+    repos.summaries,
+    memory,
+    repos.media,
+    mediaStore,
+    repos.mediaText,
+    env.ENABLE_LIFE_ENGINE ? life : undefined,
+    env.LIFE_TIME_ZONE,
+    () => world.snapshot()
+  );
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
@@ -307,7 +342,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
 
-  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED });
+  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot() });
   const thoughtFlags = readThoughtsFlags(process.env);
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
