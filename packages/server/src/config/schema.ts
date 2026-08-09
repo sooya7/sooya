@@ -63,22 +63,10 @@ export const ProviderKindSchema = z.enum([
 ]);
 export type ProviderKind = z.infer<typeof ProviderKindSchema>;
 
-/**
- * `environment` preserves the original deployment behaviour: environment
- * variables may override the JSON file. Once a section is saved through the
- * admin panel it becomes `panel` managed, so the values the user just saved
- * are the values used at runtime and after a restart. Secrets may still be
- * supplied through environment variables in either mode.
- */
-export const ModelConfigSourceSchema = z.enum(['environment', 'panel']).default('environment');
-export type ModelConfigSource = z.infer<typeof ModelConfigSourceSchema>;
-
 export const ChatModelSchema = z.object({
-  configSource: ModelConfigSourceSchema,
   provider: ProviderKindSchema.default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
-  apiKeyEnv: z.string().optional(),
   model: z.string().default(''),
   timeoutMs: z.number().int().min(1000).max(600_000).default(60_000),
   maxTokens: z.number().int().min(16).max(200_000).default(1024),
@@ -93,11 +81,9 @@ export const ChatModelSchema = z.object({
 export type ChatModelConfig = z.infer<typeof ChatModelSchema>;
 
 export const EmbeddingModelSchema = z.object({
-  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-embeddings', 'openai-compatible', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
-  apiKeyEnv: z.string().optional(),
   model: z.string().default(''),
   dimensions: z.number().int().min(8).max(8192).optional(),
   timeoutMs: z.number().int().min(1000).max(120_000).default(30_000),
@@ -106,11 +92,9 @@ export const EmbeddingModelSchema = z.object({
 export type EmbeddingModelConfig = z.infer<typeof EmbeddingModelSchema>;
 
 export const ImageModelSchema = z.object({
-  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-images', 'openai-compatible', 'anuma-input-images', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
-  apiKeyEnv: z.string().optional(),
   /** Optional NewAPI user id required by its frontend model-list endpoints. */
   newApiUserId: z.string().max(120).default(''),
   model: z.string().default(''),
@@ -123,11 +107,9 @@ export const ImageModelSchema = z.object({
 export type ImageModelConfig = z.infer<typeof ImageModelSchema>;
 
 export const TtsModelSchema = z.object({
-  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-tts', 'openai-compatible', 'volc-tts', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
-  apiKeyEnv: z.string().optional(),
   model: z.string().default(''),
   voice: z.string().default('alloy'),
   /**
@@ -164,11 +146,9 @@ export const TtsModelSchema = z.object({
 export type TtsModelConfig = z.infer<typeof TtsModelSchema>;
 
 export const RerankModelSchema = z.object({
-  configSource: ModelConfigSourceSchema,
   provider: z.enum(['openai-rerank', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
-  apiKeyEnv: z.string().optional(),
   model: z.string().default(''),
   timeoutMs: z.number().int().min(1000).max(60_000).default(10_000),
   maxRetries: z.number().int().min(0).max(5).default(1),
@@ -203,14 +183,38 @@ export type ModelPreset = z.infer<typeof ModelPresetSchema>;
 
 export const ModelPresetsSchema = z.array(ModelPresetSchema).max(60);
 
+export const WebSearchProviderSchema = z.enum(['doubao', 'tavily', 'responses']);
+export type WebSearchProviderName = z.infer<typeof WebSearchProviderSchema>;
+
+const WebSearchProvidersSchema = z.array(WebSearchProviderSchema).max(3).transform((providers) => [...new Set(providers)]);
+
+export const WebSearchConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  providers: WebSearchProvidersSchema.default(['doubao', 'tavily', 'responses']),
+  maxResults: z.number().int().min(1).max(20).default(5),
+  timeoutMs: z.number().int().min(1000).max(120_000).default(15_000),
+  doubao: z.object({
+    edition: z.enum(['custom', 'global']).default('custom'),
+    baseUrl: z.string().url().default('https://open.feedcoopapi.com/search_api/web_search'),
+    apiKey: z.string().default('')
+  }).default({}),
+  tavily: z.object({
+    baseUrl: z.string().url().default('https://api.tavily.com/search'),
+    apiKey: z.string().default('')
+  }).default({})
+});
+export type WebSearchConfig = z.infer<typeof WebSearchConfigSchema>;
+
 export const ModelsConfigSchema = z.object({
+  storageVersion: z.literal(2).default(2),
   chat: ChatModelSchema.default({}),
   vision: ChatModelSchema.optional(),
   summary: ChatModelSchema.optional(),
   embedding: EmbeddingModelSchema.default({}),
   image: ImageModelSchema.default({}),
   tts: TtsModelSchema.default({}),
-  rerank: RerankModelSchema.default({})
+  rerank: RerankModelSchema.default({}),
+  webSearch: WebSearchConfigSchema.default({})
 });
 export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
 
@@ -270,4 +274,3 @@ export const DEFAULT_PERSONA: Persona = PersonaSchema.parse({
 });
 
 export const DEFAULT_MODELS: ModelsConfig = ModelsConfigSchema.parse({});
-

@@ -55,7 +55,7 @@ describe('management panel configuration ownership', () => {
     expect(migrated).not.toContain('legacy-secret');
   });
 
-  it('keeps panel-saved model settings active immediately and after restart', () => {
+  it('keeps file-saved model settings active immediately and after restart', () => {
     const configDir = tempDir('sooya-panel-config-');
     const env = {
       SOOYA_CHAT_PROVIDER: 'openai-chat',
@@ -81,13 +81,14 @@ describe('management panel configuration ownership', () => {
     expect(first.getModels().chat.model).toBe('panel-model');
     expect(first.getModels().chat.temperature).toBe(0.35);
     expect(first.getModels().chat.apiKey).toBe('sk-env-secret-not-for-disk');
-    expect(first.getModels().chat.configSource).toBe('panel');
+    expect((first.getModels() as any).storageVersion).toBe(2);
+    expect('configSource' in first.getModels().chat).toBe(false);
 
     const onDiskText = fs.readFileSync(path.join(configDir, 'models.json'), 'utf8');
-    const onDisk = JSON.parse(onDiskText) as { chat: Record<string, unknown> };
-    expect(onDisk.chat.configSource).toBe('panel');
+    const onDisk = JSON.parse(onDiskText) as { storageVersion: number; chat: Record<string, unknown> };
+    expect(onDisk.storageVersion).toBe(2);
     expect(onDisk.chat.model).toBe('panel-model');
-    expect(onDiskText).not.toContain('sk-env-secret-not-for-disk');
+    expect(onDiskText).toContain('sk-env-secret-not-for-disk');
 
     const restarted = new ConfigStore({ configDir, env });
     expect(restarted.getModels().chat.provider).toBe('openai-compatible');

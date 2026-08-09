@@ -170,7 +170,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'bad_request', issues: parsed.error.issues };
     }
-    const saved = (config.getModels() as Record<string, { provider?: string; baseUrl?: string; apiKey?: string; newApiUserId?: string } | undefined>)[slot];
+    const saved = (config.getModels() as unknown as Record<string, { provider?: string; baseUrl?: string; apiKey?: string; newApiUserId?: string } | undefined>)[slot];
     const provider = saved?.provider ?? 'none';
     if (!DISCOVERABLE.has(provider)) {
       // A vendor-specific protocol has no /models route. Saying so beats a
