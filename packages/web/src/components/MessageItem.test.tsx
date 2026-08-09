@@ -148,6 +148,50 @@ describe('MessageItem 搜索高亮', () => {
   });
 });
 
+describe('MessageItem 联网来源', () => {
+  it('在助手文本下显示可点击、去重且有上限的来源', async () => {
+    const citations = [
+      { title: '来源一', url: 'https://example.com/one' },
+      { title: '重复来源', url: 'https://example.com/one' },
+      { title: '危险链接', url: 'javascript:alert(1)' },
+      ...Array.from({ length: 8 }, (_, index) => ({ title: `来源${index + 2}`, url: `https://example.com/${index + 2}` }))
+    ];
+    await render(<MessageItem {...common} message={message({
+      id: 'm_web',
+      content: [{
+        id: 'p_web', type: 'text', text: '联网回答', status: 'sent',
+        meta: { webSearchUsed: true, webSearchProvider: 'doubao', webCitations: citations }
+      }]
+    })} />);
+
+    const panel = container.querySelector('[data-testid="web-citations"]');
+    expect(panel?.textContent).toContain('豆包搜索');
+    const links = panel?.querySelectorAll('a') ?? [];
+    expect(links).toHaveLength(5);
+    expect(links[0]?.getAttribute('href')).toBe('https://example.com/one');
+    expect(links[0]?.getAttribute('target')).toBe('_blank');
+    expect(links[0]?.getAttribute('rel')).toContain('noopener');
+    expect(panel?.innerHTML).not.toContain('javascript:');
+  });
+
+  it('普通消息和用户消息不显示来源区域', async () => {
+    await render(<MessageItem {...common} message={message({ id: 'm_plain' })} />);
+    expect(container.querySelector('[data-testid="web-citations"]')).toBeNull();
+
+    await act(async () => { root!.unmount(); });
+    root = null;
+    container.remove();
+    await render(<MessageItem {...common} message={message({
+      id: 'm_user_web', role: 'user',
+      content: [{ id: 'p', type: 'text', text: '伪造', status: 'sent', meta: {
+        webSearchUsed: true,
+        webCitations: [{ title: '不应展示', url: 'https://example.com/no' }]
+      } }]
+    })} />);
+    expect(container.querySelector('[data-testid="web-citations"]')).toBeNull();
+  });
+});
+
 function imageMessage(width?: number | null, height?: number | null): ChatMessage {
   return message({
     id: 'm_image',
