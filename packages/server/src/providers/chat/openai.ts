@@ -487,16 +487,27 @@ function extractResponsesWebSearch(json: ResponsesPayload): NonNullable<ChatResu
   const final = finalMessages[finalMessages.length - 1];
   const seen = new Set<string>();
   const citations: Array<{ title: string; url: string }> = [];
+  const addCitation = (value: string, title?: string): void => {
+    const url = safeCitationUrl(value);
+    if (!url || seen.has(url) || citations.length >= 5) return;
+    seen.add(url);
+    citations.push({ title: title?.trim() || new URL(url).hostname, url });
+  };
   for (const content of final?.content ?? []) {
     for (const annotation of content.annotations ?? []) {
       if (annotation.type !== 'url_citation' || !annotation.url) continue;
-      const url = safeCitationUrl(annotation.url);
-      if (!url || seen.has(url)) continue;
-      seen.add(url);
-      citations.push({ title: annotation.title?.trim() || new URL(url).hostname, url });
+      addCitation(annotation.url, annotation.title);
       if (citations.length >= 5) break;
     }
     if (citations.length >= 5) break;
+  }
+  for (const item of json.output ?? []) {
+    if (item.type === 'web_search_call' && item.action?.type === 'open_page' && item.action.url) {
+      addCitation(item.action.url);
+    }
+  }
+  for (const match of extractResponsesText(json).matchAll(/https?:\/\/[^\s<>"'）。，、；！？]+/giu)) {
+    addCitation(match[0].replace(/[),.;!?]+$/u, ''));
   }
   return { used: callCount > 0, callCount, citations };
 }

@@ -217,6 +217,23 @@ describe('openai-responses 适配器：output_text 解析', () => {
       citations: []
     });
   });
+
+  it('缺少 annotations 时从 open_page 和最终文本中的 HTTP 链接补引用', async () => {
+    const { p } = provider(() => json({
+      output: [
+        { type: 'web_search_call', status: 'completed', action: { type: 'open_page', url: 'https://example.com/opened' } },
+        {
+          type: 'message', status: 'completed', role: 'assistant',
+          content: [{ type: 'output_text', text: '详情见 https://example.com/final 。', annotations: [] }]
+        }
+      ]
+    }));
+
+    expect((await p.complete({ ...TEXT_REQ, webSearch: { enabled: true } })).webSearch?.citations).toEqual([
+      { title: 'example.com', url: 'https://example.com/opened' },
+      { title: 'example.com', url: 'https://example.com/final' }
+    ]);
+  });
 });
 
 describe('openai-responses 适配器：流式增量', () => {
