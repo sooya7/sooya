@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import type { TtsModelConfig } from '../config/schema.js';
 import { assertSafeUrl, withRetry, HttpTimeoutError } from '../util/http.js';
 import { probeAudioDuration } from '../util/audio.js';
-import { renderFishSynthesisTextForMood, fishSpeedForMood } from '../core/voice/fishCue.js';
 import {
   ProviderNotConfiguredError,
   ProviderRequestError,
@@ -326,10 +325,11 @@ export class UnconfiguredTTSProvider implements TTSProvider {
 /**
  * Fish Audio S2.x TTS provider (implementation doc §2, §8).
  *
- * Talks to `POST /v1/tts` with a Bearer key. The Fish cue mapping is NOT
- * invented here: the provider renders the synthesis text through the shared
- * FishCueRenderer whitelist (mood from `opts.emotion`), so personality logic
- * stays in the Voice domain and the provider stays a thin transport.
+ * A THIN transport after the voice-system convergence: it talks to `POST
+ * /v1/tts` with a Bearer key, but never re-detects mood, never adds a Fish
+ * cue, and never recomputes speed. The synthesis text and speed arrive final
+ * from the Voice domain (VoiceDirector + FishCueRenderer); the provider only
+ * shapes the HTTP request.
  *
  * Retry policy per doc §11.1: 429 / 5xx retried once, 4xx parameter errors and
  * timeouts never retried, upstream AbortSignal aborts immediately.
@@ -370,9 +370,11 @@ export class FishAudioProvider implements TTSProvider {
     const trimmed = text.trim();
     if (!trimmed) throw new ProviderRequestError('tts requires non-empty text');
 
-    // Resolve the Fish cue/speed from the Voice-domain mood via the whitelist.
-    const synthesisText = renderFishSynthesisTextForMood(trimmed, opts.emotion ?? 'neutral', { intensity: 1 });
-    const speed = fishSpeedForMood(opts.emotion ?? 'neutral', { intensity: 1 });
+    // The text and speed are FINAL here (convergence §9): VoiceDirector +
+    // FishCueRenderer compiled them upstream. The provider does not second-
+    // guess mood, add a cue, or override the speed.
+    const synthesisText = trimmed;
+    const speed = clamp(opts.speed ?? this.cfg.speed, 0.8, 1.2);
 
     // Phase 1 keeps the provider-level timeout at ~12s regardless of the
     // shared default (doc §11.1); an explicit smaller value is honoured.

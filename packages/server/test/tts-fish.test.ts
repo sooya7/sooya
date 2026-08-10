@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TtsModelSchema } from '../src/config/schema.js';
 import { createTTSProvider, FishAudioProvider } from '../src/providers/tts.js';
-import { fishCueFor, fishCueForMood, renderFishSynthesisTextForMood } from '../src/core/voice/fishCue.js';
+import {
+  cueIntensityBand,
+  fishCueFor,
+  fishCueForMood,
+  renderFishSynthesisTextForMood,
+  fishSpeedForMood
+} from '../src/core/voice/fishCue.js';
 
 const ENDPOINT = 'https://api.fish.audio/v1/tts';
 
@@ -56,7 +62,9 @@ describe('FishAudioProvider', () => {
 
   it('posts the Fish /v1/tts contract with the model in the HTTP header', async () => {
     const { provider, read } = capture(config(), () => new Response(fakeMp3(), { status: 200, headers: { 'content-type': 'audio/mpeg' } }));
-    await provider.synthesize('你怎么这么会说啊，行吧算你赢', { emotion: 'playful' });
+    // The thin provider ships the upstream FINAL text/speed verbatim — no
+    // second cue compile, no mood re-detection (convergence §9).
+    await provider.synthesize('[small chuckle] 你怎么这么会说啊，行吧算你赢', { speed: 0.97, emotion: 'playful' });
     const sent = read()!;
 
     expect(sent.url).toBe(ENDPOINT);
@@ -69,7 +77,7 @@ describe('FishAudioProvider', () => {
       reference_id: 'sooya-voice-01',
       temperature: 0.65,
       top_p: 0.7,
-      prosody: { speed: 1.02, volume: 0, normalize_loudness: true },
+      prosody: { speed: 0.97, volume: 0, normalize_loudness: true },
       chunk_length: 200,
       normalize: true,
       format: 'mp3',
@@ -79,7 +87,7 @@ describe('FishAudioProvider', () => {
       repetition_penalty: 1.2,
       condition_on_previous_chunks: true
     });
-    // The whitelist cue is prepended; the transcript itself is untouched.
+    // The provider never touches the text it was given.
     expect(sent.json.text).toBe('[small chuckle] 你怎么这么会说啊，行吧算你赢');
   });
 
@@ -102,11 +110,18 @@ describe('FishAudioProvider', () => {
     expect(read()!.json.reference_id).toBeUndefined();
   });
 
-  it('sends no cue for neutral statements (restraint: no cue > wrong cue)', async () => {
+  it('uses the configured global speed when no final speed is passed', async () => {
+    const { provider, read } = capture(config({ speed: 1.05 }), () => new Response(fakeMp3(), { status: 200, headers: { 'content-type': 'audio/mpeg' } }));
+    await provider.synthesize('今天天气不错');
+    expect(read()!.json.prosody.speed).toBe(1.05);
+  });
+
+  it('clamps an out-of-range upstream speed into 0.8–1.2', async () => {
     const { provider, read } = capture(config(), () => new Response(fakeMp3(), { status: 200, headers: { 'content-type': 'audio/mpeg' } }));
-    await provider.synthesize('今天天气不错', { emotion: 'neutral' });
-    expect(read()!.json.text).toBe('今天天气不错');
-    expect(read()!.json.prosody.speed).toBe(1);
+    await provider.synthesize('今天天气不错', { speed: 0.3 });
+    expect(read()!.json.prosody.speed).toBe(0.8);
+    await provider.synthesize('今天天气不错', { speed: 3 });
+    expect(read()!.json.prosody.speed).toBe(1.2);
   });
 
   it('never retries 4xx parameter errors', async () => {
@@ -202,5 +217,51 @@ describe('FishCueRenderer whitelist', () => {
   it('bridges the doc ten-mood aliases without renaming the domain enum', () => {
     expect(fishCueFor({ primaryEmotion: 'happy', pace: 1, energy: 0.7, warmth: 0.7, intimacy: 0.6, seriousness: 0.25, openingStyle: 'smiling', endingStyle: 'playful', pauseStyle: 'natural', emphasis: [], instructions: '' }, { intensity: 1, moodAlias: 'warm' }).cue).toBe('[warm and relaxed]');
     expect(fishCueForMood('gentle', { intensity: 1, moodAlias: 'concerned' }).cue).toBeNull();
+  });
+
+  it('maps continuous 0–1 intensity onto the three bands (convergence §7.2)', () => {
+    expect(cueIntensityBand(0)).toBe('none');
+    expect(cueIntensityBand(0.3)).toBe('none');
+    expect(cueIntensityBand(0.31)).toBe('light');
+    expect(cueIntensityBand(0.6)).toBe('light');
+    expect(cueIntensityBand(0.61)).toBe('full');
+    expect(cueIntensityBand(1)).toBe('full');
+  });
+
+  it('adds no cue for low intensity and for plain neutral statements', () => {
+    expect(fishCueForMood('shy', { intensity: 0.2, moodAlias: 'shy' }).cue).toBeNull();
+    expect(fishCueForMood('playful', { intensity: 0 }).cue).toBeNull();
+    expect(fishCueForMood('neutral', { intensity: 1 }).cue).toBeNull();
+  });
+
+  it('light intensity keeps the mood cue but blends the pace toward neutral', () => {
+    expect(fishCueForMood('shy', { intensity: 0.5, moodAlias: 'shy' })).toEqual({ cue: '[slightly shy]', speed: 0.99 });
+    expect(fishCueForMood('sleepy', { intensity: 0.5 })).toEqual({ cue: '[slightly sleepy]', speed: 0.98 });
+    expect(fishCueForMood('happy', { intensity: 0.5 })).toEqual({ cue: '[warm and relaxed]', speed: 1.01 });
+  });
+
+  it('full intensity uses the mood table pace as-is', () => {
+    expect(fishCueForMood('happy', { intensity: 0.8 })).toEqual({ cue: '[warm and relaxed]', speed: 1.02 });
+    expect(fishCueForMood('gentle', { intensity: 1 })).toEqual({ cue: '[speaking softly]', speed: 0.97 });
+  });
+
+  it('speed priority is director → mood → TTS default (convergence §7.3)', () => {
+    // Director wins even over the mood pace.
+    expect(fishCueForMood('happy', { intensity: 1, directorSpeed: 0.95 })).toEqual({ cue: '[warm and relaxed]', speed: 0.95 });
+    expect(fishCueForMood('neutral', { intensity: 1, directorSpeed: 1.03 })).toEqual({ cue: null, speed: 1.03 });
+    // Mood pace beats the global default.
+    expect(fishCueForMood('gentle', { intensity: 1, fallbackSpeed: 1.1 }).speed).toBe(0.97);
+    expect(fishCueForMood('neutral', { intensity: 0, fallbackSpeed: 1.1 }).speed).toBe(1);
+    // The global default is the last resort for moods outside the table,
+    // still clamped to the 0.94–1.05 range.
+    expect(fishCueForMood('dramatic', { intensity: 0, fallbackSpeed: 1.1 }).speed).toBe(1.05);
+    expect(fishCueForMood('dramatic', { intensity: 0, fallbackSpeed: 0.9 }).speed).toBe(0.94);
+    expect(fishCueForMood('dramatic', { intensity: 0, fallbackSpeed: 1.03 }).speed).toBe(1.03);
+  });
+
+  it('the alias cue is reachable with a raw emotion string ([[voice:emotion=shy]])', () => {
+    expect(fishSpeedForMood('shy', { intensity: 1, moodAlias: 'shy' })).toBe(0.98);
+    expect(renderFishSynthesisTextForMood('我其实有点想你', 'shy', { intensity: 0.6, moodAlias: 'shy' })).toBe('[slightly shy] 我其实有点想你');
+    expect(renderFishSynthesisTextForMood('我其实有点想你', 'shy', { intensity: 0.2, moodAlias: 'shy' })).toBe('我其实有点想你');
   });
 });

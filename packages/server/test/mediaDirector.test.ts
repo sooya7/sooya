@@ -42,10 +42,12 @@ function makeDirector(reply: string): MediaDirector {
 }
 
 describe('MediaDirector voice', () => {
-  it('parses the director JSON into {text, speed}', async () => {
+  it('parses the director JSON into {text, speed} and strips any stray cue', async () => {
+    // The director must never emit Fish cues (single-producer rule); a model
+    // that drifts anyway gets its cue removed wholesale.
     const director = makeDirector(JSON.stringify({ text: '[slightly shy] 嗯……我刚刚有点想你。', speed: 0.97 }));
     const result = await director.voice({ content: '我刚刚突然想到你了', emotion: 'shy_warm', intensity: 0.3 });
-    expect(result.text).toBe('[slightly shy] 嗯……我刚刚有点想你。');
+    expect(result.text).toBe('嗯……我刚刚有点想你。');
     expect(result.speed).toBe(0.97);
   });
 
@@ -123,9 +125,9 @@ describe('MediaDirector image', () => {
 });
 
 describe('helpers', () => {
-  it('sanitizeFishText keeps whitelisted cues and strips everything else', () => {
-    expect(sanitizeFishText('[speaking softly] 我在呢')).toBe('[speaking softly] 我在呢');
-    expect(sanitizeFishText('[gently reassuring] 别担心')).toBe('[gently reassuring] 别担心');
+  it('sanitizeFishText strips ANY leading bracket cue — cues come from FishCueRenderer only', () => {
+    expect(sanitizeFishText('[speaking softly] 我在呢')).toBe('我在呢');
+    expect(sanitizeFishText('[gently reassuring] 别担心')).toBe('别担心');
     expect(sanitizeFishText('[screaming] 救命')).toBe('救命');
     expect(sanitizeFishText('普通陈述没有 cue')).toBe('普通陈述没有 cue');
   });

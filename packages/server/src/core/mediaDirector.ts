@@ -1,72 +1,57 @@
 import type { ChatProvider } from '../providers/types.js';
 import type { ConfigStore } from '../config/store.js';
-import { FISH_ALIAS_CUE, FISH_MOOD_TABLE } from './voice/fishCue.js';
 import type { VoiceDeliveryPlan } from './voice/types.js';
 
 /**
  * Media Prompt Director (SOOYA-Media-Prompt-Director.md).
  *
  * The main model decides WHAT to express; two fixed prompts decide HOW to hand
- * it to Fish / Image2. No second model: the existing chat provider is called
- * once more with a fixed system prompt, and the reply is parsed as JSON.
+ * it to the TTS / Image2 pipeline. No second model: the existing chat provider
+ * is called once more with a fixed system prompt, and the reply is parsed as
+ * JSON.
  *
  * Voice:  intent {content, emotion, intensity} → {text, speed}
  * Image:  intent {scene, action, mood, intent} → {prompt, aspectRatio}
  *
- * Both outputs are validated here: JSON that does not parse, a cue outside the
- * whitelist, or an empty text falls back to the input rather than failing the
+ * After the voice-system convergence the director NEVER emits Fish cues —
+ * FishCueRenderer is the single cue producer. The director only makes the
+ * utterance natural spoken language; `sanitizeFishText` strips any `[cue]` a
+ * drifting model still writes. Both outputs are validated here: JSON that does
+ * not parse or an empty text falls back to the input rather than failing the
  * request — quality is a bonus, correctness is a guarantee.
  */
 
-const VOICE_DIRECTOR_PROMPT = `你是 SOOYA 的语音提示词整理器。
+const VOICE_DIRECTOR_PROMPT = `你是 SOOYA 的语音表达整理器。
 
-SOOYA 已经拥有固定的 Fish Voice ID。
-你不负责改变她的音色。
+SOOYA 已经拥有固定音色。
+你不负责选择音色，也不负责生成任何 TTS Provider 标签。
 
-你的任务：
-把输入内容整理成适合 Fish S2 系列生成自然私人聊天语音的最终文本。
+你的任务是把已经确定的回复内容整理成自然、适合私人聊天语音的口语文本。
 
 目标：
-- 自然
-- 像真人手机语音
+- 像真人发手机语音
 - 私聊感
+- 短句
+- 停顿自然
 - 不像播音
 - 不像配音
 - 不过度表演
 
 规则：
-
 1. 保留原意。
-2. 将书面表达改成自然口语。
-3. 优先使用短句。
-4. 用标点制造自然停顿。
-5. 普通语句默认不加 cue。
-6. 只有明显能提升表达时才加入 Fish cue。
-7. Fish cue 使用 [方括号自然语言描述]。
-8. 一条普通短语音最多 0～1 个主要 cue。
-9. 不要堆叠多个强情绪。
-10. 不要为了真人感强行添加大量“嗯、唔、那个”。
-11. 不要加入原本不存在的重要事实。
-12. 不要输出解释。
+2. 不增加原文没有的重要事实。
+3. 书面表达可以改成自然口语。
+4. 优先短句。
+5. 可以用标点产生自然节奏。
+6. 不要大量加入“嗯、唔、那个”。
+7. 不要输出任何 [方括号 cue]。
+8. 不要输出 Provider 参数。
+9. 如果原文本来就很自然，少改。
+10. 只输出 JSON。
 
-常用 cue 示例：
-- [speaking softly]
-- [slightly shy]
-- [small chuckle]
-- [slightly sleepy]
-- [gently reassuring]
-- [warm and relaxed]
-
-语速建议：
-- 普通：0.98～1.02
-- 温柔：0.96～0.99
-- 困倦：0.94～0.98
-- 开心：1.00～1.05
-
-输出 JSON：
-
+输出：
 {
-  "text": "最终送给 Fish 的文本",
+  "text": "最终口语文本",
   "speed": 1.0
 }`;
 
@@ -170,15 +155,17 @@ export interface ImageDirectorResult {
   aspectRatio?: string;
 }
 
-/** Cues the director may emit; anything else is stripped (whitelist fallback). */
-const ALLOWED_FISH_CUES = new Set([
-  '[speaking softly]',
-  '[slightly shy]',
-  '[small chuckle]',
-  '[slightly sleepy]',
-  '[gently reassuring]',
-  '[warm and relaxed]'
-]);
+/**
+ * Strips any leading `[bracket cue]` from the director's output. The director
+ * is instructed to never emit cues; if a model drifts anyway the cue is
+ * removed wholesale — after the convergence Fish cues have exactly one
+ * producer (FishCueRenderer), so a cue here is always wrong.
+ */
+export function sanitizeFishText(text: string): string {
+  const cueMatch = /^(\[[^\]]+\])\s*(.+)$/s.exec(text.trim());
+  if (!cueMatch) return text.trim();
+  return cueMatch[2]!.trim();
+}
 
 export class MediaDirector {
   constructor(
@@ -208,8 +195,9 @@ export class MediaDirector {
   }
 
   /**
-   * Voice director: intent → Fish-ready {text, speed}.
-   * Falls back to the raw content when the model cannot produce a usable JSON.
+   * Voice director: intent → natural spoken {text, speed}. Never emits Fish
+   * cues (single-producer rule); falls back to the raw content when the model
+   * cannot produce a usable JSON.
    */
   async voice(intent: VoiceDirectorIntent, opts: { signal?: AbortSignal; mode?: string; userText?: string; reportReasons?: string[]; maxSeconds?: number } = {}): Promise<VoiceDirectorResult> {
     const contextLines = [
@@ -219,7 +207,7 @@ export class MediaDirector {
       ...(opts.reportReasons?.length ? [`上一版没有通过检查，原因：${opts.reportReasons.join('；')}。请针对这些问题重写。`] : [])
     ];
     const raw = await this.complete(
-      `${contextLines.join('\n')}\n\n请把下面的语音意图整理成 Fish 最终文本：\n\n${JSON.stringify(intent, null, 2)}\n\n只输出 JSON，不要解释。`,
+      `${contextLines.join('\n')}\n\n请把下面的语音意图整理成自然口语文本：\n\n${JSON.stringify(intent, null, 2)}\n\n只输出 JSON，不要解释。`,
       VOICE_DIRECTOR_PROMPT,
       opts.signal
     );
@@ -255,30 +243,6 @@ export class MediaDirector {
       aspectRatio: typeof parsed.aspectRatio === 'string' ? parsed.aspectRatio : undefined
     };
   }
-}
-
-/**
- * Strips bracket cues not on the whitelist from the director's output. The
- * director is a language model, so the whitelist is the final authority —
- * "no cue > wrong cue".
- */
-export function sanitizeFishText(text: string): string {
-  const cueMatch = /^(\[[^\]]+\])\s*(.+)$/s.exec(text.trim());
-  if (!cueMatch) return text.trim();
-  const [cue, rest] = [cueMatch[1]!, cueMatch[2]!];
-  if (ALLOWED_FISH_CUES.has(cue)) return text.trim();
-  return rest.trim();
-}
-
-/**
- * Allowed cues for validation helpers: the whitelist union of the domain table
- * and the alias table, so tests can assert against one source of truth.
- */
-export function allowedFishCues(): string[] {
-  const cues = new Set<string>();
-  for (const spec of Object.values(FISH_MOOD_TABLE)) if (spec.cue) cues.add(spec.cue);
-  for (const spec of Object.values(FISH_ALIAS_CUE)) if (spec.cue) cues.add(spec.cue);
-  return [...cues];
 }
 
 /** Fallback Image2 prompt when the director is unavailable: identity + intent. */

@@ -12,6 +12,7 @@ import { abortableDelay, StaleGenerationError } from '../../util/abort.js';
 import { redactDiagnostic } from '../public-error.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from '../voice.js';
 import { planDelivery, deliveryToTTSOptions } from './delivery.js';
+import { fishCueForMood } from './fishCue.js';
 import { parseVoiceIntent, mergeVoiceDirectives } from './intent.js';
 import { assessNaturalness, estimateSpeechSeconds, voiceTextSimilarity, splitSentences } from './naturalness.js';
 import { normalizeVoiceText, ruleBasedColloquial } from './normalize.js';
@@ -287,10 +288,18 @@ export class VoiceService {
     // The Voice Director's resolved speed (when available) wins over the mood
     // table: the fixed prompt knows the utterance better than a static map.
     const delivery = planDelivery(emotion, script?.directorSpeed ? { pace: script.directorSpeed } : {});
-    const ttsOptions = deliveryToTTSOptions(delivery, emotions, {
-      advanced: this.flags.advancedDelivery,
-      customPresets: this.deps.settings.has('voice.emotions')
-    });
+    // Fish path (converged): the cue + speed are compiled ONCE by
+    // FishCueRenderer, using the real model intensity. Custom voice.emotions
+    // presets never reach Fish; OpenAI/Volc keep the legacy delivery options.
+    const fishSynthesis = this.deps.capabilities.ttsProvider()?.name === 'fish'
+      ? this.compileFishSynthesis(synthesisText, { emotion, intensity: args.modelIntensity, directorSpeed: script?.directorSpeed })
+      : null;
+    const ttsOptions = fishSynthesis
+      ? { emotion: delivery.primaryEmotion, speed: fishSynthesis.speed }
+      : deliveryToTTSOptions(delivery, emotions, {
+        advanced: this.flags.advancedDelivery,
+        customPresets: this.deps.settings.has('voice.emotions')
+      });
 
     // 4. Generation record. For a hidden-draft replace the shell does not
     // exist yet; message_id/text_part_id are filled in once published.
@@ -329,7 +338,7 @@ export class VoiceService {
         if (attempt > 0) this.deps.voice.update(generation.id, { retry_count: attempt });
         try {
           const ttsStarted = Date.now();
-          audio = await provider.synthesize(synthesisText, { ...ttsOptions, signal: combined.signal });
+          audio = await provider.synthesize(fishSynthesis?.text ?? synthesisText, { ...ttsOptions, signal: combined.signal });
           this.deps.metrics?.record('voice', 'tts_latency_ms', Date.now() - ttsStarted);
           this.deps.metrics?.record('voice', 'tts_success');
           break;
@@ -485,14 +494,20 @@ export class VoiceService {
       }
     }
 
-    // 3. Delivery (custom presets drive when the user saved them).
+    // 3. Delivery (custom presets drive when the user saved them; Fish is
+    // compiled once through FishCueRenderer instead).
     const emotions = this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
     const emotion = resolveVoiceDelivery(text, null, emotions).emotion;
     const delivery = planDelivery(emotion);
-    const ttsOptions = deliveryToTTSOptions(delivery, emotions, {
-      advanced: this.flags.advancedDelivery,
-      customPresets: this.deps.settings.has('voice.emotions')
-    });
+    const fishSynthesis = this.deps.capabilities.ttsProvider()?.name === 'fish'
+      ? this.compileFishSynthesis(synthesisText, { emotion, directorSpeed: script?.directorSpeed })
+      : null;
+    const ttsOptions = fishSynthesis
+      ? { emotion: delivery.primaryEmotion, speed: fishSynthesis.speed }
+      : deliveryToTTSOptions(delivery, emotions, {
+        advanced: this.flags.advancedDelivery,
+        customPresets: this.deps.settings.has('voice.emotions')
+      });
 
     // 4. Generation record + TTS.
     const generation = this.deps.voice.create({
@@ -515,7 +530,7 @@ export class VoiceService {
       for (let attempt = 0; attempt <= this.flags.ttsRetries; attempt++) {
         if (attempt > 0) this.deps.voice.update(generation.id, { retry_count: attempt });
         try {
-          audio = await provider.synthesize(synthesisText, { ...ttsOptions, signal });
+          audio = await provider.synthesize(fishSynthesis?.text ?? synthesisText, { ...ttsOptions, signal });
           break;
         } catch (err) {
           if (signal.aborted) throw err;
@@ -683,6 +698,35 @@ export class VoiceService {
     }
   }
 
+  /**
+   * Fish path (voice-system convergence): the ONLY compile point for a Fish
+   * cue in the production pipeline. Takes the director's clean spoken text,
+   * applies the FishCueRenderer whitelist once (with the model's real 0–1
+   * intensity), and fixes the speed chain: director → mood → TTS global
+   * default. Custom `voice.emotions` presets never reach Fish; the returned
+   * text/speed are final and the provider just sends them.
+   */
+  private compileFishSynthesis(
+    synthesisText: string,
+    opts: { emotion: string | null; intensity?: number | null; directorSpeed?: number | null }
+  ): { text: string; speed: number } {
+    const rawEmotion = opts.emotion?.trim() || 'neutral';
+    // Restraint first: without a real intensity the cue follows the utterance
+    // mood — a plain neutral statement stays cue-free, an explicit emotion
+    // gets the full band.
+    const intensity = opts.intensity ?? (rawEmotion === 'neutral' ? 0 : 1);
+    const spec = fishCueForMood(rawEmotion, {
+      intensity,
+      moodAlias: rawEmotion,
+      directorSpeed: opts.directorSpeed ?? undefined,
+      fallbackSpeed: this.deps.config.getModels().tts.speed
+    });
+    return {
+      text: spec.cue ? `${spec.cue} ${synthesisText}` : synthesisText,
+      speed: spec.speed
+    };
+  }
+
   private async handleSynthesisFailure(
     generationId: string,
     mode: VoiceMode,
@@ -776,10 +820,15 @@ export class VoiceService {
     if (!synthesisText.trim()) return { generationId: null, ok: false, error: 'empty_text' };
     const delivery = planDelivery(null);
     const emotions = this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
-    const ttsOptions = deliveryToTTSOptions(delivery, emotions, {
-      advanced: this.flags.advancedDelivery,
-      customPresets: this.deps.settings.has('voice.emotions')
-    });
+    const fishSynthesis = caps.ttsProvider()?.name === 'fish'
+      ? this.compileFishSynthesis(synthesisText, { emotion: 'neutral' })
+      : null;
+    const ttsOptions = fishSynthesis
+      ? { emotion: 'neutral', speed: fishSynthesis.speed }
+      : deliveryToTTSOptions(delivery, emotions, {
+        advanced: this.flags.advancedDelivery,
+        customPresets: this.deps.settings.has('voice.emotions')
+      });
     const generation = this.deps.voice.create({
       messageId,
       textPartId: partId,
@@ -794,7 +843,7 @@ export class VoiceService {
     const controller = new AbortController();
     this.active.set(generation.id, controller);
     try {
-      const audio = await caps.ttsProvider().synthesize(synthesisText, { ...ttsOptions, signal: controller.signal });
+      const audio = await caps.ttsProvider().synthesize(fishSynthesis?.text ?? synthesisText, { ...ttsOptions, signal: controller.signal });
       const media = await this.deps.media.save({
         kind: 'audio',
         origin: 'generated',

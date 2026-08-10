@@ -8,6 +8,7 @@ import { requireAdminToken, requireChatToken } from './auth.js';
 import { mediaMeta, toMediaRef, type MediaRow } from '../db/repos/media.repo.js';
 import type { BrowserPushSubscription } from '../core/push.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from '../core/voice.js';
+import { fishCueForMood } from '../core/voice/fishCue.js';
 import { LifePolicySchema } from '../config/schema.js';
 import { classifyFraming } from '../media/persona-references.js';
 import { atomicWriteFile, ensureDirSync, safeJoin } from '../util/fsx.js';
@@ -579,6 +580,13 @@ export function registerFeatureRoutes(app: SooyaApp): void {
   });
 
   /* -------------------------------- voice ---------------------------------- */
+  /*
+   * Legacy admin voice endpoints (voice-system convergence): the standalone
+   * 「情绪语音」 panel is gone, and TTS provider parameters live in
+   * 「模型配置 → 语音合成」. GET/PUT are kept for old configs and read-only
+   * compatibility — nothing new depends on them, and PUT only writes what
+   * runtime V2 already ignores (voice.emotions presets, voicePolicy.frequency).
+   */
   server.get('/api/admin/voice', adminGuard, async () => {
     const status = (await services.capabilities.statuses()).tts;
     return {
@@ -630,10 +638,24 @@ export function registerFeatureRoutes(app: SooyaApp): void {
       reply.code(503);
       return { error: 'tts_not_configured', message: '请先配置可用的语音合成模型' };
     }
-    const emotions = repos.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
-    const delivery = resolveVoiceDelivery(parsed.data.text, parsed.data.emotion, emotions);
+    // Fish preview runs the same single cue compile as the production
+    // pipeline; other providers keep the legacy preset-driven delivery.
+    let options: Record<string, unknown> | undefined;
+    let previewText = parsed.data.text;
+    if (tts.name === 'fish') {
+      const spec = fishCueForMood(parsed.data.emotion, {
+        intensity: 1,
+        moodAlias: parsed.data.emotion,
+        fallbackSpeed: config.getModels().tts.speed
+      });
+      previewText = spec.cue ? `${spec.cue} ${parsed.data.text}` : parsed.data.text;
+      options = { speed: spec.speed };
+    } else {
+      const emotions = repos.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
+      options = resolveVoiceDelivery(parsed.data.text, parsed.data.emotion, emotions);
+    }
     try {
-      const audio = await tts.synthesize(parsed.data.text, delivery);
+      const audio = await tts.synthesize(previewText, options);
       void reply.header('content-type', audio.mime).header('cache-control', 'no-store').header('content-disposition', `inline; filename="preview.${audio.format}"`);
       return reply.send(audio.data);
     } catch (err) {
