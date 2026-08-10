@@ -194,6 +194,28 @@ export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: 
         const chunks: Buffer[] = [];
         let started = false;
         let done = false;
+
+        /** Decodes a chunked body, returning null until the final chunk. */
+        const decodeChunked = (body: Buffer): Buffer | null => {
+          const out: Buffer[] = [];
+          let pos = 0;
+          while (true) {
+            const lineEnd = body.indexOf('\r\n', pos);
+            if (lineEnd < 0) return null; // size line incomplete
+            const sizeLine = body.subarray(pos, lineEnd).toString('utf8').trim();
+            const size = Number.parseInt(sizeLine.split(';')[0] ?? '', 16);
+            if (Number.isNaN(size)) return null;
+            pos = lineEnd + 2;
+            if (size === 0) {
+              // Final chunk: trailing CRLF (or trailers) may follow.
+              return Buffer.concat(out);
+            }
+            if (body.length < pos + size + 2) return null; // chunk incomplete
+            out.push(body.subarray(pos, pos + size));
+            pos += size + 2;
+          }
+        };
+
         const maybeFinish = () => {
           if (done || !started) return;
           const raw = Buffer.concat(chunks);
@@ -207,21 +229,30 @@ export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: 
             const idx = line.indexOf(':');
             if (idx > 0) headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
           }
+          const body = raw.subarray(bodyStart);
+          if (headers['transfer-encoding']?.toLowerCase().includes('chunked')) {
+            const decoded = decodeChunked(body);
+            if (decoded === null) return; // not all chunks arrived yet
+            done = true;
+            signal?.removeEventListener('abort', abortHandler);
+            resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, decoded));
+            return;
+          }
           const cl = headers['content-length'];
           const contentLength = cl ? Number(cl) : null;
           if (contentLength !== null && !Number.isNaN(contentLength)) {
             // Fixed-length body: resolve once the declared bytes are buffered
             // (the origin may keep the connection alive, so no `end` comes).
-            if (raw.length - bodyStart < contentLength) return;
+            if (body.length < contentLength) return;
             done = true;
             signal?.removeEventListener('abort', abortHandler);
-            resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, raw.subarray(bodyStart, bodyStart + contentLength)));
+            resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, body.subarray(0, contentLength)));
             return;
           }
-          // No content-length: wait for the connection to close.
+          // No content-length and no chunked: wait for the connection to close.
           done = true;
           signal?.removeEventListener('abort', abortHandler);
-          resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, raw.subarray(bodyStart)));
+          resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, body));
         };
         tlsSocket.on('data', (c) => {
           if (!started) return;
