@@ -104,8 +104,6 @@
 .admin-form-card img { display: block; margin: 10px 0; }
 .admin-list-row input,
 .admin-list-row select { min-width: 0; }
-.admin-sidebar-footer { display: grid; gap: 7px; }
-.admin-side-action { display: block; text-decoration: none; }
 
 @media (max-width: 640px) {
   .gallery-toolbar,
