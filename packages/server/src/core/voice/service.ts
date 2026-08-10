@@ -72,6 +72,8 @@ export interface InlineVoiceArgs {
   userText: string;
   decision: VoiceDecision;
   modelEmotion: string | null;
+  /** Intensity (0–1) from the model's voice marker, when the model expressed one. */
+  modelIntensity?: number | null;
   signal: AbortSignal;
   persona: ReturnType<ConfigStore['getPersona']>;
   /**
@@ -186,7 +188,10 @@ export class VoiceService {
       };
     } else {
       if (this.flags.independentScript) {
-        script = await this.generateScript(args.finalText, mode, args.userText, maxSeconds, signal, 0);
+        script = await this.generateScript(args.finalText, mode, args.userText, maxSeconds, signal, 0, undefined, {
+          emotion: args.modelEmotion,
+          intensity: args.modelIntensity
+        });
       }
       if (script && this.flags.naturalnessGuard && !this.guardAccepts(script, args.finalText, mode, maxSeconds)) {
         const report = assessNaturalness(script.spokenText, args.finalText, mode, { maxVoiceSeconds: maxSeconds });
@@ -604,7 +609,8 @@ export class VoiceService {
     maxSeconds: number,
     signal: AbortSignal,
     attempt: number,
-    reportReasons?: string[]
+    reportReasons?: string[],
+    intent?: { emotion?: string | null; intensity?: number | null }
   ): Promise<VoiceScript | null> {
     const caps = this.deps.capabilities;
     if (!caps.has('chat')) return null;
@@ -620,8 +626,12 @@ export class VoiceService {
         config: this.deps.config,
         chatProvider: () => caps.chatProvider()
       });
-      const intent: VoiceDirectorIntent = { content: text, emotion: undefined, intensity: undefined };
-      const result = await director.voice(intent, { signal, mode, userText, maxSeconds });
+      const directorIntent: VoiceDirectorIntent = {
+        content: text,
+        emotion: intent?.emotion ?? undefined,
+        intensity: intent?.intensity ?? undefined
+      };
+      const result = await director.voice(directorIntent, { signal, mode, userText, maxSeconds });
       const spoken = result.text.trim();
       if (!spoken) return null;
       return {

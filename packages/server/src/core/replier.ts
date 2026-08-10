@@ -706,6 +706,7 @@ export class Replier {
           userText,
           decision,
           modelEmotion: generated.directives.voiceEmotion ?? null,
+          modelIntensity: generated.directives.voiceIntensity ?? null,
           signal,
           persona,
           ...(voiceDraft

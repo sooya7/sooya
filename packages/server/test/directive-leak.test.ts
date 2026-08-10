@@ -38,6 +38,36 @@ describe('single-bracket directive markers', () => {
     expect(directives.imagePrompt).toBe('窗台上睡着的猫');
   });
 
+  it('reads a selfie intent from [[image-self:...]] and leaves the prose clean', () => {
+    const { text, directives } = stripModelDirectives('给你看看[[image-self:晚上窝在卧室床上看手机，有点困，穿着宽松的家居服]]');
+    expect(text).toBe('给你看看');
+    expect(directives.selfImagePrompt).toBe('晚上窝在卧室床上看手机，有点困，穿着宽松的家居服');
+    expect(directives.imagePrompt).toBeUndefined();
+  });
+
+  it('keeps [[image:...]] as a regular image intent, not a selfie', () => {
+    const { directives } = stripModelDirectives('[[image:咖啡店窗边下雨]]');
+    expect(directives.imagePrompt).toBe('咖啡店窗边下雨');
+    expect(directives.selfImagePrompt).toBeUndefined();
+  });
+
+  it('reads emotion and intensity from a voice marker', () => {
+    const { directives } = stripModelDirectives('[[voice:emotion=shy_warm|intensity=0.3]]');
+    expect(directives.voice).toBe(true);
+    expect(directives.voiceEmotion).toBe('shy_warm');
+    expect(directives.voiceIntensity).toBe(0.3);
+  });
+
+  it('clamps a voice intensity outside 0–1 and ignores malformed values', () => {
+    const high = stripModelDirectives('[[voice:emotion=happy|intensity=1.7]]');
+    expect(high.directives.voiceIntensity).toBe(1);
+    // Negative or malformed intensities are not parsed at all (undefined).
+    const negative = stripModelDirectives('[[voice:emotion=happy|intensity=-0.2]]');
+    expect(negative.directives.voiceIntensity).toBeUndefined();
+    const none = stripModelDirectives('[[voice:emotion=happy]]');
+    expect(none.directives.voiceIntensity).toBeUndefined();
+  });
+
   it('strips Chinese aliases emitted by the model', () => {
     const sticker = stripModelDirectives('\u5148\u966a\u4f60\u804a\u804a[\u8868\u60c5\u5305:\u59d4\u5c48\u5df4\u5df4]');
     expect(sticker.text).toBe('\u5148\u966a\u4f60\u804a\u804a');

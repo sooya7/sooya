@@ -122,6 +122,8 @@ export interface ModelDirectives {
   stickerOnly?: boolean;
   /** The mood she asked for, e.g. `[[voice:emotion=happy]]`. */
   voiceEmotion?: string;
+  /** The emotion intensity (0–1) she asked for, e.g. `[[voice:emotion=shy|intensity=0.3]]`. */
+  voiceIntensity?: number;
 }
 
 /**
@@ -134,6 +136,19 @@ export function parseEmotionArg(arg: string | null | undefined): string | null {
   // 40-character blob to 24 would hand a provider a word nobody wrote.
   const m = /emotion\s*=\s*([A-Za-z_-]{1,24})(?![A-Za-z_-])/i.exec(arg ?? '');
   return m ? m[1]!.toLowerCase() : null;
+}
+
+/**
+ * Reads the intensity (0–1) out of a voice marker argument, e.g.
+ * `[[voice:emotion=shy|intensity=0.3]]`. Absent or unparseable values yield
+ * undefined — the director then decides its own intensity.
+ */
+export function parseIntensityArg(arg: string | null | undefined): number | undefined {
+  const m = /intensity\s*=\s*([0-9]*\.?[0-9]+)/i.exec(arg ?? '');
+  if (!m) return undefined;
+  const value = Number(m[1]);
+  if (!Number.isFinite(value)) return undefined;
+  return Math.min(1, Math.max(0, value));
 }
 
 const MARKER_KINDS = ['sticker', 'image', 'image-self', 'voice', 'voice-only', 'sticker-only', '表情包', '图片', '语音'] as const;
@@ -230,11 +245,15 @@ export function stripModelDirectives(raw: string): StripResult {
         directives.voice = true;
         const mood = parseEmotionArg(value);
         if (mood) directives.voiceEmotion = mood;
+        const intensity = parseIntensityArg(value);
+        if (intensity !== undefined) directives.voiceIntensity = intensity;
       } else if (k === 'voice-only') {
         directives.voice = true;
         directives.voiceOnly = true;
         const mood = parseEmotionArg(value);
         if (mood) directives.voiceEmotion = mood;
+        const intensity = parseIntensityArg(value);
+        if (intensity !== undefined) directives.voiceIntensity = intensity;
       } else if (k === 'sticker-only') {
         directives.sticker = value || 'auto';
         directives.stickerOnly = true;
