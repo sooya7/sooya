@@ -586,7 +586,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           <p className="admin-muted admin-form-wide">Anuma 图生图会先上传参考图，再把 HTTPS 地址传给 generations；不会把图片 Base64 或签名地址写入日志。</p>
         </>}
         {selected === 'tts' && <>
-          <label>音色<input value={String(config.voice ?? '')} onChange={(e) => update('voice', e.target.value)} /></label>
+          {config.provider !== 'fish' && <label>音色<input value={String(config.voice ?? '')} onChange={(e) => update('voice', e.target.value)} /></label>}
           <label>语速<input type="number" step="0.1" value={String(config.speed ?? '')} onChange={(e) => update('speed', Number(e.target.value))} /></label>
           <label className="admin-form-wide">
             情绪投递方式

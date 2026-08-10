@@ -90,6 +90,18 @@ describe('FishAudioProvider', () => {
     expect(read()!.headers.model).toBe('s2.1-pro-free');
   });
 
+  it('falls back to the shared voice field as the Fish voice id', async () => {
+    const { provider, read } = capture(config({ referenceId: '', voice: 'f729a143b9a34005bdae0b21697fa41a' }), () => new Response(fakeMp3(), { status: 200, headers: { 'content-type': 'audio/mpeg' } }));
+    await provider.synthesize('今天天气不错');
+    expect(read()!.json.reference_id).toBe('f729a143b9a34005bdae0b21697fa41a');
+  });
+
+  it('never sends the OpenAI default alloy as a Fish voice id', async () => {
+    const { provider, read } = capture(config({ referenceId: '', voice: 'alloy' }), () => new Response(fakeMp3(), { status: 200, headers: { 'content-type': 'audio/mpeg' } }));
+    await provider.synthesize('今天天气不错');
+    expect(read()!.json.reference_id).toBeUndefined();
+  });
+
   it('sends no cue for neutral statements (restraint: no cue > wrong cue)', async () => {
     const { provider, read } = capture(config(), () => new Response(fakeMp3(), { status: 200, headers: { 'content-type': 'audio/mpeg' } }));
     await provider.synthesize('今天天气不错', { emotion: 'neutral' });

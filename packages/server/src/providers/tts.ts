@@ -350,6 +350,16 @@ export class FishAudioProvider implements TTSProvider {
     return !!this.cfg.apiKey && !!this.cfg.model;
   }
 
+  /**
+   * Fish voice id: the dedicated `referenceId` wins; otherwise the shared
+   * `voice` field doubles as the voice id (excluding the OpenAI default
+   * `alloy`, which is not a Fish voice).
+   */
+  private resolveVoiceId(): string {
+    if (this.cfg.referenceId) return this.cfg.referenceId;
+    return this.cfg.voice && this.cfg.voice !== 'alloy' ? this.cfg.voice : '';
+  }
+
   private endpoint(): string {
     const b = (this.cfg.baseUrl || 'https://api.fish.audio').replace(/\/+$/, '');
     return b.endsWith('/v1/tts') ? b : `${b}/v1/tts`;
@@ -403,7 +413,8 @@ export class FishAudioProvider implements TTSProvider {
           };
           // reference_id is optional: omit it entirely so Fish uses its default
           // voice instead of rejecting an empty id.
-          if (this.cfg.referenceId) body.reference_id = this.cfg.referenceId;
+          const referenceId = this.resolveVoiceId();
+          if (referenceId) body.reference_id = referenceId;
           const res = await this.fetchImpl(this.endpoint(), {
             method: 'POST',
             headers: {
