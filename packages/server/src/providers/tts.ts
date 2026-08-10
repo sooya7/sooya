@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { TtsModelConfig } from '../config/schema.js';
 import { assertSafeUrl, withRetry, HttpTimeoutError } from '../util/http.js';
 import { probeAudioDuration } from '../util/audio.js';
+import { renderFishSynthesisTextForMood, fishSpeedForMood } from '../core/voice/fishCue.js';
 import {
   ProviderNotConfiguredError,
   ProviderRequestError,
@@ -322,9 +323,149 @@ export class UnconfiguredTTSProvider implements TTSProvider {
   }
 }
 
+/**
+ * Fish Audio S2.x TTS provider (implementation doc §2, §8).
+ *
+ * Talks to `POST /v1/tts` with a Bearer key. The Fish cue mapping is NOT
+ * invented here: the provider renders the synthesis text through the shared
+ * FishCueRenderer whitelist (mood from `opts.emotion`), so personality logic
+ * stays in the Voice domain and the provider stays a thin transport.
+ *
+ * Retry policy per doc §11.1: 429 / 5xx retried once, 4xx parameter errors and
+ * timeouts never retried, upstream AbortSignal aborts immediately.
+ */
+export class FishAudioProvider implements TTSProvider {
+  readonly name = 'fish';
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(
+    private readonly cfg: TtsModelConfig,
+    private readonly deps: ProviderDeps
+  ) {
+    this.fetchImpl = deps.fetchImpl ?? fetch;
+  }
+
+  get configured(): boolean {
+    // reference_id is optional: Fish falls back to a default voice when absent.
+    return !!this.cfg.apiKey && !!this.cfg.model;
+  }
+
+  private endpoint(): string {
+    const b = (this.cfg.baseUrl || 'https://api.fish.audio').replace(/\/+$/, '');
+    return b.endsWith('/v1/tts') ? b : `${b}/v1/tts`;
+  }
+
+  async synthesize(text: string, opts: TTSOptions = {}): Promise<SynthesizedAudio> {
+    if (!this.configured) throw new ProviderNotConfiguredError('tts');
+    const trimmed = text.trim();
+    if (!trimmed) throw new ProviderRequestError('tts requires non-empty text');
+
+    // Resolve the Fish cue/speed from the Voice-domain mood via the whitelist.
+    const synthesisText = renderFishSynthesisTextForMood(trimmed, opts.emotion ?? 'neutral', { intensity: 1 });
+    const speed = fishSpeedForMood(opts.emotion ?? 'neutral', { intensity: 1 });
+
+    // Phase 1 keeps the provider-level timeout at ~12s regardless of the
+    // shared default (doc §11.1); an explicit smaller value is honoured.
+    const timeoutMs = Math.min(this.cfg.timeoutMs || 12_000, 12_000);
+
+    return withRetry(
+      async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(
+          () => controller.abort(new HttpTimeoutError(`tts timed out after ${timeoutMs}ms`)),
+          timeoutMs
+        );
+        const onAbort = () => controller.abort(opts.signal?.reason);
+        opts.signal?.addEventListener('abort', onAbort, { once: true });
+        try {
+          await assertSafeUrl(this.endpoint(), this.deps.allowPrivateNetwork);
+          // The free tier is selected via the `model` HTTP header, NOT the JSON
+          // body: putting `s2.1-pro-free` in the body makes Fish bill the paid
+          // model and answer 402 (insufficient API credit). See the Fish
+          // s2.1-pro-free integration notes.
+          const body: Record<string, unknown> = {
+            text: synthesisText,
+            temperature: this.cfg.temperature,
+            top_p: this.cfg.topP,
+            prosody: {
+              speed,
+              volume: this.cfg.prosodyVolume,
+              normalize_loudness: this.cfg.normalizeLoudness
+            },
+            chunk_length: this.cfg.chunkLength,
+            normalize: this.cfg.normalize,
+            format: this.cfg.format,
+            sample_rate: 44_100,
+            mp3_bitrate: 128,
+            latency: this.cfg.latency,
+            repetition_penalty: this.cfg.repetitionPenalty,
+            condition_on_previous_chunks: this.cfg.conditionOnPreviousChunks
+          };
+          // reference_id is optional: omit it entirely so Fish uses its default
+          // voice instead of rejecting an empty id.
+          if (this.cfg.referenceId) body.reference_id = this.cfg.referenceId;
+          const res = await this.fetchImpl(this.endpoint(), {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              authorization: `Bearer ${this.cfg.apiKey}`,
+              model: this.cfg.model
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal
+          });
+          if (!res.ok) {
+            const status = res.status;
+            // 4xx (except 429) is a parameter error: never retried. The
+            // status is attached so `isRetryable` below can decide.
+            const error = new ProviderRequestError(`tts failed with status ${status}: ${await safeText(res)}`, status);
+            throw error;
+          }
+          const data = Buffer.from(await res.arrayBuffer());
+          if (data.byteLength < 128) throw new ProviderRequestError(`tts returned suspiciously small payload (${data.byteLength} bytes)`);
+          rejectTextPayload(data, res.headers.get('content-type'));
+          const mime = res.headers.get('content-type')?.split(';')[0] ?? FORMAT_MIME[this.cfg.format] ?? 'application/octet-stream';
+          const durationSec = probeAudioDuration(data, mime) ?? undefined;
+          return { data, mime, format: this.cfg.format, durationSec };
+        } catch (err) {
+          throw normalizeAbort(err, timeoutMs);
+        } finally {
+          clearTimeout(timer);
+          opts.signal?.removeEventListener('abort', onAbort);
+        }
+      },
+      {
+        retries: this.cfg.maxRetries,
+        isRetryable: (err) => {
+          // Never retry timeouts or client parameter errors (doc §11.1).
+          if (err instanceof HttpTimeoutError) return false;
+          const status = (err as { status?: number }).status;
+          if (typeof status !== 'number') return false;
+          return status === 429 || status >= 500;
+        }
+      }
+    );
+  }
+
+  async inspectHealth(): Promise<HealthStatus> {
+    return {
+      capability: 'tts',
+      configured: this.configured,
+      ok: this.configured,
+      provider: this.name,
+      model: this.cfg.model || undefined,
+      detail: this.configured
+        ? `configured (reference=${this.cfg.referenceId}, model=${this.cfg.model}, format=${this.cfg.format})`
+        : 'not configured',
+      checkedAt: new Date().toISOString()
+    };
+  }
+}
+
 export function createTTSProvider(cfg: TtsModelConfig, deps: ProviderDeps): TTSProvider {
   if (cfg.provider === 'none') return new UnconfiguredTTSProvider();
   if (cfg.provider === 'volc-tts') return new VolcTTSProvider(cfg, deps);
+  if (cfg.provider === 'fish') return new FishAudioProvider(cfg, deps);
   return new OpenAITTSProvider(cfg, deps);
 }
 

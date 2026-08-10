@@ -107,9 +107,16 @@ export const ImageModelSchema = z.object({
 export type ImageModelConfig = z.infer<typeof ImageModelSchema>;
 
 export const TtsModelSchema = z.object({
-  provider: z.enum(['openai-tts', 'openai-compatible', 'volc-tts', 'none']).default('none'),
+  provider: z.enum(['openai-tts', 'openai-compatible', 'volc-tts', 'fish', 'none']).default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
+  /**
+   * Secret-reference indirection: when set, the provider's apiKey is resolved
+   * from this environment variable at load time instead of being persisted in
+   * models.json. The stored apiKey stays empty; the env value is applied in
+   * memory only. Generic across providers (fish uses FISH_API_KEY).
+   */
+  apiKeyEnv: z.string().default(''),
   model: z.string().default(''),
   voice: z.string().default('alloy'),
   /**
@@ -141,7 +148,29 @@ export const TtsModelSchema = z.object({
   /** 情绪值 for the enum transport: 1~5, non-linear, official default is 4. */
   emotionScale: z.number().min(1).max(5).default(4),
   timeoutMs: z.number().int().min(1000).max(300_000).default(90_000),
-  maxRetries: z.number().int().min(0).max(5).default(1)
+  maxRetries: z.number().int().min(0).max(5).default(1),
+  // ---- Fish Audio S2.1-Pro-Free specifics (ignored by other providers) ----
+  /** Fish `reference_id` — the persistent Sooya voice model. `voice` is its alias. */
+  referenceId: z.string().default(''),
+  /** Fish sampling temperature; lower = more consistent persona. */
+  temperature: z.number().min(0).max(2).default(0.65),
+  topP: z.number().min(0).max(1).default(0.7),
+  /** Fish `prosody.speed` override; mood mapping supplies the default. */
+  prosodySpeed: z.number().min(0.8).max(1.2).default(1),
+  /** Fish `prosody.volume` (no artificial gain by default). */
+  prosodyVolume: z.number().default(0),
+  /** Fish `prosody.normalize_loudness` — stable loudness across clips. */
+  normalizeLoudness: z.boolean().default(true),
+  /** Fish `normalize` — digits/units read more reliably. */
+  normalize: z.boolean().default(true),
+  /** Fish `chunk_length` — interaction/stability trade-off. */
+  chunkLength: z.number().int().min(50).max(500).default(200),
+  /** Fish `latency` — balanced for auto/proactive, normal for explicit previews. */
+  latency: z.enum(['normal', 'balanced', 'low']).default('balanced'),
+  /** Fish `repetition_penalty` — suppress repeated audio patterns. */
+  repetitionPenalty: z.number().min(0).max(2).default(1.2),
+  /** Fish `condition_on_previous_chunks` — keep the voice consistent on long text. */
+  conditionOnPreviousChunks: z.boolean().default(true)
 });
 export type TtsModelConfig = z.infer<typeof TtsModelSchema>;
 

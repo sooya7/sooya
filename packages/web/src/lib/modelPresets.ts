@@ -24,7 +24,7 @@ export const SLOT_PROVIDERS: Record<ModelSlot, string[]> = {
   summary: ['openai-chat', 'openai-responses', 'anthropic-messages', 'openai-compatible'],
   embedding: ['openai-embeddings', 'openai-compatible'],
   image: ['openai-images', 'anuma-input-images', 'openai-compatible'],
-  tts: ['openai-tts', 'volc-tts', 'openai-compatible'],
+  tts: ['openai-tts', 'volc-tts', 'fish', 'openai-compatible'],
   rerank: ['openai-rerank', 'openai-compatible']
 };
 
@@ -39,6 +39,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   'anuma-input-images': 'Anuma input_images 图生图',
   'openai-tts': 'OpenAI TTS',
   'volc-tts': '火山引擎语音合成（官方协议）',
+  'fish': 'Fish Audio（S2.x 官方协议）',
   'openai-rerank': 'Rerank（SiliconFlow/Jina 协议）'
 };
 

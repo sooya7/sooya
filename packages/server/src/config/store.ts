@@ -36,7 +36,7 @@ export class ConfigStore {
     this.personaPath = path.join(opts.configDir, 'persona.json');
     this.modelsPath = path.join(opts.configDir, 'models.json');
     this.persona = this.loadPersona();
-    this.models = this.loadModels();
+    this.models = this.resolveApiKeyEnv(this.loadModels());
   }
 
   private loadPersona(): Persona {
@@ -109,9 +109,7 @@ export class ConfigStore {
 
   getModels(): ModelsConfig {
     return this.models;
-  }
-
-  /** Model config for a capability, falling back to the chat model. */
+  }  /** Model config for a capability, falling back to the chat model. */
   chatModelFor(capability: 'chat' | 'vision' | 'summary'): ModelsConfig['chat'] {
     if (capability === 'vision') return this.models.vision ?? this.models.chat;
     if (capability === 'summary') return this.models.summary ?? this.models.chat;
@@ -124,7 +122,7 @@ export class ConfigStore {
       deepMerge(this.models as unknown as Record<string, unknown>, incoming)
     );
     this.persistModels(merged);
-    this.models = merged;
+    this.models = this.resolveApiKeyEnv(merged);
     return this.models;
   }
 
@@ -142,6 +140,27 @@ export class ConfigStore {
     return redactApiKeys(JSON.parse(JSON.stringify(this.models))) as Record<string, unknown>;
   }
 
+  /**
+   * Applies `apiKeyEnv` indirection in memory only: when a model section names
+   * an environment variable, the live apiKey is the env value and the stored
+   * models.json never contains it. Sections without apiKeyEnv pass through.
+   */
+  private resolveApiKeyEnv(models: ModelsConfig): ModelsConfig {
+    const sections = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'rerank'] as const;
+    const next = { ...models } as ModelsConfig & Record<string, { apiKeyEnv?: string; apiKey?: string }>;
+    for (const name of sections) {
+      const section = next[name];
+      if (!section || typeof section !== 'object') continue;
+      const envName = (section as { apiKeyEnv?: unknown }).apiKeyEnv;
+      if (typeof envName !== 'string' || !envName) continue;
+      const resolved = this.env[envName];
+      if (typeof resolved === 'string' && resolved) {
+        (section as { apiKey?: string }).apiKey = resolved;
+      }
+    }
+    return next as ModelsConfig;
+  }
+
   /** Load an operator edit only when the complete file is valid. */
   reloadModelsFromDisk(): boolean {
     try {
@@ -155,7 +174,7 @@ export class ConfigStore {
         this.onLog?.('warn', 'models.json external edit rejected', { issues: parsed.error.issues.length });
         return false;
       }
-      this.models = parsed.data;
+      this.models = this.resolveApiKeyEnv(parsed.data);
       this.onLog?.('info', 'models.json external edit loaded');
       return true;
     } catch (error) {
