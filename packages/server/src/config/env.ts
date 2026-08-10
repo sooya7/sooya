@@ -81,6 +81,13 @@ const EnvSchema = z.object({
   MAX_REMOTE_FETCH_BYTES: intish(15 * 1024 * 1024),
   REMOTE_FETCH_TIMEOUT_MS: intish(20_000),
   ALLOW_PRIVATE_NETWORK_FETCH: boolish(false),
+  /**
+   * Outbound proxy for provider calls where the host cannot reach the vendor
+   * directly (e.g. `socks5h://127.0.0.1:8082` for Fish from a CN host).
+   * Node's native fetch ignores HTTPS_PROXY, so this is wired into the
+   * injectable fetchImpl instead.
+   */
+  SOOYA_HTTP_PROXY: z.string().optional(),
 
   BACKUP_INTERVAL_MS: intish(6 * 60 * 60 * 1000),
   BACKUP_KEEP: intish(7),

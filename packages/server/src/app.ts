@@ -8,6 +8,7 @@ import fastifyStatic from '@fastify/static';
 import type { Logger } from 'pino';
 import { loadEnv, type AppEnv } from './config/env.js';
 import { createLogger } from './util/logger.js';
+import { createProxyFetch } from './util/proxyFetch.js';
 import { closeDatabase, openDatabase, reconcileCounters } from './db/index.js';
 import { DbHandle } from './db/handle.js';
 import { ConfigStore } from './config/store.js';
@@ -187,6 +188,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const env = loadEnv({ ...process.env, ...opts.env } as NodeJS.ProcessEnv);
   const logger = opts.logger ?? createLogger({ level: env.LOG_LEVEL, logDir: env.NODE_ENV === 'test' ? null : env.logDir, pretty: env.NODE_ENV === 'development' });
 
+  // Outbound proxy for provider calls when the host cannot reach the vendor
+  // directly (SOOYA_HTTP_PROXY=socks5h://127.0.0.1:8082 for Fish from a CN
+  // host). Node's native fetch ignores HTTPS_PROXY, so the providers receive
+  // this implementation through the injectable fetchImpl seam instead.
+  const fetchImpl = env.SOOYA_HTTP_PROXY ? createProxyFetch(env.SOOYA_HTTP_PROXY) : (opts.fetchImpl ?? fetch);
+
   for (const dir of [env.dataDir, env.dbDir, env.mediaDir, env.backupDir, env.logDir, ...Object.values(env.mediaDirs)]) ensureDirSync(dir);
 
   const dbFile = path.join(env.dbDir, 'sooya.db');
@@ -224,10 +231,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const mediaVariants = new ImageVariantService(env.mediaDirs.variants, (message, id) => repos.errors.add('media.variant', message, { id }));
   const stickerLibrary = new StickerLibrary(repos.stickers, repos.media, mediaStore);
   mediaStore.setOnDelete(() => stickerLibrary.invalidate());
-  const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl: opts.fetchImpl });
+  const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl });
   const bus = new EventBus(repos.events);
   const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE });
-  const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, opts.fetchImpl, env.SOOYA_PUSH_SUBJECT);
+  const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
   /*
    * Env vars stay the deployment default; anything the user set in the panel wins
@@ -273,7 +280,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   }, repos.weather));
   const world = new WorldContextService(location, weather, opts.clock, env.LIFE_TIME_ZONE, repos.locations);
   const webSearch = new WebSearchRegistry({
-    fetchImpl: opts.fetchImpl,
+    fetchImpl,
     onError: (provider, error) =>
       repos.errors.add('web-search', `${provider}:unavailable`, { diagnostic: redactDiagnostic(error) })
   });
@@ -557,7 +564,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     repos,
     services: { mediaStore, mediaVariants, stickerLibrary, capabilities, webSearch, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
-    fetchImpl: opts.fetchImpl,
+    fetchImpl,
     recurringTimers: [],
     reopenDatabase: () => {
       const previous = dbHandle.raw;
