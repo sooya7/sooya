@@ -188,7 +188,37 @@ export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: 
           ...(isIp ? {} : { servername: url.hostname }),
           rejectUnauthorized
         });
+        // Register data/end listeners immediately — a fast origin may answer
+        // before secureConnect's callback runs, and a listener registered
+        // there would miss the response (hanging the request).
+        const chunks: Buffer[] = [];
+        let started = false;
+        tlsSocket.on('data', (c) => {
+          if (!started) return;
+          chunks.push(Buffer.from(c));
+        });
+        tlsSocket.once('end', () => {
+          if (!started) return;
+          signal?.removeEventListener('abort', abortHandler);
+          const raw = Buffer.concat(chunks);
+          const headerEnd = raw.indexOf('\r\n\r\n');
+          if (headerEnd < 0) { reject(new Error('proxy: malformed HTTP response')); return; }
+          const headStr = raw.subarray(0, headerEnd).toString('utf8');
+          const statusMatch = /^HTTP\/1\.[01] (\d{3})/.exec(headStr);
+          const bodyStart = headerEnd + 4;
+          const headers: Record<string, string> = {};
+          for (const line of headStr.split('\r\n').slice(1)) {
+            const idx = line.indexOf(':');
+            if (idx > 0) headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+          }
+          resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, raw.subarray(bodyStart)));
+        });
+        tlsSocket.once('error', (err) => {
+          signal?.removeEventListener('abort', abortHandler);
+          reject(err);
+        });
         tlsSocket.once('secureConnect', () => {
+          started = true;
           // After TLS the socket is a plain duplex stream; write the HTTP
           // request directly. Reusing http.request's createConnection with an
           // already-secured socket has proved unreliable (hang-ups).
@@ -197,29 +227,6 @@ export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: 
           for (const [key, value] of Object.entries(headerRecord)) lines.push(`${key}: ${value}`);
           const head = `${lines.join('\r\n')}\r\n\r\n`;
           tlsSocket.write(Buffer.concat([Buffer.from(head), body ?? Buffer.alloc(0)]));
-
-          const chunks: Buffer[] = [];
-          tlsSocket.on('data', (c) => chunks.push(Buffer.from(c)));
-          tlsSocket.once('end', () => {
-            signal?.removeEventListener('abort', abortHandler);
-            const raw = Buffer.concat(chunks);
-            const headerEnd = raw.indexOf('\r\n\r\n');
-            if (headerEnd < 0) { reject(new Error('proxy: malformed HTTP response')); return; }
-            const headStr = raw.subarray(0, headerEnd).toString('utf8');
-            const statusMatch = /^HTTP\/1\.[01] (\d{3})/.exec(headStr);
-            const bodyStart = headerEnd + 4;
-            const headers: Record<string, string> = {};
-            for (const line of headStr.split('\r\n').slice(1)) {
-              const idx = line.indexOf(':');
-              if (idx > 0) headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
-            }
-            resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, raw.subarray(bodyStart)));
-          });
-          tlsSocket.once('error', (err) => { signal?.removeEventListener('abort', abortHandler); reject(err); });
-        });
-        tlsSocket.once('error', (err) => {
-          signal?.removeEventListener('abort', abortHandler);
-          reject(err);
         });
         return;
       }
