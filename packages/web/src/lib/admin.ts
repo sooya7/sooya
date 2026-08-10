@@ -360,6 +360,10 @@ export const adminApi = {
   persona: () => adminRequest<{ persona: AdminPersona }>('/api/admin/persona'),
   updatePersona: (patch: Partial<AdminPersona>) =>
     adminRequest<{ persona: AdminPersona }>('/api/admin/persona', { method: 'PUT', body: patch }),
+  /** Voice-system convergence §4.1: the only two behavior knobs left in the panel. */
+  voiceBehavior: () => adminRequest<{ enabled: boolean; maxVoiceSeconds: number }>('/api/admin/voice-behavior'),
+  updateVoiceBehavior: (patch: { enabled?: boolean; maxVoiceSeconds?: number }) =>
+    adminRequest<{ enabled: boolean; maxVoiceSeconds: number }>('/api/admin/voice-behavior', { method: 'PUT', body: patch }),
   models: () => adminRequest<{ models: AdminModels }>('/api/admin/models'),
   updateModels: (patch: AdminModels) =>
     adminRequest<{ models: AdminModels }>('/api/admin/models', { method: 'PUT', body: patch }),

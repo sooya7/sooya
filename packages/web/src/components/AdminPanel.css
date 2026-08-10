@@ -857,27 +857,6 @@
   to { background-position: -200% 0; }
 }
 
-.admin-v2 .emotion-map-header,
-.admin-v2 .emotion-map-row {
-  display: grid;
-  grid-template-columns: minmax(56px, 0.65fr) minmax(0, 2fr) minmax(68px, 0.55fr);
-  align-items: center;
-  gap: 8px;
-}
-
-.admin-v2 .emotion-map-header {
-  min-height: 28px;
-  color: var(--admin-muted);
-}
-
-.admin-v2 .emotion-map-header > small {
-  white-space: normal;
-}
-
-.admin-v2 .emotion-map-row > input {
-  min-width: 0;
-}
-
 .admin-v2 .life-observation {
   width: 100%;
   max-width: 880px;
@@ -1448,16 +1427,6 @@
   .admin-v2 .life-vitals-readonly,
   .admin-v2 .life-environment-readonly dl {
     grid-template-columns: 1fr;
-  }
-
-  .admin-v2 .emotion-map-header,
-  .admin-v2 .emotion-map-row {
-    grid-template-columns: 52px minmax(0, 1fr) 68px;
-    gap: 6px;
-  }
-
-  .admin-v2 .emotion-map-row input {
-    min-height: 44px;
   }
 }
 

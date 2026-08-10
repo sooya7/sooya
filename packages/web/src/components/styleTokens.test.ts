@@ -80,8 +80,4 @@ describe('shared colour tokens', () => {
     expect(ADMIN).toMatch(/@media \(max-width:\s*640px\)[\s\S]*\.life-boundary-form/s);
     expect(ADMIN).not.toMatch(/\.life-observation[^}]*box-shadow:/s);
   });
-
-  it('aligns emotion mapping labels with both inputs', () => {
-    expect(ADMIN).toMatch(/\.emotion-map-(?:header|row)[^{]*\{[^}]*grid-template-columns:/s);
-  });
 });

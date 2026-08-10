@@ -190,11 +190,17 @@ export const featureApi = {
   batchMedia: (ids: string[], action: 'trash' | 'restore' | 'favorite' | 'unfavorite' | 'permanent') =>
     request<{ changed: number; blocked: Array<{ id: string; reason: string }>; missing: string[] }>('/api/admin/media/batch', { method: 'POST', body: { ids, action } }),
 
+  /**
+   * @deprecated Voice-system convergence: the standalone「情绪语音」panel is
+   * gone. Kept for old callers; TTS provider parameters now live in
+   * 「模型配置 → 语音合成」 and behavior knobs in「助手配置 → 语音行为」.
+   */
   voice: () => request<Record<string, any>>('/api/admin/voice'),
   updateVoice: async (body: Record<string, unknown>) => {
     await request('/api/admin/voice', { method: 'PUT', body });
     return request<Record<string, any>>('/api/admin/voice');
   },
+  /** 语音试听：模型配置 → 语音合成 使用；Fish 与 OpenAI/Volc 同样可用。 */
   previewVoice: (text: string, emotion: string) => request<Blob>('/api/admin/voice/preview', { method: 'POST', body: { text, emotion }, raw: true }),
 
   life: () => request<LifePanelData>('/api/admin/life'),

@@ -4,7 +4,6 @@ import { featureApi, type PersonaReference } from '../lib/features.js';
 import { mediaThumbnailPath } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia, type AuthenticatedMediaState } from '../lib/useAuthenticatedMedia.js';
 
-const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'gentle'] as const;
 const EMOTION_LABELS: Record<string, string> = { neutral: '中性', happy: '开心', sad: '难过', angry: '生气', gentle: '温柔', sleepy: '困倦', confused: '疑惑' };
 export function emotionLabel(value: string): string {
   return EMOTION_LABELS[value] ?? value;
@@ -138,67 +137,6 @@ export function ReferencesEditor({ onNotice }: { onNotice: (s: string) => void }
           );
         })}
       </div>
-    </section>
-  );
-}
-
-export function VoiceEditor({ onNotice }: { onNotice: (s: string) => void }) {
-  const [data, setData] = useState<Record<string, any> | null>(null);
-  const [text, setText] = useState('你好呀，我是 SOOYA。');
-  const [emotion, setEmotion] = useState('neutral');
-  const [previewed, setPreviewed] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const previewUrlRef = useRef<string | null>(null);
-  const load = () => featureApi.voice().then(setData).catch((error) => onNotice(errorText(error)));
-  useEffect(() => { void load(); }, []);
-  useEffect(() => () => {
-    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-  }, []);
-  const policy = data?.policy ?? {};
-  const model = data?.model ?? {};
-  const emotions = data?.emotions ?? {};
-  const supported = data?.supported ?? {};
-  const setPolicy = (key: string, value: unknown) => setData((previous) => previous ? { ...previous, policy: { ...previous.policy, [key]: value } } : previous);
-  const setModel = (key: string, value: unknown) => setData((previous) => previous ? { ...previous, model: { ...previous.model, [key]: value } } : previous);
-  const save = async () => {
-    if (!data) return;
-    try {
-      setData(await featureApi.updateVoice({ policy: data.policy, model: data.model, emotions: data.emotions }));
-      onNotice('情绪语音配置已保存并立即生效');
-    } catch (error) {
-      onNotice(errorText(error));
-    }
-  };
-  const preview = async () => {
-    try {
-      const blob = await featureApi.previewVoice(text, emotion);
-      const url = URL.createObjectURL(blob);
-      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-      previewUrlRef.current = url;
-      setPreviewed(true);
-      if (audioRef.current) {
-        audioRef.current.src = url;
-        await audioRef.current.play();
-      }
-    } catch (error) {
-      onNotice(errorText(error));
-    }
-  };
-  if (!data) return <section className="admin-card">正在读取语音能力…</section>;
-  const capability = data.capability ?? {};
-  return (
-    <section className="admin-form-card" data-testid="voice-settings">
-      <div className="admin-panel-heading"><div><p>{capability.ok || capability.configured ? 'TTS 能力可用' : `TTS 不可用：${capability.detail ?? '尚未配置'}`}</p></div></div>
-      <label><span>启用语音</span><input type="checkbox" checked={Boolean(policy.enabled)} onChange={(event) => setPolicy('enabled', event.target.checked)} /></label>
-      <label>发送频率<select value={String(policy.frequency ?? 'medium')} onChange={(event) => setPolicy('frequency', event.target.value)}><option value="never">从不</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
-      <label>单段最大字符<input type="number" min={20} max={2000} value={Number(policy.maxCharsPerClip ?? 300)} onChange={(event) => setPolicy('maxCharsPerClip', Number(event.target.value))} /></label>
-      <label><span>附带文字</span><input type="checkbox" checked={Boolean(policy.alwaysAttachTranscript)} onChange={(event) => setPolicy('alwaysAttachTranscript', event.target.checked)} /></label>
-      <p className="admin-muted admin-form-wide">音色和语速属于接口配置，在「模型配置 → 语音合成模型」里设置；这里只管她什么时候说话、带什么情绪。</p>
-      <label>表达模式<select value={String(model.instructionMode ?? 'auto')} onChange={(event) => setModel('instructionMode', event.target.value)} disabled={supported.instructions === false}><option value="on">始终使用情绪提示</option><option value="auto">自动</option><option value="off">关闭</option></select></label>
-      <label>情绪强度<input type="number" min={0} max={1} step={0.05} value={Number(model.emotionIntensity ?? 0.7)} onChange={(event) => setModel('emotionIntensity', Number(event.target.value))} disabled={supported.instructions === false} /></label>
-      <div className="admin-form-wide"><strong>情绪映射</strong><div className="admin-list-row emotion-map-header" aria-hidden="true"><span>情绪</span><small>说话方式</small><small>语速</small></div>{EMOTIONS.map((key) => { const item = emotions[key] ?? { label: EMOTION_LABELS[key], instructions: '', speed: 1 }; return <div className="admin-list-row emotion-map-row" key={key}><span>{item.label ?? EMOTION_LABELS[key]}</span><input aria-label={`${emotionLabel(key)}说话方式`} value={String(item.instructions ?? '')} onChange={(event) => setData({ ...data, emotions: { ...emotions, [key]: { ...item, instructions: event.target.value } } })} disabled={supported.instructions === false} /><input aria-label={`${emotionLabel(key)}语速`} type="number" step={0.05} min={0.25} max={4} value={Number(item.speed ?? 1)} onChange={(event) => setData({ ...data, emotions: { ...emotions, [key]: { ...item, speed: Number(event.target.value) } } })} disabled={supported.speed === false} /></div>; })}</div>
-      <div className="admin-card"><strong>试听</strong><textarea value={text} onChange={(event) => setText(event.target.value)} /><select value={emotion} onChange={(event) => setEmotion(event.target.value)}>{EMOTIONS.map((key) => <option key={key} value={key}>{EMOTION_LABELS[key]}</option>)}</select><button type="button" disabled={!capability.ok && !capability.configured} onClick={() => void preview()}>试听</button><audio ref={audioRef} controls style={previewed ? undefined : { display: 'none' }} /></div>
-      <div className="admin-actions"><button type="button" onClick={() => void save()}>保存语音配置</button></div>
     </section>
   );
 }

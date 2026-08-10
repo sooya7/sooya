@@ -31,24 +31,30 @@ describe('merged admin console', () => {
   });
 
   it('offers every section in one navigation', () => {
-    for (const label of ['概览', '助手配置', '双方头像', '情绪语音', '她的生活', '模型配置', '内容管理', '存储治理', '运维与备份']) {
+    // Voice-system convergence: the standalone「情绪语音」tab is gone; TTS
+    // parameters live under 模型配置, behavior knobs under 助手配置.
+    for (const label of ['概览', '助手配置', '双方头像', '她的生活', '模型配置', '内容管理', '存储治理', '运维与备份']) {
       expect(PANEL).toContain(`label: '${label}'`);
     }
+    expect(PANEL).not.toContain("label: '情绪语音'");
   });
 
   it('renders each feature section from the shared editors', () => {
-    for (const editor of ['AvatarEditor', 'VoiceEditor', 'StorageEditor']) {
+    for (const editor of ['AvatarEditor', 'StorageEditor']) {
       expect(EDITORS).toContain(`export function ${editor}(`);
     }
+    expect(EDITORS).not.toContain('export function VoiceEditor(');
     expect(EDITORS).not.toContain('export function LifePanel(');
     expect(EDITORS).not.toContain('export function LifeAdminLink(');
     const featureImports = PANEL.match(/import \{([^}]+)\} from '\.\/FeatureAdminPage\.js';/)?.[1];
-    for (const imported of ['AvatarEditor', 'emotionLabel', 'ReferencesEditor', 'StorageEditor', 'VoiceEditor']) {
+    for (const imported of ['AvatarEditor', 'emotionLabel', 'ReferencesEditor', 'StorageEditor']) {
       expect(featureImports).toContain(imported);
     }
-    for (const branch of ["tab === 'avatar'", "tab === 'voice'", "tab === 'life'", "tab === 'storage'"]) {
+    expect(featureImports).not.toContain('VoiceEditor');
+    for (const branch of ["tab === 'avatar'", "tab === 'life'", "tab === 'storage'"]) {
       expect(PANEL).toContain(branch);
     }
+    expect(PANEL).not.toContain("tab === 'voice'");
   });
 
   it('renders the life tab as the autonomous observation panel only', () => {
@@ -74,7 +80,7 @@ describe('merged admin console', () => {
    */
   it('never repeats a tab title as a heading inside an editor', () => {
     const titles = [...PANEL.matchAll(/title: '([^']+)'/g)].map((m) => m[1]);
-    expect(titles.length).toBeGreaterThanOrEqual(9);
+    expect(titles.length).toBeGreaterThanOrEqual(8);
     const headings = [...EDITORS.matchAll(/<h[12]>([^<{]+)<\/h[12]>/g)].map((m) => m[1]);
     expect(headings.filter((h) => titles.includes(h))).toEqual([]);
   });

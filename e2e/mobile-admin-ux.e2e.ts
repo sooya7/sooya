@@ -58,17 +58,20 @@ test('375px 下管理子页与表情面板保持可读且按需加载', async ({
   expect(await observation.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
-  await page.goto('/admin/voice');
-  const voiceSettings = page.getByTestId('voice-settings');
-  await expect(voiceSettings).toBeVisible();
-  await expect(page.getByLabel('中性说话方式')).toBeVisible();
-  await expect(page.getByLabel('中性语速')).toBeVisible();
+  // Voice-system convergence: the standalone「情绪语音」page is gone. The
+  // mobile panel now surfaces the two behavior knobs under 助手配置 and the
+  // TTS provider form (incl. preview) under 模型配置 — same no-overflow rule.
+  await page.goto('/admin/persona');
+  const voiceBehavior = page.getByTestId('voice-behavior-settings');
+  await expect(voiceBehavior).toBeVisible();
+  await expect(voiceBehavior.getByLabel('单条语音最大长度（秒）')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  const emotionRowsInsideViewport = await voiceSettings.locator('.emotion-map-row').evaluateAll((rows) => rows.every((row) => {
-    const box = row.getBoundingClientRect();
-    return box.left >= 0 && box.right <= window.innerWidth;
-  }));
-  expect(emotionRowsInsideViewport).toBe(true);
+  await page.goto('/admin/models');
+  await page.getByRole('button', { name: '语音合成模型' }).click();
+  const ttsPreview = page.getByTestId('admin-tts-preview');
+  await expect(ttsPreview).toBeVisible();
+  await expect(ttsPreview.getByRole('button', { name: '试听' })).toBeEnabled();
+  expect(await ttsPreview.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 
   await page.goto('/');
   await expect(page.getByTestId('connection-status')).toContainText('在线');

@@ -5,7 +5,8 @@ import { useAutoNotice } from '../lib/autoNotice.js';
 import { navigate } from '../lib/navigation.js';
 import { AppLink } from './AppLink.js';
 import { formatAdminDateTime } from '../lib/adminDisplay.js';
-import { AvatarEditor, emotionLabel, ReferencesEditor, StorageEditor, VoiceEditor } from './FeatureAdminPage.js';
+import { featureApi } from '../lib/features.js';
+import { AvatarEditor, emotionLabel, ReferencesEditor, StorageEditor } from './FeatureAdminPage.js';
 import { LifeObservationPanel } from './life/LifeObservationPanel.js';
 import { WebSearchModelEditor } from './WebSearchModelEditor.js';
 import {
@@ -46,7 +47,6 @@ export type Tab =
   | 'overview'
   | 'persona'
   | 'avatar'
-  | 'voice'
   | 'life'
   | 'models'
   | 'content'
@@ -76,7 +76,6 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: I
   { group: '助手与表达', id: 'persona', label: '助手配置', description: '人设与表达方式', icon: 'persona' },
   { group: '内容与系统', id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
   { group: '助手与表达', id: 'avatar', label: '双方头像', description: '助手与用户头像', icon: 'persona' },
-  { group: '助手与表达', id: 'voice', label: '情绪语音', description: '语气与语音合成', icon: 'message' },
   { group: '助手与表达', id: 'life', label: '她的生活', description: '此刻在做什么与主动开口', icon: 'message' },
   { group: '内容与系统', id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
   { group: '内容与系统', id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
@@ -99,7 +98,6 @@ const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
   persona: { title: '助手配置', description: '调整助手身份、语气和说话方式。' },
   models: { title: '模型配置', description: '管理每项能力对应的接口与模型。' },
   avatar: { title: '双方头像', description: '上传助手与用户头像，聊天页面即时生效。' },
-  voice: { title: '情绪语音', description: '配置语音合成的情绪、语速与表达方式。' },
   life: { title: '她的生活', description: '她此刻在做什么、今天做过什么，以及她为什么还没主动开口。' },
   content: { title: '内容管理', description: '管理长期记忆、表情包、媒体和聊天记录。' },
   storage: { title: '存储治理', description: '预览并执行媒体清理，回收磁盘空间。' },
@@ -264,6 +262,37 @@ function PersonaPanel({ onNotice }: { onNotice: (v: string) => void }) {
 }
 
 /**
+ * Voice-system convergence §4.1: the only two voice behavior knobs left in
+ * the panel — whether she ever sends voice, and the per-clip length cap.
+ * Provider parameters and per-mood mappings live in 「模型配置 → 语音合成」.
+ */
+function VoiceBehaviorEditor({ onNotice }: { onNotice: (v: string) => void }) {
+  const [behavior, setBehavior] = useState<{ enabled: boolean; maxVoiceSeconds: number } | null>(null);
+
+  useEffect(() => {
+    void adminApi.voiceBehavior().then(setBehavior).catch((e) => onNotice(errorText(e)));
+  }, [onNotice]);
+
+  if (!behavior) return <p className="admin-muted">正在读取语音行为…</p>;
+  const save = async () => {
+    try {
+      setBehavior(await adminApi.updateVoiceBehavior({ enabled: behavior.enabled, maxVoiceSeconds: behavior.maxVoiceSeconds }));
+      onNotice('语音行为已保存');
+    } catch (e) {
+      onNotice(errorText(e));
+    }
+  };
+  return (
+    <section className="admin-form-card" data-testid="voice-behavior-settings">
+      <div className="admin-panel-heading"><div><h2>语音行为</h2><p>她什么时候发语音由模型判断与你的使用偏好共同决定；这里只保留最基础的两个开关。音色、接口和语速在「模型配置 → 语音合成」里设置。</p></div></div>
+      <label><span>启用语音</span><input type="checkbox" checked={behavior.enabled} onChange={(e) => setBehavior({ ...behavior, enabled: e.target.checked })} /></label>
+      <label>单条语音最大长度（秒）<input type="number" min={5} max={120} value={behavior.maxVoiceSeconds} onChange={(e) => setBehavior({ ...behavior, maxVoiceSeconds: Number(e.target.value) })} /></label>
+      <div className="admin-actions"><button type="button" onClick={() => void save()}>保存语音行为</button></div>
+    </section>
+  );
+}
+
+/**
  * The saved model library. The seven capability slots are fixed, so this is the
  * only place an operator can add a model rather than overwrite one; applying a
  * preset is what actually assigns it to its slot on the server.
@@ -390,10 +419,19 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [libraryKey, setLibraryKey] = useState(0);
+  const [previewText, setPreviewText] = useState('你好呀，我刚刚想到你了。');
+  const [previewEmotion, setPreviewEmotion] = useState('auto');
+  const [previewing, setPreviewing] = useState(false);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     void adminApi.models().then((r) => setModels(r.models)).catch((e) => onNotice(errorText(e)));
   }, [onNotice]);
+
+  useEffect(() => () => {
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+  }, []);
 
   const config = (models?.[selected] ?? {}) as Record<string, unknown>;
   const discoveryUnsupported = config.provider === 'anuma-input-images';
@@ -414,6 +452,25 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
       onNotice(typed ? '模型配置与密钥已保存' : '模型配置已保存');
     } catch (e) {
       onNotice(errorText(e));
+    }
+  };
+
+  /** 语音试听：走 /api/admin/voice/preview，Fish 与 OpenAI/Volc 同样可用。 */
+  const previewVoice = async () => {
+    setPreviewing(true);
+    try {
+      const blob = await featureApi.previewVoice(previewText.trim() || '你好呀，我刚刚想到你了。', previewEmotion === 'auto' ? 'neutral' : previewEmotion);
+      const url = URL.createObjectURL(blob);
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = url;
+      if (previewAudioRef.current) {
+        previewAudioRef.current.src = url;
+        await previewAudioRef.current.play();
+      }
+    } catch (e) {
+      onNotice(errorText(e));
+    } finally {
+      setPreviewing(false);
     }
   };
 
@@ -588,6 +645,13 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         {selected === 'tts' && <>
           {config.provider !== 'fish' && <label>音色<input value={String(config.voice ?? '')} onChange={(e) => update('voice', e.target.value)} /></label>}
           <label>语速<input type="number" step="0.1" value={String(config.speed ?? '')} onChange={(e) => update('speed', Number(e.target.value))} /></label>
+          <label>
+            输出格式
+            <select value={String(config.format ?? 'mp3')} onChange={(e) => update('format', e.target.value)}>
+              {['mp3', 'wav', 'opus', 'aac', 'flac'].map((format) => <option key={format} value={format}>{format}</option>)}
+            </select>
+          </label>
+          <label>最大重试次数<input type="number" min="0" max="5" value={String(config.maxRetries ?? '')} onChange={(e) => update('maxRetries', Number(e.target.value))} /></label>
           <label className="admin-form-wide">
             情绪投递方式
             <select value={String(config.emotionMode ?? 'auto')} onChange={(e) => update('emotionMode', e.target.value)}>
@@ -617,6 +681,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
             <small>密钥不写入 models.json，从该环境变量读取。例如 FISH_API_KEY。</small>
           </label>
           <label>采样温度（0.55–0.75 角色更稳）<input type="number" step="0.05" min="0" max="2" value={String((config as Record<string, unknown>).temperature ?? 0.65)} onChange={(e) => update('temperature', Number(e.target.value))} /></label>
+          <label>Top-P<input type="number" step="0.05" min="0" max="1" value={String((config as Record<string, unknown>).topP ?? 0.7)} onChange={(e) => update('topP', Number(e.target.value))} /></label>
           <label>分块长度（字符）<input type="number" step="10" min="50" max="500" value={String((config as Record<string, unknown>).chunkLength ?? 200)} onChange={(e) => update('chunkLength', Number(e.target.value))} /></label>
           <label>
             延迟模式
@@ -626,7 +691,35 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
               <option value="low">low（最低延迟）</option>
             </select>
           </label>
+          <label><span>normalize（数字/单位更稳）</span><input type="checkbox" checked={Boolean((config as Record<string, unknown>).normalize ?? true)} onChange={(e) => update('normalize', e.target.checked)} /></label>
+          <label><span>normalizeLoudness（响度归一）</span><input type="checkbox" checked={Boolean((config as Record<string, unknown>).normalizeLoudness ?? true)} onChange={(e) => update('normalizeLoudness', e.target.checked)} /></label>
+          <label><span>conditionOnPreviousChunks（长文本音色一致）</span><input type="checkbox" checked={Boolean((config as Record<string, unknown>).conditionOnPreviousChunks ?? true)} onChange={(e) => update('conditionOnPreviousChunks', e.target.checked)} /></label>
+          <label>repetitionPenalty<input type="number" step="0.1" min="0" max="2" value={String((config as Record<string, unknown>).repetitionPenalty ?? 1.2)} onChange={(e) => update('repetitionPenalty', Number(e.target.value))} /></label>
+          <label>prosodyVolume（0 不增益）<input type="number" step="1" min="-20" max="20" value={String((config as Record<string, unknown>).prosodyVolume ?? 0)} onChange={(e) => update('prosodyVolume', Number(e.target.value))} /></label>
         </>}
+        {selected === 'tts' && (
+          <section className="admin-card admin-form-wide" data-testid="admin-tts-preview">
+            <div className="admin-card-heading"><h3>语音试听</h3><small>用当前已保存的 TTS 配置试听；Fish 会按所选情绪编译一条安全 cue。</small></div>
+            <label>试听文字<textarea value={previewText} onChange={(e) => setPreviewText(e.target.value)} /></label>
+            <label>
+              情绪测试
+              <select value={previewEmotion} onChange={(e) => setPreviewEmotion(e.target.value)}>
+                <option value="auto">自动</option>
+                <option value="warm">warm · 温暖</option>
+                <option value="happy">happy · 开心</option>
+                <option value="gentle">gentle · 温柔</option>
+                <option value="sleepy">sleepy · 困倦</option>
+                <option value="playful">playful · 俏皮</option>
+                <option value="serious">serious · 认真</option>
+                <option value="shy">shy · 害羞</option>
+                <option value="reassuring">reassuring · 安抚</option>
+                <option value="neutral">neutral · 中性</option>
+              </select>
+            </label>
+            <button type="button" data-testid="admin-tts-preview-play" disabled={previewing} onClick={() => void previewVoice()}>{previewing ? '试听中…' : '试听'}</button>
+            <audio ref={previewAudioRef} controls style={{ display: previewUrlRef.current ? undefined : 'none' }} />
+          </section>
+        )}
         {selected === 'embedding' && <label>向量维度<input type="number" value={String(config.dimensions ?? '')} onChange={(e) => update('dimensions', Number(e.target.value))} /></label>}
         {selected === 'rerank' && <label>重排候选数（向量初筛取前 N 条送去重排）<input type="number" min="2" max="50" value={String(config.candidateLimit ?? 16)} onChange={(e) => update('candidateLimit', Number(e.target.value))} /></label>}
         <div className="admin-actions">
@@ -965,12 +1058,10 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
       ? <Overview data={data} counts={counts} onRefresh={() => void loadOverview()} />
       : <section className="admin-overview-state" aria-live="polite">{loading ? <><div className="admin-spinner" />正在读取系统状态…</> : <><p>{notice ?? '无法加载管理信息'}</p><button type="button" onClick={() => void loadOverview()}>重试</button></>}</section>
     : tab === 'persona'
-      ? <><PersonaPanel onNotice={setNotice} /><ReferencesEditor onNotice={setNotice} /></>
+      ? <><PersonaPanel onNotice={setNotice} /><VoiceBehaviorEditor onNotice={setNotice} /><ReferencesEditor onNotice={setNotice} /></>
       : tab === 'avatar'
         ? <AvatarPanel onNotice={setNotice} />
-        : tab === 'voice'
-          ? <VoiceEditor onNotice={setNotice} />
-          : tab === 'life'
+        : tab === 'life'
             ? <LifeObservationPanel onNotice={setNotice} />
             : tab === 'models'
                 ? <ModelsPanel onNotice={setNotice} />

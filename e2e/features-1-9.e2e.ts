@@ -28,7 +28,6 @@ test.describe('SOOYA 1-9 user flows', () => {
     await page.addInitScript((token: string) => localStorage.setItem('sooya.token', token), CHAT_TOKEN);
   });
   test('feature center exposes avatar, voice and storage controls', async ({ page }) => {
-    let voiceStatusReads = 0;
     await page.addInitScript(() => {
       const original = URL.revokeObjectURL.bind(URL);
       (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls = [];
@@ -42,7 +41,6 @@ test.describe('SOOYA 1-9 user flows', () => {
       if (new URL(request.url()).pathname.startsWith('/api/media/')) {
         mediaRequests.push({ url: request.url(), authorization: request.headers().authorization });
       }
-      if (new URL(request.url()).pathname === '/api/admin/voice' && request.method() === 'GET') voiceStatusReads++;
     });
     await installAdminToken(page);
     await page.goto('/admin/features');
@@ -59,19 +57,21 @@ test.describe('SOOYA 1-9 user flows', () => {
       expect(request.authorization).toBe(`Bearer ${ADMIN_TOKEN}`);
     }
     expect(await page.locator('body').evaluate((body, token) => body.innerHTML.includes(token), ADMIN_TOKEN)).toBe(false);
-    await page.getByRole('button', { name: '情绪语音' }).click();
-    await expect(page.getByTestId('voice-settings')).toBeVisible();
-    await expect(page.getByText(/TTS 能力可用/)).toBeVisible();
-    // 音色/语速只属于「模型配置 → 语音合成模型」；这里不再重复出现，
-    // 曾经永久禁用的音调/音量死输入框也一并移除了。
-    await expect(page.getByLabel('音调')).toHaveCount(0);
-    await expect(page.getByLabel('音量')).toHaveCount(0);
-    await expect(page.getByText('默认音色')).toHaveCount(0);
-    await page.getByRole('button', { name: '保存语音配置' }).click();
-    await expect(page.getByText('情绪语音配置已保存并立即生效')).toBeVisible();
-    await expect.poll(() => voiceStatusReads).toBeGreaterThanOrEqual(2);
-    await expect(page.getByText(/TTS 能力可用/)).toBeVisible();
-    await expect(page.getByRole('button', { name: '试听' })).toBeEnabled();
+
+    // Voice-system convergence: the standalone「情绪语音」panel is gone —
+    // behavior knobs live in「助手配置」, provider parameters + preview in
+    //「模型配置 → 语音合成」.
+    await expect(page.getByRole('button', { name: '情绪语音' })).toHaveCount(0);
+    await page.getByRole('button', { name: '助手配置' }).click();
+    await expect(page.getByTestId('voice-behavior-settings')).toBeVisible();
+    await expect(page.getByTestId('voice-behavior-settings')).toContainText('启用语音');
+    await expect(page.getByTestId('voice-behavior-settings')).toContainText('单条语音最大长度');
+
+    await page.getByRole('button', { name: '模型配置' }).click();
+    await page.getByRole('button', { name: '语音合成模型' }).click();
+    await expect(page.getByTestId('admin-tts-preview')).toBeVisible();
+    await expect(page.getByTestId('admin-tts-preview-play')).toBeEnabled();
+    await expect(page.getByText('试听文字')).toBeVisible();
 
     await page.getByRole('button', { name: '存储治理' }).click();
     await expect(page.getByTestId('storage-settings')).toBeVisible();

@@ -8,6 +8,8 @@ const adminMocks = vi.hoisted(() => ({
   system: vi.fn(() => new Promise<never>(() => {})),
   capabilities: vi.fn(async () => ({ capabilities: {} })),
   backups: vi.fn(async () => ({ backups: [] })),
+  voiceBehavior: vi.fn(async () => ({ enabled: true, maxVoiceSeconds: 35 })),
+  updateVoiceBehavior: vi.fn(async (patch: Record<string, unknown>) => ({ enabled: true, maxVoiceSeconds: 35, ...patch })),
   persona: vi.fn(async () => ({
     persona: {
       id: 'persona_sooya',
@@ -36,6 +38,7 @@ const adminMocks = vi.hoisted(() => ({
     models: {
       storageVersion: 2,
       chat: { provider: 'openai-responses', model: 'deepseek-chat', supportsTools: true, apiKeyConfigured: true },
+      tts: { provider: 'fish', model: 's2.1-pro-free', referenceId: 'sooya-voice', apiKeyConfigured: true },
       webSearch: {
         enabled: true,
         providers: ['doubao', 'tavily', 'responses'],
@@ -95,6 +98,8 @@ beforeEach(() => {
   adminMocks.media.mockClear();
   adminMocks.models.mockClear();
   adminMocks.updateModels.mockClear();
+  adminMocks.voiceBehavior.mockClear();
+  adminMocks.updateVoiceBehavior.mockClear();
   adminMocks.modelPresets.mockClear();
   adminMocks.testWebSearch.mockClear();
 });
@@ -180,5 +185,79 @@ describe('AdminPanel 子页首屏', () => {
 
     expect(container.querySelector('[data-testid="admin-web-search-editor"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-testid="admin-dashboard"]')).toHaveLength(1);
+  });
+
+  it('语音收敛后导航不再出现「情绪语音」页', async () => {
+    window.history.replaceState(null, '', '/admin/overview');
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<AdminPanel initialTab="overview" />);
+      await Promise.resolve();
+    });
+
+    const tabs = [...container.querySelectorAll('[data-testid^="admin-tab-"]')].map((item) => item.textContent ?? '');
+    expect(tabs.some((text) => text.includes('情绪语音'))).toBe(false);
+    expect(tabs.some((text) => text.includes('语音合成'))).toBe(false);
+    // 旧路径 /admin/voice 回退到概览而不是渲染已删除的页。
+    window.history.replaceState(null, '', '/admin/voice');
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(container.querySelector('[data-testid="voice-settings"]')).toBeNull();
+  });
+
+  it('助手配置显示最小「语音行为」开关并可保存', async () => {
+    window.history.replaceState(null, '', '/admin/persona');
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<AdminPanel initialTab="persona" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const section = container.querySelector('[data-testid="voice-behavior-settings"]');
+    expect(section).not.toBeNull();
+    expect(section!.textContent).toContain('启用语音');
+    expect(section!.textContent).toContain('单条语音最大长度');
+    expect(adminMocks.voiceBehavior).toHaveBeenCalledTimes(1);
+
+    const checkbox = section!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    await act(async () => { checkbox.click(); });
+    const saveButton = [...section!.querySelectorAll('button')].find((item) => item.textContent?.includes('保存语音行为'))!;
+    await act(async () => { saveButton.click(); await Promise.resolve(); });
+    expect(adminMocks.updateVoiceBehavior).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+  });
+
+  it('模型配置 → 语音合成 补齐 Fish 参数并提供试听', async () => {
+    window.history.replaceState(null, '', '/admin/models');
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<AdminPanel initialTab="models" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const button = [...container.querySelectorAll('button')].find((item) => item.textContent?.includes('语音合成模型'));
+    expect(button).toBeTruthy();
+    await act(async () => button!.click());
+
+    // Fish 专属参数齐全（收敛 §3.3 补齐列表）。
+    const text = container.textContent ?? '';
+    expect(text).toContain('Reference-Id');
+    expect(text).toContain('Top-P');
+    expect(text).toContain('normalizeLoudness');
+    expect(text).toContain('repetitionPenalty');
+    expect(text).toContain('conditionOnPreviousChunks');
+    // 试听区存在且可点击（URL 保持 /api/admin/voice/preview）。
+    const preview = container.querySelector('[data-testid="admin-tts-preview"]');
+    expect(preview).not.toBeNull();
+    const play = preview!.querySelector('[data-testid="admin-tts-preview-play"]') as HTMLButtonElement;
+    expect(play).not.toBeNull();
   });
 });
