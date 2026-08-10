@@ -94,3 +94,42 @@ describe('Voice Preferences API (P1)', () => {
     void sendText;
   });
 });
+
+/**
+ * Voice-system convergence §4.1: the admin panel keeps exactly two behavior
+ * knobs (enabled + per-clip length cap); provider parameters live in model
+ * config and the old per-mood editors are gone.
+ */
+describe('Voice behavior API (convergence §4.1)', () => {
+  it('reads and updates the two minimal behavior knobs', async () => {
+    harness = await createHarness({ skipStickerImport: true, tts: 'ok', env: { ADMIN_API_TOKEN: 'admin-test-token' } });
+    const headers = { 'x-admin-token': 'admin-test-token' };
+
+    const get = await harness.app.server.inject({ method: 'GET', url: '/api/admin/voice-behavior', headers });
+    expect(get.statusCode).toBe(200);
+    expect(get.json()).toMatchObject({ enabled: true, maxVoiceSeconds: 35 });
+
+    const put = await harness.app.server.inject({
+      method: 'PUT',
+      url: '/api/admin/voice-behavior',
+      headers,
+      payload: { enabled: false, maxVoiceSeconds: 50 }
+    });
+    expect(put.statusCode).toBe(200);
+    expect(put.json()).toMatchObject({ enabled: false, maxVoiceSeconds: 50 });
+
+    const reloaded = await harness.app.server.inject({ method: 'GET', url: '/api/admin/voice-behavior', headers });
+    expect(reloaded.json()).toMatchObject({ enabled: false, maxVoiceSeconds: 50 });
+  });
+
+  it('rejects out-of-range length caps', async () => {
+    harness = await createHarness({ skipStickerImport: true, tts: 'ok', env: { ADMIN_API_TOKEN: 'admin-test-token' } });
+    const res = await harness.app.server.inject({
+      method: 'PUT',
+      url: '/api/admin/voice-behavior',
+      headers: { 'x-admin-token': 'admin-test-token' },
+      payload: { maxVoiceSeconds: 3 }
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});

@@ -8,6 +8,7 @@ import { assertSafeUrl, HttpTimeoutError, SsrfError } from '../util/http.js';
 import { ProviderNotConfiguredError, ProviderRequestError } from '../providers/types.js';
 import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
 import { redactDiagnostic } from '../core/public-error.js';
+import { DEFAULT_SPEECH_STYLE } from '../core/voice/style.js';
 
 function modelRows(payload: unknown): unknown[] {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
@@ -63,6 +64,39 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'invalid_persona', message: (err as Error).message };
     }
+  });
+
+  /**
+   * Minimal voice-behavior surface (voice-system convergence §4.1): the
+   * 「助手配置 → 语音行为」 panel edits exactly two knobs — whether she ever
+   * sends voice at all, and the per-clip length cap. Provider parameters and
+   * per-mood mappings were deliberately removed from this surface.
+   */
+  server.get('/api/admin/voice-behavior', guard, async () => {
+    const speechStyle = repos.settings.get('voice.speechStyle', DEFAULT_SPEECH_STYLE);
+    return { enabled: config.getPersona().voicePolicy.enabled, maxVoiceSeconds: speechStyle.maxVoiceSeconds };
+  });
+
+  server.put('/api/admin/voice-behavior', guard, async (req, reply) => {
+    const parsed = z.object({
+      enabled: z.boolean().optional(),
+      maxVoiceSeconds: z.number().int().min(5).max(120).optional()
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'bad_request', issues: parsed.error.issues };
+    }
+    if (parsed.data.enabled !== undefined) {
+      const persona = config.getPersona();
+      config.setPersona({ voicePolicy: { ...persona.voicePolicy, enabled: parsed.data.enabled } });
+    }
+    if (parsed.data.maxVoiceSeconds !== undefined) {
+      const current = repos.settings.get('voice.speechStyle', DEFAULT_SPEECH_STYLE);
+      repos.settings.set('voice.speechStyle', { ...current, maxVoiceSeconds: parsed.data.maxVoiceSeconds });
+    }
+    const speechStyle = repos.settings.get('voice.speechStyle', DEFAULT_SPEECH_STYLE);
+    repos.audit.add('voice', 'behavior.updated', null, parsed.data as Record<string, unknown>);
+    return { enabled: config.getPersona().voicePolicy.enabled, maxVoiceSeconds: speechStyle.maxVoiceSeconds };
   });
 
   /** Saved model library. Settings-backed so it survives config reloads. */

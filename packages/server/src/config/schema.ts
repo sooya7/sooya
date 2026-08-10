@@ -9,6 +9,12 @@ export const StickerPolicySchema = z.object({
 
 export const VoicePolicySchema = z.object({
   enabled: z.boolean().default(true),
+  /**
+   * @deprecated Voice-system convergence: auto voice frequency is decided by
+   * `voice.preferences.autoVoiceFrequency` at runtime, not by this field.
+   * Kept in the schema so old persona.json files parse; the UI no longer
+   * edits it and runtime V2 no longer reads it.
+   */
   frequency: z.enum(['never', 'low', 'medium', 'high']).default('low'),
   maxCharsPerClip: z.number().int().min(20).max(2000).default(300),
   alwaysAttachTranscript: z.boolean().default(true)

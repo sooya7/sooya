@@ -34,12 +34,23 @@ const DETECTED_TO_SAVED: Record<string, string> = {
  * Renders the configured moods for the prompt, as `key(中文标签)` pairs. Built
  * from the live presets so editing them in the panel cannot leave her being told
  * about a mood that no longer exists.
+ *
+ * @deprecated Voice-system convergence: the main model gets the fixed
+ * `VOICE_MOOD_INTENTS` contract instead of an editable catalogue — speeds,
+ * cues and vendor wording are owned by VoiceDirector + FishCueRenderer.
  */
 export function voiceMoodCatalogue(saved: VoiceEmotionMap): string {
   return Object.entries(saved)
     .map(([key, preset]) => `${key}(${preset.label})`)
     .join('、');
 }
+
+/**
+ * Fixed high-level voice-mood contract injected into the main model prompt
+ * (convergence §5.3). The model only picks an intent word; it never sees
+ * speeds, instructions or Fish cue names.
+ */
+export const VOICE_MOOD_INTENTS = 'neutral / warm / happy / gentle / sleepy / playful / serious / shy / reassuring';
 
 export function resolveVoiceDelivery(
   text: string,

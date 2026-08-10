@@ -25,7 +25,7 @@ import {
 } from '../providers/types.js';
 import { HttpTimeoutError } from '../util/http.js';
 import { abortableDelay, StaleGenerationError } from '../util/abort.js';
-import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, voiceMoodCatalogue, type VoiceEmotionMap } from './voice.js';
+import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, VOICE_MOOD_INTENTS, type VoiceEmotionMap } from './voice.js';
 import { parseVoiceIntent } from './voice/intent.js';
 import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
@@ -183,9 +183,10 @@ export class Replier {
         batchMessageIds: userMessages.map((message) => message.id),
         allowVision,
         stickerCatalogue: this.deps.stickers.catalogueForPrompt(),
-        voiceMoods: voiceMoodCatalogue(
-          this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS)
-        ),
+        // Fixed lightweight media-intent contract (voice convergence): the
+        // main model only chooses a high-level mood — never speeds, cues or
+        // vendor wording, which VoiceDirector + FishCueRenderer own.
+        voiceMoods: VOICE_MOOD_INTENTS,
         capabilityNotes,
         contextWindow,
         maxOutputTokens
