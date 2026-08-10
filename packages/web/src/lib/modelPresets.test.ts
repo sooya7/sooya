@@ -99,7 +99,7 @@ describe('model preset editing', () => {
 
 describe('interface options per capability', () => {
   it('offers 语音合成 only the speech interfaces', () => {
-    expect(interfaceOptions('tts').map((o) => o.value)).toEqual(['none', 'openai-tts', 'volc-tts', 'openai-compatible']);
+    expect(interfaceOptions('tts').map((o) => o.value)).toEqual(['none', 'openai-tts', 'volc-tts', 'fish', 'openai-compatible']);
   });
 
   it('never offers one capability the interface of another', () => {

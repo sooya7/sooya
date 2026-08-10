@@ -605,6 +605,28 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           </label>
           <label>情绪强度（仅枚举方式，1~5）<input type="number" step="1" min="1" max="5" value={String(config.emotionScale ?? 4)} onChange={(e) => update('emotionScale', Number(e.target.value))} /></label>
         </>}
+        {selected === 'tts' && config.provider === 'fish' && <>
+          <label className="admin-form-wide">
+            Reference-Id（Fish 声线 ID）
+            <input value={String((config as Record<string, unknown>).referenceId ?? '')} placeholder="例如 f729a143b9a34005bdae0b21697fa41a" onChange={(e) => update('referenceId', e.target.value)} />
+            <small>Fish 持久声线 ID（voice model）。留空则使用 Fish 默认音色。</small>
+          </label>
+          <label className="admin-form-wide">
+            API Key 环境变量名
+            <input value={String((config as Record<string, unknown>).apiKeyEnv ?? '')} placeholder="FISH_API_KEY" onChange={(e) => update('apiKeyEnv', e.target.value)} />
+            <small>密钥不写入 models.json，从该环境变量读取。例如 FISH_API_KEY。</small>
+          </label>
+          <label>采样温度（0.55–0.75 角色更稳）<input type="number" step="0.05" min="0" max="2" value={String((config as Record<string, unknown>).temperature ?? 0.65)} onChange={(e) => update('temperature', Number(e.target.value))} /></label>
+          <label>分块长度（字符）<input type="number" step="10" min="50" max="500" value={String((config as Record<string, unknown>).chunkLength ?? 200)} onChange={(e) => update('chunkLength', Number(e.target.value))} /></label>
+          <label>
+            延迟模式
+            <select value={String((config as Record<string, unknown>).latency ?? 'balanced')} onChange={(e) => update('latency', e.target.value)}>
+              <option value="balanced">balanced（自动/主动语音，默认）</option>
+              <option value="normal">normal（明确语音请求/预览）</option>
+              <option value="low">low（最低延迟）</option>
+            </select>
+          </label>
+        </>}
         {selected === 'embedding' && <label>向量维度<input type="number" value={String(config.dimensions ?? '')} onChange={(e) => update('dimensions', Number(e.target.value))} /></label>}
         {selected === 'rerank' && <label>重排候选数（向量初筛取前 N 条送去重排）<input type="number" min="2" max="50" value={String(config.candidateLimit ?? 16)} onChange={(e) => update('candidateLimit', Number(e.target.value))} /></label>}
         <div className="admin-actions">
