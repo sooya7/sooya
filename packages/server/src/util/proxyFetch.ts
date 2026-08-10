@@ -1,5 +1,5 @@
-import { request as httpsRequest, type RequestOptions } from 'node:https';
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, type RequestOptions } from 'node:http';
+import { connect as tlsConnect } from 'node:tls';
 import { connect as netConnect, type Socket } from 'node:net';
 
 /**
@@ -10,12 +10,17 @@ import { connect as netConnect, type Socket } from 'node:net';
  * providers receive this implementation through the injectable `fetchImpl`
  * seam instead. Only `socks5h://` and `http://` proxies are supported; the
  * request body must be a string or Buffer (TTS/image payloads are).
+ *
+ * The https path is: SOCKS5 CONNECT → raw net.Socket → tls.connect() →
+ * secureConnect → http.request. The TLS socket is created explicitly because
+ * handing a used socket to https.request's createConnection is unreliable
+ * (it would emit plain HTTP to the 443 port and get a Cloudflare 400).
  */
 
 export interface ProxyFetchOptions {
   proxyUrl: string;
-  /** Optional headers merged over the request's own headers. */
-  headers?: Record<string, string>;
+  /** TLS certificate verification (production true; tests may disable). */
+  rejectUnauthorized?: boolean;
 }
 
 function parseProxyUrl(raw: string): URL {
@@ -26,50 +31,110 @@ function parseProxyUrl(raw: string): URL {
   return url;
 }
 
-/** Opens a SOCKS5 connection to the target host:port through the proxy. */
-function socks5Connect(proxy: URL, host: string, port: number): Promise<Socket> {
+/**
+ * Performs the SOCKS5 handshake against `proxyHost:proxyPort` and returns the
+ * raw connected socket to `host:port` once the CONNECT reply is confirmed.
+ *
+ * Replies are parsed from an accumulating buffer: a single `data` event may
+ * carry several replies (or one reply may arrive split across events), so the
+ * state machine never assumes one event per reply.
+ */
+export function socks5Handshake(
+  proxyHost: string,
+  proxyPort: number,
+  host: string,
+  port: number,
+  credentials?: { username: string; password: string }
+): Promise<Socket> {
   return new Promise((resolve, reject) => {
-    const socket = netConnect({ host: proxy.hostname, port: Number(proxy.port || 1080) });
-    const onError = (err: Error) => { socket.destroy(); reject(err); };
-    socket.once('error', onError);
-    const hasAuth = Boolean(proxy.username);
-    socket.once('connect', () => {
-      // Greeting: no auth (or user/pass when the proxy URL carries credentials).
-      const greeting = Buffer.from([0x05, hasAuth ? 0x02 : 0x01, hasAuth ? 0x02 : 0x00]);
-      socket.write(greeting);
-    });
-    let stage: 'greeting' | 'connect' = 'greeting';
-    socket.once('data', function onData(chunk: Buffer) {
-      if (stage === 'greeting') {
-        stage = 'connect';
-        const method = chunk[1];
-        if (method === 0xff) { socket.destroy(); reject(new Error('socks5: no acceptable auth method')); return; }
-        if (method === 0x02 && hasAuth) {
-          const user = Buffer.from(proxy.username, 'utf8');
-          const pass = Buffer.from(proxy.password ?? '', 'utf8');
-          const auth = Buffer.concat([Buffer.from([0x01, user.length]), user, Buffer.from([pass.length]), pass]);
-          socket.write(auth);
-          socket.once('data', (authResp) => {
-            if (authResp[1] !== 0x00) { socket.destroy(); reject(new Error('socks5: auth failed')); return; }
-            sendConnect();
-          });
-          return;
-        }
-        sendConnect();
-        return;
-      }
-      // Connect response: VER REP RSV ATYP BND.ADDR BND.PORT
-      if (chunk[1] !== 0x00) { socket.destroy(); reject(new Error(`socks5: connect failed code ${chunk[1]}`)); return; }
+    const socket = netConnect({ host: proxyHost, port: proxyPort });
+    let buffer = Buffer.alloc(0);
+    let settled = false;
+
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
       socket.removeListener('data', onData);
-      socket.once('error', () => { /* connection is owned by the caller */ });
-      resolve(socket);
-    });
-    function sendConnect(): void {
+      socket.removeListener('error', onError);
+      socket.destroy();
+      reject(err);
+    };
+    const onError = (err: Error) => fail(err);
+
+    const stage = { value: 'greeting' as 'greeting' | 'auth' | 'connect' };
+
+    const sendConnect = () => {
       const hostBuf = Buffer.from(host, 'utf8');
       const portBuf = Buffer.alloc(2);
       portBuf.writeUInt16BE(port);
-      socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuf.length]), hostBuf, portBuf]));
-    }
+      socket.write(Buffer.concat([
+        Buffer.from([0x05, 0x01, 0x00, 0x03, hostBuf.length]), hostBuf, portBuf
+      ]));
+    };
+
+    const onData = (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+
+      if (stage.value === 'greeting') {
+        // Greeting reply: VER(1) METHOD(1)
+        if (buffer.length < 2) return;
+        const method = buffer[1];
+        buffer = buffer.subarray(2);
+        if (method === 0xff) { fail(new Error('socks5: no acceptable auth method')); return; }
+        if (method === 0x02 && credentials) {
+          stage.value = 'auth';
+          const user = Buffer.from(credentials.username, 'utf8');
+          const pass = Buffer.from(credentials.password, 'utf8');
+          socket.write(Buffer.concat([
+            Buffer.from([0x01, user.length]), user,
+            Buffer.from([pass.length]), pass
+          ]));
+          return;
+        }
+        if (method === 0x02) { fail(new Error('socks5: server requires auth but none was provided')); return; }
+        stage.value = 'connect';
+        sendConnect();
+        return;
+      }
+
+      if (stage.value === 'auth') {
+        // Auth reply: VER(1) STATUS(1)
+        if (buffer.length < 2) return;
+        const status = buffer[1];
+        buffer = buffer.subarray(2);
+        if (status !== 0x00) { fail(new Error('socks5: auth failed')); return; }
+        stage.value = 'connect';
+        sendConnect();
+        return;
+      }
+
+      // Connect reply: VER(1) REP(1) RSV(1) ATYP(1) BND.ADDR BND.PORT
+      if (buffer.length < 4) return;
+      if (buffer[1] !== 0x00) { fail(new Error(`socks5: connect failed code ${buffer[1]}`)); return; }
+      const atyp = buffer[3];
+      let bindLen: number;
+      if (atyp === 0x01) bindLen = 4;
+      else if (atyp === 0x04) bindLen = 16;
+      else if (atyp === 0x03) {
+        if (buffer.length < 5) return;
+        bindLen = buffer[4] ?? 0;
+      } else { fail(new Error(`socks5: unsupported address type ${atyp}`)); return; }
+      const total = 4 + (atyp === 0x03 ? 1 + bindLen : bindLen) + 2;
+      if (buffer.length < total) return;
+      buffer = buffer.subarray(total);
+      settled = true;
+      socket.removeListener('data', onData);
+      socket.removeListener('error', onError);
+      socket.resume();
+      resolve(socket);
+    };
+
+    socket.once('error', onError);
+    socket.on('data', onData);
+    socket.once('connect', () => {
+      const hasAuth = Boolean(credentials?.username);
+      socket.write(Buffer.from([0x05, hasAuth ? 0x02 : 0x01, hasAuth ? 0x02 : 0x00]));
+    });
   });
 }
 
@@ -88,9 +153,10 @@ function toResponse(status: number, headers: Record<string, string | string[] | 
  * Builds a fetch implementation that routes through the given proxy.
  * `socks5h://` proxies resolve DNS remotely; `http://` proxies use CONNECT.
  */
-export function createProxyFetch(proxyUrl: string): typeof fetch {
+export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: boolean } = {}): typeof fetch {
   const proxy = parseProxyUrl(proxyUrl);
   const useSocks = proxy.protocol === 'socks5h:' || proxy.protocol === 'socks5:';
+  const rejectUnauthorized = opts.rejectUnauthorized ?? true;
 
   return async function proxyFetch(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
     const url = new URL(String(input));
@@ -103,46 +169,85 @@ export function createProxyFetch(proxyUrl: string): typeof fetch {
     const abortError = () => new DOMException('The operation was aborted.', 'AbortError');
     if (signal?.aborted) throw abortError();
 
-    // Normalize headers for the underlying request.
     const headerRecord: Record<string, string> = {};
     headers.forEach((value, key) => { headerRecord[key] = value; });
     if (body && !headers.has('content-length')) headerRecord['content-length'] = String(body.length);
 
-    const doRequest = (socket: Socket): Promise<Response> => new Promise((resolve, reject) => {
+    const doRequest = (rawSocket: Socket): Promise<Response> => new Promise((resolve, reject) => {
+      const abortHandler = () => { rawSocket.destroy(abortError()); };
+      signal?.addEventListener('abort', abortHandler, { once: true });
+
+      if (url.protocol === 'https:') {
+        // The correct chain: raw proxied socket → explicit TLS upgrade.
+        // SNI is only sent for DNS names — RFC 6066 forbids IP literals in
+        // servername, and Node ignores it with a deprecation warning, which
+        // leaves the handshake without SNI and can break IP-based origins.
+        const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(url.hostname) || url.hostname.includes(':');
+        const tlsSocket = tlsConnect({
+          socket: rawSocket,
+          ...(isIp ? {} : { servername: url.hostname }),
+          rejectUnauthorized
+        });
+        tlsSocket.once('secureConnect', () => {
+          // After TLS the socket is a plain duplex stream; write the HTTP
+          // request directly. Reusing http.request's createConnection with an
+          // already-secured socket has proved unreliable (hang-ups).
+          const path = `${url.pathname}${url.search}`;
+          const lines = [`${method} ${path} HTTP/1.1`, `host: ${url.hostname}${targetPort === 443 ? '' : `:${targetPort}`}`];
+          for (const [key, value] of Object.entries(headerRecord)) lines.push(`${key}: ${value}`);
+          const head = `${lines.join('\r\n')}\r\n\r\n`;
+          tlsSocket.write(Buffer.concat([Buffer.from(head), body ?? Buffer.alloc(0)]));
+
+          const chunks: Buffer[] = [];
+          tlsSocket.on('data', (c) => chunks.push(Buffer.from(c)));
+          tlsSocket.once('end', () => {
+            signal?.removeEventListener('abort', abortHandler);
+            const raw = Buffer.concat(chunks);
+            const headerEnd = raw.indexOf('\r\n\r\n');
+            if (headerEnd < 0) { reject(new Error('proxy: malformed HTTP response')); return; }
+            const headStr = raw.subarray(0, headerEnd).toString('utf8');
+            const statusMatch = /^HTTP\/1\.[01] (\d{3})/.exec(headStr);
+            const bodyStart = headerEnd + 4;
+            const headers: Record<string, string> = {};
+            for (const line of headStr.split('\r\n').slice(1)) {
+              const idx = line.indexOf(':');
+              if (idx > 0) headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+            }
+            resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, raw.subarray(bodyStart)));
+          });
+          tlsSocket.once('error', (err) => { signal?.removeEventListener('abort', abortHandler); reject(err); });
+        });
+        tlsSocket.once('error', (err) => {
+          signal?.removeEventListener('abort', abortHandler);
+          reject(err);
+        });
+        return;
+      }
+
       const opts: RequestOptions = {
         method,
         host: url.hostname,
         port: targetPort,
         path: `${url.pathname}${url.search}`,
         headers: headerRecord,
-        servername: url.hostname,
-        createConnection: () => socket,
-        rejectUnauthorized: true
+        createConnection: () => rawSocket,
+        agent: false
       };
-      const onAbort = () => { req.destroy(abortError()); };
-      signal?.addEventListener('abort', onAbort, { once: true });
-      const req = url.protocol === 'https:' ? httpsRequest(opts, (res) => {
+      const req = httpRequest(opts, (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c) => chunks.push(Buffer.from(c)));
         res.on('end', () => {
-          signal?.removeEventListener('abort', onAbort);
-          resolve(toResponse(res.statusCode ?? 0, res.headers as Record<string, string | string[] | undefined>, Buffer.concat(chunks)));
-        });
-      }) : httpRequest(opts, (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c) => chunks.push(Buffer.from(c)));
-        res.on('end', () => {
-          signal?.removeEventListener('abort', onAbort);
+          signal?.removeEventListener('abort', abortHandler);
           resolve(toResponse(res.statusCode ?? 0, res.headers as Record<string, string | string[] | undefined>, Buffer.concat(chunks)));
         });
       });
-      req.once('error', (err) => { signal?.removeEventListener('abort', onAbort); reject(err); });
+      req.once('error', (err) => { signal?.removeEventListener('abort', abortHandler); reject(err); });
       if (body) req.write(body);
       req.end();
     });
 
     if (useSocks) {
-      const socket = await socks5Connect(proxy, url.hostname, targetPort);
+      const socket = await socks5Handshake(proxy.hostname, Number(proxy.port || 1080), url.hostname, targetPort, proxy.username ? { username: proxy.username, password: proxy.password ?? '' } : undefined);
       return doRequest(socket);
     }
 
