@@ -193,16 +193,12 @@ export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: 
         // there would miss the response (hanging the request).
         const chunks: Buffer[] = [];
         let started = false;
-        tlsSocket.on('data', (c) => {
-          if (!started) return;
-          chunks.push(Buffer.from(c));
-        });
-        tlsSocket.once('end', () => {
-          if (!started) return;
-          signal?.removeEventListener('abort', abortHandler);
+        let done = false;
+        const maybeFinish = () => {
+          if (done || !started) return;
           const raw = Buffer.concat(chunks);
           const headerEnd = raw.indexOf('\r\n\r\n');
-          if (headerEnd < 0) { reject(new Error('proxy: malformed HTTP response')); return; }
+          if (headerEnd < 0) return; // header not complete yet
           const headStr = raw.subarray(0, headerEnd).toString('utf8');
           const statusMatch = /^HTTP\/1\.[01] (\d{3})/.exec(headStr);
           const bodyStart = headerEnd + 4;
@@ -211,8 +207,28 @@ export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: 
             const idx = line.indexOf(':');
             if (idx > 0) headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
           }
+          const cl = headers['content-length'];
+          const contentLength = cl ? Number(cl) : null;
+          if (contentLength !== null && !Number.isNaN(contentLength)) {
+            // Fixed-length body: resolve once the declared bytes are buffered
+            // (the origin may keep the connection alive, so no `end` comes).
+            if (raw.length - bodyStart < contentLength) return;
+            done = true;
+            signal?.removeEventListener('abort', abortHandler);
+            resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, raw.subarray(bodyStart, bodyStart + contentLength)));
+            return;
+          }
+          // No content-length: wait for the connection to close.
+          done = true;
+          signal?.removeEventListener('abort', abortHandler);
           resolve(toResponse(statusMatch ? Number(statusMatch[1]) : 0, headers, raw.subarray(bodyStart)));
+        };
+        tlsSocket.on('data', (c) => {
+          if (!started) return;
+          chunks.push(Buffer.from(c));
+          maybeFinish();
         });
+        tlsSocket.once('end', () => maybeFinish());
         tlsSocket.once('error', (err) => {
           signal?.removeEventListener('abort', abortHandler);
           reject(err);
