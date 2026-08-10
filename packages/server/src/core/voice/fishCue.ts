@@ -20,41 +20,43 @@ import type { VoiceDeliveryPlan } from './types.js';
 export interface FishCueSpec {
   /** Fish S2 bracket cue, or null for no cue. */
   cue: string | null;
-  /** Default prosody.speed for this mood (clamped to 0.94–1.04 per doc §16). */
+  /** Default prosody.speed for this mood (clamped to 0.94–1.05 per the quality spec §5). */
   speed: number;
 }
 
 /**
- * Domain `primaryEmotion` → Fish cue, sourced from the implementation doc's
- * §5 table. Emotions the doc does not publish a cue for (sad, angry, sleepy)
- * deliberately get `cue: null` — silence beats a guess.
+ * Domain `primaryEmotion` → Fish cue, sourced from the media quality spec's
+ * whitelist (§3): default no cue, at most one main cue per short utterance,
+ * restrained over drama. Emotions the spec does not name (sad, angry) get
+ * `cue: null` — silence beats a guess.
  */
-const FISH_MOOD_TABLE: Record<VoiceDeliveryPlan['primaryEmotion'], FishCueSpec> = {
+export const FISH_MOOD_TABLE: Record<VoiceDeliveryPlan['primaryEmotion'], FishCueSpec> = {
   neutral: { cue: null, speed: 1.0 },
-  // Doc §5: excited → "[excited]", 1.04, "好消息；intensity 最高 1 为默认".
-  happy: { cue: '[excited]', speed: 1.04 },
-  // Doc §5: tender → "[soft tone]", 0.94 (晚安、安慰、亲密低声).
-  gentle: { cue: '[soft tone]', speed: 0.94 },
-  sad: { cue: null, speed: 0.96 },
+  // 开心 1.00–1.05.
+  happy: { cue: '[warm and relaxed]', speed: 1.02 },
+  // 温柔 0.96–0.99.
+  gentle: { cue: '[speaking softly]', speed: 0.97 },
+  sad: { cue: null, speed: 0.97 },
   angry: { cue: null, speed: 1.0 },
-  sleepy: { cue: null, speed: 0.94 },
-  playful: { cue: '[playful and teasing]', speed: 1.02 },
-  serious: { cue: '[calm]', speed: 0.96 }
+  // 困倦 0.94–0.98.
+  sleepy: { cue: '[slightly sleepy]', speed: 0.96 },
+  playful: { cue: '[small chuckle]', speed: 1.02 },
+  serious: { cue: null, speed: 0.99 }
 };
 
 /**
- * Doc §5 moods the domain enum does not carry yet. These are only reachable
- * when a caller explicitly passes a `moodAlias`; Phase 1 keeps them available
- * so a future mood extension needs no table change.
+ * Moods the domain enum does not carry yet. These are only reachable
+ * when a caller explicitly passes a `moodAlias`; kept available so a future
+ * mood extension needs no table change.
  */
 export const FISH_ALIAS_CUE: Record<string, FishCueSpec> = {
-  warm: { cue: '[warm and happy]', speed: 0.98 },
-  tender: { cue: '[soft tone]', speed: 0.94 },
-  curious: { cue: '[curious]', speed: 1.0 },
-  concerned: { cue: '[slightly worried]', speed: 0.96 },
-  reassuring: { cue: '[empathetic] [soft tone]', speed: 0.95 },
-  shy: { cue: '[slightly embarrassed]', speed: 0.98 },
-  excited: { cue: '[excited]', speed: 1.04 }
+  warm: { cue: '[warm and relaxed]', speed: 0.98 },
+  tender: { cue: '[speaking softly]', speed: 0.97 },
+  curious: { cue: null, speed: 1.0 },
+  concerned: { cue: null, speed: 0.97 },
+  reassuring: { cue: '[gently reassuring]', speed: 0.97 },
+  shy: { cue: '[slightly shy]', speed: 0.98 },
+  excited: { cue: '[warm and relaxed]', speed: 1.03 }
 };
 
 /** Over-the-top tags banned in Phase 1 (doc §5.1). */
@@ -85,11 +87,13 @@ export function fishCueForMood(
 
   const alias = opts.moodAlias ? FISH_ALIAS_CUE[opts.moodAlias] : undefined;
   const spec = FISH_MOOD_TABLE[mood as VoiceDeliveryPlan['primaryEmotion']] ?? { cue: null, speed: 1.0 };
-  const cue = alias?.cue ?? spec.cue;
+  // An explicit alias wins even when it maps to no cue: "no cue > wrong cue".
+  const cue = alias ? alias.cue : spec.cue;
+  const speed = alias?.speed ?? spec.speed;
   if (!cue || BANNED_CUE_FRAGMENTS.some((banned) => cue.includes(banned))) {
-    return { cue: null, speed: clampSpeed(alias?.speed ?? spec.speed) };
+    return { cue: null, speed: clampSpeed(speed) };
   }
-  return { cue, speed: clampSpeed(alias?.speed ?? spec.speed) };
+  return { cue, speed: clampSpeed(speed) };
 }
 
 /**
@@ -116,7 +120,7 @@ export function renderFishSynthesisTextForMood(
   return prefixCue(synthesisText, cue);
 }
 
-/** Resolved speed for the Fish request, clamped to the doc's 0.94–1.04 range. */
+/** Resolved speed for the Fish request, clamped to the quality spec's 0.94–1.05 range. */
 export function fishSpeedFor(plan: VoiceDeliveryPlan, opts: { intensity?: 0 | 1 | 2; moodAlias?: string } = {}): number {
   return fishCueFor(plan, opts).speed;
 }
@@ -133,5 +137,5 @@ function prefixCue(text: string, cue: string | null): string {
 }
 
 function clampSpeed(speed: number): number {
-  return Math.min(1.04, Math.max(0.94, Math.round(speed * 100) / 100));
+  return Math.min(1.05, Math.max(0.94, Math.round(speed * 100) / 100));
 }

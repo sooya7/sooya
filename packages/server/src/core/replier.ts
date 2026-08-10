@@ -29,6 +29,7 @@ import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, voiceMoodCatalogue, type 
 import { parseVoiceIntent } from './voice/intent.js';
 import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
+import { MediaDirector } from './mediaDirector.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
 import { decideWebSearch } from './web-search/policy.js';
 import { formatWebSearchContext } from './web-search/service.js';
@@ -552,10 +553,27 @@ export class Replier {
     const imagePrompt = plan.selfImagePrompt ?? plan.imagePrompt;
     if (imagePrompt && !shell) degraded.push('image:deferred');
     if (shell && imagePrompt) {
-      this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: imagePrompt.slice(0, 200) });
       const referenceMediaIds = userMessages.flatMap((message) =>
         message.content.filter((part) => part.type === 'image' && part.mediaId).map((part) => part.mediaId!)
       );
+      // Image Director: the main model's intent becomes a quality prompt
+      // through the fixed template before it reaches Image2 (see
+      // mediaDirector.ts). Editing a user-sent image skips the director — the
+      // user's instruction is already precise and must not be rewritten.
+      let finalImagePrompt = imagePrompt;
+      const editingUserImage = referenceMediaIds.length === 1;
+      if (!editingUserImage && this.deps.capabilities.has('chat')) {
+        const director = new MediaDirector({
+          config: this.deps.config,
+          chatProvider: () => this.deps.capabilities.chatProvider()
+        });
+        const expanded = await director.image({
+          scene: imagePrompt.slice(0, 400),
+          intent: plan.selfImagePrompt ? 'selfie' : 'private snapshot'
+        }, { signal });
+        if (expanded.prompt && expanded.prompt.trim()) finalImagePrompt = expanded.prompt.trim();
+      }
+      this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: finalImagePrompt.slice(0, 200) });
       const partId = this.deps.messages.appendPart(shell.id, {
         type: 'image',
         status: 'pending',
@@ -586,18 +604,18 @@ export class Replier {
             );
           }
           try {
-            img = await provider.edit(imagePrompt, reference.data, { mime: reference.row.mime, signal });
+            img = await provider.edit(finalImagePrompt, reference.data, { mime: reference.row.mime, signal });
           } catch (err) {
             if (!(err instanceof ImageEditUnsupportedError)) throw err;
-            img = await provider.generate(imagePrompt, { signal });
+            img = await provider.generate(finalImagePrompt, { signal });
           }
         } else if (plan.selfImagePrompt) {
-          const refs = await this.deps.personaReferences.load(imagePrompt);
+          const refs = await this.deps.personaReferences.load(finalImagePrompt);
           img = refs.length > 0
-            ? await provider.generate(imagePrompt, { referenceImages: refs, signal })
-            : await provider.generate(imagePrompt, { signal });
+            ? await provider.generate(finalImagePrompt, { referenceImages: refs, signal })
+            : await provider.generate(finalImagePrompt, { signal });
         } else {
-          img = await provider.generate(imagePrompt, { signal });
+          img = await provider.generate(finalImagePrompt, { signal });
         }
         const media = await this.deps.media.save({
           kind: 'image',

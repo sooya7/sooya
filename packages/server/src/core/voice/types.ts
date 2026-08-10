@@ -65,6 +65,8 @@ export interface VoiceScript {
   estimatedSeconds: number;
   semanticClaims: string[];
   styleTags: string[];
+  /** Voice Director's resolved prosody speed (0.94–1.05), when available. */
+  directorSpeed?: number;
 }
 
 /** Stored on the audio part's meta so the UI can label it correctly. */

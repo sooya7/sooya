@@ -80,7 +80,7 @@ describe('FishAudioProvider', () => {
       condition_on_previous_chunks: true
     });
     // The whitelist cue is prepended; the transcript itself is untouched.
-    expect(sent.json.text).toBe('[playful and teasing] 你怎么这么会说啊，行吧算你赢');
+    expect(sent.json.text).toBe('[small chuckle] 你怎么这么会说啊，行吧算你赢');
   });
 
   it('omits reference_id from the body when none is configured', async () => {
@@ -163,14 +163,14 @@ describe('FishAudioProvider', () => {
 
 describe('FishCueRenderer whitelist', () => {
   it('maps the domain emotions onto the doc cue table only', () => {
-    expect(fishCueForMood('playful', { intensity: 1 }).cue).toBe('[playful and teasing]');
-    expect(fishCueForMood('gentle', { intensity: 1 }).cue).toBe('[soft tone]');
-    expect(fishCueForMood('serious', { intensity: 1 }).cue).toBe('[calm]');
-    expect(fishCueForMood('happy', { intensity: 1 }).cue).toBe('[excited]');
+    expect(fishCueForMood('playful', { intensity: 1 }).cue).toBe('[small chuckle]');
+    expect(fishCueForMood('gentle', { intensity: 1 }).cue).toBe('[speaking softly]');
+    expect(fishCueForMood('serious', { intensity: 1 }).cue).toBeNull();
+    expect(fishCueForMood('happy', { intensity: 1 }).cue).toBe('[warm and relaxed]');
     // Doc §5 has no cue for these moods: silence, never a guess.
     expect(fishCueForMood('sad', { intensity: 1 }).cue).toBeNull();
     expect(fishCueForMood('angry', { intensity: 1 }).cue).toBeNull();
-    expect(fishCueForMood('sleepy', { intensity: 1 }).cue).toBeNull();
+    expect(fishCueForMood('sleepy', { intensity: 1 }).cue).toBe('[slightly sleepy]');
     // Unknown moods map to no cue.
     expect(fishCueForMood('dramatic', { intensity: 1 }).cue).toBeNull();
   });
@@ -186,8 +186,8 @@ describe('FishCueRenderer whitelist', () => {
   });
 
   it('prepends the cue but never rewrites the transcript', () => {
-    expect(renderFishSynthesisTextForMood('（轻笑）你真会说话', 'playful', { intensity: 1 })).toBe('[playful and teasing] （轻笑）你真会说话');
-    expect(renderFishSynthesisTextForMood('晚安，做个好梦', 'gentle', { intensity: 1 })).toBe('[soft tone] 晚安，做个好梦');
+    expect(renderFishSynthesisTextForMood('（轻笑）你真会说话', 'playful', { intensity: 1 })).toBe('[small chuckle] （轻笑）你真会说话');
+    expect(renderFishSynthesisTextForMood('晚安，做个好梦', 'gentle', { intensity: 1 })).toBe('[speaking softly] 晚安，做个好梦');
     expect(renderFishSynthesisTextForMood('晚安，做个好梦', 'neutral', { intensity: 1 })).toBe('晚安，做个好梦');
   });
 
@@ -195,12 +195,12 @@ describe('FishCueRenderer whitelist', () => {
     for (const mood of ['neutral', 'happy', 'gentle', 'sad', 'angry', 'sleepy', 'playful', 'serious']) {
       const speed = fishCueForMood(mood, { intensity: 1 }).speed;
       expect(speed).toBeGreaterThanOrEqual(0.94);
-      expect(speed).toBeLessThanOrEqual(1.04);
+      expect(speed).toBeLessThanOrEqual(1.05);
     }
   });
 
   it('bridges the doc ten-mood aliases without renaming the domain enum', () => {
-    expect(fishCueFor({ primaryEmotion: 'happy', pace: 1, energy: 0.7, warmth: 0.7, intimacy: 0.6, seriousness: 0.25, openingStyle: 'smiling', endingStyle: 'playful', pauseStyle: 'natural', emphasis: [], instructions: '' }, { intensity: 1, moodAlias: 'warm' }).cue).toBe('[warm and happy]');
-    expect(fishCueForMood('gentle', { intensity: 1, moodAlias: 'concerned' }).cue).toBe('[slightly worried]');
+    expect(fishCueFor({ primaryEmotion: 'happy', pace: 1, energy: 0.7, warmth: 0.7, intimacy: 0.6, seriousness: 0.25, openingStyle: 'smiling', endingStyle: 'playful', pauseStyle: 'natural', emphasis: [], instructions: '' }, { intensity: 1, moodAlias: 'warm' }).cue).toBe('[warm and relaxed]');
+    expect(fishCueForMood('gentle', { intensity: 1, moodAlias: 'concerned' }).cue).toBeNull();
   });
 });

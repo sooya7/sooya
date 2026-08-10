@@ -18,6 +18,7 @@ import { normalizeVoiceText, ruleBasedColloquial } from './normalize.js';
 import { semanticRiskReport } from './semantic.js';
 import { decideVoiceMode } from './planner.js';
 import type { VoiceDecision } from './planner.js';
+import { MediaDirector, type VoiceDirectorIntent } from '../mediaDirector.js';
 import { DEFAULT_SPEECH_STYLE, stylePromptHints } from './style.js';
 import type { PersonaSpeechStyle } from './style.js';
 import type { UserVoicePreferences, VoiceMode, VoiceRequestedBy, VoiceScript, VoicePartMeta, VoiceDeliveryPlan } from './types.js';
@@ -278,7 +279,9 @@ export class VoiceService {
     // text through the saved mapping, like the legacy read-back path did.
     const emotions = this.deps.settings.get<VoiceEmotionMap>('voice.emotions', DEFAULT_VOICE_EMOTIONS);
     const emotion = decision.emotion ?? args.modelEmotion ?? resolveVoiceDelivery(args.finalText, null, emotions).emotion;
-    const delivery = planDelivery(emotion);
+    // The Voice Director's resolved speed (when available) wins over the mood
+    // table: the fixed prompt knows the utterance better than a static map.
+    const delivery = planDelivery(emotion, script?.directorSpeed ? { pace: script.directorSpeed } : {});
     const ttsOptions = deliveryToTTSOptions(delivery, emotions, {
       advanced: this.flags.advancedDelivery,
       customPresets: this.deps.settings.has('voice.emotions')
@@ -608,6 +611,30 @@ export class VoiceService {
     const provider = caps.chatProvider();
     const persona = this.deps.config.getPersona();
     if (attempt > 0) this.deps.metrics?.record('voice', 'script_rewrite');
+
+    // First attempt goes through the Voice Director (fixed prompt → Fish-ready
+    // {text, speed}). Rewrites keep the existing inline prompt so the
+    // naturalness/semantic feedback loop stays stable.
+    if (attempt === 0) {
+      const director = new MediaDirector({
+        config: this.deps.config,
+        chatProvider: () => caps.chatProvider()
+      });
+      const intent: VoiceDirectorIntent = { content: text, emotion: undefined, intensity: undefined };
+      const result = await director.voice(intent, { signal, mode, userText, maxSeconds });
+      const spoken = result.text.trim();
+      if (!spoken) return null;
+      return {
+        spokenText: spoken,
+        mode,
+        purpose: mode === 'replace' ? 'full_answer' : mode === 'summary' ? 'short_summary' : 'emotional_support',
+        estimatedSeconds: estimateSpeechSeconds(spoken),
+        semanticClaims: [],
+        styleTags: [],
+        directorSpeed: result.speed !== 1 ? result.speed : undefined
+      };
+    }
+
     const styleHints = stylePromptHints(this.speechStyle);
     const prompt = [
       `你是${persona.name}。下面是你刚在聊天里写的一段文字回复。请把它改写成「语音消息的口语脚本」——就像按住语音键自然说话，不是念稿。`,
