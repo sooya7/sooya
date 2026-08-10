@@ -1,0 +1,6 @@
+# Shell scripts and other files that must stay LF in the working tree.
+# Windows checkouts (core.autocrlf=true) would otherwise rewrite them to CRLF
+# and break container entrypoints (`/usr/bin/env: 'sh\r'`) and CI runners.
+*.sh text eol=lf
+*.mjs text eol=lf
+*.mts text eol=lf
