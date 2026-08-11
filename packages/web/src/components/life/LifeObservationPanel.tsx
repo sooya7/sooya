@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { adminApi, type AdminLifeOverview, type AdminLifeVitals } from '../../lib/admin.js';
+import {
+  adminApi,
+  type AdminLifeLocation,
+  type AdminLifeOverview,
+  type AdminLifeVitals,
+  type TravelState,
+  type WeatherStatus
+} from '../../lib/admin.js';
 import { featureApi, type LifePanelData } from '../../lib/features.js';
 import { lifeKindLabel, lifePlanStatusText, previewPlans } from '../../lib/lifeObservation.js';
-import { formatVital } from '../../lib/numberDisplay.js';
+import { formatTemperature, formatVital } from '../../lib/numberDisplay.js';
 import { herClock, reachReasonText } from '../../lib/lifeView.js';
 import { weatherConditionLabel } from '../../lib/worldDisplay.js';
 import { LifeContactBoundaryForm } from './LifeContactBoundaryForm.js';
@@ -17,6 +24,18 @@ type VitalTone = 'muted' | 'good' | 'warn' | 'accent';
 type VitalDisplay = {
   label: string;
   tone: VitalTone;
+};
+
+type HeroEnvironment = {
+  locations: { locations: AdminLifeLocation[]; current: AdminLifeLocation | null } | null;
+  travel: { travel: TravelState | null } | null;
+  weather: WeatherStatus | null;
+};
+
+const EMPTY_HERO_ENVIRONMENT: HeroEnvironment = {
+  locations: null,
+  travel: null,
+  weather: null
 };
 
 const VITAL_FIELDS: Array<{ key: keyof AdminLifeVitals; label: string }> = [
@@ -75,6 +94,28 @@ function overviewWeather(weather: string | null): string {
   return weather ? weatherConditionLabel(weather) : '暂无';
 }
 
+function heroPlace(environment: HeroEnvironment, overview: AdminLifeOverview): string {
+  const current = environment.locations?.current;
+  const city = current?.city?.trim() || null;
+  const place = current?.name ?? overview.location?.name ?? null;
+  return [city, place].filter((value): value is string => Boolean(value)).join(' · ') || '暂无';
+}
+
+function heroWeather(environment: HeroEnvironment, overview: AdminLifeOverview): string {
+  const snapshot = environment.weather?.lastSnapshot;
+  const condition = snapshot?.condition ?? overview.weather;
+  const label = condition ? weatherConditionLabel(condition) : null;
+  const temperature = snapshot?.temperatureC == null ? null : formatTemperature(snapshot.temperatureC);
+  return [label, temperature].filter((value): value is string => Boolean(value)).join(' · ') || '暂无';
+}
+
+function heroTravel(environment: HeroEnvironment): string {
+  const travel = environment.travel?.travel;
+  if (!travel) return '没有出行';
+  const destination = environment.locations?.locations.find((location) => location.id === travel.toLocationId)?.name;
+  return destination ? `去${destination}路上` : '出行中';
+}
+
 function VitalsGrid({ vitals }: { vitals: AdminLifeVitals | null }) {
   return (
     <section className="life-vitals-card" data-testid="life-vitals-card">
@@ -106,6 +147,7 @@ function VitalsGrid({ vitals }: { vitals: AdminLifeVitals | null }) {
 export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
   const [data, setData] = useState<LifePanelData | null>(null);
   const [overview, setOverview] = useState<AdminLifeOverview | null>(null);
+  const [heroEnvironment, setHeroEnvironment] = useState<HeroEnvironment>(EMPTY_HERO_ENVIRONMENT);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const lifecycleGenerationRef = useRef(0);
@@ -114,9 +156,12 @@ export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
   const load = useCallback(async (lifecycleGeneration: number) => {
     const requestGeneration = ++requestGenerationRef.current;
     try {
-      const [nextData, nextOverview] = await Promise.all([
+      const [nextData, nextOverview, nextLocations, nextTravel, nextWeather] = await Promise.all([
         featureApi.life(),
-        adminApi.lifeOverview()
+        adminApi.lifeOverview(),
+        adminApi.lifeLocations().catch(() => null),
+        adminApi.lifeTravel().catch(() => null),
+        adminApi.weatherStatus().catch(() => null)
       ]);
       if (
         lifecycleGenerationRef.current !== lifecycleGeneration
@@ -124,6 +169,7 @@ export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
       ) return;
       setData(nextData);
       setOverview(nextOverview);
+      setHeroEnvironment({ locations: nextLocations, travel: nextTravel, weather: nextWeather });
       setUpdatedAt(new Date().toISOString());
       setError(null);
     } catch (loadError) {
@@ -192,15 +238,19 @@ export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
         <div className="life-hero-facts">
           <div className="life-hero-fact">
             <span>当前地点</span>
-            <strong>{overview.location?.name ?? '暂无'}</strong>
+            <strong>{heroPlace(heroEnvironment, overview)}</strong>
           </div>
           <div className="life-hero-fact">
-            <span>天气</span>
-            <strong>{overviewWeather(overview.weather)}</strong>
+            <span>当前天气</span>
+            <strong>{heroWeather(heroEnvironment, overview)}</strong>
           </div>
           <div className="life-hero-fact">
-            <span>今日主动</span>
-            <strong>{data.reachOut.sharedLastDay}/{data.settings.maxReachOutsPerDay} 次</strong>
+            <span>出行状态</span>
+            <strong>{heroTravel(heroEnvironment)}</strong>
+          </div>
+          <div className="life-hero-fact">
+            <span>当前活动</span>
+            <strong>{data.snapshot.activity}</strong>
           </div>
         </div>
         <p className="life-hero-note">{reachReasonText(data)}</p>
