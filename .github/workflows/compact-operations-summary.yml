@@ -22,6 +22,18 @@ jobs:
       - run: npm ci
       - name: Compact operations UI
         run: python .github/scripts/compact-operations-summary.py
+      - name: Fix visibility assertion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/web/src/components/AdminPanel.test.tsx')
+          text = path.read_text(encoding='utf-8')
+          old = "    expect(errors.textContent).not.toContain('invalid_analysis_json');"
+          new = "    const summary = errors.querySelector('.admin-error-summary')!;\n    expect(summary.textContent).not.toContain('invalid_analysis_json');\n    expect(errors.querySelector('.admin-error-group')?.hasAttribute('open')).toBe(false);"
+          if old not in text:
+              raise SystemExit('visibility assertion not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Validate Web
         run: |
           npm run typecheck -w @sooya/web
