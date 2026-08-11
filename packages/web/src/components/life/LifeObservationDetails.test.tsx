@@ -57,55 +57,49 @@ const data: LifePanelData = {
     endsAt: '2026-08-09T09:00:00.000Z',
     recent: []
   },
-  log: [
-    {
-      id: 'activity-old',
-      activity: '吃过早餐',
-      kind: 'meal',
-      mood: '轻松',
-      started_at: '2026-08-09T06:30:00.000Z',
-      ended_at: '2026-08-09T07:00:00.000Z',
-      shared: 0
-    }
-  ],
+  log: [{
+    id: 'activity-old',
+    activity: '吃过早餐',
+    kind: 'meal',
+    mood: '轻松',
+    started_at: '2026-08-09T06:30:00.000Z',
+    ended_at: '2026-08-09T07:00:00.000Z',
+    shared: 0
+  }],
   plans: [],
-  events: [
-    {
-      id: 'event-new',
-      plan_id: null,
-      log_id: null,
-      event_type: 'activity_completed',
-      activity: '整理书架',
-      kind: 'chore',
-      description: '把书架整理好了',
-      mood_before: null,
-      mood_after: '满足',
-      happened_at: '2026-08-09T09:30:00.000Z',
-      shareable: 1,
-      shared_at: null,
-      created_at: '2026-08-09T09:30:00.000Z'
-    }
-  ],
-  proactive: [
-    {
-      id: 'proactive-middle',
-      candidateId: 'candidate-1',
-      candidateKind: 'reading',
-      candidateActivity: '分享读书感想',
-      status: 'sent',
-      blockedReason: null,
-      requestedMode: 'text',
-      finalMode: 'text',
-      fallbackReason: null,
-      messageId: 'message-1',
-      sendSuccess: true,
-      userResponseMessageId: null,
-      userRespondedAt: null,
-      detail: {},
-      createdAt: '2026-08-09T08:00:00.000Z',
-      updatedAt: '2026-08-09T08:00:00.000Z'
-    }
-  ],
+  events: [{
+    id: 'event-new',
+    plan_id: null,
+    log_id: null,
+    event_type: 'activity_completed',
+    activity: '整理书架',
+    kind: 'chore',
+    description: '把书架整理好了',
+    mood_before: null,
+    mood_after: '满足',
+    happened_at: '2026-08-09T09:30:00.000Z',
+    shareable: 1,
+    shared_at: null,
+    created_at: '2026-08-09T09:30:00.000Z'
+  }],
+  proactive: [{
+    id: 'proactive-middle',
+    candidateId: 'candidate-1',
+    candidateKind: 'reading',
+    candidateActivity: '分享读书感想',
+    status: 'sent',
+    blockedReason: null,
+    requestedMode: 'text',
+    finalMode: 'text',
+    fallbackReason: null,
+    messageId: 'message-1',
+    sendSuccess: true,
+    userResponseMessageId: null,
+    userRespondedAt: null,
+    detail: {},
+    createdAt: '2026-08-09T08:00:00.000Z',
+    updatedAt: '2026-08-09T08:00:00.000Z'
+  }],
   reachOut: {
     reach: false,
     reason: 'quiet_gap_not_met',
@@ -175,6 +169,17 @@ beforeEach(() => {
   vi.resetAllMocks();
   apiMocks.life.mockResolvedValue(structuredClone(data));
   apiMocks.lifeOverview.mockResolvedValue(structuredClone(overview));
+  apiMocks.lifeLocations.mockResolvedValue({ locations: [], current: null });
+  apiMocks.lifeTravel.mockResolvedValue({ travel: null });
+  apiMocks.weatherStatus.mockResolvedValue({
+    enabled: true,
+    provider: { name: 'open-meteo', configured: true, active: true },
+    currentSource: 'open-meteo',
+    lastSnapshot: null,
+    cacheAgeSec: null,
+    daylight: null,
+    forecast: null
+  });
 });
 
 afterEach(async () => {
