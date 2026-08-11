@@ -23,6 +23,7 @@ import type { StickerRepo } from '../db/repos/sticker.repo.js';
 import { STICKER_ANALYSIS_VERSION } from './stickers/constants.js';
 import { stickerSemanticText } from './stickers/semantic-text.js';
 import type { StickerUserMeaningLearner } from './stickers/user-meaning.js';
+import type { WorldPresenceCoordinator } from './world-presence.js';
 
 export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
 
@@ -107,6 +108,7 @@ export interface JobDeps {
   bus: EventBus;
   backups: BackupService;
   life: LifeRuntime;
+  presence: WorldPresenceCoordinator;
   batches: ReplyBatchRepo;
   proactive: ProactiveComposer;
   capabilities: CapabilityRegistry;
@@ -230,6 +232,10 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     deps.life.applyConversationEffect(payload.warmth === 'warm' ? 'warm' : 'neutral');
   });
 
+  worker.register('weather.refresh', async (payload) => {
+    await deps.presence.refreshWeather(String(payload.reason ?? 'scheduled'));
+  });
+
   /*
    * Advances her day. Runs on a timer, not off a user message, because the
    * whole point is that she exists while nobody is looking. The engine
@@ -239,6 +245,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   worker.register('life.tick', async () => {
     const result = deps.life.tick();
     if (result.changed) deps.bus.publish('life.updated', { activity: result.activity, kind: result.kind, mood: result.mood });
+    deps.presence.sync('life.tick');
     if (!deps.reachOutEnabled) return;
     await deps.proactive.run();
   });

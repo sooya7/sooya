@@ -43,6 +43,7 @@ import { LocationService } from './core/location/service.js';
 import { WeatherRepo } from './db/repos/weather.repo.js';
 import { WeatherService } from './core/weather/service.js';
 import { WorldContextService } from './core/world-context.js';
+import { WorldPresenceCoordinator } from './core/world-presence.js';
 import { MetricsRepo } from './db/repos/metrics.repo.js';
 import { MetricsService } from './core/metrics.js';
 import { createWeatherChain } from './core/weather/fallback.js';
@@ -142,6 +143,7 @@ export interface SooyaApp {
     location: LocationService;
     weather: WeatherService;
     world: WorldContextService;
+    presence: WorldPresenceCoordinator;
     metrics: MetricsService;
     thoughts: ThoughtsService;
     voice: VoiceService;
@@ -316,10 +318,15 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   weather.setProvider(createWeatherChain({
     provider: env.WEATHER_PROVIDER,
     baseUrl: env.WEATHER_BASE_URL,
+    geocodingBaseUrl: env.WEATHER_GEOCODING_BASE_URL,
     apiKey: env.WEATHER_API_KEY,
-    timeoutMs: env.WEATHER_TIMEOUT_MS
+    timeoutMs: env.WEATHER_TIMEOUT_MS,
+    fetchImpl,
+    clock: opts.clock
   }, repos.weather));
   const world = new WorldContextService(location, weather, opts.clock, env.LIFE_TIME_ZONE, repos.locations);
+  const presence = new WorldPresenceCoordinator(world, location, bus);
+  presence.initialize();
   const webSearch = new WebSearchRegistry({
     fetchImpl,
     onError: (provider, error) =>
@@ -482,6 +489,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     bus,
     backups,
     life,
+    presence,
     proactive,
     capabilities,
     stickerAnalyzer,
@@ -641,7 +649,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -749,6 +757,23 @@ function scheduleRecurring(app: SooyaApp): void {
     }, env.LIFE_TICK_INTERVAL_MS);
     life.unref?.();
     app.recurringTimers.push(life);
+  }
+
+  if (env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED) {
+    const presence = setInterval(() => {
+      try { void services.presence.sync('timer'); } catch { /* ignore */ }
+    }, 60_000);
+    presence.unref?.();
+    app.recurringTimers.push(presence);
+  }
+
+  if (env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED && env.WEATHER_ENABLED && env.WEATHER_REFRESH_INTERVAL_MS > 0) {
+    try { repos.jobs.enqueue('weather.refresh', { reason: 'startup' }); } catch { /* ignore */ }
+    const weather = setInterval(() => {
+      try { repos.jobs.enqueue('weather.refresh', { reason: 'scheduled' }); } catch { /* ignore */ }
+    }, env.WEATHER_REFRESH_INTERVAL_MS);
+    weather.unref?.();
+    app.recurringTimers.push(weather);
   }
 
   if (env.BACKUP_INTERVAL_MS > 0) {

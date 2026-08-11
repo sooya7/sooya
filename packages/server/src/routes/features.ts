@@ -292,6 +292,7 @@ export function registerFeatureRoutes(app: SooyaApp): void {
   server.get('/api/life', chatGuard, async () => services.life.snapshot());
   server.get('/api/life/locations', chatGuard, async () => ({ locations: services.location.list(), current: services.location.current() }));
   server.get('/api/life/world', chatGuard, async () => services.world.snapshot());
+  server.get('/api/life/presence', chatGuard, async () => services.presence.current());
 
   server.post('/api/admin/life/tick', adminGuard, async () => {
     const result = services.life.tick();

@@ -138,7 +138,7 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
 
   // ---- locations (next phase) ----
 
-  server.get('/api/admin/life/locations', { preHandler: guard }, async () => ({ locations: app.services.location.list() }));
+  server.get('/api/admin/life/locations', { preHandler: guard }, async () => ({ locations: app.services.location.list(), current: app.services.location.current() }));
 
   server.post('/api/admin/life/locations', { preHandler: guard }, async (req, reply) => {
     const parsed = LocationWriteSchema.safeParse(req.body);
@@ -153,9 +153,11 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
     if (!params.success) { reply.code(400); return { error: 'bad_request', issues: params.error.issues }; }
     const parsed = LocationWriteSchema.safeParse(req.body);
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const currentId = app.services.location.current()?.id ?? null;
     const row = repos.locations.update(params.data.id, parsed.data);
     if (!row) { reply.code(404); return { error: 'not_found' }; }
     repos.audit.add('life.location', 'update', row.id, { name: row.name });
+    if (currentId === row.id) app.services.presence.sync('location.updated');
     return { location: toLifeLocation(row) };
   });
 
@@ -164,9 +166,11 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
     if (!params.success) { reply.code(400); return { error: 'bad_request', issues: params.error.issues }; }
     const row = repos.locations.get(params.data.id);
     if (!row) { reply.code(404); return { error: 'not_found' }; }
+    const wasCurrent = app.services.location.current()?.id === params.data.id;
     repos.locations.deactivate(params.data.id);
     repos.locations.deleteEdgesTo(params.data.id);
     repos.audit.add('life.location', 'delete', params.data.id, { name: row.name });
+    if (wasCurrent) app.services.presence.sync('location.deleted');
     return { ok: true };
   });
 
@@ -176,7 +180,7 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
     const location = app.services.location.override(parsed.data.locationId, parsed.data.reason ?? 'admin override');
     if (!location) { reply.code(404); return { error: 'not_found' }; }
-    return { location };
+    return { location, presence: app.services.presence.sync('location.override') };
   });
 
   /** E4: admin-created thread (creation source #4). */
@@ -228,7 +232,8 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
       timeZone: app.env.LIFE_TIME_ZONE
     });
     repos.audit.add('life.city', 'created', city.id, { name: city.name });
-    return { city };
+    const presence = app.services.presence.sync('city.created');
+    return { city, presence };
   });
   server.patch('/api/admin/life/cities/:id', { preHandler: guard }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
@@ -243,12 +248,15 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
         return { error: 'not_found' };
       }
       repos.audit.add('life.city', 'activated', id);
-      return { city: switched };
+      const presence = app.services.presence.sync('city.changed');
+      try { repos.jobs.enqueue('weather.refresh', { reason: 'city.changed' }); } catch { /* ignore */ }
+      return { city: switched, presence };
     }
     if (body.active === false) {
       reply.code(400);
       return { error: 'bad_request', message: 'active=false is not supported; switch cities via active=true' };
     }
+    const wasActive = app.services.location.activeCity()?.id === id;
     const city = app.services.location.updateCity(id, {
       ...(typeof body.name === 'string' && body.name.trim() ? { name: body.name.trim() } : {}),
       ...(body.region !== undefined ? { region: body.region } : {})
@@ -258,7 +266,11 @@ export function registerLifeAdminRoutes(app: SooyaApp): void {
       return { error: 'not_found' };
     }
     repos.audit.add('life.city', 'updated', id, { patch: body });
-    return { city };
+    const presence = wasActive ? app.services.presence.sync('city.updated') : app.services.presence.current();
+    if (wasActive) {
+      try { repos.jobs.enqueue('weather.refresh', { reason: 'city.updated' }); } catch { /* ignore */ }
+    }
+    return { city, presence };
   });
   server.get('/api/admin/life/travel', { preHandler: guard }, async () => ({ travel: app.services.location.currentTravel() }));
 }

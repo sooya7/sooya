@@ -1,6 +1,7 @@
 import { ApiError } from './api.js';
 import { clearMediaCache } from './authenticatedMedia.js';
 import type { ModelPreset, ModelSlot } from './modelPresets.js';
+import type { WorldPresence } from './types.js';
 
 const ADMIN_TOKEN_KEY = 'sooya.admin-token';
 export const ADMIN_UNAUTHORIZED_EVENT = 'sooya:admin-unauthorized';
@@ -276,7 +277,7 @@ export interface AdminLifeOverview {
   openThreads: Array<{ id: string; title: string; progress: number }>;
   recentEvents: Array<{ id: string; eventType: string; description: string; happenedAt: string }>;
 }
-export interface AdminLifeLocation { id: string; name: string; kind: string; tags: string[]; indoor: boolean; visitWeight: number; source: string; active: boolean; }
+export interface AdminLifeLocation { id: string; name: string; kind: string; cityId?: string | null; city?: string | null; region?: string | null; country?: string | null; timeZone?: string | null; lat?: number | null; lng?: number | null; tags: string[]; indoor: boolean; visitWeight: number; source: string; active: boolean; }
 export interface AdminProactiveAttempt { id: string; candidateId: string | null; status: string; blockedReason: string | null; messageId: string | null; requestedMode: string | null; createdAt: string; }
 
 /* ---- Next phase (frozen contract §1/§2): life cities, travel, weather, ---- */
@@ -300,7 +301,7 @@ export interface TravelState {
   expectedArriveAt: string;
 }
 
-export type WeatherCondition = 'clear' | 'partly_cloudy' | 'cloudy' | 'rain' | 'drizzle' | 'snow' | 'storm' | 'fog' | 'haze' | 'extreme_heat' | 'extreme_cold' | 'unknown';
+export type WeatherCondition = 'clear' | 'cloudy' | 'rain' | 'snow' | 'storm' | 'fog' | 'wind' | 'unknown';
 
 export interface WeatherSnapshot {
   observedAt: string;
@@ -341,9 +342,9 @@ export interface DaylightSnapshot {
 export interface WeatherStatus {
   enabled: boolean;
   provider: { name: string | null; configured: boolean; active: boolean };
+  currentSource: string | null;
   lastSnapshot: WeatherSnapshot | null;
   cacheAgeSec: number | null;
-  fallback: 'primary' | 'secondary' | 'cache' | 'unknown' | null;
   daylight: DaylightSnapshot | null;
   forecast: WeatherForecastSummary | null;
 }
@@ -390,12 +391,12 @@ export const adminApi = {
   updateThread: (id: string, status: string) =>
     adminRequest<{ thread: AdminLifeThread }>(`/api/admin/life/threads/${encodeURIComponent(id)}`, { method: 'PATCH', body: { status } }),
   lifeEvents: (limit = 50) => adminRequest<{ events: Array<{ id: string; eventType: string; description: string; happenedAt: string; meta_json?: string }> }>(`/api/admin/life/events?limit=${limit}`),
-  lifeLocations: () => adminRequest<{ locations: AdminLifeLocation[] }>('/api/admin/life/locations'),
+  lifeLocations: () => adminRequest<{ locations: AdminLifeLocation[]; current: AdminLifeLocation | null }>('/api/admin/life/locations'),
   createLocation: (input: { name: string; kind: string; tags?: string[]; indoor?: boolean; visitWeight?: number }) =>
     adminRequest<{ location: AdminLifeLocation }>('/api/admin/life/locations', { method: 'POST', body: input }),
   deleteLocation: (id: string) => adminRequest<{ ok: true }>(`/api/admin/life/locations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   overrideLocation: (locationId: string, reason: string) =>
-    adminRequest<{ location: AdminLifeLocation }>('/api/admin/life/location/override', { method: 'POST', body: { locationId, reason } }),
+    adminRequest<{ location: AdminLifeLocation; presence?: WorldPresence }>('/api/admin/life/location/override', { method: 'POST', body: { locationId, reason } }),
   proactiveAttempts: () => adminRequest<{ attempts: AdminProactiveAttempt[] }>('/api/admin/life/proactive'),
   stickers: (opts: { q?: string; status?: string; enabled?: boolean; limit?: number; offset?: number } = {}) => {
     const params = new URLSearchParams();
@@ -470,7 +471,7 @@ export const adminApi = {
   /* ---- Next phase: weather ---- */
   weatherStatus: () => adminRequest<WeatherStatus>('/api/admin/weather/status'),
   weatherForecast: () => adminRequest<{ forecast: WeatherForecastSummary | null }>('/api/admin/weather/forecast'),
-  weatherRefresh: () => adminRequest<{ snapshot: WeatherSnapshot | null }>('/api/admin/weather/refresh', { method: 'POST' }),
+  weatherRefresh: () => adminRequest<{ ok: true; snapshot: WeatherSnapshot | null; presence: WorldPresence }>('/api/admin/weather/refresh', { method: 'POST' }),
   /* ---- Next phase: metrics ---- */
   metrics: (days: number) => adminRequest<{ aggregates: MetricAggregate[] }>(`/api/admin/metrics?days=${days}`),
   metricsDistributions: (days: number) =>

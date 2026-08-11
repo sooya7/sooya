@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api.js';
 import { ChatStream } from './stream.js';
 import { fetchAllMessagePages, replaceFailedMessage } from './messageSync.js';
-import type { ActivityState, ChatMessage, ConnectionState, LifeState, PersonaInfo, StickerInfo } from './types.js';
+import type { ActivityState, ChatMessage, ConnectionState, LifeState, PersonaInfo, StickerInfo, WorldPresence } from './types.js';
 
 const PAGE_SIZE = 30;
 /** Matches the server's `?since=` cap; catch-up walks pages of this size. */
@@ -35,6 +35,7 @@ export function useChat() {
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [life, setLife] = useState<LifeState | null>(null);
+  const [presence, setPresence] = useState<WorldPresence | null>(null);
   const [stickers, setStickers] = useState<StickerInfo[]>([]);
   const [quotedStates, setQuotedStates] = useState<Record<string, QuotedMessageState>>({});
   const [replyFailures, setReplyFailures] = useState<Record<string, ReplyFailureCard>>({});
@@ -89,6 +90,10 @@ export function useChat() {
     // Never surfaces an error: what she is doing is decoration next to the
     // conversation, and must not be able to break the chat.
     try { setLife(await api.life()); } catch { /* ignore */ }
+  }, []);
+
+  const refreshPresence = useCallback(async () => {
+    try { setPresence(await api.presence()); } catch { /* presence is decorative */ }
   }, []);
 
   const startStream = useCallback((lastEventSeq = maxSeqRef.current) => {
@@ -189,6 +194,7 @@ export function useChat() {
             void api.stickerSearch({ scope: 'all', limit: 60 }).then((result) => setStickers(result.stickers)).catch(() => { /* keep the bootstrap catalogue */ });
             break;
           case 'life.updated': void refreshLife(); break;
+          case 'world.updated': if (data.presence) setPresence(data.presence as WorldPresence); break;
           case 'system.notice': if (data.action === 'reload') void reloadRef.current(); else void resync(); break;
           default: break;
         }
@@ -204,7 +210,7 @@ export function useChat() {
     try {
       maxSeqRef.current = 0; clearStreamingDraft(); quotedStatesRef.current.clear(); quotedRequestsRef.current.clear(); setQuotedStates({});
       const boot = await api.bootstrap();
-      setPersona(boot.conversation.persona); trackSeq(boot.messages.messages); setMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); streamRef.current?.setLastEventId(boot.messages.lastEventSeq); updateActivity({ thinking: false, label: null }); setError(null); setReady(true);
+      setPersona(boot.conversation.persona); trackSeq(boot.messages.messages); setMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setPresence(boot.presence); setStickers(boot.stickers); streamRef.current?.setLastEventId(boot.messages.lastEventSeq); updateActivity({ thinking: false, label: null }); setError(null); setReady(true);
       startStream(boot.messages.lastEventSeq);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) setConnection('unauthorized'); else { setConnection('offline'); setError((err as Error).message); }
@@ -219,7 +225,7 @@ export function useChat() {
       try {
         const boot = await api.bootstrap();
         if (cancelled) return;
-        setPersona(boot.conversation.persona); applyMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setStickers(boot.stickers); setReady(true);
+        setPersona(boot.conversation.persona); applyMessages(boot.messages.messages); setHasMore(boot.messages.hasMore); setLife(boot.life); setPresence(boot.presence); setStickers(boot.stickers); setReady(true);
         startStream(boot.messages.lastEventSeq);
       } catch (err) {
         if (cancelled) return;
@@ -315,7 +321,7 @@ export function useChat() {
 
   const withdraw = useCallback(async (message: ChatMessage) => { const result = await api.withdraw(message.id); applyMessages([result.message]); return result; }, [applyMessages]);
 
-  useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') void resync(); }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [resync]);
+  useEffect(() => { const focus = () => { if (document.visibilityState === 'visible') { void resync(); void refreshPresence(); } }; document.addEventListener('visibilitychange', focus); window.addEventListener('focus', focus); return () => { document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus); }; }, [refreshPresence, resync]);
 
   const retryReply = useCallback(async (batchId: string) => {
     try {
@@ -326,7 +332,7 @@ export function useChat() {
     } catch (err) { setError((err as Error).message); throw err; }
   }, [updateActivity]);
 
-  return { messages, streamingDraft, persona, connection, activity, life, stickers, quotedStates, replyFailures, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, retryReply, loadOlder, ensureQuotedMessage, addMessages: applyMessages, resync, reload, clearError: () => setError(null) };
+  return { messages, streamingDraft, persona, connection, activity, life, presence, stickers, quotedStates, replyFailures, hasMore, loadingOlder, error, ready, send, retryFailed, sendAgain, withdraw, retryReply, loadOlder, ensureQuotedMessage, addMessages: applyMessages, resync, refreshPresence, reload, clearError: () => setError(null) };
 }
 
 export function isReplayableUserMessage(message: ChatMessage): boolean {

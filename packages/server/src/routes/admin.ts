@@ -752,9 +752,16 @@ export function registerAdminRoutes(app: SooyaApp): void {
   // experiments cleanup). Weather identity is the active city.
   server.get('/api/admin/weather/status', guard, async () => {
     const snapshot = services.world.snapshot();
+    const observedAt = snapshot.weather?.observedAt ? Date.parse(snapshot.weather.observedAt) : NaN;
+    const now = Date.parse(snapshot.now);
+    const cacheAgeSec = Number.isFinite(observedAt)
+      ? Math.max(0, Math.floor(((Number.isFinite(now) ? now : Date.now()) - observedAt) / 1000))
+      : null;
     return {
       enabled: services.weather.isEnabled,
-      provider: { name: services.weather.providerName, configured: services.weather.providerName !== null },
+      provider: { name: services.weather.providerName, configured: services.weather.providerName !== null, active: services.weather.isEnabled },
+      currentSource: snapshot.weather?.provider ?? null,
+      cacheAgeSec,
       lastSnapshot: snapshot.weather ?? null,
       forecast: snapshot.forecast ?? null,
       daylight: snapshot.daylight ?? null,
@@ -766,8 +773,8 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { forecast: snapshot.forecast ?? null, daylight: snapshot.daylight ?? null };
   });
   server.post('/api/admin/weather/refresh', guard, async () => {
-    await services.world.refreshAll();
-    return { ok: true };
+    const world = await services.world.refreshAll({ forceCurrent: true });
+    return { ok: true, snapshot: world.weather ?? null, presence: services.presence.sync('admin.weather.refresh') };
   });
 
   server.get('/api/admin/system', guard, async () => ({

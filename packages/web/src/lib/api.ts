@@ -1,4 +1,4 @@
-import type { ChatMessage, LifeState, MediaRef, PersonaInfo, StickerInfo } from './types.js';
+import type { ChatMessage, LifeState, MediaRef, PersonaInfo, StickerInfo, WorldPresence } from './types.js';
 import { clearMediaCache, credentialFreeMediaPath } from './authenticatedMedia.js';
 
 const TOKEN_KEY = 'sooya.token';
@@ -35,7 +35,7 @@ export interface ConversationInfo { conversationId: string; persona: PersonaInfo
 export interface MessageContext { target: ChatMessage; messages: ChatMessage[]; hasOlder: boolean; hasNewer: boolean; }
 export interface MessageSearchHit { message: ChatMessage; snippet: string; matchedPartId: string | null; }
 /** 首屏一次性载荷：会话 + 最新一页消息 + 贴纸 + 她正在做什么。 */
-export interface BootstrapInfo { conversation: ConversationInfo; messages: { messages: ChatMessage[]; hasMore: boolean; lastEventSeq: number; lastMessageSeq: number; oldestSeq: number | null }; stickers: StickerInfo[]; life: LifeState; }
+export interface BootstrapInfo { conversation: ConversationInfo; messages: { messages: ChatMessage[]; hasMore: boolean; lastEventSeq: number; lastMessageSeq: number; oldestSeq: number | null }; stickers: StickerInfo[]; life: LifeState; presence: WorldPresence; }
 export interface VisibleThought {
   id: string;
   messageId: string;
@@ -69,6 +69,7 @@ export const api = {
   upload: async (files: Array<{ file: File | Blob; field: 'image' | 'file'; name?: string }>, options: { signal?: AbortSignal } = {}) => { const form = new FormData(); for (const f of files) form.append(f.field, f.file, f.name ?? (f.file instanceof File ? f.file.name : 'upload')); return request<{ media: MediaRef[]; failed: Array<{ filename: string; error: string; code?: string }> }>('/api/media', { method: 'POST', body: form, signal: options.signal }); },
   capabilities: () => request<{ capabilities: Record<string, { configured: boolean; ok: boolean; detail?: string }>; stickers: { available: number; total: number } }>('/api/capabilities'),
   life: () => request<{ activity: string; kind: string; mood: string; startedAt: string; endsAt: string; recent: Array<{ activity: string; startedAt: string; endedAt: string }> }>('/api/life'),
+  presence: () => request<WorldPresence>('/api/life/presence'),
   events: (since: number) => request<{ events: Array<Record<string, unknown>>; lastEventSeq: number }>(`/api/events?since=${since}`),
   /** User-visible inner thought for a message — chat token auth, may 404. */
   visibleThought: (messageId: string, signal?: AbortSignal) => request<{ thought: VisibleThought | null }>(`/api/thoughts/${encodeURIComponent(messageId)}`, { signal })

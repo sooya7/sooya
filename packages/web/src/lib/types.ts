@@ -89,3 +89,27 @@ export interface LifeState {
   endsAt: string;
   recent: Array<{ activity: string; startedAt: string; endedAt: string }>;
 }
+
+export type WeatherCondition = 'clear' | 'cloudy' | 'rain' | 'snow' | 'storm' | 'fog' | 'wind' | 'unknown';
+
+export interface WorldPresence {
+  city: { id: string; name: string; region?: string | null; country?: string | null } | null;
+  location: { id: string; name: string; kind: string } | null;
+  travel: {
+    fromLocationId: string;
+    fromName: string | null;
+    toLocationId: string;
+    toName: string | null;
+    mode: string;
+    expectedArriveAt: string;
+  } | null;
+  weather: {
+    condition: WeatherCondition;
+    temperatureC: number | null;
+    feelsLikeC: number | null;
+    observedAt: string;
+    stale: boolean;
+    provider: string;
+  } | null;
+  updatedAt: string;
+}

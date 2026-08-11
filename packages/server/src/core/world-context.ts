@@ -116,18 +116,19 @@ export class WorldContextService {
   async refreshWeather(): Promise<WeatherSnapshot | null> {
     const target = this.weatherLocation();
     if (!target) return null;
-    return this.weather.snapshotFor(target);
+    return this.weather.refreshNow(target);
   }
 
   /**
    * 全量刷新：current + forecast + daylight（各步失败都被服务层吞掉并降级），
    * 然后返回完整快照。用于管理端刷新/定时任务；不阻塞 Chat/Life。
    */
-  async refreshAll(): Promise<WorldSnapshot> {
+  async refreshAll(options: { forceCurrent?: boolean } = {}): Promise<WorldSnapshot> {
     const target = this.weatherLocation();
     if (target) {
       const timeZone = this.snapshot().timeZone;
-      await this.weather.snapshotFor(target);
+      if (options.forceCurrent) await this.weather.refreshNow(target);
+      else await this.weather.snapshotFor(target);
       await this.weather.forecastFor(target);
       await this.weather.daylightFor(target, this.clock(), timeZone);
     }

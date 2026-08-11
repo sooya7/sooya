@@ -24,6 +24,8 @@ export interface WeatherProviderEnv {
   provider?: string | null;
   /** WEATHER_BASE_URL：适配器 API 根地址。 */
   baseUrl?: string | null;
+  /** WEATHER_GEOCODING_BASE_URL：城市坐标解析 API 根地址。 */
+  geocodingBaseUrl?: string | null;
   /** WEATHER_API_KEY：需要 key 的 provider 使用（open-meteo 不需要）。 */
   apiKey?: string | null;
   /** WEATHER_TIMEOUT_MS，默认 5000。 */
@@ -57,6 +59,7 @@ export function createWeatherProvider(env: WeatherProviderEnv = {}): WeatherProv
   const name = String(env.provider ?? '').trim().toLowerCase();
   const common = {
     baseUrl: env.baseUrl ?? undefined,
+    geocodingBaseUrl: env.geocodingBaseUrl ?? undefined,
     timeoutMs: env.timeoutMs ?? DEFAULT_WEATHER_TIMEOUT_MS,
     fetchImpl: env.fetchImpl,
     clock: env.clock
@@ -109,12 +112,14 @@ export class OpenMeteoWeatherProvider implements WeatherProviderFull {
   readonly name = 'open-meteo';
   readonly configured = true;
   private readonly baseUrl: string;
+  private readonly geocodingBaseUrl: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly clock: () => Date;
 
-  constructor(opts: { baseUrl?: string; timeoutMs?: number; fetchImpl?: typeof fetch; clock?: () => Date } = {}) {
+  constructor(opts: { baseUrl?: string; geocodingBaseUrl?: string; timeoutMs?: number; fetchImpl?: typeof fetch; clock?: () => Date } = {}) {
     this.baseUrl = String(opts.baseUrl?.trim() || 'https://api.open-meteo.com').replace(/\/+$/, '');
+    this.geocodingBaseUrl = String(opts.geocodingBaseUrl?.trim() || 'https://geocoding-api.open-meteo.com').replace(/\/+$/, '');
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_WEATHER_TIMEOUT_MS;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     this.clock = opts.clock ?? (() => new Date());
@@ -136,7 +141,7 @@ export class OpenMeteoWeatherProvider implements WeatherProviderFull {
     // 这里做最小内部映射，不新增国家/Geocoding 系统。
     const code = CN_ISO_CODES.get(String(location.country ?? '').trim());
     const country = code ? `&countryCode=${code}` : '';
-    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${name}${country}&count=1&language=zh&format=json`;
+    const url = `${this.geocodingBaseUrl}/v1/search?name=${name}${country}&count=1&language=zh&format=json`;
     const json = await this.getJson(url, signal) as { results?: Array<{ latitude: number; longitude: number }> };
     const hit = json.results?.[0];
     if (!hit) throw new Error(`open-meteo: 未找到城市 ${location.city}`);

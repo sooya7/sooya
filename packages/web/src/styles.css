@@ -44,7 +44,7 @@
   --radius-sm: 10px;
   --shadow-soft: 0 2px 7px rgba(63, 43, 68, 0.08), 0 14px 30px -16px rgba(63, 43, 68, 0.24);
   --shadow-raised: 0 12px 36px -16px rgba(49, 32, 55, 0.34);
-  --topbar-h: 56px;
+  --topbar-h: 68px;
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
     'Helvetica Neue', Arial, sans-serif;
 }
@@ -143,7 +143,9 @@ button {
   flex: 0 0 auto;
   height: calc(var(--topbar-h) + env(safe-area-inset-top));
   padding-top: env(safe-area-inset-top);
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
+  column-gap: 12px;
   align-items: center;
   padding-left: 14px;
   padding-right: 14px;
@@ -160,6 +162,54 @@ button {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.topbar-world {
+  min-width: 0;
+  max-width: 240px;
+  display: grid;
+  gap: 2px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.topbar-world-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.topbar-world-line span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-world-line svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.topbar-world-weather {
+  color: var(--ink-meta);
+}
+
+.topbar-world.is-stale { opacity: 0.72; }
+
+.topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: max-content;
 }
 
 .topbar-avatar {
@@ -214,7 +264,7 @@ button {
 }
 
 .topbar-admin-entry {
-  margin-left: auto;
+  margin-left: 0;
   width: 30px;
   height: 30px;
   display: inline-flex;
@@ -1650,8 +1700,10 @@ button {
 
 .composer-offline-hint { color: var(--danger); }
 
-.history-tool-button { border: 0; background: transparent; color: var(--ink-soft); font-size: 22px; width: 38px; height: 38px; border-radius: 10px; }
+.history-tool-button { border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--accent-deep); padding: 0; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; }
 .history-tool-button:hover { background: var(--surface-hover); color: var(--accent-deep); }
+.history-tool-button:active { transform: scale(0.94); }
+.history-tool-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .history-tools { position: absolute; z-index: 30; top: calc(var(--topbar-h, 58px) + 6px); right: 12px; width: min(92vw, 430px); padding: 10px; display: grid; gap: 8px; background: var(--surface-glass); border: 1px solid var(--accent-line); border-radius: 14px; box-shadow: var(--shadow-raised); backdrop-filter: blur(16px); }
 .history-tools form, .history-date-row, .history-results { display: flex; align-items: center; gap: 7px; }
 .history-tools input { min-width: 0; flex: 1; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--panel); }
@@ -1832,6 +1884,7 @@ button {
   flex: 0 0 auto;
   display: inline-flex;
 }
+.topbar-actions .notification-menu { margin-left: 0; }
 /* Without the bell (unsupported browser) the gear keeps its own auto margin. */
 .notification-menu + .topbar-admin-entry { margin-left: 8px; }
 /* 搜索按钮插在铃铛和齿轮之间，使上面的相邻选择器失配；若不补这条，齿轮自身的
@@ -1879,6 +1932,22 @@ button {
   color: var(--ink-faint);
 }
 
+@media (max-width: 560px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 30vw) auto;
+    column-gap: 7px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .topbar-identity { gap: 8px; }
+  .topbar-avatar { width: 34px; height: 34px; }
+  .topbar-world { max-width: 30vw; font-size: 11px; }
+  .topbar-actions { gap: 4px; }
+  .topbar-actions .history-tool-button,
+  .topbar-actions .notification-bell,
+  .topbar-actions .topbar-admin-entry { width: 30px; height: 30px; }
+}
+
 /* ---- Touch targets ------------------------------------------------------ */
 
 /*
@@ -1901,6 +1970,7 @@ button {
 .audio-retry,
 .audio-play,
 .notification-bell,
+.history-tool-button,
 .topbar-admin-entry,
 .icon-btn {
   position: relative;
@@ -1913,6 +1983,7 @@ button {
 .audio-retry::after,
 .audio-play::after,
 .notification-bell::after,
+.history-tool-button::after,
 .topbar-admin-entry::after,
 .icon-btn::after {
   content: '';
@@ -1933,6 +2004,7 @@ button {
 
 /* Bell and admin entry are 38px apart, inside a 56px top bar. */
 .notification-bell::after,
+.history-tool-button::after,
 .topbar-admin-entry::after {
   width: max(100%, 38px);
   height: max(100%, 38px);
@@ -1966,6 +2038,7 @@ button {
   .audio-retry::after,
   .audio-play::after,
   .notification-bell::after,
+  .history-tool-button::after,
   .topbar-admin-entry::after,
   .icon-btn::after {
     width: 100%;

@@ -253,6 +253,7 @@ export function registerChatRoutes(app: SooyaApp): void {
       messages: { messages: page.messages, hasMore: page.hasMore, lastEventSeq, lastMessageSeq: repos.messages.maxSeq(), oldestSeq: page.messages[0]?.seq ?? null },
       stickers: stickerList(app).stickers,
       life: services.life.snapshot(),
+      presence: services.presence.current(),
     };
   });
 }

@@ -149,8 +149,10 @@ const EnvSchema = z.object({
      weather=unknown, life/chat unaffected. */
   WEATHER_PROVIDER: z.string().default(''),
   WEATHER_BASE_URL: z.string().default(''),
+  WEATHER_GEOCODING_BASE_URL: z.string().default('https://geocoding-api.open-meteo.com'),
   WEATHER_API_KEY: z.string().default(''),
   WEATHER_TIMEOUT_MS: intish(5000),
+  WEATHER_REFRESH_INTERVAL_MS: intish(10 * 60 * 1000),
 
   /* City-aware web search. Disabled until at least one server-side key is set. */
   SOOYA_WEB_SEARCH_ENABLED: boolish(false),

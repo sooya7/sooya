@@ -55,6 +55,7 @@ const COLD_SNAP_EVENT = 'weather.cold_snap';
 export class WeatherService {
   private provider: WeatherProviderFull | null = null;
   private enabled = false;
+  private readonly inFlight = new Map<string, Promise<WeatherSnapshot>>();
 
   constructor(
     private readonly repo: WeatherRepo,
@@ -98,11 +99,23 @@ export class WeatherService {
       if (age < FRESH_MS) return toWeatherSnapshot(cached, false);
       if (age < STALE_MS) {
         // Usable now; refresh in the background so the next read is fresh.
-        void this.refresh(location, signal);
+        void this.refreshNow(location, signal);
         return toWeatherSnapshot(cached, false);
       }
     }
-    return this.refresh(location, signal);
+    return this.refreshNow(location, signal);
+  }
+
+  /** Force a foreground refresh while coalescing concurrent requests per city. */
+  async refreshNow(location: WeatherLocation, signal?: AbortSignal): Promise<WeatherSnapshot> {
+    const key = this.locationKeyFor(location);
+    const active = this.inFlight.get(key);
+    if (active) return active;
+    const task = this.refresh(location, signal).finally(() => {
+      if (this.inFlight.get(key) === task) this.inFlight.delete(key);
+    });
+    this.inFlight.set(key, task);
+    return task;
   }
 
   /** Synchronous best-known condition (life scoring path); never blocks. */
