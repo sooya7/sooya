@@ -6,7 +6,7 @@ import { mergeLifeHistory, type LifeHistoryItem } from '../../lib/lifeObservatio
 const HISTORY_LABELS: Record<LifeHistoryItem['kind'], string> = {
   activity: '活动',
   event: '事件',
-  proactive: '主动联系'
+  proactive: '朋友圈'
 };
 
 interface DisclosureSectionProps {
@@ -97,7 +97,7 @@ export function LifeObservationDetails({ data, overview }: {
       <DisclosureSection
         id="life-details-history"
         title="生活记录"
-        summary="最近活动、事件与主动联系"
+        summary="最近活动、事件与朋友圈发布"
       >
         <HistoryDetails data={data} />
       </DisclosureSection>
