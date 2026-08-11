@@ -1,0 +1,48 @@
+name: Convert proactive shares to Moments
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/convert-proactive-to-moments.yml'
+      - '.github/scripts/convert-proactive-to-moments.py'
+
+permissions:
+  contents: write
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.14.0'
+          cache: npm
+      - run: npm ci
+      - name: Apply Moments conversion
+        run: python3 .github/scripts/convert-proactive-to-moments.py
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Focused server tests
+        run: npm run test -w @sooya/server -- proactive-composer.test.ts --reporter=dot
+      - name: Web tests
+        run: npm run test -w @sooya/web -- --reporter=dot
+      - name: Diff hygiene
+        run: git diff --check
+      - name: Commit converted feature
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'sooya7'
+          git config user.email '779083953@qq.com'
+          git add packages
+          if git diff --cached --quiet; then
+            echo 'No feature changes to commit.'
+            exit 0
+          fi
+          git commit -m 'feat: turn proactive life shares into Moments'
+          git push origin HEAD:main
