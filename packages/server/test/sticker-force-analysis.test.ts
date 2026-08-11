@@ -51,4 +51,25 @@ describe('forced sticker analysis', () => {
     expect(await harness.app.services.stickerAnalyzer.analyze(sticker.id, { force: true, expectedSemanticRevision: sticker.semanticRevision })).toBeNull();
     expect(harness.app.repos.stickers.get(sticker.id)).toMatchObject({ analysisSource: 'manual', analysisStatus: 'ready', description: sticker.description, tags: sticker.tags });
   });
+
+  it('shows pending and processing while force analysis runs on a manual sticker', async () => {
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { ADMIN_API_TOKEN: 'admin-test-token' }, chat: { delayMs: 40, script: [[AI]] } });
+    const sticker = await makeManualSticker();
+    const queued = await harness.app.server.inject({
+      method: 'POST',
+      url: `/api/admin/stickers/${sticker.id}/analyze`,
+      headers: { 'x-admin-token': 'admin-test-token' },
+      payload: { force: true }
+    });
+    expect(queued.statusCode).toBe(200);
+    expect(harness.app.repos.stickers.get(sticker.id)?.analysisStatus).toBe('pending');
+
+    const running = harness.app.services.worker.drain(1);
+    for (let i = 0; i < 20 && harness.app.repos.stickers.get(sticker.id)?.analysisStatus !== 'processing'; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(harness.app.repos.stickers.get(sticker.id)).toMatchObject({ analysisSource: 'manual', analysisStatus: 'processing' });
+    await running;
+    expect(harness.app.repos.stickers.get(sticker.id)).toMatchObject({ analysisSource: 'ai', analysisStatus: 'ready' });
+  });
 });

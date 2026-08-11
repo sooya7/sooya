@@ -314,7 +314,7 @@ export class StickerRepo {
     return this.get(id);
   }
 
-  setAnalysisState(id: string, patch: StickerAnalysisStatePatch): Sticker | undefined {
+  setAnalysisState(id: string, patch: StickerAnalysisStatePatch, options: { allowManual?: boolean } = {}): Sticker | undefined {
     const sets = ['analysis_status = ?', 'updated_at = ?'];
     const values: unknown[] = [patch.status, nowIso()];
     if (patch.source !== undefined) (sets.push('analysis_source = ?'), values.push(patch.source));
@@ -326,7 +326,7 @@ export class StickerRepo {
     values.push(id);
     // A worker may still be finishing after an administrator has edited the
     // sticker. Do not let its processing/failure state erase that manual fence.
-    const manualFence = " AND analysis_source != 'manual'";
+    const manualFence = options.allowManual ? '' : " AND analysis_source != 'manual'";
     const result = this.db.prepare(`UPDATE stickers SET ${sets.join(', ')} WHERE id = ?${manualFence}`).run(...values);
     if (result.changes === 0) return undefined;
     this.notify();

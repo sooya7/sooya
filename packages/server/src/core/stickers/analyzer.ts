@@ -36,24 +36,33 @@ export class StickerAnalyzer {
     if (!sticker) return null;
     const force = options.force === true;
     const expectedSemanticRevision = options.expectedSemanticRevision ?? sticker.semanticRevision;
+    const restoreManualReady = (): void => {
+      if (!force || sticker.analysisSource !== 'manual') return;
+      const latest = this.stickers.get(stickerId);
+      if (latest?.analysisSource !== 'manual' || latest.semanticRevision !== expectedSemanticRevision) return;
+      this.stickers.setAnalysisState(stickerId, { status: 'ready', error: null }, { allowManual: true });
+    };
     if (sticker.analysisSource === 'manual' && !force) return null;
     const provider = this.vision();
     if (!provider || !provider.configured) {
       // A missing vision configuration is retryable, not a permanent analysis
       // failure. The next configuration change or batch run can try again.
-      this.stickers.setAnalysisState(stickerId, { status: 'pending', error: 'vision_unavailable' });
+      if (sticker.analysisSource === 'manual' && force) restoreManualReady();
+      else this.stickers.setAnalysisState(stickerId, { status: 'pending', error: 'vision_unavailable' });
       this.onLog?.('failed', { stickerId, errorType: 'vision_unavailable' });
       return null;
     }
     const read = await this.media.read(sticker.mediaId);
     if (!read) {
-      this.stickers.setAnalysisState(stickerId, { status: 'failed', error: 'media_unavailable' });
+      if (sticker.analysisSource === 'manual' && force) restoreManualReady();
+      else this.stickers.setAnalysisState(stickerId, { status: 'failed', error: 'media_unavailable' });
       this.onLog?.('failed', { stickerId, errorType: 'media_unavailable' });
       return null;
     }
     const frames = await prepareStickerVisionFrames(read.data, read.row.mime);
     if (frames.length === 0) {
-      this.stickers.setAnalysisState(stickerId, { status: 'failed', error: 'image_decode_failed' });
+      if (sticker.analysisSource === 'manual' && force) restoreManualReady();
+      else this.stickers.setAnalysisState(stickerId, { status: 'failed', error: 'image_decode_failed' });
       this.onLog?.('failed', { stickerId, errorType: 'image_decode_failed' });
       return null;
     }
@@ -61,7 +70,7 @@ export class StickerAnalyzer {
     const beforeProcessing = this.stickers.get(stickerId);
     if (!force && beforeProcessing?.analysisSource === 'manual') return null;
     if (beforeProcessing?.semanticRevision !== expectedSemanticRevision) return null;
-    this.stickers.setAnalysisState(stickerId, { status: 'processing', error: null });
+    this.stickers.setAnalysisState(stickerId, { status: 'processing', error: null }, { allowManual: force });
     this.onLog?.('started', { stickerId, model: provider.name, frameCount: frames.length });
     const content: ChatContentPart[] = [{
       type: 'text',
@@ -93,7 +102,10 @@ export class StickerAnalyzer {
       this.onLog?.('completed', { stickerId, model: result.model || provider.name, frameCount: frames.length });
       return parsed.data;
     } catch (error) {
-      if (this.stickers.get(stickerId)?.analysisSource === 'manual') return null;
+      if (this.stickers.get(stickerId)?.analysisSource === 'manual') {
+        restoreManualReady();
+        return null;
+      }
       const message = error instanceof Error ? error.message : String(error);
       this.stickers.setAnalysisState(stickerId, { status: 'failed', error: message.slice(0, 300) });
       this.onLog?.('failed', { stickerId, errorType: 'provider_or_parse', model: provider.name });
