@@ -90,10 +90,6 @@ function vitalDisplay(key: keyof AdminLifeVitals, value: number): VitalDisplay {
   return { label, tone: 'muted' };
 }
 
-function overviewWeather(weather: string | null): string {
-  return weather ? weatherConditionLabel(weather) : '暂无';
-}
-
 function heroPlace(environment: HeroEnvironment, overview: AdminLifeOverview): string {
   const current = environment.locations?.current;
   const city = current?.city?.trim() || null;
