@@ -7,7 +7,6 @@ import { herClock, reachReasonText } from '../../lib/lifeView.js';
 import { weatherConditionLabel } from '../../lib/worldDisplay.js';
 import { LifeContactBoundaryForm } from './LifeContactBoundaryForm.js';
 import { LifeObservationDetails } from './LifeObservationDetails.js';
-import './LifeObservationPanel.css';
 
 interface LifeObservationPanelProps {
   onNotice: (message: string) => void;
