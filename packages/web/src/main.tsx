@@ -4,6 +4,7 @@ import AppShell from './AppShell.js';
 import './styles.css';
 import './components/AdminPanel.css';
 import './components/life/LifeObservationPanel.css';
+import './components/ScrollableLists.css';
 import './components/overlays.css';
 import './components/FeatureEnhancements.css';
 
