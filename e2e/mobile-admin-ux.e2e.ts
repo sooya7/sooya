@@ -52,9 +52,9 @@ test('375px 下管理子页与表情面板保持可读且按需加载', async ({
   await expect(observation).toBeVisible();
   await expect(page.getByRole('button', { name: '添加计划' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '立即推进' })).toHaveCount(0);
-  await page.getByRole('button', { name: /联系边界/ }).click();
+  await page.getByRole('button', { name: /朋友圈发布/ }).click();
   const boundaries = page.getByTestId('life-boundaries');
-  await expect(boundaries.getByRole('button', { name: '保存联系边界' })).toBeVisible();
+  await expect(boundaries.getByRole('button', { name: '保存朋友圈设置' })).toBeVisible();
   expect(await observation.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
