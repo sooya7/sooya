@@ -1,14 +1,6 @@
-import { useState, type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import type { AdminLifeOverview } from '../../lib/admin.js';
 import type { LifePanelData } from '../../lib/features.js';
-import { mergeLifeHistory, type LifeHistoryItem } from '../../lib/lifeObservation.js';
-
-const HISTORY_LABELS: Record<LifeHistoryItem['kind'], string> = {
-  activity: '活动',
-  event: '事件',
-  proactive: '朋友圈'
-};
-const HISTORY_PREVIEW_LIMIT = 5;
 
 interface DisclosureSectionProps {
   id: string;
@@ -65,40 +57,34 @@ function formatHistoryTime(value: string): string {
 }
 
 function HistoryDetails({ data }: { data: LifePanelData }) {
-  const [expanded, setExpanded] = useState(false);
-  // 朋友圈有独立 Feed。生活记录只观察她真正发生过的活动与事件，
-  // 不重复展示任何朋友圈发布记录，也不展示发布尝试日志。
-  const history = mergeLifeHistory(data.log, data.events, []);
+  // This surface is for lived activity history only. Events stay available to
+  // Life/Memory/Moments internally, and Moments have their own feed.
+  const history = [...data.log].sort((left, right) => {
+    const leftTime = Date.parse(left.ended_at);
+    const rightTime = Date.parse(right.ended_at);
+    const leftValid = Number.isFinite(leftTime);
+    const rightValid = Number.isFinite(rightTime);
+    if (leftValid && rightValid) return rightTime - leftTime;
+    if (leftValid) return -1;
+    if (rightValid) return 1;
+    return 0;
+  });
+
   if (!history.length) return <p className="life-thread-empty">暂无生活记录。</p>;
 
-  const visible = expanded ? history : history.slice(0, HISTORY_PREVIEW_LIMIT);
-  const hiddenCount = Math.max(0, history.length - HISTORY_PREVIEW_LIMIT);
-
   return (
-    <>
+    <div className="life-history-scroll" data-testid="life-history-scroll">
       <ul data-testid="life-history-list">
-        {visible.map((item) => (
-          <li key={`${item.kind}-${item.id}`}>
-            <span>{HISTORY_LABELS[item.kind]}</span>
-            <strong>{item.title}</strong>
-            <span>{item.detail}</span>
-            <time dateTime={item.at}>{formatHistoryTime(item.at)}</time>
+        {history.map((item) => (
+          <li key={item.id}>
+            <span>活动</span>
+            <strong>{item.activity}</strong>
+            <span>{item.mood}</span>
+            <time dateTime={item.ended_at}>{formatHistoryTime(item.ended_at)}</time>
           </li>
         ))}
       </ul>
-      {history.length > HISTORY_PREVIEW_LIMIT && (
-        <button
-          type="button"
-          className="life-disclosure-toggle"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          <span>{expanded ? '收起记录' : `查看更多 ${hiddenCount} 条`}</span>
-          <small>{expanded ? `共 ${history.length} 条` : `先显示最近 ${HISTORY_PREVIEW_LIMIT} 条`}</small>
-          <span aria-hidden="true">{expanded ? '−' : '＋'}</span>
-        </button>
-      )}
-    </>
+    </div>
   );
 }
 
@@ -119,7 +105,7 @@ export function LifeObservationDetails({ data, overview }: {
       <DisclosureSection
         id="life-details-history"
         title="生活记录"
-        summary="最近活动与事件"
+        summary="最近活动"
       >
         <HistoryDetails data={data} />
       </DisclosureSection>
