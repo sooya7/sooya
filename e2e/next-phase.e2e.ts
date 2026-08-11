@@ -26,9 +26,12 @@ test.describe('next-phase admin surfaces', () => {
     await gotoAdmin(page, '/admin/life/console');
     await expect(page).toHaveURL(/\/admin\/life$/);
     await expect(page.getByTestId('life-observation')).toBeVisible();
-    // The environment section is lazy: opening it loads location/weather data.
-    await page.getByRole('button', { name: /地点与天气/ }).click();
-    await expect(page.getByTestId('life-environment-detail')).toContainText('家');
+    const hero = page.getByTestId('life-hero');
+    await expect(hero).toBeVisible();
+    await expect(hero).toContainText('当前地点');
+    await expect(hero).toContainText('当前天气');
+    await expect(hero).toContainText('出行状态');
+    await expect(hero).toContainText('当前活动');
   });
 
   test('overview embeds the base runtime metrics', async ({ page }) => {
