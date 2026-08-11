@@ -649,8 +649,9 @@ export function registerAdminRoutes(app: SooyaApp): void {
     if (!sticker) { reply.code(404); return { error: 'not_found' }; }
     const force = (req.body as { force?: unknown } | null)?.force === true;
     if (sticker.analysisSource === 'manual' && !force) { reply.code(409); return { error: 'manual_semantics_protected' }; }
+    const expectedSemanticRevision = sticker.semanticRevision;
     repos.stickers.setAnalysisState(id, { status: 'pending', error: null });
-    const job = repos.jobs.enqueue('sticker.analyze', { stickerId: id, force }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
+    const job = repos.jobs.enqueue('sticker.analyze', { stickerId: id, force, expectedSemanticRevision }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
     return { queued: true, jobId: job.id, stickerId: id };
   });
 

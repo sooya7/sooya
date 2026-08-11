@@ -23,7 +23,7 @@ function dataDirFromArgs() {
 
 const dataDir = dataDirFromArgs();
 const dbFile = path.join(dataDir, 'database', 'sooya.db');
-const MAX_SCHEMA_VERSION = 32;
+const MAX_SCHEMA_VERSION = 33;
 if (!fs.existsSync(dbFile)) {
   console.error(`[preflight] database not found: ${dbFile}`);
   console.error(`[preflight] pass --data-dir <dir> or set DATA_DIR`);

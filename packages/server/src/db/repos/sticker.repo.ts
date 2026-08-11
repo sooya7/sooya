@@ -38,6 +38,7 @@ export interface StickerRow {
   user_use_count?: number;
   user_last_used_at?: string | null;
   updated_at?: string | null;
+  semantic_revision?: number;
 }
 
 export interface Sticker {
@@ -74,6 +75,7 @@ export interface Sticker {
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+  semanticRevision: number;
   url: string;
   mime?: string;
   /** True when the source media contains more than one image frame. */
@@ -139,8 +141,12 @@ export class StickerRepo {
           description, image_text, name_source, user_meaning, user_meaning_source,
           user_meaning_confidence, user_meaning_updated_at, analysis_status, analysis_source,
           analysis_version, analysis_model, analyzed_at, analysis_error, embedding, embedding_dim,
-          embedding_model, favorite, user_use_count, user_last_used_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          embedding_model, favorite, user_use_count, user_last_used_at, updated_at, semantic_revision
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )`
       )
       .run(
         id,
@@ -171,7 +177,8 @@ export class StickerRepo {
         0,
         0,
         null,
-        createdAt
+        createdAt,
+        0
       );
     this.refreshFts(id);
     this.notify();
@@ -252,7 +259,7 @@ export class StickerRepo {
       values.push('manual', 'ready');
     }
     if (patch.enabled !== undefined) (sets.push('enabled = ?'), values.push(patch.enabled ? 1 : 0));
-    if (semanticChanged) sets.push('embedding = NULL', 'embedding_dim = NULL', 'embedding_model = NULL');
+    if (semanticChanged) sets.push('embedding = NULL', 'embedding_dim = NULL', 'embedding_model = NULL', 'semantic_revision = semantic_revision + 1');
     if (sets.length === 0) return this.get(id);
     sets.push('updated_at = ?');
     values.push(nowIso(), id);
@@ -272,10 +279,10 @@ export class StickerRepo {
     return this.update(id, patch);
   }
 
-  applyAiAnalysis(id: string, patch: { suggestedName: string; description: string; imageText: string; tags: string[] }, meta: { version: number; model: string }): Sticker | undefined {
+  applyAiAnalysis(id: string, patch: { suggestedName: string; description: string; imageText: string; tags: string[] }, meta: { version: number; model: string }, options: { force?: boolean; expectedSemanticRevision?: number } = {}): Sticker | undefined {
     const current = this.get(id);
     if (!current) return undefined;
-    if (current.analysisSource === 'manual') return current;
+    if (current.analysisSource === 'manual' && !options.force) return current;
     const sets = [
       'description = ?', 'image_text = ?', 'tags_json = ?',
       'analysis_status = \'ready\'', 'analysis_source = \'ai\'',
@@ -298,11 +305,10 @@ export class StickerRepo {
       values.splice(1, 0, patch.suggestedName.trim().slice(0, 60));
     }
     values.push(id);
-    const result = this.db.prepare(`UPDATE stickers SET ${sets.join(', ')} WHERE id = ? AND analysis_source != 'manual'`).run(...values);
-    if (result.changes === 0) {
-      const latest = this.get(id);
-      return latest?.analysisSource === 'manual' ? latest : undefined;
-    }
+    const fence = options.force ? ' AND semantic_revision = ?' : " AND analysis_source != 'manual'";
+    if (options.force) values.push(options.expectedSemanticRevision ?? current.semanticRevision);
+    const result = this.db.prepare(`UPDATE stickers SET ${sets.join(', ')} WHERE id = ?${fence}`).run(...values);
+    if (result.changes === 0) return this.get(id);
     this.refreshFts(id);
     this.notify();
     return this.get(id);
@@ -495,6 +501,7 @@ export class StickerRepo {
       enabled: row.enabled === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at ?? row.created_at,
+      semanticRevision: row.semantic_revision ?? 0,
       url: `/api/media/${row.media_id}`
     };
   }

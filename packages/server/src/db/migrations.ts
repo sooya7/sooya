@@ -1327,6 +1327,13 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 33,
+    name: 'sticker_semantic_revision',
+    up: (db) => {
+      db.exec('ALTER TABLE stickers ADD COLUMN semantic_revision INTEGER NOT NULL DEFAULT 0;');
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

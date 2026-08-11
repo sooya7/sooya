@@ -31,10 +31,12 @@ export class StickerAnalyzer {
     private readonly onLog?: (event: 'started' | 'completed' | 'failed', data: Record<string, unknown>) => void
   ) {}
 
-  async analyze(stickerId: string): Promise<StickerAnalysisResult | null> {
+  async analyze(stickerId: string, options: { force?: boolean; expectedSemanticRevision?: number } = {}): Promise<StickerAnalysisResult | null> {
     const sticker = this.stickers.get(stickerId);
     if (!sticker) return null;
-    if (sticker.analysisSource === 'manual') return null;
+    const force = options.force === true;
+    const expectedSemanticRevision = options.expectedSemanticRevision ?? sticker.semanticRevision;
+    if (sticker.analysisSource === 'manual' && !force) return null;
     const provider = this.vision();
     if (!provider || !provider.configured) {
       // A missing vision configuration is retryable, not a permanent analysis
@@ -56,7 +58,9 @@ export class StickerAnalyzer {
       return null;
     }
 
-    if (this.stickers.get(stickerId)?.analysisSource === 'manual') return null;
+    const beforeProcessing = this.stickers.get(stickerId);
+    if (!force && beforeProcessing?.analysisSource === 'manual') return null;
+    if (beforeProcessing?.semanticRevision !== expectedSemanticRevision) return null;
     this.stickers.setAnalysisState(stickerId, { status: 'processing', error: null });
     this.onLog?.('started', { stickerId, model: provider.name, frameCount: frames.length });
     const content: ChatContentPart[] = [{
@@ -84,10 +88,8 @@ export class StickerAnalyzer {
       });
       const parsed = AnalysisSchema.safeParse(extractJsonObject(result.text));
       if (!parsed.success) throw new Error('invalid_analysis_json');
-      const latest = this.stickers.get(stickerId);
-      if (latest?.analysisSource === 'manual') return parsed.data;
-      const applied = this.stickers.applyAiAnalysis(stickerId, parsed.data, { version: STICKER_ANALYSIS_VERSION, model: result.model || provider.name });
-      if (!applied || applied.analysisSource === 'manual') return parsed.data;
+      const applied = this.stickers.applyAiAnalysis(stickerId, parsed.data, { version: STICKER_ANALYSIS_VERSION, model: result.model || provider.name }, { force, expectedSemanticRevision });
+      if (!applied || applied.semanticRevision !== expectedSemanticRevision) return null;
       this.onLog?.('completed', { stickerId, model: result.model || provider.name, frameCount: frames.length });
       return parsed.data;
     } catch (error) {

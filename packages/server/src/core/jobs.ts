@@ -144,7 +144,10 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   worker.register('sticker.analyze', async (payload) => {
     const stickerId = String(payload.stickerId ?? '');
     if (!stickerId) return;
-    const result = await deps.stickerAnalyzer.analyze(stickerId);
+    const result = await deps.stickerAnalyzer.analyze(stickerId, {
+      force: payload.force === true,
+      expectedSemanticRevision: typeof payload.expectedSemanticRevision === 'number' ? payload.expectedSemanticRevision : undefined
+    });
     if (result) {
       deps.jobs.enqueue('sticker.embed', { stickerId }, { maxAttempts: 2 });
       deps.bus.publish('sticker.analysis.updated', { stickerId, status: 'ready', version: STICKER_ANALYSIS_VERSION });
