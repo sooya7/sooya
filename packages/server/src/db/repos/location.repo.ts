@@ -304,6 +304,18 @@ export class LifeLocationRepo {
       .all(Math.max(1, Math.min(100, limit))) as LifeLocationVisitRow[];
   }
 
+  /** Finds the most recent persisted visit that overlaps a life event window. */
+  visitOverlapping(startedAt: string, endedAt: string): LifeLocationVisitRow | undefined {
+    return this.db.prepare(`
+      SELECT *
+      FROM life_location_visits
+      WHERE entered_at <= ?
+        AND COALESCE(left_at, ?) >= ?
+      ORDER BY entered_at DESC
+      LIMIT 1
+    `).get(endedAt, endedAt, startedAt) as LifeLocationVisitRow | undefined;
+  }
+
   /** Unique locations visited in the last `hours`, for anti-repeat. */
   recentlyVisitedLocationIds(hours: number, nowMs = Date.now()): string[] {
     const since = new Date(nowMs - hours * 3_600_000).toISOString();
