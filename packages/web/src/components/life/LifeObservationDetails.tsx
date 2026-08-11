@@ -8,6 +8,7 @@ const HISTORY_LABELS: Record<LifeHistoryItem['kind'], string> = {
   event: '事件',
   proactive: '朋友圈'
 };
+const HISTORY_PREVIEW_LIMIT = 5;
 
 interface DisclosureSectionProps {
   id: string;
@@ -64,19 +65,41 @@ function formatHistoryTime(value: string): string {
 }
 
 function HistoryDetails({ data }: { data: LifePanelData }) {
-  const history = mergeLifeHistory(data.log, data.events, data.proactive);
+  const [expanded, setExpanded] = useState(false);
+  // “生活记录”只展示真正发生过的生活和已经发布的朋友圈。
+  // blocked / failed 是内部发布尝试，不应该每次 tick 都占一整条观察记录。
+  const publishedAttempts = data.proactive.filter((attempt) => attempt.status === 'sent');
+  const history = mergeLifeHistory(data.log, data.events, publishedAttempts);
   if (!history.length) return <p className="life-thread-empty">暂无生活记录。</p>;
+
+  const visible = expanded ? history : history.slice(0, HISTORY_PREVIEW_LIMIT);
+  const hiddenCount = Math.max(0, history.length - HISTORY_PREVIEW_LIMIT);
+
   return (
-    <ul data-testid="life-history-list">
-      {history.map((item) => (
-        <li key={`${item.kind}-${item.id}`}>
-          <span>{HISTORY_LABELS[item.kind]}</span>
-          <strong>{item.title}</strong>
-          <span>{item.detail}</span>
-          <time dateTime={item.at}>{formatHistoryTime(item.at)}</time>
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul data-testid="life-history-list">
+        {visible.map((item) => (
+          <li key={`${item.kind}-${item.id}`}>
+            <span>{HISTORY_LABELS[item.kind]}</span>
+            <strong>{item.title}</strong>
+            <span>{item.detail}</span>
+            <time dateTime={item.at}>{formatHistoryTime(item.at)}</time>
+          </li>
+        ))}
+      </ul>
+      {history.length > HISTORY_PREVIEW_LIMIT && (
+        <button
+          type="button"
+          className="life-disclosure-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <span>{expanded ? '收起记录' : `查看更多 ${hiddenCount} 条`}</span>
+          <small>{expanded ? `共 ${history.length} 条` : `先显示最近 ${HISTORY_PREVIEW_LIMIT} 条`}</small>
+          <span aria-hidden="true">{expanded ? '−' : '＋'}</span>
+        </button>
+      )}
+    </>
   );
 }
 
