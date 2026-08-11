@@ -92,7 +92,8 @@ const data: LifePanelData = {
     requestedMode: 'text',
     finalMode: 'text',
     fallbackReason: null,
-    messageId: 'message-1',
+    messageId: null,
+    momentId: 'moment-1',
     sendSuccess: true,
     userResponseMessageId: null,
     userRespondedAt: null,
@@ -102,7 +103,7 @@ const data: LifePanelData = {
   }],
   reachOut: {
     reach: false,
-    reason: 'quiet_gap_not_met',
+    reason: 'nothing_worth_saying',
     candidate: null,
     sharedLastDay: 1,
     lastUserAt: null,
@@ -246,7 +247,7 @@ describe('LifeObservationDetails', () => {
     const rows = Array.from(container!.querySelectorAll('[data-testid="life-history-list"] li'));
     expect(rows.map((row) => row.textContent)).toEqual([
       expect.stringContaining('事件'),
-      expect.stringContaining('主动联系'),
+      expect.stringContaining('朋友圈'),
       expect.stringContaining('活动')
     ]);
     expect(rows[0]?.textContent).toContain('把书架整理好了');
