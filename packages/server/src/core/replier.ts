@@ -30,7 +30,7 @@ import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, VOICE_MOOD_INTENTS, type 
 import { parseVoiceIntent } from './voice/intent.js';
 import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
-import { MediaDirector } from './mediaDirector.js';
+import type { MediaDirector } from './mediaDirector.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
 import { decideWebSearch } from './web-search/policy.js';
 import { formatWebSearchContext } from './web-search/service.js';
@@ -88,6 +88,8 @@ export interface TextGenerationResult {
    * only after TTS finishes.
    */
   hiddenDraft?: boolean;
+  /** User explicitly requested a sticker-only reply; hold text until sticker selection completes. */
+  hiddenStickerOnly?: boolean;
   /** Bounded citation metadata only; raw provider payloads never enter this object. */
   webSearch?: WebSearchResult;
 }
@@ -117,6 +119,7 @@ export class Replier {
       stickers: StickerLibrary;
       stickerPicker: StickerPicker;
       capabilities: CapabilityRegistry;
+      mediaDirector: MediaDirector;
       context: ContextBuilder;
       bus: EventBus;
       config: ConfigStore;
@@ -170,6 +173,8 @@ export class Replier {
       const hiddenDraft = this.deps.voiceV2Enabled !== false && this.deps.voice != null
         && caps.has('tts') && persona.voicePolicy.enabled
         && (userVoiceIntent === 'voice_only' || userVoiceIntent === 'voice_reply');
+      const hiddenStickerOnly = userDirectives.stickerOnly === true;
+      const holdDraft = hiddenDraft || hiddenStickerOnly;
 
       const allowVision = caps.visionProvider() !== null;
       const chatModel = this.deps.config.chatModelFor('chat');
@@ -318,7 +323,7 @@ export class Replier {
         if (!visible) return;
         if (!published) {
           visibleText += visible;
-          if (!hiddenDraft && Date.now() >= publishDeadline) void openBarrier().catch(() => undefined);
+          if (!holdDraft && Date.now() >= publishDeadline) void openBarrier().catch(() => undefined);
           return;
         }
         persistDelta(visible);
@@ -391,7 +396,7 @@ export class Replier {
       // the deadline, then open the barrier once (still cancellable). A
       // hidden-draft replace never opens the barrier here — phase 2 publishes
       // the audio (or its text fallback) instead.
-      if (!hiddenDraft && !published && (visibleText || noModel)) {
+      if (!holdDraft && !published && (visibleText || noModel)) {
         const wait = Math.max(0, publishDeadline - Date.now());
         if (wait > 0) await abortableDelay(wait, signal);
         await openBarrier();
@@ -410,7 +415,7 @@ export class Replier {
           this.deps.messages.deletePart(textPartId);
           textPartId = null;
         }
-      } else if (finalText && !hiddenDraft) {
+      } else if (finalText && !holdDraft) {
         // The barrier only opens when there is visible text to show; text that
         // materialised later (e.g. stripped directives resolving into content)
         // still needs a shell to attach to, created fenced behind the barrier.
@@ -441,6 +446,7 @@ export class Replier {
         published,
         interrupted,
         hiddenDraft,
+        hiddenStickerOnly,
         webSearch: webSearchResult
       };
     } finally {
@@ -480,6 +486,7 @@ export class Replier {
     // ready, so no empty bubble and no visible-then-vanished text.
     const userVoiceIntent = parseVoiceIntent(userText);
     const hiddenReplace = generated.hiddenDraft === true;
+    const hiddenStickerOnly = generated.hiddenStickerOnly === true;
     let shell: ChatMessage | null = null;
     let textPartId: string | null = null;
     if (!hiddenReplace && !generated.published) {
@@ -491,7 +498,7 @@ export class Replier {
         revision: batch.revision,
         messageId: shell.id
       });
-      if (generated.text) {
+      if (generated.text && !hiddenStickerOnly) {
         textPartId = this.deps.messages.appendPart(shell.id, {
           type: 'text',
           text: generated.text,
@@ -562,6 +569,20 @@ export class Replier {
       }
     }
 
+    // An explicit sticker-only request gets a shell without a text part. If
+    // selection returns null, retain the generated text as the safe fallback;
+    // when selection succeeds, no text was ever visible to flash and no delete
+    // event is needed later.
+    if (hiddenStickerOnly && shell && !producedParts.includes('sticker') && finalText) {
+      textPartId = this.deps.messages.appendPart(shell.id, {
+        type: 'text',
+        text: finalText,
+        status: 'sent',
+        meta: webSearchPartMeta(generated.webSearch)
+      });
+      producedParts.push('text');
+    }
+
     // 3b. Image (deferred for hidden-draft replace, same reason).
     const imagePrompt = plan.selfImagePrompt ?? plan.imagePrompt;
     if (imagePrompt && !shell) degraded.push('image:deferred');
@@ -575,18 +596,14 @@ export class Replier {
       // user's instruction is already precise and must not be rewritten.
       let finalImagePrompt = imagePrompt;
       const editingUserImage = referenceMediaIds.length === 1;
-      if (!editingUserImage && this.deps.capabilities.has('chat')) {
-        const director = new MediaDirector({
-          config: this.deps.config,
-          chatProvider: () => this.deps.capabilities.chatProvider()
-        });
-        const expanded = await director.image({
+      if (!editingUserImage && this.deps.capabilities.has('director')) {
+        const expanded = await this.deps.mediaDirector.image({
           scene: imagePrompt.slice(0, 400),
           intent: plan.selfImagePrompt ? 'selfie' : 'private snapshot'
         }, { signal });
         if (expanded.prompt && expanded.prompt.trim()) finalImagePrompt = expanded.prompt.trim();
       }
-      this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: finalImagePrompt.slice(0, 200) });
+      this.deps.bus.publish('reply.image.generating', { messageId: shell.id, intentChars: imagePrompt.length });
       const partId = this.deps.messages.appendPart(shell.id, {
         type: 'image',
         status: 'pending',

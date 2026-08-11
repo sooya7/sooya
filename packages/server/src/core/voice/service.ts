@@ -19,7 +19,7 @@ import { normalizeVoiceText, ruleBasedColloquial } from './normalize.js';
 import { semanticRiskReport } from './semantic.js';
 import { decideVoiceMode } from './planner.js';
 import type { VoiceDecision } from './planner.js';
-import { MediaDirector, type VoiceDirectorIntent } from '../mediaDirector.js';
+import type { MediaDirector } from '../mediaDirector.js';
 import { DEFAULT_SPEECH_STYLE, stylePromptHints } from './style.js';
 import type { PersonaSpeechStyle } from './style.js';
 import type { UserVoicePreferences, VoiceMode, VoiceRequestedBy, VoiceScript, VoicePartMeta, VoiceDeliveryPlan } from './types.js';
@@ -113,6 +113,7 @@ export class VoiceService {
       voice: VoiceGenerationRepo;
       batches: ReplyBatchRepo;
       capabilities: CapabilityRegistry;
+      mediaDirector: MediaDirector;
       config: ConfigStore;
       settings: SettingsRepo;
       bus: EventBus;
@@ -628,74 +629,43 @@ export class VoiceService {
     intent?: { emotion?: string | null; intensity?: number | null }
   ): Promise<VoiceScript | null> {
     const caps = this.deps.capabilities;
-    if (!caps.has('chat')) return null;
-    const provider = caps.chatProvider();
-    const persona = this.deps.config.getPersona();
+    if (!caps.has('director')) return null;
     if (attempt > 0) this.deps.metrics?.record('voice', 'script_rewrite');
-
-    // First attempt goes through the Voice Director (fixed prompt → Fish-ready
-    // {text, speed}). Rewrites keep the existing inline prompt so the
-    // naturalness/semantic feedback loop stays stable.
-    if (attempt === 0) {
-      const director = new MediaDirector({
-        config: this.deps.config,
-        chatProvider: () => caps.chatProvider()
-      });
-      const directorIntent: VoiceDirectorIntent = {
-        content: text,
-        emotion: intent?.emotion ?? undefined,
-        intensity: intent?.intensity ?? undefined
-      };
-      const result = await director.voice(directorIntent, { signal, mode, userText, maxSeconds });
-      const spoken = result.text.trim();
-      if (!spoken) return null;
+    const spokenBase = text.trim();
+    if (mode === 'read_aloud') {
       return {
-        spokenText: spoken,
+        spokenText: spokenBase,
         mode,
-        purpose: mode === 'replace' ? 'full_answer' : mode === 'summary' ? 'short_summary' : 'emotional_support',
-        estimatedSeconds: estimateSpeechSeconds(spoken),
+        purpose: 'full_answer',
+        estimatedSeconds: estimateSpeechSeconds(spokenBase),
         semanticClaims: [],
-        styleTags: [],
-        directorSpeed: result.speed !== 1 ? result.speed : undefined
+        styleTags: ['read-aloud']
       };
     }
 
-    const styleHints = stylePromptHints(this.speechStyle);
-    const prompt = [
-      `你是${persona.name}。下面是你刚在聊天里写的一段文字回复。请把它改写成「语音消息的口语脚本」——就像按住语音键自然说话，不是念稿。`,
-      `【用户这轮说的话】\n${(userText || '（用户这轮没有发文字）').slice(0, 1500)}\n`,
-      `【你已经确定的回复内容】\n${text.slice(0, 2500)}\n`,
-      `【语音模式】${MODE_PROMPT[mode]}`,
-      `要求：短句；一次只表达一个重点；不要标题、列表、Markdown、链接；不要逐句复述原文；不要堆砌「嗯、啊、那个」；不要广播腔或客服腔。`,
-      `事实只能来自上面【你已经确定的回复内容】，不要编造、补充或承诺任何新信息。`,
-      styleHints,
-      `时长上限约 ${maxSeconds} 秒（中文约每秒 4-5 字）。`,
-      ...(attempt > 0 && reportReasons?.length ? [`上一版没有通过检查，原因：${reportReasons.join('；')}。请针对这些问题重写。`] : []),
-      `只输出脚本本身，不要任何解释或前后缀。`
-    ].join('\n');
-    try {
-      const result = await provider.complete({
-        system: persona.systemPrompt,
-        messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-        maxTokens: Math.min(1000, Math.max(200, Math.round(text.length * 1.6))),
-        temperature: 0.9,
-        signal
-      });
-      const spoken = (result.text ?? '').trim();
-      if (!spoken) return null;
-      return {
-        spokenText: spoken,
-        mode,
-        purpose: mode === 'replace' ? 'full_answer' : mode === 'summary' ? 'short_summary' : 'emotional_support',
-        estimatedSeconds: estimateSpeechSeconds(spoken),
-        semanticClaims: [],
-        styleTags: []
-      };
-    } catch (err) {
-      if (signal.aborted) throw err;
-      this.deps.errorLog.add('voice.script', 'script_generation_failed', { diagnostic: redactDiagnostic(err as Error) });
-      return null;
-    }
+    const result = await this.deps.mediaDirector.voice({
+      content: spokenBase,
+      emotion: intent?.emotion ?? undefined,
+      intensity: intent?.intensity ?? undefined
+    }, {
+      signal,
+      mode: MODE_PROMPT[mode],
+      userText,
+      maxSeconds,
+      styleHints: stylePromptHints(this.speechStyle),
+      reportReasons: attempt > 0 ? reportReasons : undefined
+    });
+    const spoken = result.text.trim();
+    if (!spoken) return null;
+    return {
+      spokenText: spoken,
+      mode,
+      purpose: mode === 'replace' ? 'full_answer' : mode === 'summary' ? 'short_summary' : 'emotional_support',
+      estimatedSeconds: estimateSpeechSeconds(spoken),
+      semanticClaims: [],
+      styleTags: [],
+      directorSpeed: result.speed !== 1 ? result.speed : undefined
+    };
   }
 
   /**

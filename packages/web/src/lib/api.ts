@@ -54,14 +54,6 @@ export const api = {
   messageSearch: (q: string, opts: { limit?: number; cursor?: string | null } = {}) => { const params = new URLSearchParams({ q }); if (opts.limit) params.set('limit', String(opts.limit)); if (opts.cursor) params.set('cursor', opts.cursor); return request<{ hits: MessageSearchHit[]; nextCursor: string | null }>(`/api/messages/search?${params.toString()}`); },
   messagesByDate: (date: string, timeZone: string, limit = 200) => { const params = new URLSearchParams({ date, timeZone, limit: String(limit) }); return request<{ date: string; timeZone: string; messages: ChatMessage[]; hasMore: boolean }>(`/api/messages/by-date?${params.toString()}`); },
   messageContext: (id: string, opts: { before?: number; after?: number } = {}) => { const params = new URLSearchParams(); if (opts.before !== undefined) params.set('before', String(opts.before)); if (opts.after !== undefined) params.set('after', String(opts.after)); return request<MessageContext>(`/api/messages/${encodeURIComponent(id)}/context?${params.toString()}`); },
-  stickerSearch: (opts: { scope?: 'recent' | 'favorite' | 'all'; q?: string; limit?: number; cursor?: string | null } = {}) => {
-    const params = new URLSearchParams({ scope: opts.scope ?? 'all' });
-    if (opts.q?.trim()) params.set('q', opts.q.trim());
-    if (opts.limit) params.set('limit', String(opts.limit));
-    if (opts.cursor) params.set('cursor', opts.cursor);
-    return request<{ stickers: StickerInfo[]; total: number; nextCursor: string | null }>(`/api/stickers?${params.toString()}`);
-  },
-  stickerPreference: (id: string, favorite: boolean) => request<{ sticker: StickerInfo }>(`/api/stickers/${encodeURIComponent(id)}/preferences`, { method: 'PATCH', body: JSON.stringify({ favorite }) }),
   mediaMeta: (id: string) => request<{ media: MediaRef; text: { status: string; value?: string | null; metadata?: unknown; error?: string | null } | null; exists: boolean }>(`/api/media/${encodeURIComponent(id)}/meta`),
   send: (payload: { clientMsgId: string; content: unknown[]; directives?: Record<string, boolean>; replyTo?: string }) => request<{ message: ChatMessage; duplicate: boolean; replyPending: boolean }>('/api/messages', { method: 'POST', body: JSON.stringify(payload) }),
   withdraw: (id: string) => request<{ message: ChatMessage }>(`/api/messages/${encodeURIComponent(id)}/withdraw`, { method: 'POST' }),

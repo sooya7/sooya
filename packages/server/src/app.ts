@@ -28,6 +28,8 @@ import { StickerUserMeaningLearner } from './core/stickers/user-meaning.js';
 import { PersonaReferenceLoader } from './media/persona-references.js';
 import { ImageVariantService } from './media/variants.js';
 import { CapabilityRegistry } from './core/capabilities.js';
+import { DirectorClient } from './core/director/client.js';
+import { MediaDirector } from './core/mediaDirector.js';
 import { MemoryService } from './core/memory.js';
 import { ContextBuilder } from './core/context.js';
 import { Summarizer } from './core/summarizer.js';
@@ -131,6 +133,8 @@ export interface SooyaApp {
     stickerPicker: StickerPicker;
     stickerUserMeaning: StickerUserMeaningLearner;
     capabilities: CapabilityRegistry;
+    directorClient: DirectorClient;
+    mediaDirector: MediaDirector;
     webSearch: WebSearchRegistry;
     memory: MemoryService;
     life: LifeRuntime;
@@ -240,6 +244,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const stickerLibrary = new StickerLibrary(repos.stickers, repos.media, mediaStore);
   mediaStore.setOnDelete(() => stickerLibrary.invalidate());
   const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl });
+  const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
+  metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
+  const directorClient = new DirectorClient(
+    () => capabilities.directorProvider(),
+    { metrics, onEvent: (event) => logger.debug({ ...event }, `director.${event.event}`) }
+  );
+  const mediaDirector = new MediaDirector(directorClient);
   const stickerAnalyzer = new StickerAnalyzer(
     repos.stickers,
     mediaStore,
@@ -253,17 +264,17 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     (error) => logger.warn({ error: redactDiagnostic(error) }, 'sticker embedding retrieval degraded')
   );
   const stickerPicker = new StickerPicker(
-    () => capabilities.stickerProvider(),
+    directorClient,
     stickerRetriever,
     (event, data) => logger.info({ ...data }, `sticker.pick.${event}`)
   );
   const stickerUserMeaning = new StickerUserMeaningLearner(
     repos.stickers,
     repos.messages,
-    () => capabilities.stickerProvider()
+    () => capabilities.chatProvider()
   );
   const bus = new EventBus(repos.events);
-  const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE });
+  const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE, config });
   const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
   /*
@@ -317,8 +328,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   webSearch.rebuild(config.getModels().webSearch);
   // Thread location tags: real open threads feed the location selector.
   location.setThreadsProvider(() => repos.lifeV2.threads('open'));
-  const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
-  metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
   const life = env.ENABLE_LIFE_V2
     ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
@@ -328,6 +337,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     voice: repos.voice,
     batches: repos.replyBatches,
     capabilities,
+    mediaDirector,
     config,
     settings: repos.settings,
     bus,
@@ -364,7 +374,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
 
-  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, stickerPicker, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot() });
+  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, stickerPicker, capabilities, mediaDirector, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot() });
   const thoughtFlags = readThoughtsFlags(process.env);
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
@@ -488,7 +498,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const tools = new ToolRegistry();
   const agents = new AgentRegistry();
   const agentCapabilities = new CapabilityRegistryStub();
-  for (const cap of ['chat', 'vision', 'summary', 'sticker', 'embedding', 'image', 'tts'] as const) {
+  for (const cap of ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'tts'] as const) {
     agentCapabilities.register({ name: cap, description: `model capability: ${cap}`, available: () => capabilities.has(cap) });
   }
 
@@ -506,7 +516,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       logger.warn({ assetsDir }, 'built-in sticker assets not found');
     }
   }
-  if (opts.startWorkers !== false && env.ENABLE_BACKGROUND_JOBS) {
+  const enqueuePendingStickerMaintenance = (): void => {
+    if (opts.startWorkers === false || !env.ENABLE_BACKGROUND_JOBS) return;
     const activeAnalysis = new Set(
       repos.jobs.list(500)
         .filter((job) => job.type === 'sticker.analyze' && (job.status === 'pending' || job.status === 'running'))
@@ -516,8 +527,23 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     const pending = repos.stickers.list({ enabledOnly: true })
       .filter((sticker) => sticker.analysisStatus !== 'ready' && sticker.analysisSource !== 'manual' && !activeAnalysis.has(sticker.id))
       .slice(0, 100);
-    for (const sticker of pending) repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2 });
-  }
+    if (capabilities.visionProvider()) {
+      for (const sticker of pending) repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2 });
+    }
+    if (capabilities.has('embedding')) {
+      const embedding = config.getModels().embedding;
+      const needsBackfill = repos.stickers.list({ enabledOnly: true }).some((sticker) =>
+        sticker.analysisStatus === 'ready' && (
+          !sticker.embedding
+          || (embedding.model.trim().length > 0 && sticker.embeddingModel !== embedding.model.trim())
+          || (embedding.dimensions !== undefined && sticker.embeddingDim !== embedding.dimensions)
+        )
+      );
+      const activeBackfill = repos.jobs.list(500).some((job) => job.type === 'sticker.embed.backfill' && (job.status === 'pending' || job.status === 'running'));
+      if (needsBackfill && !activeBackfill) repos.jobs.enqueue('sticker.embed.backfill', {});
+    }
+  };
+  enqueuePendingStickerMaintenance();
 
   const startupCounters = reconcileCounters(dbHandle);
   logger.debug(startupCounters, 'sequence counters reconciled at startup');
@@ -609,7 +635,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, webSearch, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -632,6 +658,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   stopModelWatcher = config.watchModels(() => {
     capabilities.rebuild();
     webSearch.rebuild(config.getModels().webSearch);
+    enqueuePendingStickerMaintenance();
   });
 
   repos.voice.recoverInFlight();

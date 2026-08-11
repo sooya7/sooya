@@ -23,11 +23,7 @@ export function renderMessageForSummary(message: ChatMessage): string {
     if (part.status === 'failed') continue;
     if (part.type === 'text' && part.text) bits.push(part.text);
     else if (part.type === 'audio') bits.push(part.transcript ? `(语音)${part.transcript}` : '(语音)');
-    else if (part.type === 'sticker') {
-      const name = typeof part.meta?.stickerName === 'string' ? part.meta.stickerName : '未命名';
-      const meaning = typeof part.meta?.stickerMeaning === 'string' ? part.meta.stickerMeaning : '';
-      bits.push(`(表情包：${name}${meaning ? `，${meaning.slice(0, 120)}` : ''})`);
-    }
+    else if (part.type === 'sticker') bits.push('(表情包)');
     else if (part.type === 'image') bits.push('(图片)');
     else if (part.type === 'file') bits.push('(文件)');
   }

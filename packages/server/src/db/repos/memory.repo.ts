@@ -230,16 +230,26 @@ export class MemoryRepo {
     return (this.db.prepare(sql).all(...params) as MemoryRow[]).map((r) => this.toRecord(r));
   }
 
-  /** All active, non-expired memories with embeddings of the given dimension. */
-  activeWithEmbeddings(dim: number): Array<{ row: MemoryRow; vector: number[] }> {
+  /** All active, non-expired memories with embeddings from the same model/dimension. */
+  activeWithEmbeddings(opts: number | { dimensions: number; model?: string }): Array<{ row: MemoryRow; vector: number[] }> {
+    const dimensions = typeof opts === 'number' ? opts : opts.dimensions;
+    const model = typeof opts === 'number' ? undefined : opts.model;
+    const modelClause = model ? ' AND embedding_model = ?' : '';
     const rows = this.db
       .prepare(
         `SELECT * FROM memories WHERE active = 1 AND (kind <> 'project' OR archived_at IS NULL)
           AND embedding IS NOT NULL AND embedding_dim = ?
-          AND (expires_at IS NULL OR expires_at > ?)`
+          AND (expires_at IS NULL OR expires_at > ?)${modelClause}`
       )
-      .all(dim, nowIso()) as MemoryRow[];
+      .all(dimensions, nowIso(), ...(model ? [model] : [])) as MemoryRow[];
     return rows.map((row) => ({ row, vector: bufferToFloats(row.embedding!) }));
+  }
+
+  embeddingNeedsRefresh(id: string, model?: string, dimensions?: number): boolean {
+    const row = this.db.prepare('SELECT embedding, embedding_model, embedding_dim FROM memories WHERE id = ?').get(id) as Pick<MemoryRow, 'embedding' | 'embedding_model' | 'embedding_dim'> | undefined;
+    if (!row || !row.embedding) return true;
+    if (model && row.embedding_model !== model) return true;
+    return dimensions !== undefined && row.embedding_dim !== dimensions;
   }
 
   /**
@@ -453,4 +463,3 @@ export function ngrams(text: string, n: number): Set<string> {
   for (let i = 0; i + n <= chars.length; i++) out.add(chars.slice(i, i + n).join(''));
   return out;
 }
-

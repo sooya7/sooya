@@ -23,9 +23,12 @@ export async function prepareStickerVisionFrames(
 ): Promise<StickerVisionFrame[]> {
   const normalized = mime.split(';')[0]?.toLowerCase() ?? '';
   try {
-    const metadata = await sharp(data, { failOn: 'error' }).metadata();
-    const pages = Math.max(1, metadata.pages ?? 1);
-    const animated = pages > 1 || normalized === 'image/gif';
+    const metadata = await sharp(data, { animated: true, failOn: 'error' }).metadata();
+    const inferredPages = metadata.pages ?? (
+      metadata.pageHeight && metadata.height ? Math.floor(metadata.height / metadata.pageHeight) : 1
+    );
+    const pages = Math.max(1, inferredPages);
+    const animated = pages > 1 || normalized === 'image/gif' || normalized === 'image/webp';
     const wanted = animated ? Math.min(Math.max(1, maxFrames), STICKER_GIF_ANALYSIS_MAX_FRAMES) : 1;
     const indexes = animated ? sampleFrameIndexes(pages, wanted) : [0];
     const frames: StickerVisionFrame[] = [];

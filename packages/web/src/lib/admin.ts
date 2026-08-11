@@ -220,17 +220,6 @@ export interface AdminSticker {
   emotion: string;
   enabled: boolean;
   useCount: number;
-  assistantUseCount?: number;
-  assistantLastUsedAt?: string | null;
-  userUseCount?: number;
-  description?: string | null;
-  imageText?: string | null;
-  userMeaning?: string | null;
-  analysisStatus?: 'pending' | 'processing' | 'ready' | 'failed';
-  analysisSource?: 'ai' | 'manual' | 'legacy';
-  analysisError?: string | null;
-  analysisVersion?: number;
-  hasEmbedding?: boolean;
   url: string;
   available?: boolean;
 }
@@ -397,30 +386,17 @@ export const adminApi = {
   overrideLocation: (locationId: string, reason: string) =>
     adminRequest<{ location: AdminLifeLocation }>('/api/admin/life/location/override', { method: 'POST', body: { locationId, reason } }),
   proactiveAttempts: () => adminRequest<{ attempts: AdminProactiveAttempt[] }>('/api/admin/life/proactive'),
-  stickers: (opts: { q?: string; status?: string; enabled?: boolean; limit?: number; offset?: number } = {}) => {
-    const params = new URLSearchParams();
-    if (opts.q) params.set('q', opts.q);
-    if (opts.status) params.set('status', opts.status);
-    if (opts.enabled !== undefined) params.set('enabled', String(opts.enabled));
-    if (opts.limit) params.set('limit', String(opts.limit));
-    if (opts.offset) params.set('offset', String(opts.offset));
-    const query = params.toString();
-    return adminRequest<{ stickers: AdminSticker[]; total: number; offset: number; analysisVersion?: number }>(`/api/admin/stickers${query ? `?${query}` : ''}`);
-  },
+  stickers: () => adminRequest<{ stickers: AdminSticker[] }>('/api/admin/stickers'),
   uploadSticker: (body: FormData) =>
     adminRequest<{ created: AdminSticker[]; failed: Array<{ filename: string; error: string }> }>('/api/admin/stickers', {
       method: 'POST',
       body
     }),
-  updateSticker: (id: string, patch: Partial<Pick<AdminSticker, 'name' | 'tags' | 'emotion' | 'enabled' | 'description' | 'imageText' | 'userMeaning'>> & { userMeaningSource?: 'none' | 'ai' | 'manual'; favorite?: boolean }) =>
+  updateSticker: (id: string, patch: Partial<Pick<AdminSticker, 'name' | 'tags' | 'emotion' | 'enabled'>>) =>
     adminRequest<{ sticker: AdminSticker }>(`/api/admin/stickers/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: patch
     }),
-  analyzeSticker: (id: string, force = false) =>
-    adminRequest<{ queued: boolean; jobId: string; stickerId: string }>(`/api/admin/stickers/${encodeURIComponent(id)}/analyze`, { method: 'POST', body: force ? { force: true } : {} }),
-  analyzeStickerBatch: (body: { mode?: 'missing_or_stale' | 'selected'; ids?: string[] } = {}) =>
-    adminRequest<{ queued: number; skipped: number }>('/api/admin/stickers/analyze-batch', { method: 'POST', body }),
   deleteSticker: (id: string) =>
     adminRequest<{ deleted: boolean }>(`/api/admin/stickers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   modelPresets: () => adminRequest<{ presets: ModelPreset[]; slots: ModelSlot[] }>('/api/admin/model-presets'),

@@ -62,15 +62,6 @@ export interface StickerInfo {
   tags: string[];
   url: string;
   mediaId: string;
-  description?: string | null;
-  imageText?: string | null;
-  userMeaning?: string | null;
-  favorite?: boolean;
-  assistantUseCount?: number;
-  assistantLastUsedAt?: string | null;
-  userUseCount?: number;
-  analysisStatus?: 'pending' | 'processing' | 'ready' | 'failed';
-  userLastUsedAt?: string | null;
 }
 
 export type ConnectionState = 'connecting' | 'online' | 'offline' | 'unauthorized';

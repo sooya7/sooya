@@ -161,10 +161,22 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   });
 
   worker.register('sticker.embed.backfill', async () => {
-    const missing = deps.stickerRepo.list({ enabledOnly: true }).filter((sticker) =>
-      sticker.analysisStatus === 'ready' && (!sticker.embedding || sticker.embeddingModel !== deps.config.getModels().embedding.model)
-    ).slice(0, 20);
+    const embeddingConfig = deps.config.getModels().embedding;
+    const expectedModel = embeddingConfig.model.trim();
+    const expectedDimensions = embeddingConfig.dimensions;
+    const candidates = deps.stickerRepo.list({ enabledOnly: true }).filter((sticker) =>
+      sticker.analysisStatus === 'ready' && (
+        !sticker.embedding
+        || (expectedModel.length > 0 && sticker.embeddingModel !== expectedModel)
+        || (expectedDimensions !== undefined && sticker.embeddingDim !== expectedDimensions)
+      )
+    );
+    const missing = candidates.slice(0, 20);
     for (const sticker of missing) deps.jobs.enqueue('sticker.embed', { stickerId: sticker.id }, { maxAttempts: 2 });
+    // Keep draining large catalogues in bounded batches. The next durable job
+    // is queued only after this batch is claimed, so startup never floods the
+    // job table with one row per sticker.
+    if (candidates.length > missing.length) deps.jobs.enqueue('sticker.embed.backfill', {});
   });
 
   worker.register('sticker.user-meaning.learn', async (payload) => {

@@ -194,14 +194,14 @@ export const RerankModelSchema = z.object({
 export type RerankModelConfig = z.infer<typeof RerankModelSchema>;
 
 /** The fixed capability slots a model can be assigned to. */
-export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'sticker', 'embedding', 'image', 'tts', 'rerank'] as const;
+export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'tts', 'rerank'] as const;
 export const ModelSlotSchema = z.enum(MODEL_SLOTS);
 export type ModelSlot = z.infer<typeof ModelSlotSchema>;
 
 /**
  * A named model the operator saved for reuse. The slots above are fixed, so
  * without this a panel user cannot "add a model" at all — only overwrite one of
- * seven. A preset deliberately holds no secret or key reference, so the
+ * eight. A preset deliberately holds no secret or key reference, so the
  * library can be listed, exported and diffed without spreading credentials.
  * Applying it leaves the target slot's existing key untouched.
  */
@@ -245,6 +245,9 @@ export const ModelsConfigSchema = z.object({
   chat: ChatModelSchema.default({}),
   vision: ChatModelSchema.optional(),
   summary: ChatModelSchema.optional(),
+  /** Media Director model. The old `sticker` field remains read-compatible. */
+  director: ChatModelSchema.optional(),
+  /** @deprecated Read-only compatibility for pre-Director models.json files. */
   sticker: ChatModelSchema.optional(),
   embedding: EmbeddingModelSchema.default({}),
   image: ImageModelSchema.default({}),

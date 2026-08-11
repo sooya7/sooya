@@ -77,12 +77,6 @@ export interface MessageSearchHit {
   matchedPartId: string | null;
 }
 
-export interface StickerUsageSample {
-  messageId: string;
-  createdAt: string;
-  context: string;
-}
-
 export class MessageRepo {
   private readonly media: MediaRepo;
 
@@ -432,26 +426,6 @@ export class MessageRepo {
       .prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY seq DESC LIMIT ?')
       .all(CONVERSATION_ID, limit) as MessageRow[];
     return this.hydrate(rows.reverse());
-  }
-
-  /** Bounded user-only contexts used to learn a personal sticker meaning. */
-  stickerUsage(stickerId: string, mediaId: string, limit = 6): StickerUsageSample[] {
-    const rows = this.db.prepare(
-      `SELECT m.id, m.created_at FROM messages m
-       JOIN message_parts p ON p.message_id = m.id
-       WHERE m.conversation_id = ? AND m.role = 'user' AND p.type = 'sticker'
-         AND (json_extract(p.meta_json, '$.stickerId') = ? OR p.media_id = ?)
-       ORDER BY m.seq DESC LIMIT ?`
-    ).all(CONVERSATION_ID, stickerId, mediaId, Math.max(1, Math.min(limit, 6))) as Array<{ id: string; created_at: string }>;
-    return rows.map((row) => {
-      const context = this.context(row.id, 1, 1);
-      const text = context?.messages.map((message) => {
-        const who = message.role === 'assistant' ? 'SOOYA' : '用户';
-        const body = message.content.map((part) => part.type === 'text' ? part.text ?? '' : part.type === 'audio' ? part.transcript ?? '' : part.type === 'sticker' ? '(表情包)' : '').filter(Boolean).join(' ');
-        return body ? `${who}：${body}` : '';
-      }).filter(Boolean).join('\n') ?? '';
-      return { messageId: row.id, createdAt: row.created_at, context: text.slice(0, 900) };
-    });
   }
 
   maxSeq(): number {

@@ -4,14 +4,14 @@
  * cannot drift apart silently: everything here mirrors `ModelPresetSchema`.
  */
 
-export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'sticker', 'embedding', 'image', 'tts', 'rerank'] as const;
+export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'tts', 'rerank'] as const;
 export type ModelSlot = (typeof MODEL_SLOTS)[number];
 
 export const SLOT_LABELS: Record<ModelSlot, string> = {
   chat: '对话',
   vision: '读图',
   summary: '摘要',
-  sticker: '表情选择',
+  director: '媒体导演',
   embedding: '记忆向量',
   image: '生图',
   tts: '语音合成',
@@ -23,7 +23,7 @@ export const SLOT_PROVIDERS: Record<ModelSlot, string[]> = {
   chat: ['openai-chat', 'openai-responses', 'anthropic-messages', 'openai-compatible'],
   vision: ['openai-chat', 'openai-responses', 'anthropic-messages', 'openai-compatible'],
   summary: ['openai-chat', 'openai-responses', 'anthropic-messages', 'openai-compatible'],
-  sticker: ['openai-chat', 'openai-responses', 'anthropic-messages', 'openai-compatible'],
+  director: ['openai-chat', 'openai-responses', 'anthropic-messages', 'openai-compatible'],
   embedding: ['openai-embeddings', 'openai-compatible'],
   image: ['openai-images', 'anuma-input-images', 'openai-compatible'],
   tts: ['openai-tts', 'volc-tts', 'fish', 'openai-compatible'],

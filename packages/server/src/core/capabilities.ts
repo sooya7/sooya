@@ -13,7 +13,7 @@ import type {
   TTSProvider
 } from '../providers/types.js';
 
-export type CapabilityName = 'chat' | 'vision' | 'summary' | 'sticker' | 'embedding' | 'image' | 'tts' | 'rerank';
+export type CapabilityName = 'chat' | 'vision' | 'summary' | 'director' | 'embedding' | 'image' | 'tts' | 'rerank';
 
 /**
  * Central model gateway / capability registry.
@@ -24,7 +24,7 @@ export class CapabilityRegistry {
   private chat!: ChatProvider;
   private vision!: ChatProvider;
   private summary!: ChatProvider;
-  private sticker!: ChatProvider;
+  private director!: ChatProvider;
   private embedding!: EmbeddingProvider;
   private image!: ImageProvider;
   private tts!: TTSProvider;
@@ -42,7 +42,7 @@ export class CapabilityRegistry {
     this.chat = createChatProvider(this.config.chatModelFor('chat'), this.deps);
     this.vision = createChatProvider(this.config.chatModelFor('vision'), this.deps);
     this.summary = createChatProvider(this.config.chatModelFor('summary'), this.deps);
-    this.sticker = createChatProvider(this.config.chatModelFor('sticker'), this.deps);
+    this.director = createChatProvider(this.config.chatModelFor('director'), this.deps);
     this.embedding = createEmbeddingProvider(models.embedding, this.deps);
     this.image = createImageProvider(models.image, this.deps);
     this.tts = createTTSProvider(models.tts, this.deps);
@@ -64,9 +64,14 @@ export class CapabilityRegistry {
     return this.summary;
   }
 
-  /** Dedicated picker model, falling back to the chat model in ConfigStore. */
+  /** Shared media-director model, falling back to the chat model in ConfigStore. */
+  directorProvider(): ChatProvider {
+    return this.director;
+  }
+
+  /** @deprecated Use directorProvider(). Kept for one migration window. */
   stickerProvider(): ChatProvider {
-    return this.sticker;
+    return this.directorProvider();
   }
 
   embeddingProvider(): EmbeddingProvider {
@@ -106,8 +111,8 @@ export class CapabilityRegistry {
         return this.visionProvider() !== null;
       case 'summary':
         return this.summary.configured;
-      case 'sticker':
-        return this.sticker.configured;
+      case 'director':
+        return this.director.configured;
       case 'embedding':
         return this.embedding.configured;
       case 'image':
@@ -123,11 +128,11 @@ export class CapabilityRegistry {
 
   async statuses(): Promise<Record<CapabilityName, HealthStatus>> {
     const visionCfg = this.config.chatModelFor('vision');
-    const [chat, vision, summary, sticker, embedding, image, tts, rerank] = await Promise.all([
+    const [chat, vision, summary, director, embedding, image, tts, rerank] = await Promise.all([
       this.chat.inspectHealth(),
       this.vision.inspectHealth(),
       this.summary.inspectHealth(),
-      this.sticker.inspectHealth(),
+      this.director.inspectHealth(),
       this.embedding.inspectHealth(),
       this.image.inspectHealth(),
       this.tts.inspectHealth(),
@@ -143,7 +148,7 @@ export class CapabilityRegistry {
         detail: visionCfg.supportsVision ? vision.detail : 'model does not declare vision support'
       },
       summary: { ...summary, capability: 'summary' },
-      sticker: { ...sticker, capability: 'sticker', detail: sticker.configured ? 'picker model' : 'not configured' },
+      director: { ...director, capability: 'director', detail: director.configured ? 'media director model' : 'not configured' },
       embedding,
       image,
       tts,

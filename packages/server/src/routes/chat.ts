@@ -267,14 +267,22 @@ const StickerQuerySchema = z.object({
 function stickerList(app: SooyaApp, query: z.infer<typeof StickerQuerySchema> = { scope: 'all', limit: 60 }): { stickers: ReturnType<typeof publicSticker>[]; total: number; nextCursor: string | null } {
   const available = new Map(app.services.stickerLibrary.available().map((sticker) => [sticker.id, sticker]));
   const offset = Number(query.cursor ?? 0);
-  const rows = query.q
-    ? app.repos.stickers.searchFts(query.q, { enabledOnly: true, scope: query.scope, limit: query.limit, offset })
-    : app.repos.stickers.list({ enabledOnly: true, scope: query.scope, limit: query.limit, offset });
-  const stickers = rows.filter((sticker) => available.has(sticker.id)).map((sticker) => publicSticker(available.get(sticker.id)!));
-  const total = query.q
-    ? app.repos.stickers.searchFts(query.q, { enabledOnly: true, scope: query.scope, limit: 500, offset: 0 }).filter((sticker) => available.has(sticker.id)).length
-    : [...available.values()].filter((sticker) => query.scope !== 'favorite' || sticker.favorite).length;
-  return { stickers, total, nextCursor: offset + stickers.length < total ? String(offset + stickers.length) : null };
+  // Cursor positions are over the stable repository result, not over the
+  // filtered list of files that happen to exist on disk. Otherwise a missing
+  // file shortens page N and `offset + visible.length` points back at the last
+  // visible row, so the next request repeats it forever.
+  const source = query.q
+    ? app.repos.stickers.searchFts(query.q, { enabledOnly: true, scope: query.scope, limit: 500, offset: 0 })
+    : app.repos.stickers.list({ enabledOnly: true, scope: query.scope });
+  const stickers: ReturnType<typeof publicSticker>[] = [];
+  let nextOffset = Math.min(offset, source.length);
+  while (nextOffset < source.length && stickers.length < query.limit) {
+    const row = source[nextOffset++];
+    const item = row && available.get(row.id);
+    if (item) stickers.push(publicSticker(item));
+  }
+  const total = source.filter((sticker) => available.has(sticker.id)).length;
+  return { stickers, total, nextCursor: nextOffset < source.length ? String(nextOffset) : null };
 }
 
 function publicSticker(sticker: ReturnType<SooyaApp['services']['stickerLibrary']['available']>[number]) {

@@ -59,13 +59,16 @@ const CAPABILITIES = [
   ['chat', '聊天模型'],
   ['vision', '视觉理解模型'],
   ['summary', '对话总结模型'],
-  ['sticker', '表情选择模型'],
+  ['director', '媒体导演模型'],
   ['embedding', '向量模型'],
   ['rerank', '记忆重排模型'],
   ['image', '图片生成模型'],
   ['tts', '语音合成模型'],
   ['webSearch', '联网搜索']
 ] as const;
+const CAPABILITY_DESCRIPTIONS: Partial<Record<ModelPanelSelection, string>> = {
+  director: '媒体导演统一负责表情选择、语音口语化和图片提示词扩写；未单独配置时回退聊天模型。它处理短结构化文本，不负责读图。'
+};
 type ModelPanelSelection = ModelSlot | 'webSearch';
 
 /** Nav groups, so nine sections read as a structure instead of a list. */
@@ -565,7 +568,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
             onNotice={onNotice}
           />
         </> : <>
-        <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description="编辑当前能力使用的真实服务端配置。" />
+        <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description={CAPABILITY_DESCRIPTIONS[selected] ?? '编辑当前能力使用的真实服务端配置。'} />
         <ModelLibrary onNotice={onNotice} onApplied={setModels} reloadKey={libraryKey} />
         <label>接口协议<select value={String(config.provider ?? 'none')} onChange={(e) => update('provider', e.target.value)}>
           {interfaceOptions(selected, config.provider == null ? null : String(config.provider)).map((option) => (
@@ -620,7 +623,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           <small>{config.apiKeyConfigured ? '已保存一把密钥。要换就粘新的，留空则保持不变。' : '还没有密钥，粘贴后点保存。'}</small>
         </label>
         <label>请求超时（毫秒）<input type="number" value={String(config.timeoutMs ?? '')} onChange={(e) => update('timeoutMs', Number(e.target.value))} /></label>
-        {['chat', 'vision', 'summary', 'sticker'].includes(selected) && <>
+        {['chat', 'vision', 'summary', 'director'].includes(selected) && <>
           <label>最大输出 Token<input type="number" value={String(config.maxTokens ?? '')} onChange={(e) => update('maxTokens', Number(e.target.value))} /></label>
           <label>Temperature<input type="number" step="0.1" value={String(config.temperature ?? '')} onChange={(e) => update('temperature', Number(e.target.value))} /></label>
           <label>上下文窗口<input type="number" value={String(config.contextWindow ?? '')} onChange={(e) => update('contextWindow', Number(e.target.value))} /></label>

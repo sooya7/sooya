@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { clearComposerDraft, readComposerDraft, writeComposerDraft } from '../lib/composerDraft.js';
 import type { ChatMessage, MediaRef, StickerInfo } from '../lib/types.js';
+import { mediaThumbnailPath } from '../lib/authenticatedMedia.js';
 import { AuthenticatedImage } from './AuthenticatedMedia.js';
-import { StickerPanel } from './StickerPanel.js';
 
 export interface PendingAttachment {
   key: string;
@@ -244,7 +244,14 @@ export function Composer({ disabled, disabledLabel, conversationId = 'main', rep
       onDrop={handleDrop}
     >
       {showStickers && (
-        <StickerPanel stickers={stickers} onSelect={(sticker) => void sendSticker(sticker)} onNotice={onNotice} />
+        <div className="sticker-panel" data-testid="sticker-panel">
+          {stickers.length === 0 && <div className="sticker-empty">还没有可用的表情包</div>}
+          {stickers.map((s) => (
+            <button key={s.id} type="button" className="sticker-choice" onClick={() => void sendSticker(s)} title={s.emotion}>
+              <AuthenticatedImage path={mediaThumbnailPath(s.url, 96)} scope="user" alt={s.name} loading="lazy" />
+            </button>
+          ))}
+        </div>
       )}
 
       {attachments.length > 0 && (

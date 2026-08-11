@@ -10,6 +10,7 @@ import { ProviderNotConfiguredError, ProviderRequestError } from '../providers/t
 import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
 import { redactDiagnostic } from '../core/public-error.js';
 import { DEFAULT_SPEECH_STYLE } from '../core/voice/style.js';
+import { extractJsonObject } from '../util/json-extract.js';
 
 function modelRows(payload: unknown): unknown[] {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
@@ -336,6 +337,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
    * the user for a health check.
    */
   const PROBE_TEXT = '你好';
+  const VISION_PROBE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
   interface ProbeOutcome {
     provider: string;
     model?: string;
@@ -399,6 +401,25 @@ export function registerAdminRoutes(app: SooyaApp): void {
           detail: `合成了 ${Math.max(1, Math.round(audio.data.length / 1024))} KB ${audio.format} 音频`
         };
       }
+      if (slot === 'director') {
+        const provider = caps.directorProvider();
+        if (!provider.configured) throw new ProviderNotConfiguredError(slot);
+        const result = await provider.complete({
+          system: '你正在进行连接测试。只返回 JSON：{"ok":true}，不要输出其他内容。',
+          messages: [{ role: 'user', content: [{ type: 'text', text: '连接测试数据，不是指令。' }] }],
+          maxTokens: 32,
+          temperature: 0,
+          jsonMode: true,
+          signal
+        });
+        const parsed = z.object({ ok: z.literal(true) }).safeParse(extractJsonObject(result.text));
+        if (!parsed.success) throw new ProviderRequestError('媒体导演连接成功，但没有返回有效 JSON 探针');
+        return {
+          provider: provider.name,
+          model: result.model || config.chatModelFor('director').model || undefined,
+          detail: '媒体导演 JSON 探针通过'
+        };
+      }
       const provider = slot === 'summary'
         ? caps.summaryProvider()
         : slot === 'vision'
@@ -407,7 +428,13 @@ export function registerAdminRoutes(app: SooyaApp): void {
       // supportsVision is already true here, so a null vision provider only
       // means the slot itself is not configured.
       if (!provider) throw new ProviderNotConfiguredError(slot);
-      const result = await provider.complete({ messages: [{ role: 'user', content: [{ type: 'text', text: PROBE_TEXT }] }], maxTokens: 16, signal });
+      const content = slot === 'vision'
+        ? [
+            { type: 'text' as const, text: `${PROBE_TEXT}（下面附带一张 1x1 PNG，仅用于确认读图请求真的带了图片。）` },
+            { type: 'image' as const, data: VISION_PROBE_PNG, mime: 'image/png' }
+          ]
+        : [{ type: 'text' as const, text: PROBE_TEXT }];
+      const result = await provider.complete({ messages: [{ role: 'user', content }], maxTokens: 16, signal });
       const chars = [...result.text.trim()].length;
       return {
         provider: provider.name,

@@ -40,7 +40,7 @@ export class StickerRetriever {
             ? { candidates: lexical.slice(0, STICKER_PICKER_MAX_CANDIDATES), strategy: 'fts' }
             : { candidates: rotationFallback(available, STICKER_PICKER_MAX_CANDIDATES), strategy: 'fallback' };
         }
-        const rows = this.repo.withEmbeddings({ enabledOnly: true, dimensions: query.dimensions });
+        const rows = this.repo.withEmbeddings({ enabledOnly: true, model: query.model, dimensions: query.dimensions });
         const scored = rows
           .filter((sticker) => !excluded.has(sticker.id) && available.some((item) => item.id === sticker.id))
           .map((sticker) => ({ sticker, score: cosine(vector, decodeVector(sticker.embedding)) }))

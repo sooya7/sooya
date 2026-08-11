@@ -37,6 +37,25 @@ describe('测试连接', () => {
     expect(sent.stream).toBe(false);
   });
 
+  it('媒体导演连接测试使用 director 槽位，而不是偷偷调用聊天槽位', async () => {
+    h = await boot({
+      chat: {
+        respond: ({ body }) => {
+          const model = (body as { model?: string })?.model;
+          if (model !== 'fake-director') return null;
+          return json(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+        }
+      }
+    });
+    h.app.config.setModels({ director: { provider: 'openai-chat', baseUrl: 'https://fake.example.com/v1', apiKey: 'sk-director-test', model: 'fake-director' } });
+    h.app.services.capabilities.rebuild();
+    const { res, body } = await test('director');
+    expect(res.statusCode).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.model).toBe('fake-director');
+    expect((h.state.chatCalls[0]!.body as { model?: string }).model).toBe('fake-director');
+  });
+
   it('200 但没有正文时仍算连通，而不是报成连接失败', async () => {
     h = await boot({ chat: { respond: () => json(200, { choices: [{ message: { content: '' }, finish_reason: 'length' }] }) } });
     const { res, body } = await test('chat');
@@ -132,6 +151,15 @@ describe('测试连接', () => {
     expect(res.statusCode).toBe(400);
     expect(body.error).toBe('vision_not_declared');
     expect(h.state.chatCalls).toHaveLength(0);
+  });
+
+  it('读图连接测试会发送真实图片 part，而不只是发一段文字', async () => {
+    h = await boot({ chat: { script: [['看到了']] } });
+    const { res } = await test('vision');
+    expect(res.statusCode).toBe(200);
+    const body = h.state.chatCalls[0]!.body as { messages?: Array<{ content?: Array<{ type?: string; image_url?: unknown }> }> };
+    const parts = body.messages?.flatMap((message) => message.content ?? []) ?? [];
+    expect(parts.some((part) => part.type === 'image_url' || part.image_url)).toBe(true);
   });
 
   it('读图声明了支持但自己没配全时，报配置缺失而不是回退到聊天模型', async () => {

@@ -184,10 +184,6 @@ export function useChat() {
           case 'reply.content.done': updateActivity({ thinking: true, label: '正在整理' }); break;
           case 'voice.published':
           case 'voice.synthesis.failed': void resync(); break;
-          case 'sticker.updated':
-          case 'sticker.analysis.updated':
-            void api.stickerSearch({ scope: 'all', limit: 60 }).then((result) => setStickers(result.stickers)).catch(() => { /* keep the bootstrap catalogue */ });
-            break;
           case 'life.updated': void refreshLife(); break;
           case 'system.notice': if (data.action === 'reload') void reloadRef.current(); else void resync(); break;
           default: break;

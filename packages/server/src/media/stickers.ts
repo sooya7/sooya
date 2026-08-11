@@ -4,15 +4,12 @@ import path from 'node:path';
 import type { StickerRepo, Sticker } from '../db/repos/sticker.repo.js';
 import type { MediaStore } from './store.js';
 import type { MediaRepo } from '../db/repos/media.repo.js';
-import { stickerSemanticText } from '../core/stickers/semantic-text.js';
 
 export interface StickerManifestEntry {
   name: string;
   file: string;
   emotion: string;
   tags: string[];
-  description?: string;
-  imageText?: string;
 }
 
 export interface StickerSelection {
@@ -83,12 +80,7 @@ export class StickerLibrary {
           mediaId: media.id,
           name: entry.name,
           tags: entry.tags,
-          emotion: entry.emotion,
-          description: entry.description,
-          imageText: entry.imageText,
-          nameSource: 'builtin',
-          analysisSource: entry.description ? 'manual' : 'legacy',
-          analysisStatus: entry.description ? 'ready' : 'pending'
+          emotion: entry.emotion
         });
         imported++;
       } catch {
@@ -125,19 +117,6 @@ export class StickerLibrary {
 
   markUsed(id: string): void {
     this.repo.markUsed(id);
-  }
-
-  markUserUsed(id: string): Sticker | undefined {
-    return this.repo.markUserUsed(id);
-  }
-
-  getByMediaId(mediaId: string): Sticker | undefined {
-    return this.repo.getByMediaId(mediaId);
-  }
-
-  semanticText(sticker: Sticker | string): string {
-    const resolved = typeof sticker === 'string' ? this.repo.get(sticker) : sticker;
-    return resolved ? stickerSemanticText(resolved) : '';
   }
 
   /**

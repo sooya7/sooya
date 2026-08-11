@@ -1,15 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatProvider } from '../src/providers/types.js';
-import { ConfigStore } from '../src/config/store.js';
+import { DirectorClient } from '../src/core/director/client.js';
 import {
   MediaDirector,
   fallbackImagePrompt,
   parseJsonLoose,
   sanitizeFishText
 } from '../src/core/mediaDirector.js';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 function fakeChatProvider(reply: string): ChatProvider {
   return {
@@ -28,14 +25,8 @@ function fakeChatProvider(reply: string): ChatProvider {
 }
 
 function makeDirector(reply: string): MediaDirector {
-  const dir = mkdtempSync(join(tmpdir(), 'director-'));
-  writeFileSync(join(dir, 'models.json'), JSON.stringify({ storageVersion: 2 }));
-  const store = new ConfigStore({ configDir: dir, env: {} });
   let provider = fakeChatProvider(reply);
-  const director = new MediaDirector({
-    config: store,
-    chatProvider: () => provider
-  });
+  const director = new MediaDirector(new DirectorClient(() => provider));
   // Let tests swap the reply mid-flight.
   const setReply = (next: string) => { provider = fakeChatProvider(next); };
   return Object.assign(director, { setReply }) as MediaDirector & { setReply: (s: string) => void };
@@ -73,13 +64,7 @@ describe('MediaDirector voice', () => {
   });
 
   it('falls back when the chat provider is unconfigured', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'director-'));
-    writeFileSync(join(dir, 'models.json'), JSON.stringify({ storageVersion: 2 }));
-    const store = new ConfigStore({ configDir: dir, env: {} });
-    const director = new MediaDirector({
-      config: store,
-      chatProvider: () => ({ ...fakeChatProvider(''), configured: false } as ChatProvider)
-    });
+    const director = new MediaDirector(new DirectorClient(() => ({ ...fakeChatProvider(''), configured: false } as ChatProvider)));
     const result = await director.voice({ content: '你好' });
     expect(result.text).toBe('你好');
     expect(result.speed).toBe(1);
@@ -108,16 +93,13 @@ describe('MediaDirector image', () => {
   });
 
   it('falls back when the chat provider errors', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'director-'));
-    writeFileSync(join(dir, 'models.json'), JSON.stringify({ storageVersion: 2 }));
-    const store = new ConfigStore({ configDir: dir, env: {} });
     const failing: ChatProvider = {
       name: 'fake', configured: true,
       async complete() { throw new Error('provider down'); },
       async stream() { throw new Error('provider down'); },
       async inspectHealth() { return { capability: 'chat', configured: true, ok: true, provider: 'fake', checkedAt: new Date().toISOString() }; }
     };
-    const director = new MediaDirector({ config: store, chatProvider: () => failing });
+    const director = new MediaDirector(new DirectorClient(() => failing));
     const result = await director.image({ scene: 'park bench', action: 'reading' });
     expect(result.prompt).toContain('identity reference for Sooya');
     expect(result.prompt).toContain('park bench');
