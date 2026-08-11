@@ -21,7 +21,12 @@ const HERE = __dirname;
  *
  * The suite boots a real SOOYA server (built server + built web client) backed
  * by a local OpenAI-compatible mock model, so streaming, media files, SSE and
- * the PWA are exercised over real HTTP — not mocked in the page.
+ * the PWA are exercised over real HTTP, not mocked in the page.
+ *
+ * General product behaviour runs once on desktop. Responsive coverage has its
+ * own mobile contract in mobile-admin-ux.e2e.ts, while theme.e2e.ts explicitly
+ * walks phone, landscape and desktop viewports itself. Running every business
+ * flow again under Pixel 7 doubled CI time without adding a distinct contract.
  */
 const PORT = Number(process.env.E2E_PORT ?? 8790);
 
@@ -33,6 +38,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  forbidOnly: Boolean(process.env.CI),
   reporter: [['list']],
   globalSetup: path.join(HERE, 'global-setup.ts'),
   globalTeardown: path.join(HERE, 'global-teardown.ts'),
@@ -43,7 +49,15 @@ export default defineConfig({
     permissions: ['microphone']
   },
   projects: [
-    { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 860 } } },
-    { name: 'mobile', use: { ...devices['Pixel 7'] } }
+    {
+      name: 'desktop',
+      testIgnore: 'mobile-admin-ux.e2e.ts',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 860 } }
+    },
+    {
+      name: 'mobile',
+      testMatch: 'mobile-admin-ux.e2e.ts',
+      use: { ...devices['Pixel 7'] }
+    }
   ]
 });
