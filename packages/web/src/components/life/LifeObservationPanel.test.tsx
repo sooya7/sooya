@@ -9,6 +9,9 @@ import { LifeObservationPanel } from './LifeObservationPanel.js';
 const apiMocks = vi.hoisted(() => ({
   life: vi.fn(),
   lifeOverview: vi.fn(),
+  lifeLocations: vi.fn(),
+  lifeTravel: vi.fn(),
+  weatherStatus: vi.fn(),
   tickLife: vi.fn(),
   createLifePlan: vi.fn(),
   updateLifePlan: vi.fn(),
@@ -39,6 +42,9 @@ vi.mock('../../lib/admin.js', async (importOriginal) => {
     adminApi: {
       ...original.adminApi,
       lifeOverview: apiMocks.lifeOverview,
+      lifeLocations: apiMocks.lifeLocations,
+      lifeTravel: apiMocks.lifeTravel,
+      weatherStatus: apiMocks.weatherStatus,
       adjustVitals: apiMocks.adjustVitals,
       resetVitals: apiMocks.resetVitals,
       updateThread: apiMocks.updateThread,
@@ -112,6 +118,40 @@ const overview: AdminLifeOverview = {
   recentEvents: []
 };
 
+const locations = {
+  locations: [
+    {
+      id: 'home', name: '家', kind: 'home', cityId: 'ningbo', city: '宁波', region: '浙江', country: '中国',
+      timeZone: 'Asia/Shanghai', lat: 29.87, lng: 121.55, tags: [], indoor: true, visitWeight: 1, source: 'builtin', active: true
+    },
+    {
+      id: 'cafe', name: '街角咖啡店', kind: 'cafe', cityId: 'ningbo', city: '宁波', region: '浙江', country: '中国',
+      timeZone: 'Asia/Shanghai', lat: 29.88, lng: 121.56, tags: [], indoor: true, visitWeight: 1, source: 'builtin', active: true
+    }
+  ],
+  current: {
+    id: 'home', name: '家', kind: 'home', cityId: 'ningbo', city: '宁波', region: '浙江', country: '中国',
+    timeZone: 'Asia/Shanghai', lat: 29.87, lng: 121.55, tags: [], indoor: true, visitWeight: 1, source: 'builtin', active: true
+  }
+};
+
+const weatherStatus = {
+  enabled: true,
+  provider: { name: 'open-meteo', configured: true, active: true },
+  currentSource: 'open-meteo',
+  lastSnapshot: {
+    observedAt: '2026-08-09T05:00:00.000Z',
+    condition: 'rain' as const,
+    temperatureC: 26,
+    provider: 'open-meteo',
+    locationKey: 'ningbo',
+    stale: false
+  },
+  cacheAgeSec: 0,
+  daylight: null,
+  forecast: null
+};
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -134,12 +174,19 @@ async function renderPanel({ strict = false }: { strict?: boolean } = {}): Promi
   await act(async () => { root!.render(strict ? <StrictMode>{panel}</StrictMode> : panel); });
 }
 
+function setSuccessfulReads(): void {
+  apiMocks.life.mockResolvedValue(structuredClone(panelData));
+  apiMocks.lifeOverview.mockResolvedValue(structuredClone(overview));
+  apiMocks.lifeLocations.mockResolvedValue(structuredClone(locations));
+  apiMocks.lifeTravel.mockResolvedValue({ travel: null });
+  apiMocks.weatherStatus.mockResolvedValue(structuredClone(weatherStatus));
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-08-09T05:00:00.000Z'));
   vi.resetAllMocks();
-  apiMocks.life.mockResolvedValue(structuredClone(panelData));
-  apiMocks.lifeOverview.mockResolvedValue(structuredClone(overview));
+  setSuccessfulReads();
 });
 
 afterEach(async () => {
@@ -163,10 +210,10 @@ describe('LifeObservationPanel', () => {
     expect(hero.textContent).toContain('SOOYA 当前状态');
     expect(hero.textContent).toContain('在沙发上打盹');
     expect(hero.textContent).toContain('睡觉 · 心情困倦');
-    expect(hero.textContent).toContain('13:00');
-    expect(hero.textContent).toContain('家');
-    expect(hero.textContent).toContain('雨');
-    expect(hero.textContent).toContain('0/3 次');
+    expect(hero.textContent).toContain('宁波 · 家');
+    expect(hero.textContent).toContain('雨 · 26°C');
+    expect(hero.textContent).toContain('没有出行');
+    expect(hero.textContent).toContain('当前活动');
     expect(hero.textContent).toContain('她在睡觉');
 
     const vitals = panel.querySelector('[data-testid="life-vitals-grid"]')!;
@@ -194,6 +241,33 @@ describe('LifeObservationPanel', () => {
     expect(panel.textContent).toContain('刚刚更新');
   });
 
+  it('shows the destination when travel is active', async () => {
+    apiMocks.lifeTravel.mockResolvedValueOnce({
+      travel: {
+        fromLocationId: 'home',
+        toLocationId: 'cafe',
+        mode: 'walk',
+        startedAt: '2026-08-09T04:55:00.000Z',
+        expectedArriveAt: '2026-08-09T05:10:00.000Z'
+      }
+    });
+    await renderPanel();
+    expect(container!.querySelector('[data-testid="life-hero"]')?.textContent).toContain('去街角咖啡店路上');
+  });
+
+  it('keeps optional world-summary failures from blanking the life panel', async () => {
+    apiMocks.lifeLocations.mockRejectedValueOnce(new Error('location unavailable'));
+    apiMocks.lifeTravel.mockRejectedValueOnce(new Error('travel unavailable'));
+    apiMocks.weatherStatus.mockRejectedValueOnce(new Error('weather unavailable'));
+    await renderPanel();
+
+    const hero = container!.querySelector('[data-testid="life-hero"]')!;
+    expect(hero.textContent).toContain('在沙发上打盹');
+    expect(hero.textContent).toContain('家');
+    expect(hero.textContent).toContain('雨');
+    expect(hero.textContent).toContain('没有出行');
+  });
+
   it('keeps the panel read-only and preserves existing mutation boundaries', async () => {
     await renderPanel();
 
@@ -209,15 +283,21 @@ describe('LifeObservationPanel', () => {
     expect(apiMocks.overrideLocation).not.toHaveBeenCalled();
   });
 
-  it('polls only the two primary reads every 30 seconds', async () => {
+  it('polls the primary state and compact hero environment every 30 seconds', async () => {
     await renderPanel();
     expect(apiMocks.life).toHaveBeenCalledTimes(1);
     expect(apiMocks.lifeOverview).toHaveBeenCalledTimes(1);
+    expect(apiMocks.lifeLocations).toHaveBeenCalledTimes(1);
+    expect(apiMocks.lifeTravel).toHaveBeenCalledTimes(1);
+    expect(apiMocks.weatherStatus).toHaveBeenCalledTimes(1);
 
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
 
     expect(apiMocks.life).toHaveBeenCalledTimes(2);
     expect(apiMocks.lifeOverview).toHaveBeenCalledTimes(2);
+    expect(apiMocks.lifeLocations).toHaveBeenCalledTimes(2);
+    expect(apiMocks.lifeTravel).toHaveBeenCalledTimes(2);
+    expect(apiMocks.weatherStatus).toHaveBeenCalledTimes(2);
   });
 
   it('preserves an unsaved contact-boundary draft across a poll', async () => {
