@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import AppShell from './AppShell.js';
 import './styles.css';
 import './components/AdminPanel.css';
+import './components/life/LifeObservationPanel.css';
 import './components/overlays.css';
 import './components/FeatureEnhancements.css';
 
