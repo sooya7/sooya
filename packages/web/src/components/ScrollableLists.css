@@ -1,0 +1,55 @@
+/* Long-running observation and operations lists should scroll inside their own
+   surfaces instead of stretching the entire admin page. */
+
+.admin-v2 .life-history-scroll {
+  max-height: 232px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 0 8px;
+  background: var(--admin-surface-soft);
+  border: 1px solid var(--admin-line);
+  border-radius: 11px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-v2 .life-history-scroll [data-testid='life-history-list'] {
+  margin: 0;
+}
+
+.admin-v2 [data-testid='admin-error-list'],
+.admin-v2 [data-testid='admin-job-list'] {
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-v2 [data-testid='admin-error-list'] .admin-card-subtitle,
+.admin-v2 [data-testid='admin-job-list'] .admin-card-subtitle {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-bottom: 8px;
+  background: var(--admin-surface);
+}
+
+.admin-v2 [data-testid='admin-error-list'] .admin-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding-top: 8px;
+  background: var(--admin-surface);
+}
+
+@media (max-width: 640px) {
+  .admin-v2 .life-history-scroll {
+    max-height: 210px;
+  }
+
+  .admin-v2 [data-testid='admin-error-list'],
+  .admin-v2 [data-testid='admin-job-list'] {
+    max-height: 300px;
+  }
+}
