@@ -458,7 +458,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     bus,
     voice: voiceService,
     coordinator: replyCoordinator,
-    metrics
+    metrics,
+    mediaDirector,
+    personaReferences,
+    locations: repos.locations,
+    worldSnapshot: () => world.snapshot()
   });
   const backups = new BackupService({
     db: () => dbHandle,

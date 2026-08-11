@@ -11,6 +11,12 @@ import type { StickerLibrary } from '../media/stickers.js';
 import type { EventBus } from '../events/bus.js';
 import type { ChatMessage } from './types.js';
 import type { ReplyCoordinator, ProactiveDeliveryTask } from './reply-coordinator.js';
+import type { MediaDirector } from './mediaDirector.js';
+import type { PersonaReferenceLoader } from '../media/persona-references.js';
+import type { LifeLocationRepo, LifeLocationRow } from '../db/repos/location.repo.js';
+import type { WorldSnapshot } from './world-context.js';
+import { z } from 'zod';
+import { extractJsonObject } from '../util/json-extract.js';
 
 export type { ProactiveMode } from '../db/repos/proactive.repo.js';
 
@@ -43,6 +49,39 @@ interface PreparedMedia {
   finalMode: ProactiveMode;
   fallbackReason: string | null;
   stickerId: string | null;
+  detail?: Record<string, unknown>;
+}
+
+const ProactiveSharePlanSchema = z.object({
+  // Keep the schema permissive enough for the quality guard to repair obvious
+  // fragments such as “刚刚” instead of classifying them as transport errors.
+  text: z.string().trim().min(1).max(80),
+  image: z.object({
+    kind: z.enum(['pov', 'selfie']),
+    scene: z.string().trim().min(4).max(300),
+    action: z.string().trim().max(160).optional(),
+    mood: z.string().trim().max(80).optional(),
+    framing: z.enum(['front', 'side', 'full-body', 'environment']).optional()
+  }).nullable()
+});
+
+type ProactiveSharePlan = z.infer<typeof ProactiveSharePlanSchema>;
+
+interface ProactiveEventContext {
+  activity: string;
+  kind: string;
+  mood: string;
+  startedAt: string;
+  endedAt: string;
+  location: {
+    id: string;
+    name: string;
+    kind: string;
+    city?: string | null;
+    region?: string | null;
+    country?: string | null;
+  } | null;
+  recentWeatherHint: { condition: string; temperatureC?: number | null } | null;
 }
 
 const TOPIC_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -71,6 +110,10 @@ export class ProactiveComposer {
       coordinator: ReplyCoordinator;
       /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
       metrics?: import('./metrics.js').MetricsService;
+      mediaDirector: MediaDirector;
+      personaReferences: PersonaReferenceLoader;
+      locations: LifeLocationRepo;
+      worldSnapshot: () => WorldSnapshot;
     }
   ) {}
 
@@ -153,25 +196,29 @@ export class ProactiveComposer {
         const persona = this.deps.config.getPersona();
         const lifeLines = this.deps.life.contextLines(this.lastUserDate(evaluation));
 
-        let text: string;
+        let sharePlan: ProactiveSharePlan;
+        const eventContext = this.resolveEventContext(candidate);
         try {
-          text = await composeProactiveText(provider, persona.systemPrompt, lifeLines, candidate.activity, signal);
+          sharePlan = await composeProactiveSharePlan(
+            provider,
+            persona.systemPrompt,
+            lifeLines,
+            eventContext,
+            requestedMode ?? 'text',
+            signal
+          );
         } catch (error) {
           if (signal.aborted) return { kind: 'discarded' };
-          const reason = 'compose_failed';
+          const reason = error instanceof Error && error.message === 'invalid_share_text'
+            ? 'invalid_share_text'
+            : 'compose_failed';
           this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: reason, detail: { error: safeError(error) } });
-          throw new Error(reason);
-        }
-        if (!text) {
-          if (signal.aborted) return { kind: 'discarded' };
-          const reason = 'empty_text';
-          this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: reason });
           throw new Error(reason);
         }
 
         let prepared: PreparedMedia;
         try {
-          prepared = await this.prepareMedia(requestedMode ?? 'text', text, candidate, signal);
+          prepared = await this.prepareMedia(requestedMode ?? 'text', sharePlan, eventContext, candidate, signal);
         } catch (error) {
           if (signal.aborted) return { kind: 'discarded' };
           const reason = 'media_failed';
@@ -186,7 +233,7 @@ export class ProactiveComposer {
           return { kind: 'discarded' };
         }
 
-        const parts: CreatePartInput[] = [{ type: 'text', text, status: 'sent' }];
+        const parts: CreatePartInput[] = [{ type: 'text', text: sharePlan.text, status: 'sent' }];
         if (prepared.part) parts.push(prepared.part);
         try {
           // P1-4: proactive messages are persisted ONLY through the reply
@@ -213,7 +260,15 @@ export class ProactiveComposer {
                 fallbackReason: prepared.fallbackReason,
                 messageId: message.id,
                 sendSuccess: true,
-                detail: { mediaPersisted: Boolean(prepared.part), pushEnqueued: false }
+                detail: {
+                  sharePlanVersion: 2,
+                  photoKind: sharePlan.image?.kind ?? null,
+                  eventLocationId: eventContext.location?.id ?? null,
+                  imageDirectorUsed: Boolean(prepared.detail?.imageDirectorUsed),
+                  referenceUsed: Boolean(prepared.detail?.referenceUsed),
+                  mediaPersisted: Boolean(prepared.part),
+                  pushEnqueued: false
+                }
               });
             }
           });
@@ -228,7 +283,9 @@ export class ProactiveComposer {
           } catch (error) {
             this.deps.attempts.update(attempt.id, { detail: { pushError: safeError(error) } });
           }
-          this.deps.attempts.update(attempt.id, { detail: { mediaPersisted: Boolean(prepared.part), pushEnqueued } });
+          this.deps.attempts.update(attempt.id, {
+            detail: { ...prepared.detail, mediaPersisted: Boolean(prepared.part), pushEnqueued }
+          });
           return { kind: 'sent', messageId: persisted.message.id };
         } catch (error) {
           if (isUniqueConstraint(error)) {
@@ -295,7 +352,8 @@ export class ProactiveComposer {
     return 'text';
   }
 
-  private async prepareMedia(mode: ProactiveMode, text: string, candidate: LifeLogRow, signal: AbortSignal): Promise<PreparedMedia> {
+  private async prepareMedia(mode: ProactiveMode, sharePlan: ProactiveSharePlan, eventContext: ProactiveEventContext, candidate: LifeLogRow, signal: AbortSignal): Promise<PreparedMedia> {
+    const text = sharePlan.text;
     if (mode === 'text') return { part: null, finalMode: 'text', fallbackReason: null, stickerId: null };
     if (mode === 'text_sticker') {
       const selection = this.deps.stickers.select({
@@ -345,20 +403,63 @@ export class ProactiveComposer {
     if (!this.deps.capabilities.has('image')) return { part: null, finalMode: 'text', fallbackReason: 'image_unavailable', stickerId: null };
     try {
       if (signal.aborted) return { part: null, finalMode: 'text', fallbackReason: 'aborted', stickerId: null };
-      const image = await this.deps.capabilities.imageProvider().generate(candidate.activity, { signal });
+      const imagePlan = sharePlan.image;
+      if (!imagePlan) return { part: null, finalMode: 'text', fallbackReason: 'image_plan_missing', stickerId: null };
+      const groundedScene = buildGroundedScene(imagePlan, eventContext);
+      const directed = await this.deps.mediaDirector.image({
+        scene: groundedScene,
+        action: imagePlan.action,
+        mood: imagePlan.mood ?? candidate.mood,
+        intent: imagePlan.kind === 'selfie'
+          ? 'proactive private-chat selfie from the same real lived event'
+          : 'proactive first-person smartphone snapshot of what Sooya actually saw during the same real lived event'
+      }, { signal });
+      const finalImagePrompt = directed.prompt.trim();
+      if (!finalImagePrompt) return { part: null, finalMode: 'text', fallbackReason: 'image_director_failed', stickerId: null };
+      const referenceImages = imagePlan.kind === 'selfie'
+        ? await this.deps.personaReferences.load(finalImagePrompt)
+        : [];
+      const referenceUsed = referenceImages.length > 0;
+      const image = await this.deps.capabilities.imageProvider().generate(finalImagePrompt, {
+        signal,
+        ...(referenceUsed ? { referenceImages } : {})
+      });
       const media = await this.deps.media.save({
         kind: 'image',
         origin: 'generated',
         data: image.data,
         declaredMime: image.mime,
         filename: 'proactive.png',
-        meta: { proactive: true, candidateId: candidate.id, prompt: candidate.activity }
+        meta: {
+          proactive: true,
+          candidateId: candidate.id,
+          sharePlanVersion: 2,
+          photoKind: imagePlan.kind,
+          sourceActivity: candidate.activity,
+          sourceText: text.slice(0, 200),
+          eventLocationId: eventContext.location?.id ?? null,
+          directorPrompt: finalImagePrompt.slice(0, 1000),
+          ...(imagePlan.kind === 'selfie' && !referenceUsed ? { referenceMissing: true } : {})
+        }
       });
       return {
-        part: { type: 'image', mediaId: media.id, status: 'sent', meta: { prompt: candidate.activity, proactive: true } },
+        part: {
+          type: 'image',
+          mediaId: media.id,
+          status: 'sent',
+          meta: {
+            proactive: true,
+            prompt: finalImagePrompt.slice(0, 1000),
+            sharePlanVersion: 2,
+            photoKind: imagePlan.kind,
+            eventLocationId: eventContext.location?.id ?? null,
+            referenceUsed
+          }
+        },
         finalMode: 'image',
         fallbackReason: null,
-        stickerId: null
+        stickerId: null,
+        detail: { imageDirectorUsed: true, referenceUsed, referenceMissing: imagePlan.kind === 'selfie' && !referenceUsed }
       };
     } catch {
       return { part: null, finalMode: 'text', fallbackReason: 'image_failed', stickerId: null };
@@ -380,6 +481,38 @@ export class ProactiveComposer {
     });
   }
 
+  private resolveEventContext(candidate: LifeLogRow): ProactiveEventContext {
+    let location: LifeLocationRow | undefined;
+    try {
+      const visit = this.deps.locations.visitOverlapping(candidate.started_at, candidate.ended_at);
+      location = visit ? this.deps.locations.get(visit.location_id) : undefined;
+    } catch { /* location is optional grounding */ }
+    const snapshot = this.deps.worldSnapshot();
+    const eventEnd = Date.parse(candidate.ended_at);
+    const now = Date.parse(snapshot.now);
+    const sameCity = Boolean(location?.city && snapshot.city?.name && location.city === snapshot.city.name);
+    const recent = Number.isFinite(eventEnd) && Number.isFinite(now) && now >= eventEnd && now - eventEnd <= 90 * 60_000;
+    const recentWeatherHint = recent && sameCity && snapshot.weather
+      ? { condition: snapshot.weather.condition, temperatureC: snapshot.weather.temperatureC ?? null }
+      : null;
+    return {
+      activity: candidate.activity,
+      kind: candidate.kind,
+      mood: candidate.mood,
+      startedAt: candidate.started_at,
+      endedAt: candidate.ended_at,
+      location: location ? {
+        id: location.id,
+        name: location.name,
+        kind: location.kind,
+        city: location.city,
+        region: location.region,
+        country: location.country
+      } : null,
+      recentWeatherHint
+    };
+  }
+
   private lastUserDate(evaluation: ProactiveEvaluation): Date | null {
     return evaluation.lastUserAt ? new Date(evaluation.lastUserAt) : null;
   }
@@ -395,27 +528,72 @@ export class ProactiveComposer {
   }
 }
 
-async function composeProactiveText(
+async function composeProactiveSharePlan(
   provider: ReturnType<CapabilityRegistry['chatProvider']>,
   personaPrompt: string,
   lifeLines: string[],
-  activity: string,
+  eventContext: ProactiveEventContext,
+  requestedMode: ProactiveMode,
   signal: AbortSignal
-): Promise<string> {
-  const result = await provider.complete({
-    system: [
-      personaPrompt.trim(),
-      ...lifeLines,
-      `你想主动跟用户说说刚刚${activity}的事。`,
-      '写一条 40 字以内的自然消息，只说这一件事，不要开场寒暄，不要提系统、能力、设置或模型。',
-      '直接输出消息正文，不要引号、前缀或任何媒体指令。'
-    ].join('\n'),
-    messages: [{ role: 'user', content: [{ type: 'text', text: '（没有人说话，你主动开口）' }] }],
-    temperature: 0.9,
-    maxTokens: 120,
-    signal
-  });
-  return result.text.trim().replace(/^["“”「」]|["“”「」]$/gu, '').slice(0, 120);
+): Promise<ProactiveSharePlan> {
+  const request = async (repairReason?: string): Promise<ProactiveSharePlan> => {
+    const result = await provider.complete({
+      system: [
+        personaPrompt.trim(),
+        ...lifeLines.map((line) => `【当前状态，仅用于语气连续性】${line}`),
+        '你是 SOOYA，在私人聊天里主动分享一件真实经历过的小事。',
+        '【要分享的历史事件】',
+        JSON.stringify(eventContext),
+        `本次请求模式：${requestedMode}。只有 image 模式才规划图片，否则 image 必须为 null。`,
+        '【规则】text 必须是一句完整、自然、可以直接发送的聊天消息；不要标题、标签、冒号前缀、系统/Life/模型内容。不要把当前状态改写成历史事件。',
+        '如果有图片，必须与 text 是同一件具体小事：pov 是 SOOYA 手机第一视角且不出现本人，selfie 才出现 SOOYA。只选普通现实生活场景，不编造地标、幻想建筑或旅游海报。',
+        repairReason ? `上一版未通过检查：${repairReason}。请只重新返回完整 JSON。` : '',
+        '只输出 JSON：{"text":"...","image":null 或 {"kind":"pov|selfie","scene":"...","action":"...","mood":"...","framing":"front|side|full-body|environment"}}。'
+      ].filter(Boolean).join('\n'),
+      messages: [{ role: 'user', content: [{ type: 'text', text: '（没有人说话，你主动开口）' }] }],
+      temperature: 0.8,
+      maxTokens: 450,
+      jsonMode: true,
+      signal
+    });
+    const parsed = ProactiveSharePlanSchema.safeParse(extractJsonObject(result.text));
+    if (!parsed.success) throw new Error(`invalid_share_plan: ${parsed.error.issues.map((issue) => issue.path.join('.') + ' ' + issue.message).join('; ')}`);
+    return parsed.data;
+  };
+
+  const first = await request();
+  const firstValidation = validateProactiveText(first.text);
+  if (firstValidation.ok) return first;
+  const repaired = await request(firstValidation.reason);
+  const secondValidation = validateProactiveText(repaired.text);
+  if (!secondValidation.ok) throw new Error('invalid_share_text');
+  return repaired;
+}
+
+function validateProactiveText(text: string): { ok: boolean; reason?: string } {
+  const normalized = text.trim().replace(/^["“”「」]|["“”「」]$/gu, '').trim();
+  if (Array.from(normalized.replace(/\s/gu, '')).length < 6) return { ok: false, reason: '文本太短或只是残片' };
+  if (/^(刚刚|刚才|刚发生的事|刚才发生的事|最近|今天)[：:]?$/u.test(normalized)) return { ok: false, reason: '只是标题或时间残片' };
+  if (/(因为|所以|然后|但是|不过|顺道|本来想|正准备|刚准备)$/u.test(normalized)) return { ok: false, reason: '句子以悬空连接词结尾' };
+  return { ok: true };
+}
+
+function buildGroundedScene(image: NonNullable<ProactiveSharePlan['image']>, context: ProactiveEventContext): string {
+  const location = context.location
+    ? `${context.location.city ?? ''}${context.location.region ?? ''}的${context.location.name}（${context.location.kind}）`
+    : '事件地点未知的普通现实生活环境';
+  const weather = context.recentWeatherHint
+    ? `附近最近天气参考：${context.recentWeatherHint.condition}${context.recentWeatherHint.temperatureC == null ? '' : `，${context.recentWeatherHint.temperatureC}°C`}，仅作氛围参考，不是历史事实。`
+    : '';
+  return [
+    `真实生活事件：${context.activity}。`,
+    `实际地点：${location}。`,
+    `这次要拍：${image.scene}。`,
+    image.action ? `动作：${image.action}。` : '',
+    `照片类型：${image.kind === 'selfie' ? 'SOOYA 在同一事件中的私人聊天自拍' : 'SOOYA 手机第一视角拍摄眼前所见，SOOYA 本人不入镜'}。`,
+    weather,
+    '必须是现实世界普通生活环境、自然手机照片；禁止幻想建筑、漂浮建筑、旅游海报、概念艺术、动漫世界和不可能的地理关系。'
+  ].filter(Boolean).join('\n');
 }
 
 /** True for better-sqlite3 UNIQUE constraint violations (P1-4). */

@@ -11,6 +11,10 @@ function localTime(iso: string): Date {
   return new Date(`${iso}+08:00`);
 }
 
+function sharePlan(text: string): string {
+  return JSON.stringify({ text, image: null });
+}
+
 /**
  * The point of the whole feature: she can open her mouth without being asked.
  * These drive the real `life.tick` job through the real worker, so the wiring
@@ -26,7 +30,7 @@ describe('she speaks first', () => {
         LIFE_QUIET_GAP_MINUTES: '60',
         ENABLE_BACKGROUND_JOBS: 'false'
       },
-      chat: { script: [[chatText]] },
+      chat: { script: [[sharePlan(chatText)]] },
       startWorkers: false,
       // 17:30 her time: awake, mid-afternoon, well past the quiet gap.
       clock: () => localTime('2026-07-31T17:30')
@@ -103,7 +107,7 @@ describe('she speaks first', () => {
   it('stays quiet when the feature is off', async () => {
     harness = await createHarness({
       env: { ENABLE_LIFE_ENGINE: 'true', ENABLE_LIFE_REACH_OUT: 'false', ENABLE_BACKGROUND_JOBS: 'false' },
-      chat: { script: [['不该发出来的话']] },
+      chat: { script: [[sharePlan('不该发出来的话')]] },
       startWorkers: false,
       clock: () => localTime('2026-07-31T17:30')
     });

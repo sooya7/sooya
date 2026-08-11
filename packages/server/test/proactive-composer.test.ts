@@ -12,6 +12,18 @@ function localTime(iso: string): Date {
   return new Date(`${iso}+08:00`);
 }
 
+function sharePlan(text: string, image: { kind: 'pov' | 'selfie'; scene: string } | null = { kind: 'pov', scene: '社区公园步道旁一只橘猫看向手机镜头' }): string {
+  return JSON.stringify({ text, image });
+}
+
+function asSharePlan(chunk: string): string {
+  try {
+    const value = JSON.parse(chunk) as { text?: unknown; image?: unknown };
+    if (typeof value.text === 'string' && 'image' in value) return chunk;
+  } catch { /* plain test text */ }
+  return sharePlan(chunk);
+}
+
 function stageCandidate(h: Harness): void {
   const oldUser = h.app.repos.messages.create({
     role: 'user',
@@ -48,7 +60,11 @@ async function withReachOut(options: Parameters<typeof createHarness>[0] = {}): 
       ADMIN_API_TOKEN: 'admin-test-token',
       ...options.env
     },
-    chat: { script: [['刚刚去公园看猫，橘猫踩了我的鞋']], ...options.chat },
+    chat: {
+      ...options.chat,
+      script: options.chat?.script?.map((chunks) => chunks.map(asSharePlan))
+        ?? [[sharePlan('刚刚去公园看猫，橘猫踩了我的鞋')]]
+    },
     startWorkers: false,
     clock: () => localTime('2026-07-31T17:30')
   });
@@ -172,6 +188,64 @@ describe('ProactiveComposer', () => {
     expect(result.sendSuccess).toBe(true);
     expect(message?.status).toBe('sent');
     expect(message?.content.some((part) => part.type === (mode === 'text_sticker' ? 'sticker' : mode === 'voice' ? 'audio' : 'image') && part.status === 'sent')).toBe(true);
+  });
+
+  it('plans proactive text and POV image as one grounded event', async () => {
+    harness = await withReachOut({ image: 'ok' });
+    stageCandidate(harness);
+    const park = harness.app.repos.locations.create({ name: '社区公园', kind: 'park', city: '宁波', source: 'admin' });
+    harness.app.repos.locations.recordVisit({
+      locationId: park.id,
+      enteredAt: localTime('2026-07-31T14:00').toISOString(),
+      leftAt: localTime('2026-07-31T17:00').toISOString()
+    });
+
+    const result = await harness.app.services.proactive.run({ mode: 'image' });
+    expect(result.status).toBe('sent');
+    const imageRequest = harness.state.imageRequests[0]!;
+    const prompt = JSON.stringify(imageRequest.body);
+    expect(prompt).toContain('社区公园');
+    expect(prompt).toContain('橘猫');
+    expect(prompt).not.toBe('出门散步');
+    expect(imageRequest.body.input_images).toBeUndefined();
+    expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({
+      sharePlanVersion: 2,
+      photoKind: 'pov',
+      eventLocationId: park.id,
+      imageDirectorUsed: true,
+      referenceUsed: false
+    });
+  });
+
+  it('uses persona references only for a proactive selfie', async () => {
+    harness = await withReachOut({
+      image: 'anuma',
+      chat: { script: [[sharePlan('坐窗边喝咖啡，想拍给你看', { kind: 'selfie', scene: '咖啡店窗边的 SOOYA 举着咖啡杯看向手机' })]] }
+    });
+    stageCandidate(harness);
+    const result = await harness.app.services.proactive.run({ mode: 'image' });
+    expect(result.status).toBe('sent');
+    expect(harness.state.imageRequests[0]!.body.input_images).toBeDefined();
+    expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({ photoKind: 'selfie', referenceUsed: true });
+  });
+
+  it('repairs an incomplete proactive text once and never sends two invalid plans', async () => {
+    harness = await withReachOut({
+      chat: { script: [[JSON.stringify({ text: '刚刚', image: null })], [JSON.stringify({ text: '路边的猫盯了我好久，给你看看', image: null })]] }
+    });
+    stageCandidate(harness);
+    const result = await harness.app.services.proactive.run({ mode: 'text' });
+    expect(result.status).toBe('sent');
+    expect(harness.app.repos.messages.get(result.messageId!)?.content[0]?.text).toContain('路边的猫');
+
+    harness = await withReachOut({
+      chat: { script: [[JSON.stringify({ text: '刚刚', image: null })], [JSON.stringify({ text: '刚发生的事：', image: null })]] }
+    });
+    stageCandidate(harness);
+    const blocked = await harness.app.services.proactive.run({ mode: 'text' });
+    expect(blocked.status).toBe('failed');
+    expect(blocked.blockedReason).toBe('invalid_share_text');
+    expect(harness.app.repos.messages.recent(20).filter((message) => message.meta?.proactive)).toHaveLength(0);
   });
 
   it('marks the life candidate only after persistence and enqueues push.reply', async () => {
