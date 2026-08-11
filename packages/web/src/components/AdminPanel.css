@@ -1654,3 +1654,118 @@
   box-shadow: none;
 }
 
+
+
+/* ---- Human-readable operations logs ---- */
+.admin-v2 .admin-log-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  margin: 4px -4px 10px 0;
+  padding-right: 4px;
+}
+
+.admin-v2 .admin-error-groups {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-v2 .admin-error-group {
+  padding: 10px 11px;
+  background: var(--admin-surface-soft);
+  border: 1px solid var(--admin-line);
+  border-radius: 11px;
+}
+
+.admin-v2 .admin-error-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-v2 .admin-error-group-head strong {
+  min-width: 0;
+  color: var(--admin-text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.admin-v2 .admin-error-group-head span {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  color: var(--admin-warning);
+  background: var(--admin-warning-soft);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.admin-v2 .admin-error-group p {
+  margin: 5px 0 4px;
+  color: var(--admin-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.admin-v2 .admin-error-group > small {
+  color: var(--admin-faint);
+  font-size: 10px;
+}
+
+.admin-v2 .admin-error-technical {
+  margin-top: 6px;
+  color: var(--admin-muted);
+  font-size: 10px;
+}
+
+.admin-v2 .admin-error-technical summary {
+  width: max-content;
+  max-width: 100%;
+  cursor: pointer;
+  color: var(--admin-primary-deep);
+  font-weight: 650;
+}
+
+.admin-v2 .admin-error-technical code,
+.admin-v2 .admin-error-technical pre {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 7px 8px;
+  overflow: auto;
+  color: var(--admin-text);
+  background: var(--admin-surface);
+  border: 1px solid var(--admin-line);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.admin-v2 .admin-job-readable > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.admin-v2 .admin-job-readable > span strong {
+  font-size: 12px;
+}
+
+.admin-v2 .admin-job-readable > span small {
+  color: var(--admin-muted);
+  font-size: 10px;
+}
+
+@media (max-width: 560px) {
+  .admin-v2 .admin-log-scroll {
+    max-height: 280px;
+  }
+
+  .admin-v2 .admin-error-group {
+    padding: 9px 10px;
+  }
+}

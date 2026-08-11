@@ -880,10 +880,144 @@ function StickerUpload({ onDone, onNotice }: { onDone: () => Promise<void>; onNo
   return <div className="admin-upload"><input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /><button type="button" disabled={!file} onClick={() => void upload()}>上传表情包</button></div>;
 }
 
+type AdminErrorGroup = {
+  key: string;
+  count: number;
+  latest: AdminError;
+  title: string;
+  explanation: string;
+};
+
+function operationAreaLabel(scope: string): string {
+  if (scope === 'job.sticker.analyze' || scope.includes('sticker.analy')) return '表情包 AI 分析';
+  if (scope.includes('sticker')) return '表情包处理';
+  if (scope.includes('moment') || scope.includes('proactive')) return '朋友圈发布';
+  if (scope.includes('life')) return '生活状态更新';
+  if (scope.includes('weather')) return '天气更新';
+  if (scope.includes('image')) return '图片生成';
+  if (scope.includes('tts') || scope.includes('voice')) return '语音处理';
+  if (scope.includes('push')) return '消息推送';
+  if (scope.includes('chat') || scope.includes('reply')) return '聊天回复';
+  if (scope.includes('memory') || scope.includes('embedding') || scope.includes('rerank')) return '记忆系统';
+  if (scope.includes('database') || scope.includes('sqlite') || scope.includes('db')) return '数据库';
+  return '后台任务';
+}
+
+function operationErrorCopy(error: AdminError): { title: string; explanation: string } {
+  const area = operationAreaLabel(error.scope);
+  const message = error.message.toLowerCase();
+
+  if (message.includes('invalid_analysis_json')) {
+    return {
+      title: '表情包 AI 分析结果格式异常',
+      explanation: '视觉模型返回的数据格式不符合要求，本次分析结果没有保存。若持续出现，建议检查视觉模型配置或输出格式。'
+    };
+  }
+  if (/timeout|timed out|etimedout/.test(message)) {
+    return {
+      title: `${area}超时`,
+      explanation: '上游服务在限定时间内没有返回结果。系统会按任务策略重试，持续出现时再检查接口速度或网络。'
+    };
+  }
+  if (/rate.?limit|too many requests|\b429\b/.test(message)) {
+    return {
+      title: `${area}请求过于频繁`,
+      explanation: '上游服务触发了频率限制。通常等待一会儿即可恢复，频繁发生时需要降低并发或提高额度。'
+    };
+  }
+  if (/unauthor|forbidden|invalid.?key|\b401\b|\b403\b/.test(message)) {
+    return {
+      title: `${area}鉴权失败`,
+      explanation: '服务拒绝了当前凭据。请检查对应模型或服务的 API Key、权限和接口地址。'
+    };
+  }
+  if (/not configured|unconfigured|provider.*config|missing.*key/.test(message)) {
+    return {
+      title: `${area}尚未配置完整`,
+      explanation: '这项能力缺少必要配置，因此任务没有继续执行。请到对应设置页补齐服务地址、模型或密钥。'
+    };
+  }
+  if (/fetch failed|network|econn|socket|dns|connection/.test(message)) {
+    return {
+      title: `${area}连接失败`,
+      explanation: '系统没有成功连到上游服务。持续出现时请检查网络、代理、接口地址以及服务是否可用。'
+    };
+  }
+  if (/json|parse|schema|invalid.*format/.test(message)) {
+    return {
+      title: `${area}返回格式异常`,
+      explanation: '上游返回的内容与系统预期格式不一致，本次结果没有采用。技术详情里保留了原始错误码。'
+    };
+  }
+  if (/not found|missing|enoent|\b404\b/.test(message)) {
+    return {
+      title: `${area}所需资源不存在`,
+      explanation: '任务引用的资源或上游地址没有找到。可先检查对应媒体、配置或服务地址是否仍然有效。'
+    };
+  }
+
+  return {
+    title: `${area}出现异常`,
+    explanation: '系统记录到一次异常。这里先显示可读摘要，原始错误码和详细数据收在“查看技术详情”里。'
+  };
+}
+
+function groupAdminErrors(errors: AdminError[]): AdminErrorGroup[] {
+  const groups = new Map<string, AdminErrorGroup>();
+  for (const error of errors) {
+    const key = `${error.scope}\u0000${error.message}`;
+    const existing = groups.get(key);
+    if (!existing) {
+      const copy = operationErrorCopy(error);
+      groups.set(key, { key, count: 1, latest: error, ...copy });
+      continue;
+    }
+    existing.count += 1;
+    if (Date.parse(error.createdAt) > Date.parse(existing.latest.createdAt)) existing.latest = error;
+  }
+  return [...groups.values()].sort((a, b) => Date.parse(b.latest.createdAt) - Date.parse(a.latest.createdAt));
+}
+
+function operationDetailText(detail: unknown): string | null {
+  if (detail == null) return null;
+  if (typeof detail === 'string') return detail.trim() || null;
+  try {
+    return JSON.stringify(detail, null, 2);
+  } catch {
+    return String(detail);
+  }
+}
+
+function operationJobLabel(type: string): string {
+  if (type.includes('sticker') && type.includes('analy')) return '表情包 AI 分析';
+  if (type.includes('sticker')) return '表情包处理';
+  if (type.includes('moment') || type.includes('proactive')) return '朋友圈发布';
+  if (type.includes('life')) return '生活状态更新';
+  if (type.includes('weather')) return '天气更新';
+  if (type.includes('image')) return '图片生成';
+  if (type.includes('tts') || type.includes('voice')) return '语音处理';
+  if (type.includes('push')) return '消息推送';
+  if (type.includes('reply') || type.includes('chat')) return '聊天回复';
+  return '后台任务';
+}
+
+function operationJobStatus(status: string): string {
+  const value = status.toLowerCase();
+  if (['queued', 'pending'].includes(value)) return '等待处理';
+  if (['running', 'processing', 'leased'].includes(value)) return '处理中';
+  if (['completed', 'done', 'success', 'succeeded'].includes(value)) return '已完成';
+  if (['failed', 'dead'].includes(value)) return '失败';
+  if (['cancelled', 'canceled'].includes(value)) return '已取消';
+  if (value.includes('retry')) return '等待重试';
+  return status;
+}
+
 function OperationsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [errors, setErrors] = useState<AdminError[]>([]);
   const [jobs, setJobs] = useState<AdminJob[]>([]);
   const [backups, setBackups] = useState<AdminBackup[]>([]);
+
+  const groupedErrors = useMemo(() => groupAdminErrors(errors), [errors]);
 
   const load = useCallback(async () => {
     try {
@@ -911,14 +1045,47 @@ function OperationsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   return (
     <section className="admin-operations">
       <article className="admin-card" data-testid="admin-error-list">
-        <div className="admin-card-subtitle"><h2>最近错误</h2><span className="admin-count-badge">{errors.length}</span></div>
-        {errors.length ? errors.map((e) => <div className="admin-list-row" key={e.id}><span>{e.scope} · {e.message}</span><small>{formatAdminDateTime(e.createdAt)}</small></div>) : <EmptyState>暂无错误记录</EmptyState>}
+        <div className="admin-card-subtitle">
+          <h2>最近错误</h2>
+          <span className="admin-count-badge">{errors.length ? `${groupedErrors.length} 类 · ${errors.length} 次` : '0'}</span>
+        </div>
+        {errors.length ? (
+          <div className="admin-log-scroll admin-error-groups">
+            {groupedErrors.map((group) => {
+              const detail = operationDetailText(group.latest.detail);
+              return (
+                <article className="admin-error-group" key={group.key}>
+                  <div className="admin-error-group-head">
+                    <strong>{group.title}</strong>
+                    <span>{group.count} 次</span>
+                  </div>
+                  <p>{group.explanation}</p>
+                  <small>最近发生：{formatAdminDateTime(group.latest.createdAt)}</small>
+                  <details className="admin-error-technical">
+                    <summary>查看技术详情</summary>
+                    <code>{group.latest.scope} · {group.latest.message}</code>
+                    {detail && <pre>{detail}</pre>}
+                  </details>
+                </article>
+              );
+            })}
+          </div>
+        ) : <EmptyState>暂无错误记录</EmptyState>}
         <div className="admin-actions"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('确认清空错误记录？')) void run(() => adminApi.clearErrors(), '错误记录已清空'); }}>清空错误记录</button></div>
       </article>
 
       <article className="admin-card" data-testid="admin-job-list">
         <div className="admin-card-subtitle"><h2>后台任务</h2><span className="admin-count-badge">{jobs.length}</span></div>
-        {jobs.length ? jobs.map((j) => <div className="admin-list-row" key={j.id}><span>{j.type} · {j.status}</span><small>{j.attempts}/{j.max_attempts}</small></div>) : <EmptyState>暂无后台任务</EmptyState>}
+        {jobs.length ? (
+          <div className="admin-log-scroll">
+            {jobs.map((job) => (
+              <div className="admin-list-row admin-job-readable" key={job.id} title={`${job.type} · ${job.status}`}>
+                <span><strong>{operationJobLabel(job.type)}</strong><small>{operationJobStatus(job.status)}</small></span>
+                <small>尝试 {job.attempts}/{job.max_attempts}</small>
+              </div>
+            ))}
+          </div>
+        ) : <EmptyState>暂无后台任务</EmptyState>}
       </article>
 
       <article className="admin-card" data-testid="admin-backup-list">
