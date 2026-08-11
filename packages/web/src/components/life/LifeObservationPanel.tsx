@@ -152,12 +152,6 @@ export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
   if (!data || !overview) {
     return (
       <section className="life-observation" data-testid="life-observation">
-        <header className="life-observation-header">
-          <div>
-            <h2>她的生活</h2>
-            <p>状态会随时间自行变化</p>
-          </div>
-        </header>
         {error ? (
           <div role="alert">
             <p>{error}</p>
@@ -176,14 +170,6 @@ export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
 
   return (
     <section className="life-observation" data-testid="life-observation">
-      <header className="life-observation-header">
-        <div>
-          <h2>她的生活</h2>
-          <p>状态会随时间自行变化</p>
-        </div>
-        {updatedAt && <small className="life-observation-updated">{updatedText(updatedAt, timezone)}</small>}
-      </header>
-
       {error && (
         <div role="alert">
           <span>
@@ -201,7 +187,7 @@ export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
             <strong className="life-hero-activity">{data.snapshot.activity}</strong>
             <span className="life-hero-meta">{lifeKindLabel(data.snapshot.kind)} · 心情{data.snapshot.mood}</span>
           </div>
-          <time className="life-hero-clock">{currentTime}</time>
+          <span className="life-hero-clock">{currentTime}{updatedAt ? ` · ${updatedText(updatedAt, timezone)}` : ''}</span>
         </div>
         <div className="life-hero-facts">
           <div className="life-hero-fact">
