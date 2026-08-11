@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/convert-proactive-to-moments.yml'
       - '.github/scripts/convert-proactive-to-moments.py'
+      - '.github/scripts/convert-proactive-to-moments-post.py'
 
 permissions:
   contents: write
@@ -24,7 +25,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Apply Moments conversion
-        run: python3 .github/scripts/convert-proactive-to-moments.py
+        run: |
+          python3 .github/scripts/convert-proactive-to-moments.py
+          python3 .github/scripts/convert-proactive-to-moments-post.py
       - name: Typecheck
         run: npm run typecheck
       - name: Focused server tests
