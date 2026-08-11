@@ -23,7 +23,9 @@ function dataDirFromArgs() {
 
 const dataDir = dataDirFromArgs();
 const dbFile = path.join(dataDir, 'database', 'sooya.db');
-const MAX_SCHEMA_VERSION = 33;
+// v34 adds the Moments feed. It introduces no new in-flight state that must be
+// normalized for a pre-v15 rollback, so it is safe for this checker to inspect.
+const MAX_SCHEMA_VERSION = 34;
 if (!fs.existsSync(dbFile)) {
   console.error(`[preflight] database not found: ${dbFile}`);
   console.error(`[preflight] pass --data-dir <dir> or set DATA_DIR`);
@@ -66,7 +68,7 @@ try {
     problems.push(`pending voice generations: ${voicePending.n}`);
   }
 
-  // 3. Proactive attempts that were still being prepared.
+  // 3. Proactive/Moments attempts that were still being prepared.
   const proactivePending = db.prepare(
     `SELECT COUNT(*) AS n FROM proactive_attempts WHERE status = 'blocked' AND blocked_reason IS NULL`
   ).get();
