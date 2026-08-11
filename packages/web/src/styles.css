@@ -1949,7 +1949,7 @@ button {
   .topbar-identity { gap: 8px; }
   .topbar-avatar { width: 34px; height: 34px; }
   .topbar-world { max-width: 30vw; font-size: 11px; }
-  .topbar-actions { gap: 4px; }
+  .topbar-actions { gap: 8px; }
   .topbar-actions .history-tool-button,
   .topbar-actions .notification-bell,
   .topbar-actions .topbar-admin-entry { width: 30px; height: 30px; }
@@ -2009,7 +2009,7 @@ button {
   height: max(100%, 36px);
 }
 
-/* Bell and admin entry are 38px apart, inside a 56px top bar. */
+/* Top-bar action centers stay at least 38px apart, so expanded hit targets never overlap. */
 .notification-bell::after,
 .history-tool-button::after,
 .topbar-admin-entry::after {
