@@ -25,19 +25,24 @@ async function panelHarness(env: Record<string, string> = {}, at = '2026-07-31T1
   return harness;
 }
 
-/**
- * A user message at a known distance from the pinned engine clock.
- *
- * `messages.create` always stamps wall-clock now, so the gap the engine sees
- * was "pinned clock minus real now" -- a number that depends on what time of
- * day the suite runs, and goes negative after 17:30 Beijing. The quiet-gap
- * assertions then measured the clock instead of the panel. Backdating the row
- * makes the distance the test's own choice.
- */
+/** A user message at a known distance from the pinned engine clock. */
 function userMessageMinutesAgo(h: Harness, minutes: number, text: string): void {
   const { message } = h.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text }] });
   const stamp = new Date(pinnedNow.getTime() - minutes * 60_000).toISOString();
   h.app.db.prepare('UPDATE messages SET created_at = ? WHERE id = ?').run(stamp, message.id);
+}
+
+function stageShareableCandidate(h: Harness): void {
+  h.app.repos.life.advance({
+    activity: '去公园看猫', kind: 'out', mood: '好奇',
+    startedAt: localTime('2026-07-31T14:00').toISOString(),
+    endsAt: localTime('2026-07-31T17:00').toISOString()
+  });
+  h.app.repos.life.advance({
+    activity: '练琴', kind: 'play', mood: '专注',
+    startedAt: localTime('2026-07-31T17:00').toISOString(),
+    endsAt: localTime('2026-07-31T18:00').toISOString()
+  });
 }
 
 async function get(h: Harness, url: string) {
@@ -50,30 +55,25 @@ async function put(h: Harness, url: string, payload: unknown) {
   return { res, body: res.json() as any };
 }
 
-/**
- * The reason she is silent is the whole point of this endpoint. Before it, the
- * only observable was "no message", which looks the same whether she is capped,
- * asleep, or has nothing finished worth mentioning.
- */
+/** The panel explains why a Life event is or is not ready for Moments. */
 describe('life panel', () => {
-  it('reports what she is doing, her log and why she has not spoken', async () => {
+  it('reports what she is doing, her log and why there is no Moment to publish yet', async () => {
     const h = await panelHarness();
     const { res, body } = await get(h, '/api/admin/life');
     expect(res.statusCode).toBe(200);
     expect(body.snapshot.activity).toBeTruthy();
     expect(body.snapshot.mood).toBeTruthy();
     expect(Array.isArray(body.log)).toBe(true);
-    // Nothing has finished yet in a fresh install, so that is the honest reason.
     expect(body.reachOut.reason).toBe('nothing_worth_saying');
     expect(body.reachOut.enabledByDeployment).toBe(true);
     expect(body.settings).toMatchObject({ reachOut: true, quietGapMinutes: expect.any(Number), maxReachOutsPerDay: expect.any(Number) });
   });
 
-  it('names the user as the reason while she is still inside the quiet gap', async () => {
+  it('reports recent chat activity without using it as a Moments blocker', async () => {
     const h = await panelHarness({ LIFE_QUIET_GAP_MINUTES: '60' });
     userMessageMinutesAgo(h, 10, '在吗');
     const { body } = await get(h, '/api/admin/life');
-    expect(body.reachOut.reason).toBe('user_was_recently_here');
+    expect(body.reachOut.reason).toBe('nothing_worth_saying');
     expect(body.reachOut.lastUserAt).toBeTruthy();
   });
 
@@ -88,31 +88,35 @@ describe('life panel', () => {
     const { res, body } = await put(h, '/api/admin/life/settings', { quietGapMinutes: 30, maxReachOutsPerDay: 8 });
     expect(res.statusCode).toBe(200);
     expect(body.settings).toMatchObject({ quietGapMinutes: 30, maxReachOutsPerDay: 8 });
-    // Fields left alone keep following the env default instead of being frozen.
     expect(body.lifePolicy.silentFrom).toBeUndefined();
     const after = await get(h, '/api/admin/life');
     expect(after.body.settings.quietGapMinutes).toBe(30);
   });
 
-  it('applies a changed quiet gap to the live decision without a restart', async () => {
-    // The message sits 60 minutes back: inside a 1440-minute gap, outside a
-    // 30-minute one. Lowering the setting must flip the answer on the next read.
+  it('applies a changed Moments gap to the live decision without a restart', async () => {
     const h = await panelHarness({ LIFE_QUIET_GAP_MINUTES: '1440' });
-    userMessageMinutesAgo(h, 60, '我去洗澡');
+    stageShareableCandidate(h);
+    h.app.repos.moments.create({
+      candidateId: 'old-breakfast-moment',
+      text: '早些时候的早餐意外地很好吃。',
+      activity: '吃早餐',
+      createdAt: new Date(pinnedNow.getTime() - 60 * 60_000).toISOString()
+    });
+
     const before = await get(h, '/api/admin/life');
-    expect(before.body.reachOut.reason).toBe('user_was_recently_here');
+    expect(before.body.reachOut.reason).toBe('moment_gap');
+
     await put(h, '/api/admin/life/settings', { quietGapMinutes: 30 });
     const after = await get(h, '/api/admin/life');
-    expect(after.body.reachOut.reason).not.toBe('user_was_recently_here');
+    expect(after.body.reachOut.reason).toBe('ok');
   });
 
-  it('lets the panel switch reach-out off, and reports it as the reason', async () => {
+  it('lets the panel switch Moments publishing off, and reports it as the reason', async () => {
     const h = await panelHarness();
     await put(h, '/api/admin/life/settings', { reachOut: false });
     const { body } = await get(h, '/api/admin/life');
     expect(body.settings.reachOut).toBe(false);
     expect(body.reachOut.reason).toBe('disabled');
-    // The deployment switch is still reported as on: the panel is the one saying no.
     expect(body.reachOut.enabledByDeployment).toBe(true);
   });
 
