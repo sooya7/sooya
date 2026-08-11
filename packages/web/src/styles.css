@@ -1091,9 +1091,13 @@ button {
     height: 34px;
   }
   .sticker-panel {
-    /* Four columns fit on a phone; keep three complete rows visible instead of
-       clipping the last row behind the composer controls. */
+    /* Five compact columns keep the first nine choices inside the panel on a
+       375px phone, while the panel still scrolls for larger catalogues. */
     max-height: 264px;
+  }
+  .sticker-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
   }
 }
 

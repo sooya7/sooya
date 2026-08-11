@@ -45,6 +45,18 @@ export default async function globalSetup(): Promise<void> {
           maxRetries: 0,
           timeoutMs: 20000
         },
+        // Keep structured director decisions on a separate mock model so they
+        // never consume the reply script used by the chat specs.
+        director: {
+          provider: 'openai-chat',
+          baseUrl: base,
+          apiKey: 'sk-e2e-mock-key',
+          model: 'mock-director',
+          supportsVision: true,
+          supportsStreaming: false,
+          maxRetries: 0,
+          timeoutMs: 5000
+        },
         embedding: { provider: 'openai-embeddings', baseUrl: base, apiKey: 'sk-e2e-mock-key', model: 'mock-embed', dimensions: 32 },
         image: { provider: 'openai-images', baseUrl: base, apiKey: 'sk-e2e-mock-key', model: 'mock-image', maxRetries: 0 },
         tts: { provider: 'openai-tts', baseUrl: base, apiKey: 'sk-e2e-mock-key', model: 'mock-tts', format: 'mp3', maxRetries: 0 }

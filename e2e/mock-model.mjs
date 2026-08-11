@@ -130,6 +130,7 @@ const server = http.createServer(async (req, res) => {
     const isExtraction = system.includes('记忆抽取器');
     const isSummary = system.includes('压缩成简洁');
     const isThought = system.includes('可见想法');
+    const isDirector = parsed.model === 'mock-director';
 
     if (state.delayMs) await new Promise((r) => setTimeout(r, state.delayMs));
     if (state.failChat && !isExtraction && !isSummary && !isThought) {
@@ -151,6 +152,18 @@ const server = http.createServer(async (req, res) => {
         : JSON.stringify({ worth: false, items: [] });
     } else if (isSummary) {
       text = '这段聊天的要点摘要。';
+    } else if (isDirector) {
+      const userContent = String(parsed.messages?.[1]?.content ?? '');
+      if (system.includes('表情选择器')) {
+        const candidate = userContent.match(/"id":"([^"]+)"/);
+        text = JSON.stringify({ stickerId: candidate?.[1] ?? null, confidence: candidate ? 0.95 : null });
+      } else if (system.includes('语音表达整理器')) {
+        text = JSON.stringify({ text: '好的。', speed: 1 });
+      } else if (system.includes('Image2')) {
+        text = JSON.stringify({ prompt: 'a quiet private snapshot', aspectRatio: '3:4' });
+      } else {
+        text = JSON.stringify({ ok: true });
+      }
     } else {
       text = state.queue.length > 0 ? state.queue.shift() : state.fallback;
     }
