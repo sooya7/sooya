@@ -66,10 +66,9 @@ function formatHistoryTime(value: string): string {
 
 function HistoryDetails({ data }: { data: LifePanelData }) {
   const [expanded, setExpanded] = useState(false);
-  // “生活记录”只展示真正发生过的生活和已经发布的朋友圈。
-  // blocked / failed 是内部发布尝试，不应该每次 tick 都占一整条观察记录。
-  const publishedAttempts = data.proactive.filter((attempt) => attempt.status === 'sent');
-  const history = mergeLifeHistory(data.log, data.events, publishedAttempts);
+  // 朋友圈有独立 Feed。生活记录只观察她真正发生过的活动与事件，
+  // 不重复展示任何朋友圈发布记录，也不展示发布尝试日志。
+  const history = mergeLifeHistory(data.log, data.events, []);
   if (!history.length) return <p className="life-thread-empty">暂无生活记录。</p>;
 
   const visible = expanded ? history : history.slice(0, HISTORY_PREVIEW_LIMIT);
@@ -120,7 +119,7 @@ export function LifeObservationDetails({ data, overview }: {
       <DisclosureSection
         id="life-details-history"
         title="生活记录"
-        summary="最近活动、事件与朋友圈发布"
+        summary="最近活动与事件"
       >
         <HistoryDetails data={data} />
       </DisclosureSection>
