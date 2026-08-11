@@ -1,0 +1,477 @@
+/* Compact, mobile-first Life observation surface. */
+
+.admin-v2 .life-observation {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  color: var(--admin-text);
+}
+
+.admin-v2 .life-observation [role='alert'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 9px 11px;
+  color: var(--admin-danger, var(--admin-text));
+  background: color-mix(in srgb, var(--admin-danger, var(--admin-primary)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--admin-danger, var(--admin-primary)) 24%, transparent);
+  border-radius: 11px;
+  font-size: 11px;
+}
+
+.admin-v2 .life-observation [role='alert'] button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--admin-primary-deep);
+  background: var(--admin-surface);
+  border: 1px solid var(--admin-line);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.admin-v2 .life-hero-card,
+.admin-v2 .life-vitals-card,
+.admin-v2 .life-plan-card,
+.admin-v2 .life-secondary-card {
+  background: var(--admin-surface);
+  border: 1px solid var(--admin-line);
+  border-radius: 16px;
+  box-shadow: var(--admin-sh-1);
+}
+
+.admin-v2 .life-hero-card {
+  padding: 13px 14px 12px;
+  background:
+    radial-gradient(circle at 100% 0%, var(--admin-primary-soft), transparent 44%),
+    var(--admin-surface);
+}
+
+.admin-v2 .life-hero-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-v2 .life-hero-copy {
+  min-width: 0;
+}
+
+.admin-v2 .life-hero-kicker {
+  display: block;
+  color: var(--admin-primary-deep);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+}
+
+.admin-v2 .life-hero-activity {
+  display: block;
+  margin-top: 3px;
+  color: var(--admin-text);
+  font-size: 17px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.admin-v2 .life-hero-meta,
+.admin-v2 .life-hero-note {
+  color: var(--admin-muted);
+  font-size: 10px;
+}
+
+.admin-v2 .life-hero-meta {
+  display: block;
+  margin-top: 2px;
+}
+
+.admin-v2 .life-hero-clock {
+  flex: 0 0 auto;
+  color: var(--admin-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.admin-v2 .life-hero-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid var(--admin-line);
+}
+
+.admin-v2 .life-hero-fact {
+  min-width: 0;
+  padding: 0 9px;
+}
+
+.admin-v2 .life-hero-fact:first-child {
+  padding-left: 0;
+}
+
+.admin-v2 .life-hero-fact:last-child {
+  padding-right: 0;
+}
+
+.admin-v2 .life-hero-fact + .life-hero-fact {
+  border-left: 1px solid var(--admin-line);
+}
+
+.admin-v2 .life-hero-fact span,
+.admin-v2 .life-hero-fact strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-v2 .life-hero-fact span {
+  color: var(--admin-muted);
+  font-size: 9px;
+}
+
+.admin-v2 .life-hero-fact strong {
+  margin-top: 2px;
+  color: var(--admin-text);
+  font-size: 12px;
+}
+
+.admin-v2 .life-hero-note {
+  margin: 8px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-v2 .life-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.admin-v2 .life-card-heading h3 {
+  margin: 0;
+  color: var(--admin-text);
+  font-size: 14px;
+}
+
+.admin-v2 .life-card-heading small {
+  color: var(--admin-muted);
+  font-size: 9px;
+}
+
+.admin-v2 .life-vitals-card {
+  padding: 12px 13px;
+}
+
+.admin-v2 .life-vitals-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.admin-v2 .life-vital-item {
+  min-width: 0;
+  min-height: 52px;
+  padding: 7px 8px;
+  background: var(--admin-surface-soft);
+  border: 1px solid var(--admin-line);
+  border-radius: 11px;
+}
+
+.admin-v2 .life-vital-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.admin-v2 .life-vital-name {
+  min-width: 0;
+  color: var(--admin-muted);
+  font-size: 10px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-v2 .life-vital-value {
+  flex: 0 0 auto;
+  color: var(--admin-text);
+  font-size: 15px;
+  line-height: 1.1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.admin-v2 .life-vital-item[data-vital='sleep_debt'] .life-vital-value {
+  font-size: 11px;
+}
+
+.admin-v2 .life-vital-level {
+  display: block;
+  margin-top: 4px;
+  color: var(--admin-muted);
+  font-size: 9px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.admin-v2 .life-vital-level[data-tone='good'] { color: var(--admin-success); }
+.admin-v2 .life-vital-level[data-tone='warn'] { color: var(--admin-warning); }
+.admin-v2 .life-vital-level[data-tone='accent'] { color: var(--admin-primary-deep); }
+
+.admin-v2 .life-vitals-empty,
+.admin-v2 .life-plan-empty,
+.admin-v2 .life-thread-empty {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 11px;
+}
+
+.admin-v2 .life-vitals-empty {
+  padding: 8px 0 2px;
+}
+
+.admin-v2 .life-plan-card {
+  padding: 11px 13px;
+}
+
+.admin-v2 .life-plan-list,
+.admin-v2 .life-thread-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-v2 .life-plan-item,
+.admin-v2 .life-thread-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 9px;
+  background: var(--admin-surface-soft);
+  border: 1px solid var(--admin-line);
+  border-radius: 11px;
+}
+
+.admin-v2 .life-plan-copy,
+.admin-v2 .life-thread-copy {
+  min-width: 0;
+}
+
+.admin-v2 .life-plan-copy strong,
+.admin-v2 .life-thread-copy strong {
+  display: block;
+  color: var(--admin-text);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-v2 .life-plan-copy small,
+.admin-v2 .life-thread-copy small {
+  display: block;
+  margin-top: 1px;
+  color: var(--admin-muted);
+  font-size: 9px;
+}
+
+.admin-v2 .life-plan-time,
+.admin-v2 .life-thread-progress {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  color: var(--admin-primary-deep);
+  background: var(--admin-primary-soft);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-v2 .life-secondary-card {
+  overflow: hidden;
+}
+
+.admin-v2 .life-secondary-card .life-observation-details,
+.admin-v2 .life-secondary-card .life-boundaries {
+  padding: 0;
+  border: 0;
+}
+
+.admin-v2 .life-secondary-card .life-detail-disclosure,
+.admin-v2 .life-secondary-card .life-disclosure {
+  border: 0;
+  border-bottom: 1px solid var(--admin-line);
+}
+
+.admin-v2 .life-secondary-card .life-boundaries {
+  border-bottom: 0;
+}
+
+.admin-v2 .life-secondary-card .life-disclosure-toggle {
+  min-height: 46px;
+  padding: 10px 13px;
+}
+
+.admin-v2 .life-secondary-card .life-disclosure-toggle > span:first-child {
+  gap: 1px;
+  color: var(--admin-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-v2 .life-secondary-card .life-disclosure-toggle small {
+  color: var(--admin-muted);
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.admin-v2 .life-secondary-card .life-detail-disclosure > div,
+.admin-v2 .life-secondary-card [id$='-panel'] {
+  padding: 0 13px 12px;
+}
+
+.admin-v2 .life-secondary-card .life-thread-list {
+  padding-top: 1px;
+}
+
+.admin-v2 .life-observation [data-testid='life-history-list'] {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.admin-v2 .life-observation [data-testid='life-history-list'] li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--admin-line);
+  font-size: 10px;
+}
+
+.admin-v2 .life-observation [data-testid='life-history-list'] li:last-child {
+  border-bottom: 0;
+}
+
+.admin-v2 .life-observation [data-testid='life-history-list'] li > span:first-child,
+.admin-v2 .life-observation [data-testid='life-history-list'] li time {
+  color: var(--admin-muted);
+  white-space: nowrap;
+}
+
+.admin-v2 .life-observation [data-testid='life-history-list'] li strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-v2 .life-observation [data-testid='life-history-list'] li > span:nth-of-type(2) {
+  grid-column: 2;
+  color: var(--admin-muted);
+  overflow-wrap: anywhere;
+}
+
+.admin-v2 .life-secondary-card .life-boundary-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 10px;
+  padding: 0 13px 12px;
+}
+
+.admin-v2 .life-secondary-card .life-boundary-form label,
+.admin-v2 .life-secondary-card .life-boundary-form legend,
+.admin-v2 .life-secondary-card .life-boundary-form p {
+  font-size: 10px;
+}
+
+.admin-v2 .life-secondary-card .life-boundary-form input,
+.admin-v2 .life-secondary-card .life-boundary-form select {
+  min-height: 34px;
+  font-size: 11px;
+}
+
+.admin-v2 .life-secondary-card .life-boundary-form button[type='submit'] {
+  min-height: 34px;
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .admin-v2 .life-observation {
+    gap: 8px;
+  }
+
+  .admin-v2 .life-hero-card {
+    padding: 12px;
+  }
+
+  .admin-v2 .life-hero-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 8px;
+  }
+
+  .admin-v2 .life-hero-fact {
+    padding: 0 7px;
+  }
+
+  .admin-v2 .life-hero-fact:nth-child(odd) {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .admin-v2 .life-hero-fact:nth-child(even) {
+    padding-right: 0;
+  }
+
+  .admin-v2 .life-hero-fact:nth-child(n + 3) {
+    padding-top: 8px;
+    border-top: 1px solid var(--admin-line);
+  }
+
+  .admin-v2 .life-vitals-card,
+  .admin-v2 .life-plan-card {
+    padding: 10px 11px;
+  }
+
+  .admin-v2 .life-vitals-grid {
+    gap: 5px;
+  }
+
+  .admin-v2 .life-vital-item {
+    min-height: 49px;
+    padding: 7px;
+  }
+
+  .admin-v2 .life-secondary-card .life-boundary-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 390px) {
+  .admin-v2 .life-hero-clock { font-size: 9px; }
+  .admin-v2 .life-hero-fact span { font-size: 8px; }
+  .admin-v2 .life-hero-fact strong { font-size: 11px; }
+  .admin-v2 .life-vital-name { font-size: 9px; }
+  .admin-v2 .life-vital-value { font-size: 14px; }
+  .admin-v2 .life-vital-item[data-vital='sleep_debt'] .life-vital-value { font-size: 10px; }
+}
