@@ -1,5 +1,7 @@
 from pathlib import Path
 
+# One-off main-branch transformation. The workflow removes this helper after the
+# validated UI change lands.
 path = Path('packages/web/src/components/AdminPanel.tsx')
 text = path.read_text(encoding='utf-8')
 
