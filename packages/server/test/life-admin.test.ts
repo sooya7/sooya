@@ -235,7 +235,7 @@ describe('Life Admin API (P1)', () => {
     expect(status.statusCode).toBe(200);
     const body = status.json() as { enabled: boolean; provider: { name: string | null; configured: boolean }; lastSnapshot: unknown; location: unknown };
     expect(typeof body.enabled).toBe('boolean');
-    expect(body.provider).toMatchObject({ configured: false });
+    expect(body.provider).toMatchObject({ name: 'fallback', configured: true });
     // Weather identity is the active city (宁波).
     expect(body.location).toMatchObject({ kind: 'home' });
 

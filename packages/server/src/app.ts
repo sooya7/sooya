@@ -314,7 +314,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
   weather.setEnabled(env.WORLD_CONTEXT_ENABLED && env.WEATHER_ENABLED);
   // Production provider chain (primary -> secondary -> cache -> unknown);
-  // unconfigured env yields the no-op provider, so behaviour is unchanged.
+  // the default Open-Meteo provider is keyless, while an explicit unknown
+  // provider still falls back to the inert no-op adapter.
   weather.setProvider(createWeatherChain({
     provider: env.WEATHER_PROVIDER,
     baseUrl: env.WEATHER_BASE_URL,

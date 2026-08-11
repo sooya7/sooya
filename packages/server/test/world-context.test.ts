@@ -50,7 +50,7 @@ function fullProvider(clock: () => Date): WeatherProviderFull {
 
 describe('WorldContextService snapshot（contract §1.3）', () => {
   it('flags 全关时快照为缺省空态（不编造任何数据）', async () => {
-    harness = await createHarness({ skipStickerImport: true, startWorkers: false });
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { WORLD_CONTEXT_ENABLED: 'false', LOCATION_MODEL_ENABLED: 'false', WEATHER_ENABLED: 'false' } });
     const snapshot = harness.app.services.world.snapshot();
     expect(snapshot.weatherCondition).toBeNull();
     expect(snapshot.location).toBeNull();
@@ -220,7 +220,7 @@ describe('WorldContextService weather 快照同步路径', () => {
 
 describe('快照字段类型回归（冻结契约形状）', () => {
   it('WorldSnapshot 字段集合与 contract §1.3 一致', async () => {
-    harness = await createHarness({ skipStickerImport: true, startWorkers: false });
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { WORLD_CONTEXT_ENABLED: 'false', LOCATION_MODEL_ENABLED: 'false', WEATHER_ENABLED: 'false' } });
     const snapshot = harness.app.services.world.snapshot() as Record<string, unknown>;
     for (const field of ['now', 'localDate', 'timeZone', 'city', 'location', 'previousLocation', 'travel', 'weather', 'forecast', 'daylight', 'weatherCondition']) {
       expect(field in snapshot, `missing ${field}`).toBe(true);

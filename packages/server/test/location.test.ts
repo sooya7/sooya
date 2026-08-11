@@ -23,7 +23,7 @@ function localTime(iso: string): Date {
  */
 describe('location model (P0)', () => {
   it('is completely inert when LOCATION_MODEL_ENABLED=false', async () => {
-    harness = await createHarness({ skipStickerImport: true, startWorkers: false });
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { WORLD_CONTEXT_ENABLED: 'false', LOCATION_MODEL_ENABLED: 'false' } });
     expect(harness.app.services.location.isEnabled).toBe(false);
     expect(harness.app.services.location.current()).toBeNull();
     expect(harness.app.services.location.list()).toEqual([]);
@@ -256,7 +256,7 @@ describe('location model (P0)', () => {
   });
 
   it('does not duplicate seeds on a legacy DB (pre-key rows)', async () => {
-    harness = await createHarness({ skipStickerImport: true, startWorkers: false });
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { WORLD_CONTEXT_ENABLED: 'false', LOCATION_MODEL_ENABLED: 'false' } });
     // 模拟 v19 时代的库：已有地点但没有 key 列数据。
     harness.app.repos.locations.create({ name: '家', kind: 'home', source: 'builtin' });
     harness.app.repos.locations.create({ name: '街角咖啡店', kind: 'cafe', source: 'builtin' });

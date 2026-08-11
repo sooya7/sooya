@@ -47,7 +47,7 @@ function enableWorld(app: SooyaApp): void {
 
 describe('weather snapshot (P0)', () => {
   it('is inert when the flags are off (no provider, unknown condition)', async () => {
-    harness = await createHarness({ skipStickerImport: true, startWorkers: false });
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { WORLD_CONTEXT_ENABLED: 'false', LOCATION_MODEL_ENABLED: 'false', WEATHER_ENABLED: 'false' } });
     expect(harness.app.services.weather.isEnabled).toBe(false);
     expect(harness.app.services.world.snapshot().weatherCondition).toBeNull();
   });
