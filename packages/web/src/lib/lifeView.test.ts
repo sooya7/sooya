@@ -25,7 +25,7 @@ const reachOut = (patch: Partial<LifePanelData['reachOut']>): LifePanelData['rea
 describe('lifeView', () => {
   it('explains each silence reason in a way you can act on', () => {
     expect(reachReasonText({ settings, reachOut: reachOut({ reason: 'nothing_worth_saying' }) }))
-      .toContain('还没有做完');
+      .toContain('还没有值得发布的新动态');
     expect(reachReasonText({ settings, reachOut: reachOut({ reason: 'silent_hours' }) }))
       .toContain('00:00 – 09:00');
     expect(reachReasonText({ settings, reachOut: reachOut({ reason: 'daily_cap', sharedLastDay: 3 }) }))
@@ -55,10 +55,10 @@ describe('lifeView', () => {
 
   it('translates every proactive result produced by the current server', () => {
     expect(proactiveReasonText('share_candidate')).toBe('有值得分享的新动态');
-    expect(proactiveReasonText('compose_failed')).toBe('主动消息生成失败');
-    expect(proactiveReasonText('empty_text')).toBe('模型没有生成可发送文字');
-    expect(proactiveReasonText('media_failed')).toBe('附加媒体准备失败');
-    expect(proactiveReasonText('message_persist_failed: database busy')).toBe('消息保存失败');
+    expect(proactiveReasonText('compose_failed')).toBe('朋友圈文案生成失败');
+    expect(proactiveReasonText('empty_text')).toBe('模型没有生成可发布文字');
+    expect(proactiveReasonText('media_failed')).toBe('动态图片准备失败');
+    expect(proactiveReasonText('moment_persist_failed: database busy')).toBe('动态保存失败');
   });
 
   it('formats gaps in the largest useful unit', () => {

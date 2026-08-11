@@ -54,6 +54,7 @@ import { ThoughtSafetyFilter } from './core/thoughts/safety.js';
 import { readThoughtsFlags } from './core/thoughts/flags.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
+import { MomentRepo } from './db/repos/moment.repo.js';
 import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
 import { VoiceGenerationRepo } from './db/repos/voice.repo.js';
 import { VoiceService } from './core/voice/service.js';
@@ -76,6 +77,7 @@ import { registerFeatureRoutes } from './routes/features.js';
 import { registerVoiceRoutes } from './routes/voice.js';
 import { registerLifeAdminRoutes } from './routes/life-admin.js';
 import { registerThoughtRoutes } from './routes/thoughts.js';
+import { registerMomentRoutes } from './routes/moments.js';
 import { ensureDirSync, cleanupTempFiles } from './util/fsx.js';
 
 export interface BuildAppOptions {
@@ -115,6 +117,7 @@ export interface SooyaApp {
     pushSubscriptions: PushSubscriptionRepo;
     life: LifeRepo;
     proactive: ProactiveAttemptRepo;
+    moments: MomentRepo;
     voice: VoiceGenerationRepo;
     lifeV2: LifeV2Repo;
     locations: LifeLocationRepo;
@@ -230,6 +233,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     pushSubscriptions: new PushSubscriptionRepo(dbHandle),
     life: new LifeRepo(dbHandle),
     proactive: new ProactiveAttemptRepo(dbHandle),
+    moments: new MomentRepo(dbHandle),
     voice: new VoiceGenerationRepo(dbHandle),
     lifeV2: new LifeV2Repo(dbHandle),
     locations: new LifeLocationRepo(dbHandle),
@@ -448,15 +452,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const proactive = new ProactiveComposer({
     attempts: repos.proactive,
     replyBatches: repos.replyBatches,
-    jobs: repos.jobs,
     messages: repos.messages,
+    moments: repos.moments,
     life,
     capabilities,
     config,
     media: mediaStore,
-    stickers: stickerLibrary,
     bus,
-    voice: voiceService,
     coordinator: replyCoordinator,
     metrics,
     mediaDirector,
@@ -689,6 +691,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   registerVoiceRoutes(app);
   registerLifeAdminRoutes(app);
   registerThoughtRoutes(app);
+  registerMomentRoutes(app);
   registerAdminRoutes(app);
   registerFeatureRoutes(app);
 

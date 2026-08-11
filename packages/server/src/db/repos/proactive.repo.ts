@@ -15,6 +15,7 @@ export interface ProactiveAttempt {
   finalMode: ProactiveMode | null;
   fallbackReason: string | null;
   messageId: string | null;
+  momentId: string | null;
   sendSuccess: boolean;
   userResponseMessageId: string | null;
   userRespondedAt: string | null;
@@ -33,6 +34,7 @@ export interface ProactiveAttemptInput {
   finalMode?: ProactiveMode | null;
   fallbackReason?: string | null;
   messageId?: string | null;
+  momentId?: string | null;
   sendSuccess?: boolean;
   detail?: Record<string, unknown>;
 }
@@ -44,6 +46,7 @@ export interface ProactiveAttemptPatch {
   finalMode?: ProactiveMode | null;
   fallbackReason?: string | null;
   messageId?: string | null;
+  momentId?: string | null;
   sendSuccess?: boolean;
   detail?: Record<string, unknown>;
 }
@@ -59,6 +62,7 @@ interface ProactiveAttemptRow {
   final_mode: ProactiveMode | null;
   fallback_reason: string | null;
   message_id: string | null;
+  moment_id: string | null;
   send_success: number;
   user_response_message_id: string | null;
   user_responded_at: string | null;
@@ -76,9 +80,9 @@ export class ProactiveAttemptRepo {
     this.db.prepare(`
       INSERT INTO proactive_attempts(
         id,candidate_id,candidate_kind,candidate_activity,status,blocked_reason,
-        requested_mode,final_mode,fallback_reason,message_id,send_success,
+        requested_mode,final_mode,fallback_reason,message_id,moment_id,send_success,
         detail_json,created_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?, ?,?,?)
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       id,
       input.candidateId ?? null,
@@ -90,6 +94,7 @@ export class ProactiveAttemptRepo {
       input.finalMode ?? null,
       input.fallbackReason ?? null,
       input.messageId ?? null,
+      input.momentId ?? null,
       input.sendSuccess ? 1 : 0,
       JSON.stringify(input.detail ?? {}),
       timestamp,
@@ -110,7 +115,7 @@ export class ProactiveAttemptRepo {
     this.db.prepare(`
       UPDATE proactive_attempts SET
         status=?, blocked_reason=?, requested_mode=?, final_mode=?, fallback_reason=?,
-        message_id=?, send_success=?, detail_json=?, updated_at=?
+        message_id=?, moment_id=?, send_success=?, detail_json=?, updated_at=?
       WHERE id=?
     `).run(
       patch.status ?? current.status,
@@ -119,6 +124,7 @@ export class ProactiveAttemptRepo {
       patch.finalMode === undefined ? current.finalMode : patch.finalMode,
       patch.fallbackReason === undefined ? current.fallbackReason : patch.fallbackReason,
       patch.messageId === undefined ? current.messageId : patch.messageId,
+      patch.momentId === undefined ? current.momentId : patch.momentId,
       patch.sendSuccess === undefined ? (current.sendSuccess ? 1 : 0) : (patch.sendSuccess ? 1 : 0),
       JSON.stringify(detail),
       nowIso(),
@@ -133,7 +139,7 @@ export class ProactiveAttemptRepo {
     return rows.map(toAttempt);
   }
 
-  /** Attach the next user message to the latest successful proactive message. */
+  /** Legacy history hook. New Moments posts no longer bind the next chat message as a response. */
   recordUserResponse(messageId: string, messageCreatedAt: string): boolean {
     const parsed = Date.parse(messageCreatedAt);
     if (!Number.isFinite(parsed)) return false;
@@ -141,6 +147,7 @@ export class ProactiveAttemptRepo {
     const row = this.db.prepare(`
       SELECT id FROM proactive_attempts
       WHERE status='sent' AND send_success=1
+        AND moment_id IS NULL
         AND user_response_message_id IS NULL
         AND created_at <= ? AND created_at >= ?
       ORDER BY created_at DESC LIMIT 1
@@ -167,6 +174,7 @@ function toAttempt(row: ProactiveAttemptRow): ProactiveAttempt {
     finalMode: row.final_mode,
     fallbackReason: row.fallback_reason,
     messageId: row.message_id,
+    momentId: row.moment_id,
     sendSuccess: row.send_success === 1,
     userResponseMessageId: row.user_response_message_id,
     userRespondedAt: row.user_responded_at,

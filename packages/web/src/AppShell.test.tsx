@@ -8,6 +8,8 @@ import { navigate } from './lib/navigation.js';
 const lifecycle = vi.hoisted(() => ({
   chatMounts: 0,
   chatUnmounts: 0,
+  momentsMounts: 0,
+  momentsUnmounts: 0,
   galleryMounts: 0,
   galleryUnmounts: 0,
   adminMounts: 0,
@@ -21,6 +23,16 @@ vi.mock('./App.js', () => ({
       return () => { lifecycle.chatUnmounts += 1; };
     }, []);
     return active ? <div data-testid="chat">chat</div> : null;
+  }
+}));
+
+vi.mock('./components/MomentsPage.js', () => ({
+  default: () => {
+    useEffect(() => {
+      lifecycle.momentsMounts += 1;
+      return () => { lifecycle.momentsUnmounts += 1; };
+    }, []);
+    return <div data-testid="moments">moments</div>;
   }
 }));
 
@@ -70,6 +82,8 @@ afterEach(async () => {
   Object.assign(lifecycle, {
     chatMounts: 0,
     chatUnmounts: 0,
+    momentsMounts: 0,
+    momentsUnmounts: 0,
     galleryMounts: 0,
     galleryUnmounts: 0,
     adminMounts: 0,
@@ -92,8 +106,17 @@ describe('AppShell route lifecycle', () => {
     expect(host.querySelector('[data-testid="viewer"]')).not.toBeNull();
     expect(lifecycle.adminUnmounts).toBe(1);
 
+    await act(async () => { navigate('/moments'); });
+
+    expect(lifecycle.chatMounts).toBe(1);
+    expect(lifecycle.chatUnmounts).toBe(0);
+    expect(host.querySelector('[data-testid="chat"]')).toBeNull();
+    expect(host.querySelector('[data-testid="moments"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="viewer"]')).not.toBeNull();
+
     await act(async () => { navigate('/gallery'); });
 
+    expect(lifecycle.momentsUnmounts).toBe(1);
     expect(lifecycle.chatMounts).toBe(1);
     expect(lifecycle.chatUnmounts).toBe(0);
     expect(host.querySelector('[data-testid="chat"]')).toBeNull();

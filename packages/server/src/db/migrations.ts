@@ -1334,6 +1334,31 @@ export const MIGRATIONS: Migration[] = [
       db.exec('ALTER TABLE stickers ADD COLUMN semantic_revision INTEGER NOT NULL DEFAULT 0;');
     }
   },
+  {
+    version: 34,
+    name: 'moments_feed',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE moments (
+          id                TEXT PRIMARY KEY,
+          candidate_id      TEXT NOT NULL UNIQUE,
+          text              TEXT NOT NULL,
+          image_media_id    TEXT REFERENCES media(id) ON DELETE SET NULL,
+          image_kind        TEXT CHECK (image_kind IN ('pov','selfie')),
+          activity          TEXT NOT NULL,
+          location_id       TEXT,
+          location_name     TEXT,
+          city              TEXT,
+          weather_condition TEXT,
+          temperature_c     REAL,
+          liked             INTEGER NOT NULL DEFAULT 0,
+          created_at        TEXT NOT NULL
+        );
+        CREATE INDEX idx_moments_created ON moments(created_at DESC);
+        ALTER TABLE proactive_attempts ADD COLUMN moment_id TEXT REFERENCES moments(id) ON DELETE SET NULL;
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

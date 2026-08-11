@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 
-export type AppRouteKind = 'chat' | 'gallery' | 'admin';
+export type AppRouteKind = 'chat' | 'moments' | 'gallery' | 'admin';
 export const APP_NAVIGATION_EVENT = 'sooya:navigation';
 export interface NavigateOptions { replace?: boolean; state?: unknown; }
 
 export function classifyRoute(pathname: string): AppRouteKind {
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  if (normalized === '/moments') return 'moments';
   if (normalized === '/gallery') return 'gallery';
   if (normalized === '/admin' || normalized.startsWith('/admin/')) return 'admin';
   return 'chat';

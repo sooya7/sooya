@@ -19,7 +19,7 @@ export interface FeatureMedia {
   favorite: boolean;
   tags: string[];
   meta?: Record<string, unknown>;
-  references?: { total: number; messages?: number; stickers?: number };
+  references?: { total: number; messages?: number; messageParts?: number; stickers?: number; moments?: number };
 }
 
 export interface PersonaReference {
@@ -101,6 +101,7 @@ export interface ProactiveAttempt {
   finalMode: 'text' | 'text_sticker' | 'voice' | 'image' | null;
   fallbackReason: string | null;
   messageId: string | null;
+  momentId?: string | null;
   sendSuccess: boolean;
   userResponseMessageId: string | null;
   userRespondedAt: string | null;

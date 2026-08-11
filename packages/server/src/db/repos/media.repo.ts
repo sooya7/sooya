@@ -68,6 +68,7 @@ const AVATAR_META = `json_extract(CASE WHEN json_valid(m.meta_json) THEN m.meta_
 export interface MediaReferences {
   messageParts: number;
   stickers: number;
+  moments: number;
   total: number;
 }
 
@@ -152,7 +153,8 @@ export class MediaRepo {
   references(id: string): MediaReferences {
     const messageParts = (this.db.prepare('SELECT COUNT(*) c FROM message_parts WHERE media_id = ?').get(id) as { c: number }).c;
     const stickers = (this.db.prepare('SELECT COUNT(*) c FROM stickers WHERE media_id = ?').get(id) as { c: number }).c;
-    return { messageParts, stickers, total: messageParts + stickers };
+    const moments = (this.db.prepare('SELECT COUNT(*) c FROM moments WHERE image_media_id = ?').get(id) as { c: number }).c;
+    return { messageParts, stickers, moments, total: messageParts + stickers + moments };
   }
 
   allRows(): MediaRow[] { return this.db.prepare('SELECT * FROM media ORDER BY created_at DESC').all() as MediaRow[]; }
@@ -164,6 +166,7 @@ export class MediaRepo {
       WHERE m.kind != 'sticker'
         AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM moments mo WHERE mo.image_media_id = m.id)
       ORDER BY m.created_at LIMIT ?
     `).all(limit) as MediaRow[];
   }
@@ -178,6 +181,7 @@ export class MediaRepo {
         AND ${AVATAR_META} IS NULL
         AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM moments mo WHERE mo.image_media_id = m.id)
       ORDER BY m.created_at LIMIT ?
     `).all(cutoff, limit) as MediaRow[];
   }

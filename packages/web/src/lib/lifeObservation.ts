@@ -99,12 +99,12 @@ export function mergeLifeHistory(
       kind: 'proactive',
       id: attempt.id,
       at: attempt.createdAt,
-      title: attempt.candidateActivity ?? '主动联系尝试',
+      title: attempt.candidateActivity ?? '朋友圈发布尝试',
       detail: attempt.status === 'sent'
-        ? '已经发送'
+        ? '已发布到朋友圈'
         : attempt.status === 'blocked'
-          ? '没有打扰你'
-          : '发送失败'
+          ? '暂未发布'
+          : '发布失败'
     }))
   ];
 

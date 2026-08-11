@@ -34,6 +34,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export interface ConversationInfo { conversationId: string; persona: PersonaInfo; messageCount: number; lastSeq: number; lastEventSeq: number; }
 export interface MessageContext { target: ChatMessage; messages: ChatMessage[]; hasOlder: boolean; hasNewer: boolean; }
 export interface MessageSearchHit { message: ChatMessage; snippet: string; matchedPartId: string | null; }
+export interface Moment {
+  id: string;
+  text: string;
+  activity: string;
+  image: { id: string; url: string; kind: 'pov' | 'selfie' | null } | null;
+  location: { id: string | null; name: string | null; city: string | null } | null;
+  weather: { condition: string; temperatureC: number | null } | null;
+  liked: boolean;
+  createdAt: string;
+}
 /** 首屏一次性载荷：会话 + 最新一页消息 + 贴纸 + 她正在做什么。 */
 export interface BootstrapInfo { conversation: ConversationInfo; messages: { messages: ChatMessage[]; hasMore: boolean; lastEventSeq: number; lastMessageSeq: number; oldestSeq: number | null }; stickers: StickerInfo[]; life: LifeState; presence: WorldPresence; }
 export interface VisibleThought {
@@ -50,6 +60,9 @@ export interface VisibleThought {
 
 export const api = {
   bootstrap: () => request<BootstrapInfo>('/api/bootstrap'),
+  conversation: () => request<ConversationInfo>('/api/conversation'),
+  moments: (limit = 50) => request<{ moments: Moment[]; hasMore: boolean }>(`/api/moments?limit=${Math.max(1, Math.min(100, limit))}`),
+  likeMoment: (id: string, liked: boolean) => request<{ moment: Moment }>(`/api/moments/${encodeURIComponent(id)}/like`, { method: 'PATCH', body: JSON.stringify({ liked }) }),
   messages: (opts: { limit?: number; before?: number; since?: number } = {}) => { const params = new URLSearchParams(); if (opts.limit) params.set('limit', String(opts.limit)); if (opts.before !== undefined) params.set('before', String(opts.before)); if (opts.since !== undefined) params.set('since', String(opts.since)); return request<{ messages: ChatMessage[]; hasMore: boolean; nextSince?: number; lastEventSeq: number; lastMessageSeq: number; oldestSeq: number | null }>(`/api/messages?${params.toString()}`); },
   messageSearch: (q: string, opts: { limit?: number; cursor?: string | null } = {}) => { const params = new URLSearchParams({ q }); if (opts.limit) params.set('limit', String(opts.limit)); if (opts.cursor) params.set('cursor', opts.cursor); return request<{ hits: MessageSearchHit[]; nextCursor: string | null }>(`/api/messages/search?${params.toString()}`); },
   messagesByDate: (date: string, timeZone: string, limit = 200) => { const params = new URLSearchParams({ date, timeZone, limit: String(limit) }); return request<{ date: string; timeZone: string; messages: ChatMessage[]; hasMore: boolean }>(`/api/messages/by-date?${params.toString()}`); },

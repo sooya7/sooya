@@ -94,7 +94,6 @@ export function registerChatRoutes(app: SooyaApp): void {
         meta: { directives }
       });
       if (created.created) {
-        repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
         enqueueStickerMeaningJobs(app, parts);
       }
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
@@ -144,7 +143,6 @@ export function registerChatRoutes(app: SooyaApp): void {
         meta: { directives }
       });
       if (created.created) {
-        repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
         enqueueStickerMeaningJobs(app, parts);
       }
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;

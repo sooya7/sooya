@@ -208,7 +208,7 @@ describe('LifeObservationDetails', () => {
     expect(secondary?.contains(details)).toBe(true);
     expect(secondary?.textContent).toContain('正在发展的事');
     expect(secondary?.textContent).toContain('生活记录');
-    expect(secondary?.textContent).toContain('联系边界');
+    expect(secondary?.textContent).toContain('朋友圈发布');
     expect(secondary?.textContent).not.toContain('地点与天气');
   });
 

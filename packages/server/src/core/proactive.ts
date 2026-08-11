@@ -1,13 +1,12 @@
-import type { MessageRepo, CreatePartInput } from '../db/repos/message.repo.js';
+import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { ProactiveAttemptRepo, ProactiveMode } from '../db/repos/proactive.repo.js';
-import type { JobRepo } from '../db/repos/misc.repo.js';
 import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
 import type { LifeLogRow } from '../db/repos/life.repo.js';
+import type { MomentRepo, MomentImageKind } from '../db/repos/moment.repo.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ConfigStore } from '../config/store.js';
 import type { LifeRuntime } from './life.js';
 import type { MediaStore } from '../media/store.js';
-import type { StickerLibrary } from '../media/stickers.js';
 import type { EventBus } from '../events/bus.js';
 import type { ChatMessage } from './types.js';
 import type { ReplyCoordinator, ProactiveDeliveryTask } from './reply-coordinator.js';
@@ -21,7 +20,7 @@ import { extractJsonObject } from '../util/json-extract.js';
 export type { ProactiveMode } from '../db/repos/proactive.repo.js';
 
 export interface ProactiveRunOptions {
-  /** Test/admin seam; production uses the configured mode policy. */
+  /** Test/admin seam; legacy voice/sticker choices are normalized to a text Moment. */
   mode?: ProactiveMode;
 }
 
@@ -37,7 +36,9 @@ export interface ProactiveRunResult {
   status: 'blocked' | 'sent' | 'failed';
   blockedReason: string | null;
   candidateId: string | null;
+  /** Deprecated: proactive Life sharing no longer creates a chat message. */
   messageId: string | null;
+  momentId: string | null;
   requestedMode: ProactiveMode | null;
   finalMode: ProactiveMode | null;
   fallbackReason: string | null;
@@ -45,17 +46,15 @@ export interface ProactiveRunResult {
 }
 
 interface PreparedMedia {
-  part: CreatePartInput | null;
+  imageMediaId: string | null;
+  imageKind: MomentImageKind | null;
   finalMode: ProactiveMode;
   fallbackReason: string | null;
-  stickerId: string | null;
   detail?: Record<string, unknown>;
 }
 
-const ProactiveSharePlanSchema = z.object({
-  // Keep the schema permissive enough for the quality guard to repair obvious
-  // fragments such as “刚刚” instead of classifying them as transport errors.
-  text: z.string().trim().min(1).max(80),
+const MomentSharePlanSchema = z.object({
+  text: z.string().trim().min(1).max(120),
   image: z.object({
     kind: z.enum(['pov', 'selfie']),
     scene: z.string().trim().min(4).max(300),
@@ -65,7 +64,7 @@ const ProactiveSharePlanSchema = z.object({
   }).nullable()
 });
 
-type ProactiveSharePlan = z.infer<typeof ProactiveSharePlanSchema>;
+type MomentSharePlan = z.infer<typeof MomentSharePlanSchema>;
 
 interface ProactiveEventContext {
   activity: string;
@@ -87,28 +86,23 @@ interface ProactiveEventContext {
 const TOPIC_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Owns the complete proactive reach-out transaction. Rules are evaluated before
- * a model call; media is persisted before the candidate is marked shared; and
- * push is only enqueued after the sent assistant message exists.
+ * Historical name kept for compatibility. This service now turns shareable
+ * Life events into a private Moments feed. It never writes assistant messages
+ * and never enqueues reply push notifications.
  */
 export class ProactiveComposer {
   constructor(
     private readonly deps: {
       attempts: ProactiveAttemptRepo;
-      jobs: JobRepo;
       messages: MessageRepo;
+      moments: MomentRepo;
       life: LifeRuntime;
       replyBatches: ReplyBatchRepo;
       capabilities: CapabilityRegistry;
       config: ConfigStore;
       media: MediaStore;
-      stickers: StickerLibrary;
       bus: EventBus;
-      /** D5: proactive voice runs through the full voice pipeline. */
-      voice?: import('./voice/service.js').VoiceService | null;
-      /** P0-1: proactive deliveries are scheduled by the reply coordinator. */
       coordinator: ReplyCoordinator;
-      /** Next-phase privacy-safe metrics (METRICS_DASHBOARD_ENABLED). */
       metrics?: import('./metrics.js').MetricsService;
       mediaDirector: MediaDirector;
       personaReferences: PersonaReferenceLoader;
@@ -117,41 +111,37 @@ export class ProactiveComposer {
     }
   ) {}
 
-  /** True when a user message arrived after the evaluation snapshot. */
-  private userAppearedSince(lastUserAt: string | null): boolean {
-    if (!lastUserAt) return false;
-    const recent = this.deps.messages.recent(20);
-    for (const message of recent) {
-      if (message.role !== 'user') continue;
-      if (Date.parse(message.createdAt) > Date.parse(lastUserAt)) return true;
-    }
-    return false;
-  }
-
   evaluate(): ProactiveEvaluation {
     const recent = this.deps.messages.recent(40);
     const lastUser = [...recent].reverse().find((message) => message.role === 'user');
     const lastAssistant = [...recent].reverse().find((message) => message.role === 'assistant');
-    const decision = this.deps.life.shouldReachOut(
-      lastUser ? new Date(lastUser.createdAt) : null,
-      lastAssistant ? new Date(lastAssistant.createdAt) : null
-    );
+
+    // A Moment is not a chat interruption. Reuse Life's candidate, sleep,
+    // silent-hour and daily-cap rules, but deliberately remove chat-gap gates.
+    const decision = this.deps.life.shouldReachOut(null, null);
     const base = {
       candidate: decision.candidate,
       lastUserAt: lastUser?.createdAt ?? null,
       lastAssistantAt: lastAssistant?.createdAt ?? null
     };
     if (!decision.reach || !decision.candidate) return { reach: false, reason: decision.reason, ...base };
-    // §50.4: never reach out while a reply batch is open — the user is mid-
-    // conversation and an unprompted message would stack on her reply.
-    const openBatch = this.deps.replyBatches.openBatch();
-    if (openBatch) return { reach: false, reason: 'reply_in_progress', ...base };
-    if (this.recentlyDiscussed(decision.candidate, recent)) {
+
+    const latest = this.deps.moments.latest();
+    if (latest) {
+      const elapsed = this.deps.life.now().getTime() - Date.parse(latest.created_at);
+      const gap = this.deps.life.settings.quietGapMinutes * 60_000;
+      if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed < gap) {
+        return { reach: false, reason: 'moment_gap', ...base };
+      }
+    }
+
+    // User replies still get model/provider priority. The candidate remains
+    // unshared and will be retried on a later Life tick.
+    if (this.deps.replyBatches.openBatch()) return { reach: false, reason: 'reply_in_progress', ...base };
+    if (this.recentlyDiscussed(decision.candidate, recent) || this.recentlyShared(decision.candidate)) {
       return { reach: false, reason: 'recent_topic', ...base };
     }
-    if (!this.deps.capabilities.has('chat')) {
-      return { reach: false, reason: 'chat_unavailable', ...base };
-    }
+    if (!this.deps.capabilities.has('chat')) return { reach: false, reason: 'chat_unavailable', ...base };
     return { reach: true, reason: 'ok', ...base };
   }
 
@@ -166,26 +156,11 @@ export class ProactiveComposer {
       requestedMode,
       status: 'blocked',
       blockedReason: evaluation.reach ? null : evaluation.reason,
-      detail: { evaluatedAt: new Date().toISOString() }
+      detail: { evaluatedAt: this.deps.life.now().toISOString(), destination: 'moments' }
     });
 
-    if (!evaluation.reach || !candidate) {
-      return {
-        status: 'blocked',
-        blockedReason: evaluation.reason,
-        candidateId: candidate?.id ?? null,
-        messageId: null,
-        requestedMode,
-        finalMode: null,
-        fallbackReason: null,
-        sendSuccess: false
-      };
-    }
+    if (!evaluation.reach || !candidate) return this.blocked(evaluation.reason, candidate?.id ?? null, requestedMode);
 
-    // P0-1: the whole delivery (compose -> media -> persist) runs as a task on
-    // the reply coordinator. The coordinator enforces user-reply priority,
-    // aborts the task the moment a user message arrives (the signal reaches
-    // the chat/TTS/image providers), and guarantees once-only scheduling.
     let finalMode: ProactiveMode | null = null;
     let fallbackReason: string | null = null;
     const task: ProactiveDeliveryTask = {
@@ -194,12 +169,12 @@ export class ProactiveComposer {
       run: async (signal) => {
         const provider = this.deps.capabilities.chatProvider();
         const persona = this.deps.config.getPersona();
-        const lifeLines = this.deps.life.contextLines(this.lastUserDate(evaluation));
-
-        let sharePlan: ProactiveSharePlan;
+        const lifeLines = this.deps.life.contextLines(evaluation.lastUserAt ? new Date(evaluation.lastUserAt) : null);
         const eventContext = this.resolveEventContext(candidate);
+
+        let sharePlan: MomentSharePlan;
         try {
-          sharePlan = await composeProactiveSharePlan(
+          sharePlan = await composeMomentSharePlan(
             provider,
             persona.systemPrompt,
             lifeLines,
@@ -209,9 +184,7 @@ export class ProactiveComposer {
           );
         } catch (error) {
           if (signal.aborted) return { kind: 'discarded' };
-          const reason = error instanceof Error && error.message === 'invalid_share_text'
-            ? 'invalid_share_text'
-            : 'compose_failed';
+          const reason = error instanceof Error && error.message === 'invalid_share_text' ? 'invalid_share_text' : 'compose_failed';
           this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: reason, detail: { error: safeError(error) } });
           throw new Error(reason);
         }
@@ -221,79 +194,60 @@ export class ProactiveComposer {
           prepared = await this.prepareMedia(requestedMode ?? 'text', sharePlan, eventContext, candidate, signal);
         } catch (error) {
           if (signal.aborted) return { kind: 'discarded' };
-          const reason = 'media_failed';
-          this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: reason, detail: { error: safeError(error) } });
-          throw new Error(reason);
+          this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: 'media_failed', detail: { error: safeError(error) } });
+          throw new Error('media_failed');
         }
         finalMode = prepared.finalMode;
         fallbackReason = prepared.fallbackReason;
+        if (signal.aborted) return { kind: 'discarded' };
 
-        // Final gate: the user may have appeared while we composed/prepared.
-        if (signal.aborted || this.userAppearedSince(evaluation.lastUserAt)) {
-          return { kind: 'discarded' };
-        }
-
-        const parts: CreatePartInput[] = [{ type: 'text', text: sharePlan.text, status: 'sent' }];
-        if (prepared.part) parts.push(prepared.part);
         try {
-          // P1-4: proactive messages are persisted ONLY through the reply
-          // coordinator (publishProactiveMessage): the attempt is marked
-          // 'sent' in the SAME transaction as the message, and the partial
-          // unique index on (candidate_id) WHERE status='sent' rejects a
-          // concurrent sender, rolling the message back with it.
-          const persisted = this.deps.coordinator.publishProactiveMessage({
-            parts,
-            meta: {
-              proactive: true,
-              proactiveAttemptId: attempt.id,
-              proactiveCandidateId: candidate.id,
-              lifeLogId: candidate.id,
+          const persisted = this.deps.moments.inTransaction(() => {
+            const moment = this.deps.moments.create({
+              candidateId: candidate.id,
+              text: sharePlan.text,
+              imageMediaId: prepared.imageMediaId,
+              imageKind: prepared.imageKind,
               activity: candidate.activity,
-              proactiveMode: prepared.finalMode,
-              ...(prepared.fallbackReason ? { fallbackReason: prepared.fallbackReason } : {})
-            },
-            onPersisted: (message) => {
-              this.deps.attempts.update(attempt.id, {
-                status: 'sent',
-                blockedReason: null,
-                finalMode: prepared.finalMode,
-                fallbackReason: prepared.fallbackReason,
-                messageId: message.id,
-                sendSuccess: true,
-                detail: {
-                  sharePlanVersion: 2,
-                  photoKind: sharePlan.image?.kind ?? null,
-                  eventLocationId: eventContext.location?.id ?? null,
-                  imageDirectorUsed: Boolean(prepared.detail?.imageDirectorUsed),
-                  referenceUsed: Boolean(prepared.detail?.referenceUsed),
-                  mediaPersisted: Boolean(prepared.part),
-                  pushEnqueued: false
-                }
-              });
-            }
+              locationId: eventContext.location?.id ?? null,
+              locationName: eventContext.location?.name ?? null,
+              city: eventContext.location?.city ?? null,
+              weatherCondition: eventContext.recentWeatherHint?.condition ?? null,
+              temperatureC: eventContext.recentWeatherHint?.temperatureC ?? null,
+              createdAt: this.deps.life.now().toISOString()
+            });
+            const updated = this.deps.attempts.update(attempt.id, {
+              status: 'sent',
+              blockedReason: null,
+              finalMode: prepared.finalMode,
+              fallbackReason: prepared.fallbackReason,
+              messageId: null,
+              momentId: moment.id,
+              sendSuccess: true,
+              detail: {
+                destination: 'moments',
+                sharePlanVersion: 3,
+                photoKind: sharePlan.image?.kind ?? null,
+                eventLocationId: eventContext.location?.id ?? null,
+                imageDirectorUsed: Boolean(prepared.detail?.imageDirectorUsed),
+                referenceUsed: Boolean(prepared.detail?.referenceUsed),
+                mediaPersisted: Boolean(prepared.imageMediaId)
+              }
+            });
+            if (!updated) throw new Error('proactive attempt disappeared');
+            this.deps.life.markShared(candidate.id);
+            const event = this.deps.bus.persist('moment.created', { momentId: moment.id, activity: moment.activity });
+            return { moment, event };
           });
-          if (!persisted) throw new Error('proactive message unexpectedly duplicated');
-          if (prepared.stickerId) this.deps.stickers.markUsed(prepared.stickerId);
-          this.deps.life.markShared(candidate.id);
           this.deps.bus.fanout(persisted.event);
-          let pushEnqueued = false;
-          try {
-            this.deps.jobs.enqueue('push.reply', { messageId: persisted.message.id }, { maxAttempts: 3 });
-            pushEnqueued = true;
-          } catch (error) {
-            this.deps.attempts.update(attempt.id, { detail: { pushError: safeError(error) } });
-          }
-          this.deps.attempts.update(attempt.id, {
-            detail: { ...prepared.detail, mediaPersisted: Boolean(prepared.part), pushEnqueued }
-          });
-          return { kind: 'sent', messageId: persisted.message.id };
+          this.deps.attempts.update(attempt.id, { detail: { ...prepared.detail, destination: 'moments' } });
+          return { kind: 'sent', messageId: persisted.moment.id };
         } catch (error) {
           if (isUniqueConstraint(error)) {
-            // Another sender won the race for this candidate (P1-4).
             this.deps.attempts.update(attempt.id, { status: 'blocked', blockedReason: 'candidate_already_sent' });
             return { kind: 'blocked', blockedReason: 'candidate_already_sent' };
           }
-          const reason = 'message_persist_failed';
+          const reason = 'moment_persist_failed';
           this.deps.attempts.update(attempt.id, {
             status: 'failed',
             blockedReason: reason,
@@ -301,7 +255,7 @@ export class ProactiveComposer {
             fallbackReason: prepared.fallbackReason,
             detail: { error: safeError(error) }
           });
-          throw new Error(`${reason}: ${(error as Error).message ?? String(error)}`);
+          throw new Error(reason);
         }
       }
     };
@@ -313,7 +267,8 @@ export class ProactiveComposer {
         status: 'sent',
         blockedReason: null,
         candidateId: candidate.id,
-        messageId: result.messageId,
+        messageId: null,
+        momentId: result.messageId,
         requestedMode,
         finalMode,
         fallbackReason,
@@ -328,9 +283,10 @@ export class ProactiveComposer {
     this.deps.attempts.update(attempt.id, { status: result.status === 'failed' ? 'failed' : 'blocked', blockedReason });
     return {
       status: result.status === 'failed' ? 'failed' : 'blocked',
-      blockedReason: result.blockedReason ?? result.status,
+      blockedReason,
       candidateId: candidate.id,
       messageId: null,
+      momentId: null,
       requestedMode,
       finalMode,
       fallbackReason,
@@ -338,87 +294,55 @@ export class ProactiveComposer {
     };
   }
 
+  private blocked(reason: string, candidateId: string | null, requestedMode: ProactiveMode | null): ProactiveRunResult {
+    return {
+      status: 'blocked',
+      blockedReason: reason,
+      candidateId,
+      messageId: null,
+      momentId: null,
+      requestedMode,
+      finalMode: null,
+      fallbackReason: null,
+      sendSuccess: false
+    };
+  }
+
   private resolveMode(requested?: ProactiveMode): ProactiveMode {
-    if (requested) return requested;
+    const normalize = (mode: ProactiveMode): ProactiveMode => mode === 'image' ? 'image' : 'text';
+    if (requested) return normalize(requested);
     const configured = this.deps.life.settings.proactiveMode ?? 'auto';
-    if (configured !== 'auto') return configured;
+    if (configured !== 'auto') return normalize(configured);
     const persona = this.deps.config.getPersona();
-    // Auto is deliberately text-first: proactive media is opt-in through a
-    // high-frequency media policy, so a default deployment cannot surprise the
-    // user with a large image or audio clip.
-    if (persona.stickerPolicy.enabled && persona.stickerPolicy.frequency === 'high' && this.deps.stickers.count() > 0) return 'text_sticker';
-    if (persona.voicePolicy.enabled && persona.voicePolicy.frequency === 'high' && this.deps.capabilities.has('tts')) return 'voice';
     if (persona.imagePolicy.enabled && persona.imagePolicy.frequency === 'high' && this.deps.capabilities.has('image')) return 'image';
     return 'text';
   }
 
-  private async prepareMedia(mode: ProactiveMode, sharePlan: ProactiveSharePlan, eventContext: ProactiveEventContext, candidate: LifeLogRow, signal: AbortSignal): Promise<PreparedMedia> {
-    const text = sharePlan.text;
-    if (mode === 'text') return { part: null, finalMode: 'text', fallbackReason: null, stickerId: null };
-    if (mode === 'text_sticker') {
-      const selection = this.deps.stickers.select({
-        hint: candidate.mood,
-        text: `${candidate.activity}\n${text}`,
-        requireMatch: false
-      });
-      if (!selection) return { part: null, finalMode: 'text', fallbackReason: 'text_sticker_failed', stickerId: null };
-      return {
-        part: {
-          type: 'sticker',
-          mediaId: selection.sticker.mediaId,
-          status: 'sent',
-          meta: { stickerId: selection.sticker.id, stickerName: selection.sticker.name, proactive: true }
-        },
-        finalMode: 'text_sticker',
-        fallbackReason: null,
-        stickerId: selection.sticker.id
-      };
-    }
-    if (mode === 'voice') {
-      if (!this.deps.capabilities.has('tts')) return { part: null, finalMode: 'text', fallbackReason: 'voice_unavailable', stickerId: null };
-      // D5: proactive voice runs the full voice pipeline (script → guard →
-      // delivery → TTS) through VoiceService — never a raw synthesize() call.
-      if (!this.deps.voice) return { part: null, finalMode: 'text', fallbackReason: 'voice_unavailable', stickerId: null };
-      try {
-        const result = await this.deps.voice.synthesizeProactive(text, { candidateId: candidate.id, activity: candidate.activity }, signal);
-        if (!result.ok || !result.mediaId) {
-          return { part: null, finalMode: 'text', fallbackReason: result.fallbackReason ?? 'voice_failed', stickerId: null };
-        }
-        return {
-          part: {
-            type: 'audio',
-            mediaId: result.mediaId,
-            status: 'sent',
-            transcript: result.transcript,
-            meta: { proactive: true, candidateId: candidate.id, voiceGenerationId: result.generationId ?? undefined }
-          },
-          finalMode: 'voice',
-          fallbackReason: null,
-          stickerId: null
-        };
-      } catch {
-        return { part: null, finalMode: 'text', fallbackReason: 'voice_failed', stickerId: null };
-      }
-    }
-    if (!this.deps.capabilities.has('image')) return { part: null, finalMode: 'text', fallbackReason: 'image_unavailable', stickerId: null };
+  private async prepareMedia(
+    mode: ProactiveMode,
+    sharePlan: MomentSharePlan,
+    eventContext: ProactiveEventContext,
+    candidate: LifeLogRow,
+    signal: AbortSignal
+  ): Promise<PreparedMedia> {
+    if (mode !== 'image') return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: null };
+    if (!this.deps.capabilities.has('image')) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_unavailable' };
     try {
-      if (signal.aborted) return { part: null, finalMode: 'text', fallbackReason: 'aborted', stickerId: null };
+      if (signal.aborted) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'aborted' };
       const imagePlan = sharePlan.image;
-      if (!imagePlan) return { part: null, finalMode: 'text', fallbackReason: 'image_plan_missing', stickerId: null };
+      if (!imagePlan) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_plan_missing' };
       const groundedScene = buildGroundedScene(imagePlan, eventContext);
       const directed = await this.deps.mediaDirector.image({
         scene: groundedScene,
         action: imagePlan.action,
         mood: imagePlan.mood ?? candidate.mood,
         intent: imagePlan.kind === 'selfie'
-          ? 'proactive private-chat selfie from the same real lived event'
-          : 'proactive first-person smartphone snapshot of what Sooya actually saw during the same real lived event'
+          ? 'casual Moments-feed selfie from the same real lived event'
+          : 'casual first-person smartphone photo for a Moments feed from the same real lived event'
       }, { signal });
       const finalImagePrompt = directed.prompt.trim();
-      if (!finalImagePrompt) return { part: null, finalMode: 'text', fallbackReason: 'image_director_failed', stickerId: null };
-      const referenceImages = imagePlan.kind === 'selfie'
-        ? await this.deps.personaReferences.load(finalImagePrompt)
-        : [];
+      if (!finalImagePrompt) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_director_failed' };
+      const referenceImages = imagePlan.kind === 'selfie' ? await this.deps.personaReferences.load(finalImagePrompt) : [];
       const referenceUsed = referenceImages.length > 0;
       const image = await this.deps.capabilities.imageProvider().generate(finalImagePrompt, {
         signal,
@@ -429,40 +353,29 @@ export class ProactiveComposer {
         origin: 'generated',
         data: image.data,
         declaredMime: image.mime,
-        filename: 'proactive.png',
+        filename: 'moment.png',
         meta: {
+          moment: true,
           proactive: true,
           candidateId: candidate.id,
-          sharePlanVersion: 2,
+          sharePlanVersion: 3,
           photoKind: imagePlan.kind,
           sourceActivity: candidate.activity,
-          sourceText: text.slice(0, 200),
+          sourceText: sharePlan.text.slice(0, 200),
           eventLocationId: eventContext.location?.id ?? null,
           directorPrompt: finalImagePrompt.slice(0, 1000),
           ...(imagePlan.kind === 'selfie' && !referenceUsed ? { referenceMissing: true } : {})
         }
       });
       return {
-        part: {
-          type: 'image',
-          mediaId: media.id,
-          status: 'sent',
-          meta: {
-            proactive: true,
-            prompt: finalImagePrompt.slice(0, 1000),
-            sharePlanVersion: 2,
-            photoKind: imagePlan.kind,
-            eventLocationId: eventContext.location?.id ?? null,
-            referenceUsed
-          }
-        },
+        imageMediaId: media.id,
+        imageKind: imagePlan.kind,
         finalMode: 'image',
         fallbackReason: null,
-        stickerId: null,
         detail: { imageDirectorUsed: true, referenceUsed, referenceMissing: imagePlan.kind === 'selfie' && !referenceUsed }
       };
     } catch {
-      return { part: null, finalMode: 'text', fallbackReason: 'image_failed', stickerId: null };
+      return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_failed' };
     }
   }
 
@@ -473,9 +386,22 @@ export class ProactiveComposer {
     return messages.some((message) => {
       const created = Date.parse(message.createdAt);
       if (!Number.isFinite(created) || created > now || now - created > TOPIC_WINDOW_MS) return false;
-      if (message.meta?.proactiveCandidateId === candidate.id) return true;
       const messageTopics = new Set(topicTokens(textOf(message)));
       const overlap = candidateTopics.filter((token) => messageTopics.has(token)).length;
+      const required = candidateTopics.length <= 2 ? 1 : Math.max(2, Math.ceil(candidateTopics.length * 0.4));
+      return overlap >= required;
+    });
+  }
+
+  private recentlyShared(candidate: LifeLogRow): boolean {
+    const now = this.deps.life.now().getTime();
+    const candidateTopics = topicTokens(candidate.activity);
+    if (candidateTopics.length === 0) return false;
+    return this.deps.moments.list(20).some((moment) => {
+      const created = Date.parse(moment.created_at);
+      if (!Number.isFinite(created) || created > now || now - created > TOPIC_WINDOW_MS) return false;
+      const topics = new Set(topicTokens(`${moment.activity}\n${moment.text}`));
+      const overlap = candidateTopics.filter((token) => topics.has(token)).length;
       const required = candidateTopics.length <= 2 ? 1 : Math.max(2, Math.ceil(candidateTopics.length * 0.4));
       return overlap >= required;
     });
@@ -486,7 +412,7 @@ export class ProactiveComposer {
     try {
       const visit = this.deps.locations.visitOverlapping(candidate.started_at, candidate.ended_at);
       location = visit ? this.deps.locations.get(visit.location_id) : undefined;
-    } catch { /* location is optional grounding */ }
+    } catch { /* optional grounding */ }
     const snapshot = this.deps.worldSnapshot();
     const eventEnd = Date.parse(candidate.ended_at);
     const now = Date.parse(snapshot.now);
@@ -512,73 +438,62 @@ export class ProactiveComposer {
       recentWeatherHint
     };
   }
-
-  private lastUserDate(evaluation: ProactiveEvaluation): Date | null {
-    return evaluation.lastUserAt ? new Date(evaluation.lastUserAt) : null;
-  }
-
-  private failed(
-    candidateId: string,
-    requestedMode: ProactiveMode | null,
-    reason: string,
-    finalMode: ProactiveMode | null = null,
-    fallbackReason: string | null = null
-  ): ProactiveRunResult {
-    return { status: 'failed', blockedReason: reason, candidateId, messageId: null, requestedMode, finalMode, fallbackReason, sendSuccess: false };
-  }
 }
 
-async function composeProactiveSharePlan(
+async function composeMomentSharePlan(
   provider: ReturnType<CapabilityRegistry['chatProvider']>,
   personaPrompt: string,
   lifeLines: string[],
   eventContext: ProactiveEventContext,
   requestedMode: ProactiveMode,
   signal: AbortSignal
-): Promise<ProactiveSharePlan> {
-  const request = async (repairReason?: string): Promise<ProactiveSharePlan> => {
+): Promise<MomentSharePlan> {
+  const imageMode = requestedMode === 'image';
+  const request = async (repairReason?: string): Promise<MomentSharePlan> => {
     const result = await provider.complete({
       system: [
         personaPrompt.trim(),
         ...lifeLines.map((line) => `【当前状态，仅用于语气连续性】${line}`),
-        '你是 SOOYA，在私人聊天里主动分享一件真实经历过的小事。',
-        '【要分享的历史事件】',
+        '你是 SOOYA，要把一件真实经历过的小事发到只对用户可见的朋友圈。这里不是私人聊天窗口。',
+        '【要发布的历史事件】',
         JSON.stringify(eventContext),
-        `本次请求模式：${requestedMode}。只有 image 模式才规划图片，否则 image 必须为 null。`,
-        '【规则】text 必须是一句完整、自然、可以直接发送的聊天消息；不要标题、标签、冒号前缀、系统/Life/模型内容。不要把当前状态改写成历史事件。',
-        '如果有图片，必须与 text 是同一件具体小事：pov 是 SOOYA 手机第一视角且不出现本人，selfie 才出现 SOOYA。只选普通现实生活场景，不编造地标、幻想建筑或旅游海报。',
+        `本次发布方式：${imageMode ? '图片动态' : '文字动态'}。${imageMode ? '请规划一张与正文同一事件的照片。' : 'image 必须为 null。'}`,
+        '【规则】text 是一条自然、完整的朋友圈正文，像随手记录生活，不要标题、标签、冒号前缀、系统/Life/模型内容。',
+        '不要用“在吗”“睡了吗”“刚想跟你说”“发给你看看”这种私聊式呼叫，也不要为了发动态虚构新事件。',
+        '如果有图片，必须与 text 是同一件具体小事：pov 是 SOOYA 手机第一视角且不出现本人，selfie 才出现 SOOYA。只选普通现实生活场景。',
         repairReason ? `上一版未通过检查：${repairReason}。请只重新返回完整 JSON。` : '',
         '只输出 JSON：{"text":"...","image":null 或 {"kind":"pov|selfie","scene":"...","action":"...","mood":"...","framing":"front|side|full-body|environment"}}。'
       ].filter(Boolean).join('\n'),
-      messages: [{ role: 'user', content: [{ type: 'text', text: '（没有人说话，你主动开口）' }] }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: '为这件真实经历写一条朋友圈动态。' }] }],
       temperature: 0.8,
       maxTokens: 450,
       jsonMode: true,
       signal
     });
-    const parsed = ProactiveSharePlanSchema.safeParse(extractJsonObject(result.text));
+    const parsed = MomentSharePlanSchema.safeParse(extractJsonObject(result.text));
     if (!parsed.success) throw new Error(`invalid_share_plan: ${parsed.error.issues.map((issue) => issue.path.join('.') + ' ' + issue.message).join('; ')}`);
-    return parsed.data;
+    return imageMode ? parsed.data : { ...parsed.data, image: null };
   };
 
   const first = await request();
-  const firstValidation = validateProactiveText(first.text);
+  const firstValidation = validateMomentText(first.text);
   if (firstValidation.ok) return first;
   const repaired = await request(firstValidation.reason);
-  const secondValidation = validateProactiveText(repaired.text);
+  const secondValidation = validateMomentText(repaired.text);
   if (!secondValidation.ok) throw new Error('invalid_share_text');
   return repaired;
 }
 
-function validateProactiveText(text: string): { ok: boolean; reason?: string } {
+function validateMomentText(text: string): { ok: boolean; reason?: string } {
   const normalized = text.trim().replace(/^["“”「」]|["“”「」]$/gu, '').trim();
   if (Array.from(normalized.replace(/\s/gu, '')).length < 6) return { ok: false, reason: '文本太短或只是残片' };
   if (/^(刚刚|刚才|刚发生的事|刚才发生的事|最近|今天)[：:]?$/u.test(normalized)) return { ok: false, reason: '只是标题或时间残片' };
+  if (/^(在吗|睡了吗|干嘛呢)[？?。.]?$/u.test(normalized)) return { ok: false, reason: '像私聊呼叫，不像朋友圈正文' };
   if (/(因为|所以|然后|但是|不过|顺道|本来想|正准备|刚准备)$/u.test(normalized)) return { ok: false, reason: '句子以悬空连接词结尾' };
   return { ok: true };
 }
 
-function buildGroundedScene(image: NonNullable<ProactiveSharePlan['image']>, context: ProactiveEventContext): string {
+function buildGroundedScene(image: NonNullable<MomentSharePlan['image']>, context: ProactiveEventContext): string {
   const location = context.location
     ? `${context.location.city ?? ''}${context.location.region ?? ''}的${context.location.name}（${context.location.kind}）`
     : '事件地点未知的普通现实生活环境';
@@ -588,15 +503,14 @@ function buildGroundedScene(image: NonNullable<ProactiveSharePlan['image']>, con
   return [
     `真实生活事件：${context.activity}。`,
     `实际地点：${location}。`,
-    `这次要拍：${image.scene}。`,
+    `这条朋友圈要拍：${image.scene}。`,
     image.action ? `动作：${image.action}。` : '',
-    `照片类型：${image.kind === 'selfie' ? 'SOOYA 在同一事件中的私人聊天自拍' : 'SOOYA 手机第一视角拍摄眼前所见，SOOYA 本人不入镜'}。`,
+    `照片类型：${image.kind === 'selfie' ? 'SOOYA 在同一真实事件中的自然生活自拍' : 'SOOYA 手机第一视角拍摄眼前所见，SOOYA 本人不入镜'}。`,
     weather,
     '必须是现实世界普通生活环境、自然手机照片；禁止幻想建筑、漂浮建筑、旅游海报、概念艺术、动漫世界和不可能的地理关系。'
   ].filter(Boolean).join('\n');
 }
 
-/** True for better-sqlite3 UNIQUE constraint violations (P1-4). */
 function isUniqueConstraint(error: unknown): boolean {
   const code = (error as { code?: string }).code ?? '';
   return typeof code === 'string' && code.includes('SQLITE_CONSTRAINT');

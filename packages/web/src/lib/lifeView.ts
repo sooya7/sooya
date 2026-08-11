@@ -7,43 +7,48 @@ import type { LifePanelData, LifeSnapshot } from './features.js';
  */
 
 export const REACH_REASON_LABELS: Record<string, string> = {
-  ok: '条件满足，下一次 tick 就会开口',
-  disabled: '你在这个页面关掉了主动开口',
-  deployment_disabled: '部署层关掉了主动开口（改 .env 的 ENABLE_LIFE_REACH_OUT）',
-  silent_hours: '在静默时段里，她不打扰你',
+  ok: '条件满足，下一次 tick 可以发布动态',
+  disabled: '你在这个页面关掉了朋友圈发布',
+  deployment_disabled: '部署层关掉了朋友圈发布（沿用 .env 的 ENABLE_LIFE_REACH_OUT）',
+  silent_hours: '在这个时段里，她不发动态',
   asleep: '她在睡觉',
-  user_was_recently_here: '你刚说过话，她要等满安静间隔',
-  already_spoke: '上一条还是她说的，不叠着发',
-  daily_cap: '今天的主动条数已经用完',
-  nothing_worth_saying: '还没有做完、且没跟你说过的事',
-  share_candidate: '有值得分享的新动态'
+  user_was_recently_here: '旧版聊天间隔条件',
+  already_spoke: '旧版主动聊天条件',
+  daily_cap: '今天的动态条数已经用完',
+  nothing_worth_saying: '还没有值得发布的新动态',
+  share_candidate: '有值得分享的新动态',
+  moment_gap: '离上一条动态还没到最小间隔'
 };
 
 export const PROACTIVE_REASON_LABELS: Record<string, string> = {
   ...REACH_REASON_LABELS,
-  reply_in_progress: '正在回复中',
-  recent_topic: '近期已经聊过这个话题',
-  chat_unavailable: '聊天服务暂不可用',
-  candidate_already_sent: '这件事已经分享过',
-  candidate_already_queued: '这件事已经在发送队列中',
-  user_appeared: '你刚刚回来了，已取消主动消息',
+  reply_in_progress: '正在回复聊天，动态稍后再发',
+  recent_topic: '这件事近期已经聊过或发过动态',
+  chat_unavailable: '朋友圈文案模型暂不可用',
+  candidate_already_sent: '这件事已经发布过',
+  candidate_already_queued: '这件事已经在发布队列中',
+  user_appeared: '聊天回复获得优先级，本次动态稍后重试',
   stopped: '回复服务已停止',
   discarded: '候选内容已取消',
-  text_sticker_failed: '表情包准备失败，已回退为文字',
-  voice_unavailable: '语音能力不可用，已回退为文字',
-  voice_failed: '语音生成失败，已回退为文字',
-  image_unavailable: '图片能力不可用，已回退为文字',
-  image_failed: '图片生成失败，已回退为文字',
-  aborted: '任务已取消',
-  compose_failed: '主动消息生成失败',
-  empty_text: '模型没有生成可发送文字',
-  media_failed: '附加媒体准备失败',
-  message_persist_failed: '消息保存失败'
+  text_sticker_failed: '旧表情包模式已按文字动态发布',
+  voice_unavailable: '旧语音模式已按文字动态发布',
+  voice_failed: '旧语音模式已按文字动态发布',
+  image_unavailable: '图片能力不可用，已回退为文字动态',
+  image_failed: '图片生成失败，已回退为文字动态',
+  image_plan_missing: '没有合适的配图方案，已发布文字动态',
+  aborted: '发布任务已取消',
+  compose_failed: '朋友圈文案生成失败',
+  invalid_share_text: '朋友圈文案不完整，本次没有发布',
+  empty_text: '模型没有生成可发布文字',
+  media_failed: '动态图片准备失败',
+  message_persist_failed: '旧版消息保存失败',
+  moment_persist_failed: '动态保存失败'
 };
 
 export function proactiveReasonText(value: string | null | undefined): string | null {
   if (!value) return null;
   if (value.startsWith('message_persist_failed:')) return PROACTIVE_REASON_LABELS.message_persist_failed!;
+  if (value.startsWith('moment_persist_failed:')) return PROACTIVE_REASON_LABELS.moment_persist_failed!;
   return PROACTIVE_REASON_LABELS[value] ?? value;
 }
 
@@ -79,6 +84,9 @@ export function reachReasonText(data: Pick<LifePanelData, 'reachOut' | 'settings
   const base = REACH_REASON_LABELS[reachOut.reason] ?? reachOut.reason;
   if (reachOut.reason === 'user_was_recently_here' && reachOut.lastUserAt) {
     return `${base}（间隔 ${settings.quietGapMinutes} 分钟，你上次说话在 ${formatGap(Date.now() - Date.parse(reachOut.lastUserAt))}前）`;
+  }
+  if (reachOut.reason === 'moment_gap') {
+    return `${base}（至少间隔 ${settings.quietGapMinutes} 分钟）`;
   }
   if (reachOut.reason === 'daily_cap') {
     return `${base}（${reachOut.sharedLastDay}/${settings.maxReachOutsPerDay}）`;
