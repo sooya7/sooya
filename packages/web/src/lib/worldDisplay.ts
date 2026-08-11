@@ -16,6 +16,39 @@ const WEATHER_LABELS: Record<string, string> = {
   extreme_cold: '严寒'
 };
 
+export type WeatherVisual =
+  | 'clear'
+  | 'partly-cloudy'
+  | 'cloudy'
+  | 'drizzle'
+  | 'rain'
+  | 'storm'
+  | 'snow'
+  | 'fog'
+  | 'haze'
+  | 'wind'
+  | 'extreme-heat'
+  | 'extreme-cold'
+  | 'unknown';
+
+export function weatherVisual(condition: string): WeatherVisual {
+  switch (condition) {
+    case 'clear': return 'clear';
+    case 'partly_cloudy': return 'partly-cloudy';
+    case 'cloudy': return 'cloudy';
+    case 'drizzle': return 'drizzle';
+    case 'rain': return 'rain';
+    case 'storm': return 'storm';
+    case 'snow': return 'snow';
+    case 'fog': return 'fog';
+    case 'haze': return 'haze';
+    case 'wind': return 'wind';
+    case 'extreme_heat': return 'extreme-heat';
+    case 'extreme_cold': return 'extreme-cold';
+    default: return 'unknown';
+  }
+}
+
 export function formatPresencePlace(presence: WorldPresence | null): string | null {
   if (!presence) return null;
   const place = presence.travel

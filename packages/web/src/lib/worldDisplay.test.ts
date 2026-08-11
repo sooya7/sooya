@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatHeaderWeather, formatPresencePlace } from './worldDisplay.js';
+import { formatHeaderWeather, formatPresencePlace, weatherVisual } from './worldDisplay.js';
 import { formatTemperature, formatVital } from './numberDisplay.js';
 import type { WorldPresence } from './types.js';
 
@@ -22,5 +22,23 @@ describe('world display formatters', () => {
     expect(formatHeaderWeather({ ...base.weather!, condition: 'unknown' })).toBeNull();
     expect(formatTemperature(26.6)).toBe('27°C');
     expect(formatVital('sleep_debt', 1.537)).toBe('1.5 小时');
+  });
+
+  it.each([
+    ['clear', 'clear'],
+    ['partly_cloudy', 'partly-cloudy'],
+    ['cloudy', 'cloudy'],
+    ['drizzle', 'drizzle'],
+    ['rain', 'rain'],
+    ['storm', 'storm'],
+    ['snow', 'snow'],
+    ['fog', 'fog'],
+    ['haze', 'haze'],
+    ['wind', 'wind'],
+    ['extreme_heat', 'extreme-heat'],
+    ['extreme_cold', 'extreme-cold'],
+    ['future-condition', 'unknown']
+  ] as const)('maps %s to the stable weather visual %s', (condition, visual) => {
+    expect(weatherVisual(condition)).toBe(visual);
   });
 });
