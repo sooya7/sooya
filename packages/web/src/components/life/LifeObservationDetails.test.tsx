@@ -209,8 +209,8 @@ describe('LifeObservationDetails', () => {
     expect(secondary?.contains(details)).toBe(true);
     expect(secondary?.textContent).toContain('正在发展的事');
     expect(secondary?.textContent).toContain('生活记录');
-    expect(secondary?.textContent).toContain('最近活动与事件');
-    expect(secondary?.textContent).not.toContain('最近活动、事件与朋友圈发布');
+    expect(secondary?.textContent).toContain('最近活动');
+    expect(secondary?.textContent).not.toContain('朋友圈发布');
     expect(secondary?.textContent).not.toContain('地点与天气');
   });
 
@@ -241,18 +241,18 @@ describe('LifeObservationDetails', () => {
     expect(apiMocks.weatherStatus).not.toHaveBeenCalled();
   });
 
-  it('renders only Life activities and events, never Moments records', async () => {
+  it('renders only activity history inside its own scroll surface', async () => {
     await renderDetails();
     await click(button('生活记录'));
 
+    const scroll = container!.querySelector('[data-testid="life-history-scroll"]');
     const rows = Array.from(container!.querySelectorAll('[data-testid="life-history-list"] li'));
-    expect(rows).toHaveLength(2);
-    expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringContaining('事件'),
-      expect.stringContaining('活动')
-    ]);
-    expect(rows[0]?.textContent).toContain('把书架整理好了');
-    expect(rows[1]?.textContent).toContain('吃过早餐');
+    expect(scroll).not.toBeNull();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain('活动');
+    expect(rows[0]?.textContent).toContain('吃过早餐');
+    expect(rows[0]?.textContent).toContain('轻松');
+    expect(container!.textContent).not.toContain('把书架整理好了');
     expect(container!.textContent).not.toContain('分享读书感想');
     expect(container!.textContent).not.toContain('朋友圈');
 
