@@ -146,6 +146,20 @@ describe('媒体缩略图变体', () => {
     expect(variantFiles(h)).toEqual([]);
   });
 
+  it('动态 WebP 记录 animated 并始终返回多帧原图', async () => {
+    h = await createHarness({ startWorkers: false });
+    const animated = Buffer.from(fs.readFileSync(new URL('./fixtures/animated-webp.b64', import.meta.url), 'utf8').trim(), 'base64');
+    const row = await h.app.services.mediaStore.save({ kind: 'sticker', origin: 'upload', data: animated, declaredMime: 'image/webp', filename: 'animated.webp' });
+    expect(row.animated).toBe(1);
+
+    const res = await h.app.server.inject({ method: 'GET', url: `/api/media/${row.id}?w=240` });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/webp');
+    expect(res.rawPayload).toEqual(animated);
+    expect((await sharp(res.rawPayload, { animated: true }).metadata()).pages).toBeGreaterThan(1);
+    expect(variantFiles(h)).toEqual([]);
+  });
+
   it('删除媒体时一并清掉它的变体文件', async () => {
     h = await createHarness({ startWorkers: false });
     const row = await seed(h, bigJpeg, 'image/jpeg');

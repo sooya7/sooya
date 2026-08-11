@@ -129,6 +129,7 @@ function bootstrapInfo(over: Partial<BootstrapInfo> = {}): BootstrapInfo {
     messages: { messages: [message({ id: 'm_7', seq: 7 })], hasMore: true, lastEventSeq: 42, lastMessageSeq: 7, oldestSeq: 7 },
     stickers: [{ id: 's_1', name: '笑', emotion: 'happy', tags: ['笑'], url: '/api/media/s_1', mediaId: 'md_1' }],
     life: { activity: '在看书', kind: 'rest', mood: '平静', startedAt: '2026-08-01T00:00:00.000Z', endsAt: '2026-08-01T01:00:00.000Z', recent: [] },
+    presence: { city: null, location: null, travel: null, weather: null, updatedAt: '2026-08-01T00:00:00.000Z' },
     ...over
   };
 }

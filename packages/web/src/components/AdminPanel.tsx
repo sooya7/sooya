@@ -59,12 +59,16 @@ const CAPABILITIES = [
   ['chat', '聊天模型'],
   ['vision', '视觉理解模型'],
   ['summary', '对话总结模型'],
+  ['director', '媒体导演模型'],
   ['embedding', '向量模型'],
   ['rerank', '记忆重排模型'],
   ['image', '图片生成模型'],
   ['tts', '语音合成模型'],
   ['webSearch', '联网搜索']
 ] as const;
+const CAPABILITY_DESCRIPTIONS: Partial<Record<ModelPanelSelection, string>> = {
+  director: '媒体导演统一负责表情选择、语音口语化和图片提示词扩写；未单独配置时回退聊天模型。它处理短结构化文本，不负责读图。'
+};
 type ModelPanelSelection = ModelSlot | 'webSearch';
 
 /** Nav groups, so nine sections read as a structure instead of a list. */
@@ -564,7 +568,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
             onNotice={onNotice}
           />
         </> : <>
-        <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description="编辑当前能力使用的真实服务端配置。" />
+        <PanelHeading title={CAPABILITIES.find(([k]) => k === selected)?.[1] ?? '模型配置'} description={CAPABILITY_DESCRIPTIONS[selected] ?? '编辑当前能力使用的真实服务端配置。'} />
         <ModelLibrary onNotice={onNotice} onApplied={setModels} reloadKey={libraryKey} />
         <label>接口协议<select value={String(config.provider ?? 'none')} onChange={(e) => update('provider', e.target.value)}>
           {interfaceOptions(selected, config.provider == null ? null : String(config.provider)).map((option) => (
@@ -619,7 +623,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           <small>{config.apiKeyConfigured ? '已保存一把密钥。要换就粘新的，留空则保持不变。' : '还没有密钥，粘贴后点保存。'}</small>
         </label>
         <label>请求超时（毫秒）<input type="number" value={String(config.timeoutMs ?? '')} onChange={(e) => update('timeoutMs', Number(e.target.value))} /></label>
-        {['chat', 'vision', 'summary'].includes(selected) && <>
+        {['chat', 'vision', 'summary', 'director'].includes(selected) && <>
           <label>最大输出 Token<input type="number" value={String(config.maxTokens ?? '')} onChange={(e) => update('maxTokens', Number(e.target.value))} /></label>
           <label>Temperature<input type="number" step="0.1" value={String(config.temperature ?? '')} onChange={(e) => update('temperature', Number(e.target.value))} /></label>
           <label>上下文窗口<input type="number" value={String(config.contextWindow ?? '')} onChange={(e) => update('contextWindow', Number(e.target.value))} /></label>
@@ -781,7 +785,12 @@ function ContentPanel({ onNotice }: { onNotice: (v: string) => void }) {
 
       <article className="admin-card" data-testid="admin-sticker-list">
         <div className="admin-card-subtitle"><h2>表情包</h2><span className="admin-count-badge">{stickers.length}</span></div>
-        {stickers.length ? stickers.slice(0, 8).map((s) => <div className="admin-list-row" key={s.id}><span>{s.name} · {emotionLabel(s.emotion)}</span><button type="button" onClick={() => { if (confirmAction(`删除表情包“${s.name}”？`)) void adminApi.deleteSticker(s.id).then(load).catch((e) => onNotice(errorText(e))); }}>删除</button></div>) : <EmptyState>暂无表情包</EmptyState>}
+        {stickers.length ? <>
+          <div className="admin-actions">
+            <button type="button" onClick={() => void adminApi.analyzeStickerBatch().then((result) => { onNotice(`已排队 ${result.queued} 个表情包分析任务`); return load(); }).catch((e) => onNotice(errorText(e)))}>补齐/更新语义</button>
+          </div>
+          {stickers.slice(0, 20).map((sticker) => <StickerAdminRow key={sticker.id} sticker={sticker} onDone={load} onNotice={onNotice} />)}
+        </> : <EmptyState>暂无表情包</EmptyState>}
         <StickerUpload onDone={load} onNotice={onNotice} />
       </article>
 
@@ -797,6 +806,57 @@ function ContentPanel({ onNotice }: { onNotice: (v: string) => void }) {
       </article>
     </section>
   );
+}
+
+function stickerStatusLabel(status: AdminSticker['analysisStatus']): string {
+  return status === 'ready' ? '语义就绪' : status === 'processing' ? '分析中' : status === 'failed' ? '分析失败' : '待分析';
+}
+
+function StickerAdminRow({ sticker, onDone, onNotice }: { sticker: AdminSticker; onDone: () => Promise<void>; onNotice: (text: string) => void }) {
+  const [description, setDescription] = useState(sticker.description ?? '');
+  const [userMeaning, setUserMeaning] = useState(sticker.userMeaning ?? '');
+  const [busy, setBusy] = useState(false);
+  const saveSemantics = async () => {
+    setBusy(true);
+    try {
+      await adminApi.updateSticker(sticker.id, { description, userMeaning });
+      onNotice(`已保存「${sticker.name}」的语义`);
+      await onDone();
+    } catch (error) {
+      onNotice(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const analyze = async () => {
+    setBusy(true);
+    try {
+      await adminApi.analyzeSticker(sticker.id, true);
+      onNotice(`已排队分析「${sticker.name}」`);
+      await onDone();
+    } catch (error) {
+      onNotice(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="admin-sticker-row" data-testid={`admin-sticker-${sticker.id}`}>
+    <div className="admin-list-row">
+      <span><strong>{sticker.name}</strong> · {emotionLabel(sticker.emotion)} · {stickerStatusLabel(sticker.analysisStatus)}{sticker.hasEmbedding ? ' · 已建向量' : ''}</span>
+      <span className="admin-actions">
+        <button type="button" disabled={busy || sticker.analysisStatus === 'processing'} onClick={() => void analyze()}>AI 重分析</button>
+        <button type="button" className="admin-danger" onClick={() => { if (confirmAction(`删除表情包“${sticker.name}”？`)) void adminApi.deleteSticker(sticker.id).then(onDone).catch((e) => onNotice(errorText(e))); }}>删除</button>
+      </span>
+    </div>
+    <details>
+      <summary>查看/编辑语义</summary>
+      <p className="admin-muted">{sticker.description || '暂无图像含义'}{sticker.imageText ? ` · 图片文字：${sticker.imageText}` : ''}</p>
+      {sticker.analysisError && <p className="admin-inline-error">分析错误：{sticker.analysisError}</p>}
+      <label>标准含义<textarea value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+      <label>用户常见用法<textarea value={userMeaning} onChange={(event) => setUserMeaning(event.target.value)} /></label>
+      <button type="button" disabled={busy} onClick={() => void saveSemantics()}>保存语义</button>
+    </details>
+  </div>;
 }
 
 function StickerUpload({ onDone, onNotice }: { onDone: () => Promise<void>; onNotice: (s: string) => void }) {

@@ -3,6 +3,7 @@ import { cosineSimilarity, normalizeMemoryText } from '../db/repos/memory.repo.j
 import type { CapabilityRegistry } from './capabilities.js';
 import type { MemoryRecord } from './types.js';
 import type { ErrorLogRepo } from '../db/repos/misc.repo.js';
+import type { ConfigStore } from '../config/store.js';
 import { extractJsonObject } from '../util/json-extract.js';
 
 export interface MemoryCandidate {
@@ -47,7 +48,7 @@ export class MemoryService {
     private readonly repo: MemoryRepo,
     private readonly capabilities: CapabilityRegistry,
     private readonly errorLog: ErrorLogRepo,
-    private readonly opts: { disabled?: boolean } = {}
+    private readonly opts: { disabled?: boolean; config?: ConfigStore } = {}
   ) {}
 
   private jsonModeNoticed = false;
@@ -201,10 +202,10 @@ export class MemoryService {
       return null;
     }
     try {
-      const { vectors, dimensions } = await embedder.embed([content]);
+      const { vectors, model, dimensions } = await embedder.embed([content]);
       const vec = vectors[0];
       if (!vec) return null;
-      const existing = this.repo.activeWithEmbeddings(dimensions);
+      const existing = this.repo.activeWithEmbeddings({ dimensions, model });
       let best: { record: MemoryRecord; score: number } | null = null;
       for (const e of existing) {
         const score = cosineSimilarity(vec, e.vector);
@@ -237,7 +238,11 @@ export class MemoryService {
   async backfillEmbeddings(limit = 20): Promise<number> {
     const embedder = this.capabilities.embeddingProvider();
     if (!embedder.configured) return 0;
-    const pending = this.repo.list({ limit: 500 }).filter((m) => !m.hasEmbedding).slice(0, limit);
+    const expectedModel = this.opts.config?.getModels().embedding.model.trim() ?? '';
+    const expectedDimensions = this.capabilities.embeddingDimensions() ?? undefined;
+    const pending = this.repo.list({ limit: 500 })
+      .filter((m) => this.repo.embeddingNeedsRefresh(m.id, expectedModel || undefined, expectedDimensions))
+      .slice(0, limit);
     let done = 0;
     for (const m of pending) {
       if (await this.embedOne(m.id, m.content)) done++;
@@ -261,11 +266,11 @@ export class MemoryService {
     const embedder = this.capabilities.embeddingProvider();
     if (embedder.configured) {
       try {
-        const { vectors, dimensions } = await embedder.embed([query]);
+        const { vectors, model, dimensions } = await embedder.embed([query]);
         const vec = vectors[0];
         const dim = this.capabilities.embeddingDimensions() ?? dimensions;
         if (vec && vec.length === dim) {
-          const pool = this.repo.activeWithEmbeddings(dim);
+          const pool = this.repo.activeWithEmbeddings({ dimensions: dim, model });
           if (pool.length > 0) {
             const rerankCfg = this.capabilities.rerankProvider().configured
               ? this.config_rerankCandidateLimit()
@@ -440,4 +445,3 @@ function factIdentity(kind: MemoryKind, content: string): string | null {
 function ftsMatches(memories: MemoryRecord[]): RecallMatch[] {
   return memories.map((memory) => ({ memory, strategy: 'fts', score: null, reason: 'FTS lexical match' }));
 }
-

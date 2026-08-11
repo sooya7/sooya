@@ -64,7 +64,7 @@ describe('location cities (LifeCity)', () => {
 
   it('refuses to deactivate the last remaining city (invariant guard)', async () => {
     // 未启用 location 模型 → 无默认城市种子；单城市库才能触达"唯一城市"兜底。
-    harness = await createHarness({ skipStickerImport: true, startWorkers: false });
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { WORLD_CONTEXT_ENABLED: 'false', LOCATION_MODEL_ENABLED: 'false' } });
     const service = harness.app.services.location;
     const city = service.createCity({ name: '孤城', timeZone: 'Asia/Shanghai' });
     expect(city.active).toBe(true); // 第一个城市自动激活

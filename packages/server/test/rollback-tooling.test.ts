@@ -38,7 +38,7 @@ describe('rollback tooling (P0-5)', () => {
     for (const m of MIGRATIONS) {
       db.transaction(() => { m.up(db as never); insert.run(m.version, m.name, new Date().toISOString()); })();
     }
-    expect(LATEST_VERSION).toBe(29);
+    expect(LATEST_VERSION).toBe(33);
     db.exec(`
       INSERT INTO messages(id, conversation_id, role, created_at, updated_at, seq, status, client_msg_id, reply_to, error, meta_json)
         VALUES ('msg_rb_1','main','user','2026-08-01T00:00:00.000Z','2026-08-01T00:00:00.000Z',1,'sent',NULL,NULL,NULL,'{}');

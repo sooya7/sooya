@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { FastifyReply } from 'fastify';
 import type { SooyaApp } from '../app.js';
 import { requireChatToken } from './auth.js';
-import { SendMessageSchema, type ChatMessage } from '../core/types.js';
+import { SendMessageSchema, type ChatMessage, type InputPart } from '../core/types.js';
 import { parseUserDirectives } from '../core/directives.js';
 import { maintenanceCoordinator } from '../core/maintenance.js';
 
@@ -87,12 +87,16 @@ export function registerChatRoutes(app: SooyaApp): void {
     const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
     const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
     const tx = app.db.transaction(() => {
+      const parts = storedInputParts(app, input.content);
       const created = repos.messages.createInTransaction({
         role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: null, transcript: null })),
+        parts,
         meta: { directives }
       });
-      if (created.created) repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
+      if (created.created) {
+        repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
+        enqueueStickerMeaningJobs(app, parts);
+      }
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
       const admission = created.created
         ? repos.replyBatches.appendOrCreateMessage(
@@ -133,12 +137,16 @@ export function registerChatRoutes(app: SooyaApp): void {
     const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
     const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
     const tx = app.db.transaction(() => {
+      const parts = storedInputParts(app, input.content);
       const created = repos.messages.createInTransaction({
         role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-        parts: input.content.map((part) => ({ type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: null, transcript: null })),
+        parts,
         meta: { directives }
       });
-      if (created.created) repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
+      if (created.created) {
+        repos.proactive.recordUserResponse(created.message.id, created.message.createdAt);
+        enqueueStickerMeaningJobs(app, parts);
+      }
       const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
       const admission = created.created
         ? repos.replyBatches.appendOrCreateMessage(
@@ -209,7 +217,25 @@ export function registerChatRoutes(app: SooyaApp): void {
     return { message: result.message };
   });
 
-  server.get('/api/stickers', { preHandler: auth }, async () => ({ stickers: stickerList(app) }));
+  server.get('/api/stickers', { preHandler: auth }, async (req, reply) => {
+    const parsed = StickerQuerySchema.safeParse(req.query);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const result = stickerList(app, parsed.data);
+    return { stickers: result.stickers, total: result.total, nextCursor: result.nextCursor };
+  });
+
+  server.patch('/api/stickers/:id/preferences', { preHandler: auth }, async (req, reply) => {
+    const id = String((req.params as { id?: string }).id ?? '');
+    const parsed = z.object({ favorite: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const current = repos.stickers.get(id);
+    const media = current ? repos.media.get(current.mediaId) : undefined;
+    if (!current || !current.enabled || !media || !services.mediaStore.exists(media)) { reply.code(404); return { error: 'not_found' }; }
+    const sticker = repos.stickers.setFavorite(id, parsed.data.favorite);
+    if (!sticker) { reply.code(404); return { error: 'not_found' }; }
+    services.bus.publish('sticker.updated', { stickerId: id, favorite: sticker.favorite });
+    return { sticker: publicSticker(sticker) };
+  });
 
   /*
    * 首屏合并请求：会话信息 + 最新消息页 + 贴纸 + 生活状态一次返回，
@@ -225,14 +251,60 @@ export function registerChatRoutes(app: SooyaApp): void {
     return {
       conversation: { conversationId: 'main', persona: { name: persona.name, avatar: persona.avatar, userAvatar: persona.userAvatar, tagline: persona.tagline }, messageCount: repos.messages.count(), lastSeq: repos.messages.maxSeq(), lastEventSeq },
       messages: { messages: page.messages, hasMore: page.hasMore, lastEventSeq, lastMessageSeq: repos.messages.maxSeq(), oldestSeq: page.messages[0]?.seq ?? null },
-      stickers: stickerList(app),
+      stickers: stickerList(app).stickers,
       life: services.life.snapshot(),
+      presence: services.presence.current(),
     };
   });
 }
 
-function stickerList(app: SooyaApp) {
-  return app.services.stickerLibrary.available().map((sticker) => ({ id: sticker.id, name: sticker.name, emotion: sticker.emotion, tags: sticker.tags, url: sticker.url, mediaId: sticker.mediaId }));
+const StickerQuerySchema = z.object({
+  scope: z.enum(['recent', 'favorite', 'all']).default('all'),
+  q: z.string().trim().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(60),
+  cursor: z.string().regex(/^\d+$/u).optional()
+});
+
+function stickerList(app: SooyaApp, query: z.infer<typeof StickerQuerySchema> = { scope: 'all', limit: 60 }): { stickers: ReturnType<typeof publicSticker>[]; total: number; nextCursor: string | null } {
+  const available = new Map(app.services.stickerLibrary.available().map((sticker) => [sticker.id, sticker]));
+  const offset = Number(query.cursor ?? 0);
+  // Cursor positions are over the stable repository result, not over the
+  // filtered list of files that happen to exist on disk. Otherwise a missing
+  // file shortens page N and `offset + visible.length` points back at the last
+  // visible row, so the next request repeats it forever.
+  const source = query.q
+    ? app.repos.stickers.searchFts(query.q, { enabledOnly: true, scope: query.scope, limit: 500, offset: 0 })
+    : app.repos.stickers.list({ enabledOnly: true, scope: query.scope });
+  const stickers: ReturnType<typeof publicSticker>[] = [];
+  let nextOffset = Math.min(offset, source.length);
+  while (nextOffset < source.length && stickers.length < query.limit) {
+    const row = source[nextOffset++];
+    const item = row && available.get(row.id);
+    if (item) stickers.push(publicSticker(item));
+  }
+  const total = source.filter((sticker) => available.has(sticker.id)).length;
+  return { stickers, total, nextCursor: nextOffset < source.length ? String(nextOffset) : null };
+}
+
+function publicSticker(sticker: ReturnType<SooyaApp['services']['stickerLibrary']['available']>[number]) {
+  return {
+    id: sticker.id,
+    mediaId: sticker.mediaId,
+    name: sticker.name,
+    emotion: sticker.emotion,
+    description: sticker.description,
+    imageText: sticker.imageText,
+    tags: sticker.tags,
+    favorite: sticker.favorite,
+    userMeaning: sticker.userMeaning || null,
+    assistantUseCount: sticker.assistantUseCount,
+    assistantLastUsedAt: sticker.assistantLastUsedAt,
+    userUseCount: sticker.userUseCount,
+    analysisStatus: sticker.analysisStatus,
+    userLastUsedAt: sticker.userLastUsedAt,
+    url: sticker.url,
+    animated: sticker.animated === true
+  };
 }
 
 function rejectBlockedWrite(reply: FastifyReply): Record<string, unknown> | null {
@@ -243,9 +315,42 @@ function rejectBlockedWrite(reply: FastifyReply): Record<string, unknown> | null
 }
 
 function validateInput(app: SooyaApp, content: Array<{ type: string; mediaId?: string }>, replyTo?: string): Record<string, unknown> | null {
-  for (const part of content) if (part.mediaId && !app.repos.media.get(part.mediaId)) return { error: 'unknown_media', mediaId: part.mediaId };
+  for (const part of content) {
+    if (!part.mediaId) continue;
+    const media = app.repos.media.get(part.mediaId);
+    if (!media) return part.type === 'sticker' ? { error: 'unknown_sticker', mediaId: part.mediaId } : { error: 'unknown_media', mediaId: part.mediaId };
+    if (part.type === 'sticker') {
+      const sticker = app.repos.stickers.getByMediaId(part.mediaId);
+      if (media.kind !== 'sticker' || !sticker || !sticker.enabled || !app.services.mediaStore.exists(media)) return { error: 'unknown_sticker', mediaId: part.mediaId };
+    }
+  }
   if (replyTo && !app.repos.messages.get(replyTo)) return { error: 'unknown_reply_target', replyTo };
   return null;
+}
+
+function storedInputParts(app: SooyaApp, content: Array<InputPart>): Array<{
+  type: InputPart['type']; text?: string | null; mediaId?: string | null; status: 'sent'; duration: null; transcript: null; meta?: Record<string, unknown>
+}> {
+  return content.map((part) => {
+    if (part.type !== 'sticker') return { type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: null, transcript: null };
+    const sticker = app.repos.stickers.getByMediaId(part.mediaId)!;
+    return {
+      type: 'sticker', text: null, mediaId: part.mediaId, status: 'sent', duration: null, transcript: null,
+      meta: { stickerId: sticker.id, stickerName: sticker.name, stickerMeaning: (sticker.description || sticker.emotion).slice(0, 120) }
+    };
+  });
+}
+
+function enqueueStickerMeaningJobs(app: SooyaApp, parts: Array<{ type: string; meta?: Record<string, unknown> }>): void {
+  if (!app.config.getPersona().stickerPolicy.learnUserMeaning) return;
+  for (const part of parts) {
+    if (part.type !== 'sticker') continue;
+    const id = String(part.meta?.stickerId ?? '');
+    const sticker = app.repos.stickers.markUserUsed(id);
+    if (sticker && sticker.userUseCount >= 3 && sticker.userUseCount % 3 === 0) {
+      app.repos.jobs.enqueue('sticker.user-meaning.learn', { stickerId: id }, { maxAttempts: 2 });
+    }
+  }
 }
 
 function findReply(app: SooyaApp, userMessageId: string): ChatMessage | null {

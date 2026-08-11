@@ -21,7 +21,7 @@ function quotedPreview(message: ChatMessage): string {
     }
     if (part.type === 'audio') return part.transcript?.trim() ? `[语音] ${part.transcript.trim()}` : '[语音]';
     if (part.type === 'image') return '[图片]';
-    if (part.type === 'sticker') return '[表情]';
+    if (part.type === 'sticker') return `[表情：${String(part.meta?.stickerName ?? '表情')}]`;
     if (part.type === 'file') return `[文件] ${part.media?.name ?? ''}`.trim();
   }
   return '[空消息]';
@@ -101,7 +101,7 @@ function ImagePart({ part, mine, onOpen }: { part: MessagePart; mine: boolean; o
     </button>
   );
 }
-function StickerPart({ part }: { part: MessagePart }) { const [failed, setFailed] = useState(false); if (!part.media || failed) return null; return <AuthenticatedImage className="sticker-part" path={part.media.url} scope="user" alt={String(part.meta?.stickerName ?? '表情')} loading="lazy" onError={() => setFailed(true)} />; }
+function StickerPart({ part }: { part: MessagePart }) { const [failed, setFailed] = useState(false); if (!part.media || failed) return null; const name = String(part.meta?.stickerName ?? '表情'); const meaning = String(part.meta?.stickerMeaning ?? ''); return <AuthenticatedImage className="sticker-part" path={part.media.url} scope="user" alt={meaning ? `${name}：${meaning}` : name} title={meaning ? `${name}：${meaning}` : name} loading="lazy" onError={() => setFailed(true)} />; }
 function FilePart({ part, mine }: { part: MessagePart; mine: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

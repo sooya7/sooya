@@ -3,6 +3,7 @@ import { nextSeq } from '../index.js';
 import { newJobId, newSummaryId, nowIso, randomId } from '../../util/ids.js';
 import { CONVERSATION_ID, type StreamEvent, type StreamEventType } from '../../core/types.js';
 import { redactSecrets, redactStringSecrets } from '../../util/logger.js';
+import { priorityForJob } from '../../core/job-priority.js';
 
 /* ------------------------------- settings -------------------------------- */
 
@@ -127,20 +128,22 @@ export interface JobRow {
   created_at: string;
   updated_at: string;
   run_after: string | null;
+  priority: number;
 }
 
 export class JobRepo {
   constructor(private readonly db: DbLike) {}
 
-  enqueue(type: string, payload: Record<string, unknown>, opts: { maxAttempts?: number; runAfter?: string } = {}): JobRow {
+  enqueue(type: string, payload: Record<string, unknown>, opts: { maxAttempts?: number; runAfter?: string; priority?: number } = {}): JobRow {
     const id = newJobId();
     const ts = nowIso();
+    const priority = Math.max(0, Math.min(100, Math.trunc(opts.priority ?? priorityForJob(type))));
     this.db
       .prepare(
-        `INSERT INTO jobs(id, type, payload_json, status, attempts, max_attempts, created_at, updated_at, run_after)
-         VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
+        `INSERT INTO jobs(id, type, payload_json, status, attempts, max_attempts, created_at, updated_at, run_after, priority)
+         VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)`
       )
-      .run(id, type, JSON.stringify(payload), opts.maxAttempts ?? 3, ts, ts, opts.runAfter ?? null);
+      .run(id, type, JSON.stringify(payload), opts.maxAttempts ?? 3, ts, ts, opts.runAfter ?? null, priority);
     return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as JobRow;
   }
 
@@ -149,7 +152,7 @@ export class JobRepo {
       const row = this.db
         .prepare(
           `SELECT * FROM jobs WHERE status = 'pending' AND (run_after IS NULL OR run_after <= ?)
-           ORDER BY created_at LIMIT 1`
+           ORDER BY priority DESC, created_at ASC, id ASC LIMIT 1`
         )
         .get(nowIso()) as JobRow | undefined;
       if (!row) return undefined;

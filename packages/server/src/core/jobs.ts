@@ -18,8 +18,16 @@ import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
 import { extractText } from '../media/text-extractor.js';
 import { cleanupTempFiles } from '../util/fsx.js';
 import { textForMemoryExtraction } from './web-search/isolation.js';
+import type { StickerAnalyzer } from './stickers/analyzer.js';
+import type { StickerRepo } from '../db/repos/sticker.repo.js';
+import { STICKER_ANALYSIS_VERSION } from './stickers/constants.js';
+import { stickerSemanticText } from './stickers/semantic-text.js';
+import type { StickerUserMeaningLearner } from './stickers/user-meaning.js';
+import type { WorldPresenceCoordinator } from './world-presence.js';
+import { JOB_PRIORITY } from './job-priority.js';
 
 export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
+export const STICKER_MAINTENANCE_BATCH = 8;
 
 /** Small persisted in-process job worker. */
 export class JobWorker {
@@ -102,9 +110,13 @@ export interface JobDeps {
   bus: EventBus;
   backups: BackupService;
   life: LifeRuntime;
+  presence: WorldPresenceCoordinator;
   batches: ReplyBatchRepo;
   proactive: ProactiveComposer;
   capabilities: CapabilityRegistry;
+  stickerAnalyzer: StickerAnalyzer;
+  stickerRepo: StickerRepo;
+  stickerUserMeaning: StickerUserMeaningLearner;
   config: ConfigStore;
   reachOutEnabled: boolean;
   push: PushService;
@@ -127,6 +139,91 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const result = extractText(read.data, read.row.mime, mediaName(read.row.meta_json));
     deps.mediaText.upsert({ mediaId, status: result.status, text: result.status === 'ready' ? result.text : null, metadata: result.metadata, error: result.status === 'failed' ? result.error : null });
     deps.bus.publish('media.updated', { mediaId, textStatus: result.status });
+  });
+
+  worker.register('sticker.analyze', async (payload) => {
+    const stickerId = String(payload.stickerId ?? '');
+    if (!stickerId) return;
+    const result = await deps.stickerAnalyzer.analyze(stickerId, {
+      force: payload.force === true,
+      expectedSemanticRevision: typeof payload.expectedSemanticRevision === 'number' ? payload.expectedSemanticRevision : undefined
+    });
+    if (result) {
+      deps.jobs.enqueue('sticker.embed', { stickerId }, { maxAttempts: 2 });
+      deps.bus.publish('sticker.analysis.updated', { stickerId, status: 'ready', version: STICKER_ANALYSIS_VERSION });
+    }
+  });
+
+  worker.register('sticker.analyze.backfill', async (payload) => {
+    if (!deps.capabilities.visionProvider()) return;
+    const requestedIds = Array.isArray(payload.ids)
+      ? payload.ids.map((id) => String(id)).filter(Boolean)
+      : null;
+    const active = new Set(
+      deps.jobs.list(500)
+        .filter((job) => job.type === 'sticker.analyze' && (job.status === 'pending' || job.status === 'running'))
+        .map((job) => stickerIdFromJob(job.payload_json))
+        .filter(Boolean)
+    );
+    const source = requestedIds
+      ? requestedIds.map((id) => deps.stickerRepo.get(id)).filter((sticker): sticker is NonNullable<typeof sticker> => Boolean(sticker))
+      : deps.stickerRepo.list({ enabledOnly: true });
+    const candidates = source.filter((sticker) =>
+      sticker.analysisStatus !== 'ready'
+      && sticker.analysisSource !== 'manual'
+      && !active.has(sticker.id)
+    );
+    const batch = candidates.slice(0, STICKER_MAINTENANCE_BATCH);
+    for (const sticker of batch) {
+      deps.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
+    }
+    const remaining = candidates.slice(batch.length).map((sticker) => sticker.id);
+    if (remaining.length > 0) {
+      deps.jobs.enqueue('sticker.analyze.backfill', { ids: remaining }, { priority: JOB_PRIORITY.stickerAnalyze });
+    }
+  });
+
+  worker.register('sticker.embed', async (payload) => {
+    const stickerId = String(payload.stickerId ?? '');
+    const sticker = deps.stickerRepo.get(stickerId);
+    if (!sticker || sticker.analysisStatus !== 'ready') return;
+    const provider = deps.capabilities.embeddingProvider();
+    if (!provider.configured) return;
+    const result = await provider.embed([stickerSemanticText(sticker)]);
+    const vector = result.vectors[0];
+    if (!vector) return;
+    deps.stickerRepo.setEmbedding(stickerId, vector, result.model, result.dimensions);
+    deps.bus.publish('sticker.updated', { stickerId, embedding: true, embeddingModel: result.model, embeddingDim: result.dimensions });
+  });
+
+  worker.register('sticker.embed.backfill', async () => {
+    const embeddingConfig = deps.config.getModels().embedding;
+    const expectedModel = embeddingConfig.model.trim();
+    const expectedDimensions = embeddingConfig.dimensions;
+    const candidates = deps.stickerRepo.list({ enabledOnly: true }).filter((sticker) =>
+      sticker.analysisStatus === 'ready' && (
+        !sticker.embedding
+        || (expectedModel.length > 0 && sticker.embeddingModel !== expectedModel)
+        || (expectedDimensions !== undefined && sticker.embeddingDim !== expectedDimensions)
+      )
+    );
+    const missing = candidates.slice(0, STICKER_MAINTENANCE_BATCH);
+    for (const sticker of missing) {
+      deps.jobs.enqueue('sticker.embed', { stickerId: sticker.id }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerEmbed });
+    }
+    // Keep draining large catalogues in bounded batches. The next durable job
+    // is queued only after this batch is claimed, so startup never floods the
+    // job table with one row per sticker.
+    if (candidates.length > missing.length) deps.jobs.enqueue('sticker.embed.backfill', {});
+  });
+
+  worker.register('sticker.user-meaning.learn', async (payload) => {
+    const stickerId = String(payload.stickerId ?? '');
+    if (!stickerId) return;
+    if (await deps.stickerUserMeaning.learn(stickerId)) {
+      deps.jobs.enqueue('sticker.embed', { stickerId }, { maxAttempts: 2 });
+      deps.bus.publish('sticker.updated', { stickerId, userMeaning: true });
+    }
   });
 
   worker.register('memory.extract', async (payload) => {
@@ -171,6 +268,10 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     deps.life.applyConversationEffect(payload.warmth === 'warm' ? 'warm' : 'neutral');
   });
 
+  worker.register('weather.refresh', async (payload) => {
+    await deps.presence.refreshWeather(String(payload.reason ?? 'scheduled'));
+  });
+
   /*
    * Advances her day. Runs on a timer, not off a user message, because the
    * whole point is that she exists while nobody is looking. The engine
@@ -180,6 +281,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   worker.register('life.tick', async () => {
     const result = deps.life.tick();
     if (result.changed) deps.bus.publish('life.updated', { activity: result.activity, kind: result.kind, mood: result.mood });
+    deps.presence.sync('life.tick');
     if (!deps.reachOutEnabled) return;
     await deps.proactive.run();
   });
@@ -202,6 +304,10 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   });
 
   worker.register('backup.create', async (payload) => { await deps.backups.create(String(payload.reason ?? 'scheduled')); });
+}
+
+function stickerIdFromJob(payloadJson: string): string {
+  try { return String((JSON.parse(payloadJson) as { stickerId?: unknown }).stickerId ?? ''); } catch { return ''; }
 }
 
 function mediaName(metaJson: string): string | undefined {

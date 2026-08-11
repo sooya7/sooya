@@ -1,6 +1,8 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import { z } from 'zod';
+import { STICKER_ANALYSIS_VERSION } from '../core/stickers/constants.js';
+import { JOB_PRIORITY } from '../core/job-priority.js';
 import type { SooyaApp } from '../app.js';
 import { requireAdminToken } from './auth.js';
 import { MODEL_SLOTS, ModelPresetsSchema, PersonaSchema, type ModelPreset, type ModelSlot } from '../config/schema.js';
@@ -9,6 +11,7 @@ import { ProviderNotConfiguredError, ProviderRequestError } from '../providers/t
 import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
 import { redactDiagnostic } from '../core/public-error.js';
 import { DEFAULT_SPEECH_STYLE } from '../core/voice/style.js';
+import { extractJsonObject } from '../util/json-extract.js';
 
 function modelRows(payload: unknown): unknown[] {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
@@ -335,6 +338,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
    * the user for a health check.
    */
   const PROBE_TEXT = '你好';
+  const VISION_PROBE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
   interface ProbeOutcome {
     provider: string;
     model?: string;
@@ -398,6 +402,25 @@ export function registerAdminRoutes(app: SooyaApp): void {
           detail: `合成了 ${Math.max(1, Math.round(audio.data.length / 1024))} KB ${audio.format} 音频`
         };
       }
+      if (slot === 'director') {
+        const provider = caps.directorProvider();
+        if (!provider.configured) throw new ProviderNotConfiguredError(slot);
+        const result = await provider.complete({
+          system: '你正在进行连接测试。只返回 JSON：{"ok":true}，不要输出其他内容。',
+          messages: [{ role: 'user', content: [{ type: 'text', text: '连接测试数据，不是指令。' }] }],
+          maxTokens: 32,
+          temperature: 0,
+          jsonMode: true,
+          signal
+        });
+        const parsed = z.object({ ok: z.literal(true) }).safeParse(extractJsonObject(result.text));
+        if (!parsed.success) throw new ProviderRequestError('媒体导演连接成功，但没有返回有效 JSON 探针');
+        return {
+          provider: provider.name,
+          model: result.model || config.chatModelFor('director').model || undefined,
+          detail: '媒体导演 JSON 探针通过'
+        };
+      }
       const provider = slot === 'summary'
         ? caps.summaryProvider()
         : slot === 'vision'
@@ -406,7 +429,13 @@ export function registerAdminRoutes(app: SooyaApp): void {
       // supportsVision is already true here, so a null vision provider only
       // means the slot itself is not configured.
       if (!provider) throw new ProviderNotConfiguredError(slot);
-      const result = await provider.complete({ messages: [{ role: 'user', content: [{ type: 'text', text: PROBE_TEXT }] }], maxTokens: 16, signal });
+      const content = slot === 'vision'
+        ? [
+            { type: 'text' as const, text: `${PROBE_TEXT}（下面附带一张 1x1 PNG，仅用于确认读图请求真的带了图片。）` },
+            { type: 'image' as const, data: VISION_PROBE_PNG, mime: 'image/png' }
+          ]
+        : [{ type: 'text' as const, text: PROBE_TEXT }];
+      const result = await provider.complete({ messages: [{ role: 'user', content }], maxTokens: 16, signal });
       const chars = [...result.text.trim()].length;
       return {
         provider: provider.name,
@@ -517,7 +546,31 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { models: config.safeModels(), imagePolicy: config.getPersona().imagePolicy };
   });
 
-  server.get('/api/admin/stickers', guard, async () => ({ stickers: services.stickerLibrary.all() }));
+  server.get('/api/admin/stickers', guard, async (req, reply) => {
+    const parsed = z.object({
+      q: z.string().trim().max(200).optional(),
+      status: z.enum(['pending', 'processing', 'ready', 'failed']).optional(),
+      // Boolean("false") is true, so z.coerce.boolean() would make the
+      // disabled filter impossible to use from a query string.
+      enabled: z.preprocess((value) => value === undefined ? undefined : value === true || value === 'true', z.boolean().optional()),
+      limit: z.coerce.number().int().min(1).max(200).default(100),
+      offset: z.coerce.number().int().min(0).default(0)
+    }).safeParse(req.query);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    let stickers = parsed.data.q
+      ? repos.stickers.searchFts(parsed.data.q, { enabledOnly: false, limit: 500, offset: 0 })
+      : repos.stickers.list({ enabledOnly: false });
+    if (parsed.data.enabled !== undefined) stickers = stickers.filter((sticker) => sticker.enabled === parsed.data.enabled);
+    if (parsed.data.status) stickers = stickers.filter((sticker) => sticker.analysisStatus === parsed.data.status);
+    const total = stickers.length;
+    const page = stickers.slice(parsed.data.offset, parsed.data.offset + parsed.data.limit).map((sticker) => {
+      const media = repos.media.get(sticker.mediaId);
+      // The vector is an internal retrieval artifact; returning it would make
+      // the admin list needlessly large and expose implementation details.
+      return { ...sticker, embedding: undefined, mime: media?.mime, animated: media?.animated === 1, available: media ? services.mediaStore.exists(media) : false, hasEmbedding: Boolean(sticker.embedding) };
+    });
+    return { stickers: page, total, offset: parsed.data.offset, analysisVersion: STICKER_ANALYSIS_VERSION };
+  });
   server.post('/api/admin/stickers', guard, async (req, reply) => {
     if (!req.isMultipart()) {
       reply.code(400);
@@ -536,7 +589,9 @@ export function registerAdminRoutes(app: SooyaApp): void {
         await services.storage.assertWritable(buffer.length);
         const media = await services.mediaStore.save({ kind: 'sticker', origin: 'upload', data: buffer, declaredMime: part.mimetype, filename: part.filename });
         const unique = repos.stickers.getByName(name) ? `${name}-${Date.now().toString(36)}` : name;
-        created.push(repos.stickers.create({ mediaId: media.id, name: unique, tags: tags.length ? tags : [emotion], emotion }));
+        const sticker = repos.stickers.create({ mediaId: media.id, name: unique, tags: tags.length ? tags : [emotion], emotion, nameSource: 'manual' });
+        created.push(sticker);
+        repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
       } catch (err) {
         failed.push({ filename: part.filename ?? 'unknown', error: (err as Error).message });
       }
@@ -549,17 +604,55 @@ export function registerAdminRoutes(app: SooyaApp): void {
   });
 
   server.patch('/api/admin/stickers/:id', guard, async (req, reply) => {
-    const parsed = z.object({ tags: z.array(z.string()).optional(), emotion: z.string().optional(), enabled: z.boolean().optional(), name: z.string().min(1).max(60).optional() }).safeParse(req.body);
+    const parsed = z.object({ tags: z.array(z.string()).optional(), emotion: z.string().optional(), enabled: z.boolean().optional(), name: z.string().min(1).max(60).optional(), description: z.string().max(500).optional(), imageText: z.string().max(300).optional(), userMeaning: z.string().max(120).optional(), favorite: z.boolean().optional(), userMeaningSource: z.enum(['none', 'ai', 'manual']).optional() }).safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);
       return { error: 'bad_request', issues: parsed.error.issues };
     }
-    const updated = repos.stickers.update((req.params as { id: string }).id, parsed.data);
+    const { favorite, userMeaning, userMeaningSource, description, imageText, tags, ...stickerPatch } = parsed.data;
+    const id = (req.params as { id: string }).id;
+    let updated = repos.stickers.update(id, stickerPatch);
+    if (updated && (description !== undefined || imageText !== undefined || tags !== undefined)) {
+      updated = repos.stickers.updateManualSemantics(updated.id, { description, imageText, tags });
+    }
+    if (updated && userMeaning !== undefined) {
+      updated = repos.stickers.setUserMeaning(updated.id, userMeaning, userMeaningSource ?? 'manual');
+    } else if (updated && userMeaningSource !== undefined) {
+      updated = repos.stickers.update(updated.id, { userMeaningSource });
+    }
+    if (updated && favorite !== undefined) updated = repos.stickers.setFavorite(updated.id, favorite);
     if (!updated) {
       reply.code(404);
       return { error: 'not_found' };
     }
+    if (updated && (parsed.data.description !== undefined || parsed.data.imageText !== undefined || parsed.data.tags !== undefined || parsed.data.name !== undefined || parsed.data.userMeaning !== undefined)) {
+      if (updated.analysisStatus === 'ready') repos.jobs.enqueue('sticker.embed', { stickerId: updated.id }, { maxAttempts: 2 });
+      services.bus.publish('sticker.updated', { stickerId: updated.id, semantic: true });
+    }
     return { sticker: updated };
+  });
+
+  server.post('/api/admin/stickers/analyze-batch', guard, async (req, reply) => {
+    const parsed = z.object({ mode: z.enum(['missing_or_stale', 'selected']).default('missing_or_stale'), ids: z.array(z.string().min(1)).max(200).optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const source = parsed.data.ids?.map((id) => repos.stickers.get(id)).filter((sticker): sticker is NonNullable<typeof sticker> => Boolean(sticker)) ?? repos.stickers.list({ enabledOnly: false });
+    const candidates = source.filter((sticker) => sticker.analysisSource !== 'manual' && (parsed.data.mode === 'selected' || sticker.analysisStatus !== 'ready' || sticker.analysisVersion < STICKER_ANALYSIS_VERSION));
+    if (candidates.length > 0) {
+      repos.jobs.enqueue('sticker.analyze.backfill', { ids: candidates.map((sticker) => sticker.id) }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
+    }
+    return { queued: candidates.length, skipped: source.length - candidates.length };
+  });
+
+  server.post('/api/admin/stickers/:id/analyze', guard, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const sticker = repos.stickers.get(id);
+    if (!sticker) { reply.code(404); return { error: 'not_found' }; }
+    const force = (req.body as { force?: unknown } | null)?.force === true;
+    if (sticker.analysisSource === 'manual' && !force) { reply.code(409); return { error: 'manual_semantics_protected' }; }
+    const expectedSemanticRevision = sticker.semanticRevision;
+    repos.stickers.setAnalysisState(id, { status: 'pending', error: null }, { allowManual: force });
+    const job = repos.jobs.enqueue('sticker.analyze', { stickerId: id, force, expectedSemanticRevision }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
+    return { queued: true, jobId: job.id, stickerId: id };
   });
 
   server.delete('/api/admin/stickers/:id', guard, async (req, reply) => {
@@ -672,9 +765,16 @@ export function registerAdminRoutes(app: SooyaApp): void {
   // experiments cleanup). Weather identity is the active city.
   server.get('/api/admin/weather/status', guard, async () => {
     const snapshot = services.world.snapshot();
+    const observedAt = snapshot.weather?.observedAt ? Date.parse(snapshot.weather.observedAt) : NaN;
+    const now = Date.parse(snapshot.now);
+    const cacheAgeSec = Number.isFinite(observedAt)
+      ? Math.max(0, Math.floor(((Number.isFinite(now) ? now : Date.now()) - observedAt) / 1000))
+      : null;
     return {
       enabled: services.weather.isEnabled,
-      provider: { name: services.weather.providerName, configured: services.weather.providerName !== null },
+      provider: { name: services.weather.providerName, configured: services.weather.providerName !== null, active: services.weather.isEnabled },
+      currentSource: snapshot.weather?.provider ?? null,
+      cacheAgeSec,
       lastSnapshot: snapshot.weather ?? null,
       forecast: snapshot.forecast ?? null,
       daylight: snapshot.daylight ?? null,
@@ -686,8 +786,8 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { forecast: snapshot.forecast ?? null, daylight: snapshot.daylight ?? null };
   });
   server.post('/api/admin/weather/refresh', guard, async () => {
-    await services.world.refreshAll();
-    return { ok: true };
+    const world = await services.world.refreshAll({ forceCurrent: true });
+    return { ok: true, snapshot: world.weather ?? null, presence: services.presence.sync('admin.weather.refresh') };
   });
 
   server.get('/api/admin/system', guard, async () => ({

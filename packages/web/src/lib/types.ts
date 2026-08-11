@@ -14,6 +14,7 @@ export interface MediaRef {
   url: string;
   name?: string | null;
   transcript?: string | null;
+  animated?: boolean;
   textStatus?: 'pending' | 'ready' | 'failed' | 'unsupported';
   textError?: string | null;
 }
@@ -62,6 +63,16 @@ export interface StickerInfo {
   tags: string[];
   url: string;
   mediaId: string;
+  description?: string | null;
+  imageText?: string | null;
+  userMeaning?: string | null;
+  favorite?: boolean;
+  assistantUseCount?: number;
+  assistantLastUsedAt?: string | null;
+  userUseCount?: number;
+  analysisStatus?: 'pending' | 'processing' | 'ready' | 'failed';
+  userLastUsedAt?: string | null;
+  animated?: boolean;
 }
 
 export type ConnectionState = 'connecting' | 'online' | 'offline' | 'unauthorized';
@@ -79,4 +90,28 @@ export interface LifeState {
   startedAt: string;
   endsAt: string;
   recent: Array<{ activity: string; startedAt: string; endedAt: string }>;
+}
+
+export type WeatherCondition = 'clear' | 'cloudy' | 'rain' | 'snow' | 'storm' | 'fog' | 'wind' | 'unknown';
+
+export interface WorldPresence {
+  city: { id: string; name: string; region?: string | null; country?: string | null } | null;
+  location: { id: string; name: string; kind: string } | null;
+  travel: {
+    fromLocationId: string;
+    fromName: string | null;
+    toLocationId: string;
+    toName: string | null;
+    mode: string;
+    expectedArriveAt: string;
+  } | null;
+  weather: {
+    condition: WeatherCondition;
+    temperatureC: number | null;
+    feelsLikeC: number | null;
+    observedAt: string;
+    stale: boolean;
+    provider: string;
+  } | null;
+  updatedAt: string;
 }

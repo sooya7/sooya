@@ -21,9 +21,15 @@ import { MediaTextRepo } from './db/repos/media-text.repo.js';
 import { AuditRepo, PushSubscriptionRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
 import { MediaStore } from './media/store.js';
 import { StickerLibrary } from './media/stickers.js';
+import { StickerAnalyzer } from './core/stickers/analyzer.js';
+import { StickerRetriever } from './core/stickers/retriever.js';
+import { StickerPicker } from './core/stickers/picker.js';
+import { StickerUserMeaningLearner } from './core/stickers/user-meaning.js';
 import { PersonaReferenceLoader } from './media/persona-references.js';
 import { ImageVariantService } from './media/variants.js';
 import { CapabilityRegistry } from './core/capabilities.js';
+import { DirectorClient } from './core/director/client.js';
+import { MediaDirector } from './core/mediaDirector.js';
 import { MemoryService } from './core/memory.js';
 import { ContextBuilder } from './core/context.js';
 import { Summarizer } from './core/summarizer.js';
@@ -37,6 +43,7 @@ import { LocationService } from './core/location/service.js';
 import { WeatherRepo } from './db/repos/weather.repo.js';
 import { WeatherService } from './core/weather/service.js';
 import { WorldContextService } from './core/world-context.js';
+import { WorldPresenceCoordinator } from './core/world-presence.js';
 import { MetricsRepo } from './db/repos/metrics.repo.js';
 import { MetricsService } from './core/metrics.js';
 import { createWeatherChain } from './core/weather/fallback.js';
@@ -122,7 +129,13 @@ export interface SooyaApp {
     mediaStore: MediaStore;
     mediaVariants: ImageVariantService;
     stickerLibrary: StickerLibrary;
+    stickerAnalyzer: StickerAnalyzer;
+    stickerRetriever: StickerRetriever;
+    stickerPicker: StickerPicker;
+    stickerUserMeaning: StickerUserMeaningLearner;
     capabilities: CapabilityRegistry;
+    directorClient: DirectorClient;
+    mediaDirector: MediaDirector;
     webSearch: WebSearchRegistry;
     memory: MemoryService;
     life: LifeRuntime;
@@ -130,6 +143,7 @@ export interface SooyaApp {
     location: LocationService;
     weather: WeatherService;
     world: WorldContextService;
+    presence: WorldPresenceCoordinator;
     metrics: MetricsService;
     thoughts: ThoughtsService;
     voice: VoiceService;
@@ -232,8 +246,37 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const stickerLibrary = new StickerLibrary(repos.stickers, repos.media, mediaStore);
   mediaStore.setOnDelete(() => stickerLibrary.invalidate());
   const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl });
+  const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
+  metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
+  const directorClient = new DirectorClient(
+    () => capabilities.directorProvider(),
+    { metrics, onEvent: (event) => logger.debug({ ...event }, `director.${event.event}`) }
+  );
+  const mediaDirector = new MediaDirector(directorClient);
+  const stickerAnalyzer = new StickerAnalyzer(
+    repos.stickers,
+    mediaStore,
+    () => capabilities.visionProvider(),
+    (event, data) => logger.info({ ...data }, `sticker.analysis.${event}`)
+  );
+  const stickerRetriever = new StickerRetriever(
+    repos.stickers,
+    stickerLibrary,
+    () => capabilities.embeddingProvider(),
+    (error) => logger.warn({ error: redactDiagnostic(error) }, 'sticker embedding retrieval degraded')
+  );
+  const stickerPicker = new StickerPicker(
+    directorClient,
+    stickerRetriever,
+    (event, data) => logger.info({ ...data }, `sticker.pick.${event}`)
+  );
+  const stickerUserMeaning = new StickerUserMeaningLearner(
+    repos.stickers,
+    repos.messages,
+    () => capabilities.chatProvider()
+  );
   const bus = new EventBus(repos.events);
-  const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE });
+  const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE, config });
   const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
   /*
@@ -271,14 +314,20 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
   weather.setEnabled(env.WORLD_CONTEXT_ENABLED && env.WEATHER_ENABLED);
   // Production provider chain (primary -> secondary -> cache -> unknown);
-  // unconfigured env yields the no-op provider, so behaviour is unchanged.
+  // the default Open-Meteo provider is keyless, while an explicit unknown
+  // provider still falls back to the inert no-op adapter.
   weather.setProvider(createWeatherChain({
     provider: env.WEATHER_PROVIDER,
     baseUrl: env.WEATHER_BASE_URL,
+    geocodingBaseUrl: env.WEATHER_GEOCODING_BASE_URL,
     apiKey: env.WEATHER_API_KEY,
-    timeoutMs: env.WEATHER_TIMEOUT_MS
+    timeoutMs: env.WEATHER_TIMEOUT_MS,
+    fetchImpl,
+    clock: opts.clock
   }, repos.weather));
   const world = new WorldContextService(location, weather, opts.clock, env.LIFE_TIME_ZONE, repos.locations);
+  const presence = new WorldPresenceCoordinator(world, location, bus);
+  presence.initialize();
   const webSearch = new WebSearchRegistry({
     fetchImpl,
     onError: (provider, error) =>
@@ -287,8 +336,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   webSearch.rebuild(config.getModels().webSearch);
   // Thread location tags: real open threads feed the location selector.
   location.setThreadsProvider(() => repos.lifeV2.threads('open'));
-  const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
-  metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
   const life = env.ENABLE_LIFE_V2
     ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
@@ -298,6 +345,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     voice: repos.voice,
     batches: repos.replyBatches,
     capabilities,
+    mediaDirector,
     config,
     settings: repos.settings,
     bus,
@@ -321,6 +369,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     repos.media,
     mediaStore,
     repos.mediaText,
+    repos.stickers,
+    stickerLibrary,
     env.ENABLE_LIFE_ENGINE ? life : undefined,
     env.LIFE_TIME_ZONE,
     () => world.snapshot()
@@ -332,7 +382,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
 
-  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot() });
+  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, stickerPicker, capabilities, mediaDirector, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot() });
   const thoughtFlags = readThoughtsFlags(process.env);
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
@@ -440,8 +490,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     bus,
     backups,
     life,
+    presence,
     proactive,
     capabilities,
+    stickerAnalyzer,
+    stickerRepo: repos.stickers,
+    stickerUserMeaning,
     config,
     reachOutEnabled: env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT,
     push,
@@ -453,7 +507,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const tools = new ToolRegistry();
   const agents = new AgentRegistry();
   const agentCapabilities = new CapabilityRegistryStub();
-  for (const cap of ['chat', 'vision', 'summary', 'embedding', 'image', 'tts'] as const) {
+  for (const cap of ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'tts'] as const) {
     agentCapabilities.register({ name: cap, description: `model capability: ${cap}`, available: () => capabilities.has(cap) });
   }
 
@@ -471,6 +525,39 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       logger.warn({ assetsDir }, 'built-in sticker assets not found');
     }
   }
+  const enqueuePendingStickerMaintenance = (): void => {
+    if (opts.startWorkers === false || !env.ENABLE_BACKGROUND_JOBS) return;
+    // Startup maintenance must yield to interactive jobs (chat completion,
+    // life bridge, memory and push). A large legacy catalogue can otherwise
+    // occupy the single durable worker long enough to make a fresh reply look
+    // stuck. The jobs remain durable and will be claimed once this short grace
+    // period expires.
+    const runAfter = new Date(Date.now() + 30_000).toISOString();
+    const jobs = repos.jobs.list(500);
+    const activeAnalysis = jobs.some((job) =>
+      (job.type === 'sticker.analyze' || job.type === 'sticker.analyze.backfill')
+      && (job.status === 'pending' || job.status === 'running')
+    );
+    const hasPendingAnalysis = repos.stickers.list({ enabledOnly: true }).some((sticker) =>
+      sticker.analysisStatus !== 'ready' && sticker.analysisSource !== 'manual'
+    );
+    if (capabilities.visionProvider() && hasPendingAnalysis && !activeAnalysis) {
+      repos.jobs.enqueue('sticker.analyze.backfill', {}, { maxAttempts: 2, runAfter });
+    }
+    if (capabilities.has('embedding')) {
+      const embedding = config.getModels().embedding;
+      const needsBackfill = repos.stickers.list({ enabledOnly: true }).some((sticker) =>
+        sticker.analysisStatus === 'ready' && (
+          !sticker.embedding
+          || (embedding.model.trim().length > 0 && sticker.embeddingModel !== embedding.model.trim())
+          || (embedding.dimensions !== undefined && sticker.embeddingDim !== embedding.dimensions)
+        )
+      );
+      const activeBackfill = jobs.some((job) => job.type === 'sticker.embed.backfill' && (job.status === 'pending' || job.status === 'running'));
+      if (needsBackfill && !activeBackfill) repos.jobs.enqueue('sticker.embed.backfill', {}, { runAfter });
+    }
+  };
+  enqueuePendingStickerMaintenance();
 
   const startupCounters = reconcileCounters(dbHandle);
   logger.debug(startupCounters, 'sequence counters reconciled at startup');
@@ -562,7 +649,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, webSearch, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -585,6 +672,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   stopModelWatcher = config.watchModels(() => {
     capabilities.rebuild();
     webSearch.rebuild(config.getModels().webSearch);
+    enqueuePendingStickerMaintenance();
   });
 
   repos.voice.recoverInFlight();
@@ -671,6 +759,23 @@ function scheduleRecurring(app: SooyaApp): void {
     app.recurringTimers.push(life);
   }
 
+  if (env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED) {
+    const presence = setInterval(() => {
+      try { void services.presence.sync('timer'); } catch { /* ignore */ }
+    }, 60_000);
+    presence.unref?.();
+    app.recurringTimers.push(presence);
+  }
+
+  if (env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED && env.WEATHER_ENABLED && env.WEATHER_REFRESH_INTERVAL_MS > 0) {
+    try { repos.jobs.enqueue('weather.refresh', { reason: 'startup' }); } catch { /* ignore */ }
+    const weather = setInterval(() => {
+      try { repos.jobs.enqueue('weather.refresh', { reason: 'scheduled' }); } catch { /* ignore */ }
+    }, env.WEATHER_REFRESH_INTERVAL_MS);
+    weather.unref?.();
+    app.recurringTimers.push(weather);
+  }
+
   if (env.BACKUP_INTERVAL_MS > 0) {
     const backup = setInterval(() => {
       try { repos.jobs.enqueue('backup.create', { reason: 'scheduled' }); } catch { /* ignore */ }
@@ -715,5 +820,3 @@ function resolveWebDir(): string | null {
 }
 
 export { VERSION };
-
-

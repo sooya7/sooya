@@ -133,6 +133,8 @@ export interface LifeLocation {
   region?: string | null;
   country?: string | null;
   timeZone?: string | null;
+  lat?: number | null;
+  lng?: number | null;
   tags: string[];
   indoor: boolean;
   visitWeight: number;
@@ -153,6 +155,8 @@ export function toLifeLocation(row: LifeLocationRow): LifeLocation {
     region: row.region,
     country: row.country,
     timeZone: row.time_zone,
+    lat: row.lat,
+    lng: row.lng,
     tags,
     indoor: row.indoor === 1,
     visitWeight: row.visit_weight,

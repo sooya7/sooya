@@ -63,6 +63,10 @@ export class ImageVariantService {
     if (row.kind !== 'image' && row.kind !== 'sticker') return null;
     if (!RESIZABLE_MIME.has(row.mime)) return null;
     if (row.width !== null && row.width <= width) return null;
+    // Resizing an animated WebP with a normal sharp pipeline silently keeps
+    // only one frame. New rows carry the flag; the metadata probe preserves
+    // animation for rows created before that column existed.
+    if (row.animated === 1 || await isAnimatedWebp(sourcePath, row.mime)) return null;
 
     const target = variantPath(this.dir, row.id, width);
     const cached = sizeOf(target);
@@ -96,6 +100,16 @@ export class ImageVariantService {
 
   async remove(id: string): Promise<void> {
     await removeVariants(this.dir, id);
+  }
+}
+
+async function isAnimatedWebp(sourcePath: string, mime: string): Promise<boolean> {
+  if (mime !== 'image/webp') return false;
+  try {
+    const metadata = await sharp(sourcePath, { animated: true, failOn: 'none' }).metadata();
+    return (metadata.pages ?? 1) > 1;
+  } catch {
+    return false;
   }
 }
 

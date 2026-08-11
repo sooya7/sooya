@@ -64,7 +64,7 @@ const input = () => container.querySelector<HTMLTextAreaElement>('[data-testid="
 const sendBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="btn-send"]')!;
 const stickerBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="btn-sticker"]')!;
 const stickerPanel = () => container.querySelector('[data-testid="sticker-panel"]');
-const stickerChoices = () => [...container.querySelectorAll<HTMLButtonElement>('.sticker-choice')];
+const stickerChoices = () => [...container.querySelectorAll<HTMLElement>('.sticker-choice')];
 const imageInput = () => container.querySelector<HTMLInputElement>('[data-testid="input-image"]')!;
 const fileInput = () => container.querySelector<HTMLInputElement>('[data-testid="input-file"]')!;
 const strip = () => container.querySelector('[data-testid="attachment-strip"]');
@@ -628,6 +628,18 @@ describe('Composer 附件发送', () => {
       .find((url) => url.startsWith('/api/media/md_1'));
     expect(mediaRequest).toMatch(/^\/api\/media\/md_1\?w=\d+$/);
     expect(stickerChoices()[0]!.querySelector('img')?.getAttribute('loading')).toBe('lazy');
+  });
+
+  it('动态表情使用原图，并把选择与收藏拆成并列按钮', async () => {
+    await render({ stickers: [{ ...stickers[0]!, animated: true }] });
+    await click(stickerBtn());
+    await flush();
+
+    expect(stickerChoices()[0]!.querySelectorAll('button')).toHaveLength(2);
+    const mediaRequest = vi.mocked(fetch).mock.calls
+      .map(([input]) => String(input))
+      .find((url) => url.startsWith('/api/media/md_1'));
+    expect(mediaRequest).toBe('/api/media/md_1');
   });
 
   it('网络断开时仍可编辑，但发送按钮明确提示网络已断开', async () => {

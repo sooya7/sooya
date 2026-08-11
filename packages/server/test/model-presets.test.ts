@@ -36,7 +36,7 @@ describe('model preset library', () => {
     const { res, body } = await api('GET', '/api/admin/model-presets');
     expect(res.statusCode).toBe(200);
     expect(body.presets).toEqual([]);
-    expect(body.slots).toEqual(['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'rerank']);
+    expect(body.slots).toEqual(['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'tts', 'rerank']);
   });
 
   it('saves a preset and reads it back', async () => {

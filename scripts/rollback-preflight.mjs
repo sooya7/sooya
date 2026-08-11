@@ -23,6 +23,7 @@ function dataDirFromArgs() {
 
 const dataDir = dataDirFromArgs();
 const dbFile = path.join(dataDir, 'database', 'sooya.db');
+const MAX_SCHEMA_VERSION = 33;
 if (!fs.existsSync(dbFile)) {
   console.error(`[preflight] database not found: ${dbFile}`);
   console.error(`[preflight] pass --data-dir <dir> or set DATA_DIR`);
@@ -40,8 +41,8 @@ try {
     console.log(`[preflight] OK: version ${version} needs no v15+ downgrade normalization.`);
     process.exit(0);
   }
-  if (version > 29) {
-    problems.push(`schema version ${version} is NEWER than this tool understands (max 29)`);
+  if (version > MAX_SCHEMA_VERSION) {
+    problems.push(`schema version ${version} is NEWER than this tool understands (max ${MAX_SCHEMA_VERSION})`);
   }
 
   // 1. Reply batches in post-v15 states.

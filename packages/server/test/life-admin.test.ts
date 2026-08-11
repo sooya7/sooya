@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
+import { vi } from 'vitest';
 
 let harness: Harness | null = null;
 afterEach(async () => {
@@ -19,6 +20,16 @@ function localTime(iso: string): Date {
  * proactive endpoints answer the "where / why / next" questions.
  */
 describe('Life Admin API (P1)', () => {
+  it('syncs world presence after an administrative life tick', async () => {
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { ADMIN_API_TOKEN: 'admin-test-token' } });
+    const sync = vi.spyOn(harness.app.services.presence, 'sync');
+    const response = await harness.app.server.inject({ method: 'POST', url: '/api/admin/life/tick', headers: ADMIN });
+
+    expect(response.statusCode).toBe(200);
+    expect(sync).toHaveBeenCalledWith('admin.life.tick');
+    expect(response.json().presence).toBeTruthy();
+  });
+
   it('adjusts and resets vitals with audit entries', async () => {
     harness = await createHarness({ skipStickerImport: true, startWorkers: false, env: { ENABLE_LIFE_ENGINE: 'true', ADMIN_API_TOKEN: 'admin-test-token' } });
     const adjust = await harness.app.server.inject({
@@ -224,7 +235,7 @@ describe('Life Admin API (P1)', () => {
     expect(status.statusCode).toBe(200);
     const body = status.json() as { enabled: boolean; provider: { name: string | null; configured: boolean }; lastSnapshot: unknown; location: unknown };
     expect(typeof body.enabled).toBe('boolean');
-    expect(body.provider).toMatchObject({ configured: false });
+    expect(body.provider).toMatchObject({ name: 'fallback', configured: true });
     // Weather identity is the active city (宁波).
     expect(body.location).toMatchObject({ kind: 'home' });
 

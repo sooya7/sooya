@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { adminApi, type AdminLifeOverview, type AdminLifeVitals } from '../../lib/admin.js';
 import type { LifePanelData } from '../../lib/features.js';
 import { mergeLifeHistory, type LifeHistoryItem } from '../../lib/lifeObservation.js';
+import { formatTemperature, formatVital } from '../../lib/numberDisplay.js';
+import { weatherConditionLabel } from '../../lib/worldDisplay.js';
 
 type LoadState<T> =
   | { status: 'idle' }
@@ -28,21 +30,6 @@ const VITAL_FIELDS: Array<{ key: keyof AdminLifeVitals; label: string }> = [
   { key: 'focus', label: '专注度' },
   { key: 'sleep_debt', label: '睡眠债' }
 ];
-
-const WEATHER_LABELS: Record<string, string> = {
-  clear: '晴',
-  partly_cloudy: '多云间晴',
-  cloudy: '多云',
-  rain: '雨',
-  drizzle: '毛毛雨',
-  snow: '雪',
-  storm: '雷暴',
-  fog: '雾',
-  haze: '霾',
-  extreme_heat: '酷热',
-  extreme_cold: '严寒',
-  unknown: '未知'
-};
 
 const TRAVEL_LABELS: Record<string, string> = {
   walk: '步行',
@@ -170,7 +157,7 @@ function VitalsDetails({ vitals }: { vitals: AdminLifeVitals | null }) {
       {VITAL_FIELDS.map(({ key, label }) => (
         <div key={key}>
           <dt>{label}</dt>
-          <dd>{vitals[key]}</dd>
+          <dd>{formatVital(key, vitals[key])}</dd>
         </div>
       ))}
     </dl>
@@ -193,8 +180,8 @@ function ForecastDetails({ title, periods }: {
           {periods.map((period) => (
             <li key={period.at}>
               <time dateTime={period.at}>{period.at}</time>
-              {' · '}{WEATHER_LABELS[period.condition] ?? period.condition}
-              {period.temperatureC === undefined ? '' : ` · ${period.temperatureC}°C`}
+              {' · '}{weatherConditionLabel(period.condition)}
+              {period.temperatureC == null ? '' : ` · ${formatTemperature(period.temperatureC)}`}
             </li>
           ))}
         </ul>
@@ -207,7 +194,7 @@ function EnvironmentDetails({ environment, overview }: {
   environment: EnvironmentData;
   overview: AdminLifeOverview;
 }) {
-  const activeLocation = environment.locations.locations.find((location) => location.active);
+  const activeLocation = environment.locations.current;
   const activeCities = environment.cities.cities.filter((city) => city.active);
   const travel = environment.travel.travel;
   const weather = environment.weather.lastSnapshot;
@@ -251,7 +238,7 @@ function EnvironmentDetails({ environment, overview }: {
             <dt>当前天气</dt>
             <dd>
               {weather
-                ? `${WEATHER_LABELS[weather.condition] ?? weather.condition}${weather.temperatureC === undefined ? '' : ` · ${weather.temperatureC}°C`}`
+                ? `${weatherConditionLabel(weather.condition)}${weather.temperatureC == null ? '' : ` · ${formatTemperature(weather.temperatureC)}`}`
                 : overview.weather ?? '暂无天气状态'}
             </dd>
           </div>

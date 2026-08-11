@@ -1,6 +1,7 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { MediaStore } from '../media/store.js';
 import type { StickerLibrary } from '../media/stickers.js';
+import type { StickerPicker } from './stickers/picker.js';
 import type { PersonaReferenceLoader } from '../media/persona-references.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ContextBuilder } from './context.js';
@@ -29,7 +30,7 @@ import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, VOICE_MOOD_INTENTS, type 
 import { parseVoiceIntent } from './voice/intent.js';
 import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
-import { MediaDirector } from './mediaDirector.js';
+import type { MediaDirector } from './mediaDirector.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
 import { decideWebSearch } from './web-search/policy.js';
 import { formatWebSearchContext } from './web-search/service.js';
@@ -87,6 +88,8 @@ export interface TextGenerationResult {
    * only after TTS finishes.
    */
   hiddenDraft?: boolean;
+  /** User explicitly requested a sticker-only reply; hold text until sticker selection completes. */
+  hiddenStickerOnly?: boolean;
   /** Bounded citation metadata only; raw provider payloads never enter this object. */
   webSearch?: WebSearchResult;
 }
@@ -114,7 +117,9 @@ export class Replier {
       messages: MessageRepo;
       media: MediaStore;
       stickers: StickerLibrary;
+      stickerPicker: StickerPicker;
       capabilities: CapabilityRegistry;
+      mediaDirector: MediaDirector;
       context: ContextBuilder;
       bus: EventBus;
       config: ConfigStore;
@@ -168,6 +173,8 @@ export class Replier {
       const hiddenDraft = this.deps.voiceV2Enabled !== false && this.deps.voice != null
         && caps.has('tts') && persona.voicePolicy.enabled
         && (userVoiceIntent === 'voice_only' || userVoiceIntent === 'voice_reply');
+      const hiddenStickerOnly = userDirectives.stickerOnly === true;
+      const holdDraft = hiddenDraft || hiddenStickerOnly;
 
       const allowVision = caps.visionProvider() !== null;
       const chatModel = this.deps.config.chatModelFor('chat');
@@ -182,7 +189,6 @@ export class Replier {
         memoryLimit: options.memoryLimit,
         batchMessageIds: userMessages.map((message) => message.id),
         allowVision,
-        stickerCatalogue: this.deps.stickers.catalogueForPrompt(),
         // Fixed lightweight media-intent contract (voice convergence): the
         // main model only chooses a high-level mood — never speeds, cues or
         // vendor wording, which VoiceDirector + FishCueRenderer own.
@@ -317,7 +323,7 @@ export class Replier {
         if (!visible) return;
         if (!published) {
           visibleText += visible;
-          if (!hiddenDraft && Date.now() >= publishDeadline) void openBarrier().catch(() => undefined);
+          if (!holdDraft && Date.now() >= publishDeadline) void openBarrier().catch(() => undefined);
           return;
         }
         persistDelta(visible);
@@ -390,7 +396,7 @@ export class Replier {
       // the deadline, then open the barrier once (still cancellable). A
       // hidden-draft replace never opens the barrier here — phase 2 publishes
       // the audio (or its text fallback) instead.
-      if (!hiddenDraft && !published && (visibleText || noModel)) {
+      if (!holdDraft && !published && (visibleText || noModel)) {
         const wait = Math.max(0, publishDeadline - Date.now());
         if (wait > 0) await abortableDelay(wait, signal);
         await openBarrier();
@@ -409,7 +415,7 @@ export class Replier {
           this.deps.messages.deletePart(textPartId);
           textPartId = null;
         }
-      } else if (finalText && !hiddenDraft) {
+      } else if (finalText && !holdDraft) {
         // The barrier only opens when there is visible text to show; text that
         // materialised later (e.g. stripped directives resolving into content)
         // still needs a shell to attach to, created fenced behind the barrier.
@@ -440,6 +446,7 @@ export class Replier {
         published,
         interrupted,
         hiddenDraft,
+        hiddenStickerOnly,
         webSearch: webSearchResult
       };
     } finally {
@@ -479,6 +486,7 @@ export class Replier {
     // ready, so no empty bubble and no visible-then-vanished text.
     const userVoiceIntent = parseVoiceIntent(userText);
     const hiddenReplace = generated.hiddenDraft === true;
+    const hiddenStickerOnly = generated.hiddenStickerOnly === true;
     let shell: ChatMessage | null = null;
     let textPartId: string | null = null;
     if (!hiddenReplace && !generated.published) {
@@ -490,7 +498,7 @@ export class Replier {
         revision: batch.revision,
         messageId: shell.id
       });
-      if (generated.text) {
+      if (generated.text && !hiddenStickerOnly) {
         textPartId = this.deps.messages.appendPart(shell.id, {
           type: 'text',
           text: generated.text,
@@ -515,39 +523,64 @@ export class Replier {
     // 3a. Sticker (deferred for hidden-draft replace: the shell does not
     // exist until the voice is ready).
     if (plan.sticker && !shell) degraded.push('sticker:deferred');
-    if (shell && plan.sticker) {
-      this.deps.bus.publish('reply.sticker.selecting', { messageId: shell.id, hint: plan.stickerHint ?? null });
+    if (shell && plan.stickers.length > 0) {
+      this.deps.bus.publish('reply.sticker.selecting', { messageId: shell.id, hint: plan.stickers[0] ?? null, count: plan.stickers.length });
       const window = plan.forceDifferent
         ? Math.max(persona.stickerPolicy.avoidRepeatWindow, 1)
         : persona.stickerPolicy.avoidRepeatWindow;
-      const recent = this.recentStickerIds(window);
-      let selection = this.deps.stickers.select({
-        hint: plan.stickerHint,
-        text: `${userText}\n${finalText}`,
-        excludeIds: recent,
-        requireMatch: plan.stickerRequired ? false : true
+      const excludeIds = this.recentStickerIds(window);
+      const maxPerReply = Math.max(0, Math.min(3, persona.stickerPolicy.maxPerReply));
+      for (const intent of plan.stickers.slice(0, maxPerReply)) {
+        const picked = await this.deps.stickerPicker.pick({
+          intent,
+          userText: userText.slice(-5000),
+          assistantText: finalText.slice(-5000),
+          recentContext: this.recentPlainContext(4),
+          excludeIds,
+          required: plan.stickerRequired
+        });
+        let sticker = picked.stickerId ? this.deps.stickers.available().find((item) => item.id === picked.stickerId) : undefined;
+        // Existing deployments may have no picker response yet. Keep the old
+        // local matcher as an emergency-only fallback; an explicit picker null
+        // remains a real decision not to send a sticker.
+        if (!sticker && picked.reason === 'failed') {
+          sticker = this.deps.stickers.select({ hint: intent, text: `${userText}\n${finalText}`, excludeIds, requireMatch: plan.stickerRequired ? false : true })?.sticker;
+        }
+        if (sticker) {
+          const partId = this.deps.messages.appendPart(shell.id, {
+            type: 'sticker',
+            mediaId: sticker.mediaId,
+            status: 'sent',
+            meta: {
+              stickerId: sticker.id,
+              stickerName: sticker.name,
+              stickerMeaning: (sticker.description || sticker.emotion).slice(0, 120),
+              stickerIntent: intent,
+              pickerStrategy: picked.strategy,
+              pickerConfidence: picked.confidence,
+              pickerModel: picked.model
+            }
+          });
+          this.deps.stickers.markUsed(sticker.id);
+          excludeIds.push(sticker.id);
+          producedParts.push('sticker');
+          this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'sticker' });
+        } else degraded.push('sticker:no-suitable-match');
+      }
+    }
+
+    // An explicit sticker-only request gets a shell without a text part. If
+    // selection returns null, retain the generated text as the safe fallback;
+    // when selection succeeds, no text was ever visible to flash and no delete
+    // event is needed later.
+    if (hiddenStickerOnly && shell && !producedParts.includes('sticker') && finalText) {
+      textPartId = this.deps.messages.appendPart(shell.id, {
+        type: 'text',
+        text: finalText,
+        status: 'sent',
+        meta: webSearchPartMeta(generated.webSearch)
       });
-      if (!selection && plan.stickerRequired && recent.length > 0) {
-        selection = this.deps.stickers.select({
-          hint: null,
-          text: `${userText}\n${finalText}`,
-          excludeIds: recent,
-          requireMatch: false
-        });
-      }
-      if (selection) {
-        const partId = this.deps.messages.appendPart(shell.id, {
-          type: 'sticker',
-          mediaId: selection.sticker.mediaId,
-          status: 'sent',
-          meta: { stickerId: selection.sticker.id, stickerName: selection.sticker.name, reason: selection.reason }
-        });
-        this.deps.stickers.markUsed(selection.sticker.id);
-        producedParts.push('sticker');
-        this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'sticker' });
-      } else {
-        degraded.push('sticker:no-suitable-match');
-      }
+      producedParts.push('text');
     }
 
     // 3b. Image (deferred for hidden-draft replace, same reason).
@@ -563,18 +596,14 @@ export class Replier {
       // user's instruction is already precise and must not be rewritten.
       let finalImagePrompt = imagePrompt;
       const editingUserImage = referenceMediaIds.length === 1;
-      if (!editingUserImage && this.deps.capabilities.has('chat')) {
-        const director = new MediaDirector({
-          config: this.deps.config,
-          chatProvider: () => this.deps.capabilities.chatProvider()
-        });
-        const expanded = await director.image({
+      if (!editingUserImage && this.deps.capabilities.has('director')) {
+        const expanded = await this.deps.mediaDirector.image({
           scene: imagePrompt.slice(0, 400),
           intent: plan.selfImagePrompt ? 'selfie' : 'private snapshot'
         }, { signal });
         if (expanded.prompt && expanded.prompt.trim()) finalImagePrompt = expanded.prompt.trim();
       }
-      this.deps.bus.publish('reply.image.generating', { messageId: shell.id, prompt: finalImagePrompt.slice(0, 200) });
+      this.deps.bus.publish('reply.image.generating', { messageId: shell.id, intentChars: imagePrompt.length });
       const partId = this.deps.messages.appendPart(shell.id, {
         type: 'image',
         status: 'pending',
@@ -937,7 +966,7 @@ export class Replier {
     text: string
   ): {
     sticker: boolean;
-    stickerHint: string | null;
+    stickers: string[];
     stickerRequired: boolean;
     stickerOnly: boolean;
     forceDifferent: boolean;
@@ -951,20 +980,20 @@ export class Replier {
 
     // Sticker
     let sticker = false;
-    let stickerHint: string | null = null;
+    let stickerIntents: string[] = [];
     let stickerRequired = false;
     let forceDifferent = false;
     if (persona.stickerPolicy.enabled && stickersAvailable && !user.noSticker) {
-      sticker = user.wantSticker === true || user.stickerOnly === true || model.sticker !== undefined;
+      sticker = user.wantSticker === true || user.stickerOnly === true || model.sticker !== undefined || (model.stickers?.length ?? 0) > 0;
       // A user asking for a sticker must get one: requireMatch is disabled so
       // the library can fall back to any sticker when the hint matches nothing
       // (e.g. the previous one is excluded by the repeat window).
       stickerRequired = user.wantSticker === true || user.stickerOnly === true || model.stickerOnly === true;
       forceDifferent = user.anotherSticker === true;
       if (sticker) {
-        const hint = model.sticker;
-        if (typeof hint === 'string' && hint !== 'auto') stickerHint = hint;
-        else stickerHint = guessEmotion(text);
+        stickerIntents = (model.stickers ?? (model.sticker ? [model.sticker] : []))
+          .filter((intent): intent is string => typeof intent === 'string' && intent.trim().length > 0 && intent.trim().toLowerCase() !== 'auto');
+        if (stickerIntents.length === 0) stickerIntents = [guessEmotion(text)];
       }
     }
     const stickerOnly = sticker && (user.stickerOnly === true || model.stickerOnly === true);
@@ -992,7 +1021,15 @@ export class Replier {
     }
     const voiceOnly = voice && (user.voiceOnly === true || model.voiceOnly === true);
 
-    return { sticker, stickerHint, stickerRequired, stickerOnly, forceDifferent, imagePrompt, selfImagePrompt, voice, voiceOnly };
+    return { sticker, stickers: stickerIntents, stickerRequired, stickerOnly, forceDifferent, imagePrompt, selfImagePrompt, voice, voiceOnly };
+  }
+
+  private recentPlainContext(limit: number): string {
+    return this.deps.messages.recent(Math.max(4, limit)).slice(-limit).map((message) => message.content
+      .filter((part) => part.type === 'text' || part.type === 'audio')
+      .map((part) => part.type === 'text' ? part.text ?? '' : part.transcript ?? '')
+      .filter(Boolean)
+      .join(' ')).filter(Boolean).join('\n').slice(-5000);
   }
 }
 

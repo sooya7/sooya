@@ -137,20 +137,21 @@ const EnvSchema = z.object({
   LIFE_MAX_REACH_OUTS_PER_DAY: intish(3),
   /* Unprompted messages are off until the user turns them on. */
   ENABLE_LIFE_REACH_OUT: boolish(false),
-  // Next phase: world context / admin / thoughts (all off by default;
-  // off must behave exactly like the stable release).
-  WORLD_CONTEXT_ENABLED: boolish(false),
-  LOCATION_MODEL_ENABLED: boolish(false),
-  WEATHER_ENABLED: boolish(false),
+  // World context is useful out of the box; each feature remains individually
+  // disableable for deployments that need the stable no-world behavior.
+  WORLD_CONTEXT_ENABLED: boolish(true),
+  LOCATION_MODEL_ENABLED: boolish(true),
+  WEATHER_ENABLED: boolish(true),
   LIFE_ADMIN_UI_ENABLED: boolish(false),
   VOICE_PREFERENCES_UI_ENABLED: boolish(false),
   METRICS_DASHBOARD_ENABLED: boolish(false),
-  /* Weather production provider (next phase): unconfigured -> no-op provider,
-     weather=unknown, life/chat unaffected. */
-  WEATHER_PROVIDER: z.string().default(''),
+  /* Open-Meteo is free and keyless; an explicit provider still wins. */
+  WEATHER_PROVIDER: z.string().optional().transform((value) => value?.trim() || 'open-meteo'),
   WEATHER_BASE_URL: z.string().default(''),
+  WEATHER_GEOCODING_BASE_URL: z.string().default('https://geocoding-api.open-meteo.com'),
   WEATHER_API_KEY: z.string().default(''),
   WEATHER_TIMEOUT_MS: intish(5000),
+  WEATHER_REFRESH_INTERVAL_MS: intish(10 * 60 * 1000),
 
   /* City-aware web search. Disabled until at least one server-side key is set. */
   SOOYA_WEB_SEARCH_ENABLED: boolish(false),

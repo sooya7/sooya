@@ -14,6 +14,28 @@ describe('web search environment configuration', () => {
     expect(env.SOOYA_TAVILY_BASE_URL).toBe('https://api.tavily.com/search');
   });
 
+  it('enables world context by default with Open-Meteo as the keyless provider', () => {
+    const env = loadEnv({ NODE_ENV: 'test' });
+    expect(env.WORLD_CONTEXT_ENABLED).toBe(true);
+    expect(env.LOCATION_MODEL_ENABLED).toBe(true);
+    expect(env.WEATHER_ENABLED).toBe(true);
+    expect(env.WEATHER_PROVIDER).toBe('open-meteo');
+  });
+
+  it('keeps explicit world flags and a blank provider as kill switches/fallbacks', () => {
+    const env = loadEnv({
+      NODE_ENV: 'test',
+      WORLD_CONTEXT_ENABLED: 'false',
+      LOCATION_MODEL_ENABLED: 'false',
+      WEATHER_ENABLED: 'false',
+      WEATHER_PROVIDER: '   '
+    });
+    expect(env.WORLD_CONTEXT_ENABLED).toBe(false);
+    expect(env.LOCATION_MODEL_ENABLED).toBe(false);
+    expect(env.WEATHER_ENABLED).toBe(false);
+    expect(env.WEATHER_PROVIDER).toBe('open-meteo');
+  });
+
   it('parses and deduplicates a configured provider chain', () => {
     const env = loadEnv({
       NODE_ENV: 'test',

@@ -1,6 +1,7 @@
 import { ApiError } from './api.js';
 import { clearMediaCache } from './authenticatedMedia.js';
 import type { ModelPreset, ModelSlot } from './modelPresets.js';
+import type { WorldPresence } from './types.js';
 
 const ADMIN_TOKEN_KEY = 'sooya.admin-token';
 export const ADMIN_UNAUTHORIZED_EVENT = 'sooya:admin-unauthorized';
@@ -208,6 +209,7 @@ export interface AdminMedia {
   mime: string;
   bytes: number;
   url: string;
+  animated?: boolean;
   origin: string;
   exists: boolean;
   createdAt: string;
@@ -220,7 +222,19 @@ export interface AdminSticker {
   emotion: string;
   enabled: boolean;
   useCount: number;
+  assistantUseCount?: number;
+  assistantLastUsedAt?: string | null;
+  userUseCount?: number;
+  description?: string | null;
+  imageText?: string | null;
+  userMeaning?: string | null;
+  analysisStatus?: 'pending' | 'processing' | 'ready' | 'failed';
+  analysisSource?: 'ai' | 'manual' | 'legacy';
+  analysisError?: string | null;
+  analysisVersion?: number;
+  hasEmbedding?: boolean;
   url: string;
+  animated?: boolean;
   available?: boolean;
 }
 
@@ -265,7 +279,7 @@ export interface AdminLifeOverview {
   openThreads: Array<{ id: string; title: string; progress: number }>;
   recentEvents: Array<{ id: string; eventType: string; description: string; happenedAt: string }>;
 }
-export interface AdminLifeLocation { id: string; name: string; kind: string; tags: string[]; indoor: boolean; visitWeight: number; source: string; active: boolean; }
+export interface AdminLifeLocation { id: string; name: string; kind: string; cityId?: string | null; city?: string | null; region?: string | null; country?: string | null; timeZone?: string | null; lat?: number | null; lng?: number | null; tags: string[]; indoor: boolean; visitWeight: number; source: string; active: boolean; }
 export interface AdminProactiveAttempt { id: string; candidateId: string | null; status: string; blockedReason: string | null; messageId: string | null; requestedMode: string | null; createdAt: string; }
 
 /* ---- Next phase (frozen contract §1/§2): life cities, travel, weather, ---- */
@@ -289,7 +303,7 @@ export interface TravelState {
   expectedArriveAt: string;
 }
 
-export type WeatherCondition = 'clear' | 'partly_cloudy' | 'cloudy' | 'rain' | 'drizzle' | 'snow' | 'storm' | 'fog' | 'haze' | 'extreme_heat' | 'extreme_cold' | 'unknown';
+export type WeatherCondition = 'clear' | 'cloudy' | 'rain' | 'snow' | 'storm' | 'fog' | 'wind' | 'unknown';
 
 export interface WeatherSnapshot {
   observedAt: string;
@@ -330,9 +344,9 @@ export interface DaylightSnapshot {
 export interface WeatherStatus {
   enabled: boolean;
   provider: { name: string | null; configured: boolean; active: boolean };
+  currentSource: string | null;
   lastSnapshot: WeatherSnapshot | null;
   cacheAgeSec: number | null;
-  fallback: 'primary' | 'secondary' | 'cache' | 'unknown' | null;
   daylight: DaylightSnapshot | null;
   forecast: WeatherForecastSummary | null;
 }
@@ -379,24 +393,37 @@ export const adminApi = {
   updateThread: (id: string, status: string) =>
     adminRequest<{ thread: AdminLifeThread }>(`/api/admin/life/threads/${encodeURIComponent(id)}`, { method: 'PATCH', body: { status } }),
   lifeEvents: (limit = 50) => adminRequest<{ events: Array<{ id: string; eventType: string; description: string; happenedAt: string; meta_json?: string }> }>(`/api/admin/life/events?limit=${limit}`),
-  lifeLocations: () => adminRequest<{ locations: AdminLifeLocation[] }>('/api/admin/life/locations'),
+  lifeLocations: () => adminRequest<{ locations: AdminLifeLocation[]; current: AdminLifeLocation | null }>('/api/admin/life/locations'),
   createLocation: (input: { name: string; kind: string; tags?: string[]; indoor?: boolean; visitWeight?: number }) =>
     adminRequest<{ location: AdminLifeLocation }>('/api/admin/life/locations', { method: 'POST', body: input }),
   deleteLocation: (id: string) => adminRequest<{ ok: true }>(`/api/admin/life/locations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   overrideLocation: (locationId: string, reason: string) =>
-    adminRequest<{ location: AdminLifeLocation }>('/api/admin/life/location/override', { method: 'POST', body: { locationId, reason } }),
+    adminRequest<{ location: AdminLifeLocation; presence?: WorldPresence }>('/api/admin/life/location/override', { method: 'POST', body: { locationId, reason } }),
   proactiveAttempts: () => adminRequest<{ attempts: AdminProactiveAttempt[] }>('/api/admin/life/proactive'),
-  stickers: () => adminRequest<{ stickers: AdminSticker[] }>('/api/admin/stickers'),
+  stickers: (opts: { q?: string; status?: string; enabled?: boolean; limit?: number; offset?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (opts.q) params.set('q', opts.q);
+    if (opts.status) params.set('status', opts.status);
+    if (opts.enabled !== undefined) params.set('enabled', String(opts.enabled));
+    if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.offset) params.set('offset', String(opts.offset));
+    const query = params.toString();
+    return adminRequest<{ stickers: AdminSticker[]; total: number; offset: number; analysisVersion?: number }>(`/api/admin/stickers${query ? `?${query}` : ''}`);
+  },
   uploadSticker: (body: FormData) =>
     adminRequest<{ created: AdminSticker[]; failed: Array<{ filename: string; error: string }> }>('/api/admin/stickers', {
       method: 'POST',
       body
     }),
-  updateSticker: (id: string, patch: Partial<Pick<AdminSticker, 'name' | 'tags' | 'emotion' | 'enabled'>>) =>
+  updateSticker: (id: string, patch: Partial<Pick<AdminSticker, 'name' | 'tags' | 'emotion' | 'enabled' | 'description' | 'imageText' | 'userMeaning'>> & { userMeaningSource?: 'none' | 'ai' | 'manual'; favorite?: boolean }) =>
     adminRequest<{ sticker: AdminSticker }>(`/api/admin/stickers/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: patch
     }),
+  analyzeSticker: (id: string, force = false) =>
+    adminRequest<{ queued: boolean; jobId: string; stickerId: string }>(`/api/admin/stickers/${encodeURIComponent(id)}/analyze`, { method: 'POST', body: force ? { force: true } : {} }),
+  analyzeStickerBatch: (body: { mode?: 'missing_or_stale' | 'selected'; ids?: string[] } = {}) =>
+    adminRequest<{ queued: number; skipped: number }>('/api/admin/stickers/analyze-batch', { method: 'POST', body }),
   deleteSticker: (id: string) =>
     adminRequest<{ deleted: boolean }>(`/api/admin/stickers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   modelPresets: () => adminRequest<{ presets: ModelPreset[]; slots: ModelSlot[] }>('/api/admin/model-presets'),
@@ -446,7 +473,7 @@ export const adminApi = {
   /* ---- Next phase: weather ---- */
   weatherStatus: () => adminRequest<WeatherStatus>('/api/admin/weather/status'),
   weatherForecast: () => adminRequest<{ forecast: WeatherForecastSummary | null }>('/api/admin/weather/forecast'),
-  weatherRefresh: () => adminRequest<{ snapshot: WeatherSnapshot | null }>('/api/admin/weather/refresh', { method: 'POST' }),
+  weatherRefresh: () => adminRequest<{ ok: true; snapshot: WeatherSnapshot | null; presence: WorldPresence }>('/api/admin/weather/refresh', { method: 'POST' }),
   /* ---- Next phase: metrics ---- */
   metrics: (days: number) => adminRequest<{ aggregates: MetricAggregate[] }>(`/api/admin/metrics?days=${days}`),
   metricsDistributions: (days: number) =>
