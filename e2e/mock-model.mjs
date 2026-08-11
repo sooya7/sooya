@@ -131,6 +131,10 @@ const server = http.createServer(async (req, res) => {
     const isSummary = system.includes('压缩成简洁');
     const isThought = system.includes('可见想法');
     const isDirector = parsed.model === 'mock-director';
+    // Only the streaming completion is the interactive reply under test. The
+    // suite also enables background jobs, whose non-streaming model calls must
+    // not consume the next scripted chat reply between beforeEach and send().
+    const isInteractiveChat = parsed.stream === true && !isDirector;
     const userContent = Array.isArray(parsed.messages?.[1]?.content)
       ? parsed.messages[1].content.map((part) => String(part?.text ?? '')).join('\n')
       : String(parsed.messages?.[1]?.content ?? '');
@@ -172,7 +176,7 @@ const server = http.createServer(async (req, res) => {
         text = JSON.stringify({ ok: true });
       }
     } else {
-      text = state.queue.length > 0 ? state.queue.shift() : state.fallback;
+      text = isInteractiveChat && state.queue.length > 0 ? state.queue.shift() : state.fallback;
     }
 
     if (!parsed.stream) {
