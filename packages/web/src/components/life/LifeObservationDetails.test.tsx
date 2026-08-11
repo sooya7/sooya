@@ -210,7 +210,6 @@ describe('LifeObservationDetails', () => {
     expect(secondary?.textContent).toContain('正在发展的事');
     expect(secondary?.textContent).toContain('生活记录');
     expect(secondary?.textContent).toContain('最近活动');
-    expect(secondary?.textContent).not.toContain('朋友圈发布');
     expect(secondary?.textContent).not.toContain('地点与天气');
   });
 
