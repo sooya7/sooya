@@ -1,6 +1,4 @@
-/* Compact, mobile-first Life observation surface. The underlying admin tokens
-   remain the single source of color/theme truth; this file only reshapes the
-   observation page so it reads like a product surface instead of a debug dump. */
+/* Compact, mobile-first Life observation surface. */
 
 .admin-v2 .life-observation {
   display: grid;
@@ -9,32 +7,6 @@
   max-width: 880px;
   margin: 0 auto;
   color: var(--admin-text);
-}
-
-.admin-v2 .life-observation-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px 2px 0;
-}
-
-.admin-v2 .life-observation-header h2 {
-  margin: 0;
-  font-size: 22px;
-  line-height: 1.2;
-}
-
-.admin-v2 .life-observation-header p {
-  margin: 3px 0 0;
-  color: var(--admin-muted);
-  font-size: 11px;
-}
-
-.admin-v2 .life-observation-updated {
-  flex: 0 0 auto;
-  color: var(--admin-muted);
-  font-size: 10px;
 }
 
 .admin-v2 .life-observation [role='alert'] {
@@ -123,13 +95,14 @@
 .admin-v2 .life-hero-clock {
   flex: 0 0 auto;
   color: var(--admin-muted);
-  font-size: 11px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .admin-v2 .life-hero-facts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 11px;
   padding-top: 10px;
   border-top: 1px solid var(--admin-line);
@@ -261,11 +234,16 @@
 .admin-v2 .life-vital-level[data-tone='warn'] { color: var(--admin-warning); }
 .admin-v2 .life-vital-level[data-tone='accent'] { color: var(--admin-primary-deep); }
 
-.admin-v2 .life-vitals-empty {
+.admin-v2 .life-vitals-empty,
+.admin-v2 .life-plan-empty,
+.admin-v2 .life-thread-empty {
   margin: 0;
-  padding: 8px 0 2px;
   color: var(--admin-muted);
   font-size: 11px;
+}
+
+.admin-v2 .life-vitals-empty {
+  padding: 8px 0 2px;
 }
 
 .admin-v2 .life-plan-card {
@@ -328,13 +306,6 @@
   font-size: 9px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-}
-
-.admin-v2 .life-plan-empty,
-.admin-v2 .life-thread-empty {
-  margin: 0;
-  color: var(--admin-muted);
-  font-size: 11px;
 }
 
 .admin-v2 .life-secondary-card {
@@ -450,16 +421,31 @@
     gap: 8px;
   }
 
-  .admin-v2 .life-observation-header h2 {
-    font-size: 20px;
-  }
-
   .admin-v2 .life-hero-card {
     padding: 12px;
   }
 
+  .admin-v2 .life-hero-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 8px;
+  }
+
   .admin-v2 .life-hero-fact {
     padding: 0 7px;
+  }
+
+  .admin-v2 .life-hero-fact:nth-child(odd) {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .admin-v2 .life-hero-fact:nth-child(even) {
+    padding-right: 0;
+  }
+
+  .admin-v2 .life-hero-fact:nth-child(n + 3) {
+    padding-top: 8px;
+    border-top: 1px solid var(--admin-line);
   }
 
   .admin-v2 .life-vitals-card,
@@ -482,6 +468,7 @@
 }
 
 @media (max-width: 390px) {
+  .admin-v2 .life-hero-clock { font-size: 9px; }
   .admin-v2 .life-hero-fact span { font-size: 8px; }
   .admin-v2 .life-hero-fact strong { font-size: 11px; }
   .admin-v2 .life-vital-name { font-size: 9px; }
