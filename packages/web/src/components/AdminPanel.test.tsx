@@ -56,6 +56,15 @@ const adminMocks = vi.hoisted(() => ({
   discoverModels: vi.fn(async () => ({ models: [], source: 'test' })),
   testModel: vi.fn(async () => ({ ok: true, provider: 'test', latencyMs: 1, detail: 'ok' })),
   testWebSearch: vi.fn(async (provider: string) => ({ ok: true, provider, latencyMs: 1, resultCount: 1 })),
+  errors: vi.fn(async () => ({ errors: [
+    { id: 'e1', createdAt: '2026-08-12T04:55:00.000Z', scope: 'job.sticker.analyze', message: 'invalid_analysis_json', detail: { raw: 'bad' } },
+    { id: 'e2', createdAt: '2026-08-12T04:54:00.000Z', scope: 'job.sticker.analyze', message: 'invalid_analysis_json: schema', detail: null }
+  ] })),
+  jobs: vi.fn(async () => ({ jobs: [
+    { id: 'j1', type: 'life.tick', status: 'completed', attempts: 1, max_attempts: 3, last_error: null, created_at: '2026-08-12T04:00:00.000Z', updated_at: '2026-08-12T04:00:01.000Z' },
+    { id: 'j2', type: 'life.tick', status: 'completed', attempts: 1, max_attempts: 3, last_error: null, created_at: '2026-08-12T04:05:00.000Z', updated_at: '2026-08-12T04:05:01.000Z' }
+  ] })),
+  clearErrors: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock('../lib/admin.js', () => ({
@@ -166,6 +175,30 @@ describe('AdminPanel 子页首屏', () => {
     expect(recall.textContent).toContain('关键词匹配');
     expect(recall.textContent).not.toContain('deduplicated_recent');
     expect(recall.textContent).not.toContain('FTS lexical match');
+  });
+
+  it('运维页按人话问题类型和任务状态聚合日志', async () => {
+    window.history.replaceState(null, '', '/admin/operations');
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<AdminPanel initialTab="operations" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const errors = container.querySelector('[data-testid="admin-error-list"]')!;
+    expect(errors.textContent).toContain('表情包 AI 分析结果格式异常');
+    expect(errors.textContent).toContain('1 类 · 2 次');
+    const summary = errors.querySelector('.admin-error-summary')!;
+    expect(summary.textContent).not.toContain('invalid_analysis_json');
+    expect(errors.querySelector('.admin-error-group')?.hasAttribute('open')).toBe(false);
+
+    const jobs = container.querySelector('[data-testid="admin-job-list"]')!;
+    expect(jobs.textContent).toContain('生活状态更新');
+    expect(jobs.textContent).toContain('已完成');
+    expect(jobs.textContent).toContain('2 个');
   });
 
   it('联网搜索位于现有模型配置的能力列表中', async () => {

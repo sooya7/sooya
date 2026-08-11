@@ -965,10 +965,12 @@ function operationErrorCopy(error: AdminError): { title: string; explanation: st
 function groupAdminErrors(errors: AdminError[]): AdminErrorGroup[] {
   const groups = new Map<string, AdminErrorGroup>();
   for (const error of errors) {
-    const key = `${error.scope}\u0000${error.message}`;
+    const copy = operationErrorCopy(error);
+    // Group by the problem a human can act on, not by raw backend code. Several
+    // parser/provider variants can describe the same visible failure mode.
+    const key = copy.title;
     const existing = groups.get(key);
     if (!existing) {
-      const copy = operationErrorCopy(error);
       groups.set(key, { key, count: 1, latest: error, ...copy });
       continue;
     }
@@ -1012,12 +1014,43 @@ function operationJobStatus(status: string): string {
   return status;
 }
 
+type AdminJobGroup = {
+  key: string;
+  label: string;
+  status: string;
+  count: number;
+  latest: AdminJob;
+};
+
+function groupAdminJobs(jobs: AdminJob[]): AdminJobGroup[] {
+  const groups = new Map<string, AdminJobGroup>();
+  for (const job of jobs) {
+    const label = operationJobLabel(job.type);
+    const status = operationJobStatus(job.status);
+    const key = `${label}\u0000${status}`;
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, { key, label, status, count: 1, latest: job });
+      continue;
+    }
+    existing.count += 1;
+    if (Date.parse(job.updated_at) > Date.parse(existing.latest.updated_at)) existing.latest = job;
+  }
+
+  const priority = (status: string) => status === '失败' ? 0 : status === '处理中' ? 1 : status === '等待重试' ? 2 : status === '等待处理' ? 3 : 4;
+  return [...groups.values()].sort((a, b) => {
+    const delta = priority(a.status) - priority(b.status);
+    return delta || Date.parse(b.latest.updated_at) - Date.parse(a.latest.updated_at);
+  });
+}
+
 function OperationsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [errors, setErrors] = useState<AdminError[]>([]);
   const [jobs, setJobs] = useState<AdminJob[]>([]);
   const [backups, setBackups] = useState<AdminBackup[]>([]);
 
   const groupedErrors = useMemo(() => groupAdminErrors(errors), [errors]);
+  const groupedJobs = useMemo(() => groupAdminJobs(jobs), [jobs]);
 
   const load = useCallback(async () => {
     try {
@@ -1054,34 +1087,33 @@ function OperationsPanel({ onNotice }: { onNotice: (v: string) => void }) {
             {groupedErrors.map((group) => {
               const detail = operationDetailText(group.latest.detail);
               return (
-                <article className="admin-error-group" key={group.key}>
-                  <div className="admin-error-group-head">
-                    <strong>{group.title}</strong>
-                    <span>{group.count} 次</span>
-                  </div>
+                <details className="admin-error-group" key={group.key}>
+                  <summary className="admin-error-summary">
+                    <span><strong>{group.title}</strong><small>最近：{formatAdminDateTime(group.latest.createdAt)}</small></span>
+                    <b>{group.count} 次</b>
+                  </summary>
                   <p>{group.explanation}</p>
-                  <small>最近发生：{formatAdminDateTime(group.latest.createdAt)}</small>
-                  <details className="admin-error-technical">
-                    <summary>查看技术详情</summary>
+                  <div className="admin-error-technical">
+                    <strong>技术详情</strong>
                     <code>{group.latest.scope} · {group.latest.message}</code>
                     {detail && <pre>{detail}</pre>}
-                  </details>
-                </article>
+                  </div>
+                </details>
               );
             })}
           </div>
         ) : <EmptyState>暂无错误记录</EmptyState>}
-        <div className="admin-actions"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('确认清空错误记录？')) void run(() => adminApi.clearErrors(), '错误记录已清空'); }}>清空错误记录</button></div>
+        <div className="admin-log-footer"><button type="button" className="admin-danger" onClick={() => { if (confirmAction('确认清空错误记录？')) void run(() => adminApi.clearErrors(), '错误记录已清空'); }}>清空错误记录</button></div>
       </article>
 
       <article className="admin-card" data-testid="admin-job-list">
         <div className="admin-card-subtitle"><h2>后台任务</h2><span className="admin-count-badge">{jobs.length}</span></div>
         {jobs.length ? (
-          <div className="admin-log-scroll">
-            {jobs.map((job) => (
-              <div className="admin-list-row admin-job-readable" key={job.id} title={`${job.type} · ${job.status}`}>
-                <span><strong>{operationJobLabel(job.type)}</strong><small>{operationJobStatus(job.status)}</small></span>
-                <small>尝试 {job.attempts}/{job.max_attempts}</small>
+          <div className="admin-log-scroll admin-job-groups">
+            {groupedJobs.map((group) => (
+              <div className="admin-list-row admin-job-readable" key={group.key} title={`${group.latest.type} · ${group.latest.status}`}>
+                <span><strong>{group.label}</strong><small>{group.status} · 最近 {formatAdminDateTime(group.latest.updated_at)}</small></span>
+                <span className="admin-job-count">{group.count} 个</span>
               </div>
             ))}
           </div>

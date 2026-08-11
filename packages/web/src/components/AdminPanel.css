@@ -1769,3 +1769,100 @@
     padding: 9px 10px;
   }
 }
+
+
+/* Compact operations summaries: the page shows problems, not raw rows. */
+.admin-v2 .admin-error-group {
+  padding: 0;
+  overflow: hidden;
+}
+
+.admin-v2 .admin-error-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 11px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.admin-v2 .admin-error-summary::-webkit-details-marker { display: none; }
+
+.admin-v2 .admin-error-summary > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.admin-v2 .admin-error-summary strong {
+  overflow: hidden;
+  color: var(--admin-text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-v2 .admin-error-summary small {
+  color: var(--admin-muted);
+  font-size: 9px;
+}
+
+.admin-v2 .admin-error-summary b,
+.admin-v2 .admin-job-count {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  color: var(--admin-warning);
+  background: var(--admin-warning-soft);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.admin-v2 .admin-error-group[open] > p,
+.admin-v2 .admin-error-group[open] > .admin-error-technical {
+  margin-left: 11px;
+  margin-right: 11px;
+}
+
+.admin-v2 .admin-error-group[open] > p {
+  margin-top: 0;
+  padding-top: 1px;
+}
+
+.admin-v2 .admin-error-group[open] > .admin-error-technical {
+  margin-bottom: 10px;
+}
+
+.admin-v2 .admin-log-footer {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  margin: 0 -14px -13px;
+  padding: 8px 14px;
+  background: var(--admin-surface);
+  border-top: 1px solid var(--admin-line);
+}
+
+.admin-v2 .admin-log-footer button {
+  min-height: 34px;
+  padding: 6px 11px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.admin-v2 .admin-job-groups .admin-list-row {
+  min-height: 50px;
+}
+
+.admin-v2 .admin-job-count {
+  color: var(--admin-primary-deep);
+  background: var(--admin-primary-soft);
+}
+
+@media (max-width: 560px) {
+  .admin-v2 .admin-log-scroll { max-height: 230px; }
+  .admin-v2 .admin-error-summary { padding: 9px 10px; }
+  .admin-v2 .admin-log-footer { margin-left: -14px; margin-right: -14px; }
+}
