@@ -1,14 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { adminApi, type AdminLifeOverview } from '../../lib/admin.js';
+import { adminApi, type AdminLifeOverview, type AdminLifeVitals } from '../../lib/admin.js';
 import { featureApi, type LifePanelData } from '../../lib/features.js';
 import { lifeKindLabel, lifePlanStatusText, previewPlans } from '../../lib/lifeObservation.js';
-import { herClock, reachReasonText, slotProgress } from '../../lib/lifeView.js';
+import { formatVital } from '../../lib/numberDisplay.js';
+import { herClock, reachReasonText } from '../../lib/lifeView.js';
+import { weatherConditionLabel } from '../../lib/worldDisplay.js';
 import { LifeContactBoundaryForm } from './LifeContactBoundaryForm.js';
 import { LifeObservationDetails } from './LifeObservationDetails.js';
+import './LifeObservationPanel.css';
 
 interface LifeObservationPanelProps {
   onNotice: (message: string) => void;
 }
+
+type VitalTone = 'muted' | 'good' | 'warn' | 'accent';
+
+type VitalDisplay = {
+  label: string;
+  tone: VitalTone;
+};
+
+const VITAL_FIELDS: Array<{ key: keyof AdminLifeVitals; label: string }> = [
+  { key: 'energy', label: '精力' },
+  { key: 'hunger', label: '饥饿' },
+  { key: 'stress', label: '压力' },
+  { key: 'social_need', label: '社交需求' },
+  { key: 'loneliness', label: '孤独感' },
+  { key: 'curiosity', label: '好奇心' },
+  { key: 'comfort', label: '舒适度' },
+  { key: 'focus', label: '专注度' },
+  { key: 'sleep_debt', label: '睡眠债' }
+];
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -17,6 +39,69 @@ function errorText(error: unknown): string {
 function updatedText(updatedAt: string, tzOffsetMinutes: number): string {
   if (Date.now() - Date.parse(updatedAt) < 60_000) return '刚刚更新';
   return `更新于 ${herClock(updatedAt, tzOffsetMinutes)}`;
+}
+
+function genericLevel(value: number): string {
+  if (value <= 15) return '很低';
+  if (value <= 35) return '偏低';
+  if (value <= 65) return '中等';
+  if (value <= 85) return '偏高';
+  return '很高';
+}
+
+function vitalDisplay(key: keyof AdminLifeVitals, value: number): VitalDisplay {
+  if (key === 'sleep_debt') {
+    if (value <= 0.05) return { label: '无欠债', tone: 'good' };
+    if (value <= 1) return { label: '很少', tone: 'muted' };
+    if (value <= 2.5) return { label: '轻微', tone: 'warn' };
+    return { label: '偏高', tone: 'warn' };
+  }
+
+  if (key === 'stress') {
+    if (value <= 15) return { label: '很轻松', tone: 'good' };
+    if (value <= 35) return { label: '偏低', tone: 'good' };
+    if (value <= 65) return { label: '中等', tone: 'muted' };
+    return { label: value <= 85 ? '偏高' : '很高', tone: 'warn' };
+  }
+
+  const label = value >= 98 && (key === 'comfort' || key === 'focus') ? '极佳' : genericLevel(value);
+  if ((key === 'comfort' || key === 'focus') && value >= 86) return { label, tone: 'good' };
+  if (key === 'energy' && value <= 35) return { label, tone: 'warn' };
+  if ((key === 'hunger' || key === 'social_need' || key === 'loneliness') && value >= 66) return { label, tone: 'warn' };
+  if (key === 'curiosity' && value >= 86) return { label, tone: 'accent' };
+  return { label, tone: 'muted' };
+}
+
+function overviewWeather(weather: string | null): string {
+  return weather ? weatherConditionLabel(weather) : '暂无';
+}
+
+function VitalsGrid({ vitals }: { vitals: AdminLifeVitals | null }) {
+  return (
+    <section className="life-vitals-card" data-testid="life-vitals-card">
+      <div className="life-card-heading">
+        <h3>身体与节律</h3>
+        <small>实时状态</small>
+      </div>
+      {vitals ? (
+        <div className="life-vitals-grid" data-testid="life-vitals-grid">
+          {VITAL_FIELDS.map(({ key, label }) => {
+            const value = vitals[key];
+            const display = vitalDisplay(key, value);
+            return (
+              <div className="life-vital-item" data-vital={key} key={key}>
+                <div className="life-vital-main">
+                  <span className="life-vital-name">{label}</span>
+                  <strong className="life-vital-value">{formatVital(key, value)}</strong>
+                </div>
+                <span className="life-vital-level" data-tone={display.tone}>{display.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : <p className="life-vitals-empty">暂无身体与节律数据。</p>}
+    </section>
+  );
 }
 
 export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
@@ -68,29 +153,38 @@ export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
   if (!data || !overview) {
     return (
       <section className="life-observation" data-testid="life-observation">
-        <h2>她的生活</h2>
-        <p>状态会随时间自行变化</p>
+        <header className="life-observation-header">
+          <div>
+            <h2>她的生活</h2>
+            <p>状态会随时间自行变化</p>
+          </div>
+        </header>
         {error ? (
           <div role="alert">
             <p>{error}</p>
             <button type="button" onClick={retry}>重新读取</button>
           </div>
         ) : (
-          <div aria-label="正在读取她的生活">正在读取……</div>
+          <div className="admin-overview-state" aria-label="正在读取她的生活">正在读取……</div>
         )}
       </section>
     );
   }
 
   const timezone = data.settings.tzOffsetMinutes;
-  const progress = slotProgress(data.snapshot);
   const plans = previewPlans(data.plans);
+  const currentTime = herClock(new Date().toISOString(), timezone);
 
   return (
     <section className="life-observation" data-testid="life-observation">
-      <h2>她的生活</h2>
-      <p>状态会随时间自行变化</p>
-      {updatedAt && <small>{updatedText(updatedAt, timezone)}</small>}
+      <header className="life-observation-header">
+        <div>
+          <h2>她的生活</h2>
+          <p>状态会随时间自行变化</p>
+        </div>
+        {updatedAt && <small className="life-observation-updated">{updatedText(updatedAt, timezone)}</small>}
+      </header>
+
       {error && (
         <div role="alert">
           <span>
@@ -101,48 +195,58 @@ export function LifeObservationPanel({ onNotice }: LifeObservationPanelProps) {
         </div>
       )}
 
-      <div className="life-now-summary" data-testid="life-now-summary">
-        <h3>此刻 · {herClock(new Date().toISOString(), timezone)}</h3>
-        <p>{data.snapshot.activity}</p>
-        <p>{lifeKindLabel(data.snapshot.kind)} · 心情{data.snapshot.mood}</p>
-        <p>已经 {progress.intoIt}，还有 {progress.left}</p>
-        <progress
-          value={progress.percent}
-          max={100}
-          role="progressbar"
-          aria-label={`当前活动进度 ${progress.percent}%`}
-        >{progress.percent}%</progress>
-        <p>{reachReasonText(data)}</p>
-        <p>今日已主动联系 {data.reachOut.sharedLastDay} 次（每日上限 {data.settings.maxReachOutsPerDay} 次）</p>
-      </div>
+      <section className="life-hero-card" data-testid="life-hero">
+        <div className="life-hero-head">
+          <div className="life-hero-copy">
+            <span className="life-hero-kicker">SOOYA 当前状态</span>
+            <strong className="life-hero-activity">{data.snapshot.activity}</strong>
+            <span className="life-hero-meta">{lifeKindLabel(data.snapshot.kind)} · 心情{data.snapshot.mood}</span>
+          </div>
+          <time className="life-hero-clock">{currentTime}</time>
+        </div>
+        <div className="life-hero-facts">
+          <div className="life-hero-fact">
+            <span>当前地点</span>
+            <strong>{overview.location?.name ?? '暂无'}</strong>
+          </div>
+          <div className="life-hero-fact">
+            <span>天气</span>
+            <strong>{overviewWeather(overview.weather)}</strong>
+          </div>
+          <div className="life-hero-fact">
+            <span>今日主动</span>
+            <strong>{data.reachOut.sharedLastDay}/{data.settings.maxReachOutsPerDay} 次</strong>
+          </div>
+        </div>
+        <p className="life-hero-note">{reachReasonText(data)}</p>
+      </section>
 
-      <div className="life-preview" data-testid="life-preview">
-        <h3>今天可能会做</h3>
-        <p>由她自行决定</p>
+      <VitalsGrid vitals={overview.vitals} />
+
+      <section className="life-plan-card" data-testid="life-preview">
+        <div className="life-card-heading">
+          <h3>可能会做</h3>
+          <small>由她自行决定</small>
+        </div>
         {plans.length ? (
-          <ul>
+          <ul className="life-plan-list">
             {plans.map((plan) => (
-              <li key={plan.id}>
-                <span>{plan.title}</span>
-                <small>{lifeKindLabel(plan.kind)} · {lifePlanStatusText(plan.status)}</small>
+              <li className="life-plan-item" key={plan.id}>
+                <div className="life-plan-copy">
+                  <strong>{plan.title}</strong>
+                  <small>{lifeKindLabel(plan.kind)} · {lifePlanStatusText(plan.status)}</small>
+                </div>
+                {plan.planned_start && <time className="life-plan-time" dateTime={plan.planned_start}>{herClock(plan.planned_start, timezone)}</time>}
               </li>
             ))}
           </ul>
-        ) : <p>她还没有决定接下来做什么。</p>}
-      </div>
+        ) : <p className="life-plan-empty">她还没有决定接下来做什么。</p>}
+      </section>
 
-      <div className="life-threads-preview" data-testid="life-threads-preview">
-        <h3>正在发展的事</h3>
-        {overview.openThreads.length ? (
-          <ul>
-            {overview.openThreads.map((thread) => (
-              <li key={thread.id}><span>{thread.title}</span><small>{thread.progress}%</small></li>
-            ))}
-          </ul>
-        ) : <p>暂时没有持续发展的事。</p>}
+      <div className="life-secondary-card" data-testid="life-secondary-card">
+        <LifeObservationDetails data={data} overview={overview} />
+        <LifeContactBoundaryForm initial={data.settings} onNotice={onNotice} />
       </div>
-      <LifeObservationDetails data={data} overview={overview} />
-      <LifeContactBoundaryForm initial={data.settings} onNotice={onNotice} />
     </section>
   );
 }
