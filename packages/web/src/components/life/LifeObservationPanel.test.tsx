@@ -102,9 +102,19 @@ const panelData: LifePanelData = {
 
 const overview: AdminLifeOverview = {
   snapshot: { activity: '在沙发上打盹', kind: 'sleep', mood: '困倦' },
-  location: null,
-  weather: null,
-  vitals: null,
+  location: { id: 'home', name: '家', kind: 'home' },
+  weather: 'rain',
+  vitals: {
+    energy: 7,
+    hunger: 38,
+    stress: 0,
+    social_need: 11,
+    loneliness: 9,
+    curiosity: 96,
+    comfort: 100,
+    focus: 100,
+    sleep_debt: 0
+  },
   activePlan: null,
   openThreads: [{ id: 'thread-1', title: '慢慢整理房间', progress: 42 }],
   recentEvents: []
@@ -161,30 +171,44 @@ afterEach(async () => {
 });
 
 describe('LifeObservationPanel', () => {
-  it('loads and renders the autonomous read-only overview', async () => {
+  it('renders the compact overview from the two primary read APIs', async () => {
     await renderPanel();
 
     const panel = container!.querySelector('[data-testid="life-observation"]');
     expect(panel?.className).toBe('life-observation');
-    expect(panel?.querySelector('[data-testid="life-now-summary"]')?.textContent).toContain('此刻 · 13:00');
     expect(panel?.textContent).toContain('状态会随时间自行变化');
-    expect(panel?.textContent).toContain('在沙发上打盹');
-    expect(panel?.textContent).toContain('睡觉');
-    expect(panel?.textContent).toContain('心情困倦');
-    expect(panel?.textContent).toContain('已经 1 小时，还有 1 小时');
-    expect(panel?.textContent).toContain('她在睡觉');
-    expect(panel?.textContent).toContain('今日已主动联系 0 次');
-    const progress = panel?.querySelector('[role="progressbar"][aria-label="当前活动进度 50%"]');
-    expect(progress).not.toBeNull();
-    expect(progress?.getAttribute('value')).toBe('50');
-    expect(panel?.querySelector('[data-testid="life-preview"]')?.textContent).toContain('今天可能会做');
-    expect(panel?.textContent).toContain('由她自行决定');
-    expect(panel?.textContent).toContain('读完手边这本书');
-    expect(panel?.textContent).toContain('阅读 · 可能');
-    expect(panel?.querySelector('[data-testid="life-threads-preview"]')?.textContent).toContain('正在发展的事');
-    expect(panel?.textContent).toContain('慢慢整理房间');
-    expect(panel?.textContent).toContain('42%');
+
+    const hero = panel?.querySelector('[data-testid="life-hero"]');
+    expect(hero?.textContent).toContain('SOOYA 当前状态');
+    expect(hero?.textContent).toContain('在沙发上打盹');
+    expect(hero?.textContent).toContain('睡觉 · 心情困倦');
+    expect(hero?.textContent).toContain('13:00');
+    expect(hero?.textContent).toContain('家');
+    expect(hero?.textContent).toContain('雨');
+    expect(hero?.textContent).toContain('0/3 次');
+    expect(hero?.textContent).toContain('她在睡觉');
+
+    const vitals = panel?.querySelector('[data-testid="life-vitals-grid"]');
+    expect(vitals?.children).toHaveLength(9);
+    expect(vitals?.textContent).toContain('精力7很低');
+    expect(vitals?.textContent).toContain('压力0很轻松');
+    expect(vitals?.textContent).toContain('舒适度100极佳');
+    expect(vitals?.textContent).toContain('睡眠债0 小时无欠债');
+
+    const plans = panel?.querySelector('[data-testid="life-preview"]');
+    expect(plans?.textContent).toContain('可能会做');
+    expect(plans?.textContent).toContain('由她自行决定');
+    expect(plans?.textContent).toContain('读完手边这本书');
+    expect(plans?.textContent).toContain('阅读 · 可能');
+    expect(plans?.textContent).toContain('15:00');
+
+    const secondary = panel?.querySelector('[data-testid="life-secondary-card"]');
+    expect(secondary?.textContent).toContain('正在发展的事');
+    expect(secondary?.textContent).toContain('生活记录');
+    expect(secondary?.textContent).toContain('联系边界');
+    expect(secondary?.textContent).not.toContain('慢慢整理房间');
     expect(panel?.textContent).toContain('刚刚更新');
+    expect(panel?.querySelector('[role="progressbar"]')).toBeNull();
   });
 
   it('never renders intervention controls or calls mutation APIs', async () => {
@@ -204,7 +228,7 @@ describe('LifeObservationPanel', () => {
     expect(apiMocks.overrideLocation).not.toHaveBeenCalled();
   });
 
-  it('refreshes both read APIs after 30 seconds without remounting', async () => {
+  it('refreshes both primary read APIs after 30 seconds without remounting', async () => {
     await renderPanel();
     expect(apiMocks.life).toHaveBeenCalledTimes(1);
     expect(apiMocks.lifeOverview).toHaveBeenCalledTimes(1);
@@ -294,14 +318,14 @@ describe('LifeObservationPanel', () => {
     const newestData = structuredClone(panelData);
     newestData.snapshot.activity = '正在准备晚饭';
     const newestOverview = structuredClone(overview);
-    newestOverview.openThreads = [{ id: 'new-thread', title: '新的长期事项', progress: 64 }];
+    newestOverview.vitals = { ...overview.vitals!, energy: 91 };
     await act(async () => {
       secondData.resolve(newestData);
       secondOverview.resolve(newestOverview);
       await Promise.resolve();
     });
     expect(container!.textContent).toContain('正在准备晚饭');
-    expect(container!.textContent).toContain('新的长期事项');
+    expect(container!.querySelector('[data-vital="energy"]')?.textContent).toContain('91');
 
     await act(async () => {
       firstData.resolve(structuredClone(panelData));
@@ -310,7 +334,7 @@ describe('LifeObservationPanel', () => {
     });
     expect(container!.textContent).toContain('正在准备晚饭');
     expect(container!.textContent).not.toContain('在沙发上打盹');
-    expect(container!.textContent).toContain('新的长期事项');
+    expect(container!.querySelector('[data-vital="energy"]')?.textContent).toContain('91');
   });
 
   it('stops polling after unmount while a read is in flight', async () => {
