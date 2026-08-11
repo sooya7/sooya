@@ -1,6 +1,7 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { MediaStore } from '../media/store.js';
 import type { StickerLibrary } from '../media/stickers.js';
+import type { StickerPicker } from './stickers/picker.js';
 import type { PersonaReferenceLoader } from '../media/persona-references.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ContextBuilder } from './context.js';
@@ -114,6 +115,7 @@ export class Replier {
       messages: MessageRepo;
       media: MediaStore;
       stickers: StickerLibrary;
+      stickerPicker: StickerPicker;
       capabilities: CapabilityRegistry;
       context: ContextBuilder;
       bus: EventBus;
@@ -182,7 +184,6 @@ export class Replier {
         memoryLimit: options.memoryLimit,
         batchMessageIds: userMessages.map((message) => message.id),
         allowVision,
-        stickerCatalogue: this.deps.stickers.catalogueForPrompt(),
         // Fixed lightweight media-intent contract (voice convergence): the
         // main model only chooses a high-level mood — never speeds, cues or
         // vendor wording, which VoiceDirector + FishCueRenderer own.
@@ -515,38 +516,49 @@ export class Replier {
     // 3a. Sticker (deferred for hidden-draft replace: the shell does not
     // exist until the voice is ready).
     if (plan.sticker && !shell) degraded.push('sticker:deferred');
-    if (shell && plan.sticker) {
-      this.deps.bus.publish('reply.sticker.selecting', { messageId: shell.id, hint: plan.stickerHint ?? null });
+    if (shell && plan.stickers.length > 0) {
+      this.deps.bus.publish('reply.sticker.selecting', { messageId: shell.id, hint: plan.stickers[0] ?? null, count: plan.stickers.length });
       const window = plan.forceDifferent
         ? Math.max(persona.stickerPolicy.avoidRepeatWindow, 1)
         : persona.stickerPolicy.avoidRepeatWindow;
-      const recent = this.recentStickerIds(window);
-      let selection = this.deps.stickers.select({
-        hint: plan.stickerHint,
-        text: `${userText}\n${finalText}`,
-        excludeIds: recent,
-        requireMatch: plan.stickerRequired ? false : true
-      });
-      if (!selection && plan.stickerRequired && recent.length > 0) {
-        selection = this.deps.stickers.select({
-          hint: null,
-          text: `${userText}\n${finalText}`,
-          excludeIds: recent,
-          requireMatch: false
+      const excludeIds = this.recentStickerIds(window);
+      const maxPerReply = Math.max(0, Math.min(3, persona.stickerPolicy.maxPerReply));
+      for (const intent of plan.stickers.slice(0, maxPerReply)) {
+        const picked = await this.deps.stickerPicker.pick({
+          intent,
+          userText: userText.slice(-5000),
+          assistantText: finalText.slice(-5000),
+          recentContext: this.recentPlainContext(4),
+          excludeIds,
+          required: plan.stickerRequired
         });
-      }
-      if (selection) {
-        const partId = this.deps.messages.appendPart(shell.id, {
-          type: 'sticker',
-          mediaId: selection.sticker.mediaId,
-          status: 'sent',
-          meta: { stickerId: selection.sticker.id, stickerName: selection.sticker.name, reason: selection.reason }
-        });
-        this.deps.stickers.markUsed(selection.sticker.id);
-        producedParts.push('sticker');
-        this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'sticker' });
-      } else {
-        degraded.push('sticker:no-suitable-match');
+        let sticker = picked.stickerId ? this.deps.stickers.available().find((item) => item.id === picked.stickerId) : undefined;
+        // Existing deployments may have no picker response yet. Keep the old
+        // local matcher as an emergency-only fallback; an explicit picker null
+        // remains a real decision not to send a sticker.
+        if (!sticker && picked.reason === 'failed') {
+          sticker = this.deps.stickers.select({ hint: intent, text: `${userText}\n${finalText}`, excludeIds, requireMatch: plan.stickerRequired ? false : true })?.sticker;
+        }
+        if (sticker) {
+          const partId = this.deps.messages.appendPart(shell.id, {
+            type: 'sticker',
+            mediaId: sticker.mediaId,
+            status: 'sent',
+            meta: {
+              stickerId: sticker.id,
+              stickerName: sticker.name,
+              stickerMeaning: (sticker.description || sticker.emotion).slice(0, 120),
+              stickerIntent: intent,
+              pickerStrategy: picked.strategy,
+              pickerConfidence: picked.confidence,
+              pickerModel: picked.model
+            }
+          });
+          this.deps.stickers.markUsed(sticker.id);
+          excludeIds.push(sticker.id);
+          producedParts.push('sticker');
+          this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'sticker' });
+        } else degraded.push('sticker:no-suitable-match');
       }
     }
 
@@ -937,7 +949,7 @@ export class Replier {
     text: string
   ): {
     sticker: boolean;
-    stickerHint: string | null;
+    stickers: string[];
     stickerRequired: boolean;
     stickerOnly: boolean;
     forceDifferent: boolean;
@@ -951,20 +963,20 @@ export class Replier {
 
     // Sticker
     let sticker = false;
-    let stickerHint: string | null = null;
+    let stickerIntents: string[] = [];
     let stickerRequired = false;
     let forceDifferent = false;
     if (persona.stickerPolicy.enabled && stickersAvailable && !user.noSticker) {
-      sticker = user.wantSticker === true || user.stickerOnly === true || model.sticker !== undefined;
+      sticker = user.wantSticker === true || user.stickerOnly === true || model.sticker !== undefined || (model.stickers?.length ?? 0) > 0;
       // A user asking for a sticker must get one: requireMatch is disabled so
       // the library can fall back to any sticker when the hint matches nothing
       // (e.g. the previous one is excluded by the repeat window).
       stickerRequired = user.wantSticker === true || user.stickerOnly === true || model.stickerOnly === true;
       forceDifferent = user.anotherSticker === true;
       if (sticker) {
-        const hint = model.sticker;
-        if (typeof hint === 'string' && hint !== 'auto') stickerHint = hint;
-        else stickerHint = guessEmotion(text);
+        stickerIntents = (model.stickers ?? (model.sticker ? [model.sticker] : []))
+          .filter((intent): intent is string => typeof intent === 'string' && intent.trim().length > 0 && intent.trim().toLowerCase() !== 'auto');
+        if (stickerIntents.length === 0) stickerIntents = [guessEmotion(text)];
       }
     }
     const stickerOnly = sticker && (user.stickerOnly === true || model.stickerOnly === true);
@@ -992,7 +1004,15 @@ export class Replier {
     }
     const voiceOnly = voice && (user.voiceOnly === true || model.voiceOnly === true);
 
-    return { sticker, stickerHint, stickerRequired, stickerOnly, forceDifferent, imagePrompt, selfImagePrompt, voice, voiceOnly };
+    return { sticker, stickers: stickerIntents, stickerRequired, stickerOnly, forceDifferent, imagePrompt, selfImagePrompt, voice, voiceOnly };
+  }
+
+  private recentPlainContext(limit: number): string {
+    return this.deps.messages.recent(Math.max(4, limit)).slice(-limit).map((message) => message.content
+      .filter((part) => part.type === 'text' || part.type === 'audio')
+      .map((part) => part.type === 'text' ? part.text ?? '' : part.transcript ?? '')
+      .filter(Boolean)
+      .join(' ')).filter(Boolean).join('\n').slice(-5000);
   }
 }
 

@@ -21,6 +21,10 @@ import { MediaTextRepo } from './db/repos/media-text.repo.js';
 import { AuditRepo, PushSubscriptionRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
 import { MediaStore } from './media/store.js';
 import { StickerLibrary } from './media/stickers.js';
+import { StickerAnalyzer } from './core/stickers/analyzer.js';
+import { StickerRetriever } from './core/stickers/retriever.js';
+import { StickerPicker } from './core/stickers/picker.js';
+import { StickerUserMeaningLearner } from './core/stickers/user-meaning.js';
 import { PersonaReferenceLoader } from './media/persona-references.js';
 import { ImageVariantService } from './media/variants.js';
 import { CapabilityRegistry } from './core/capabilities.js';
@@ -122,6 +126,10 @@ export interface SooyaApp {
     mediaStore: MediaStore;
     mediaVariants: ImageVariantService;
     stickerLibrary: StickerLibrary;
+    stickerAnalyzer: StickerAnalyzer;
+    stickerRetriever: StickerRetriever;
+    stickerPicker: StickerPicker;
+    stickerUserMeaning: StickerUserMeaningLearner;
     capabilities: CapabilityRegistry;
     webSearch: WebSearchRegistry;
     memory: MemoryService;
@@ -232,6 +240,28 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const stickerLibrary = new StickerLibrary(repos.stickers, repos.media, mediaStore);
   mediaStore.setOnDelete(() => stickerLibrary.invalidate());
   const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl });
+  const stickerAnalyzer = new StickerAnalyzer(
+    repos.stickers,
+    mediaStore,
+    () => capabilities.visionProvider(),
+    (event, data) => logger.info({ ...data }, `sticker.analysis.${event}`)
+  );
+  const stickerRetriever = new StickerRetriever(
+    repos.stickers,
+    stickerLibrary,
+    () => capabilities.embeddingProvider(),
+    (error) => logger.warn({ error: redactDiagnostic(error) }, 'sticker embedding retrieval degraded')
+  );
+  const stickerPicker = new StickerPicker(
+    () => capabilities.stickerProvider(),
+    stickerRetriever,
+    (event, data) => logger.info({ ...data }, `sticker.pick.${event}`)
+  );
+  const stickerUserMeaning = new StickerUserMeaningLearner(
+    repos.stickers,
+    repos.messages,
+    () => capabilities.stickerProvider()
+  );
   const bus = new EventBus(repos.events);
   const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE });
   const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, fetchImpl, env.SOOYA_PUSH_SUBJECT);
@@ -321,6 +351,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     repos.media,
     mediaStore,
     repos.mediaText,
+    repos.stickers,
+    stickerLibrary,
     env.ENABLE_LIFE_ENGINE ? life : undefined,
     env.LIFE_TIME_ZONE,
     () => world.snapshot()
@@ -332,7 +364,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
 
-  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot() });
+  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, stickerPicker, capabilities, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot() });
   const thoughtFlags = readThoughtsFlags(process.env);
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
@@ -442,6 +474,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     life,
     proactive,
     capabilities,
+    stickerAnalyzer,
+    stickerRepo: repos.stickers,
+    stickerUserMeaning,
     config,
     reachOutEnabled: env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT,
     push,
@@ -453,7 +488,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const tools = new ToolRegistry();
   const agents = new AgentRegistry();
   const agentCapabilities = new CapabilityRegistryStub();
-  for (const cap of ['chat', 'vision', 'summary', 'embedding', 'image', 'tts'] as const) {
+  for (const cap of ['chat', 'vision', 'summary', 'sticker', 'embedding', 'image', 'tts'] as const) {
     agentCapabilities.register({ name: cap, description: `model capability: ${cap}`, available: () => capabilities.has(cap) });
   }
 
@@ -470,6 +505,18 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     } else {
       logger.warn({ assetsDir }, 'built-in sticker assets not found');
     }
+  }
+  if (opts.startWorkers !== false && env.ENABLE_BACKGROUND_JOBS) {
+    const activeAnalysis = new Set(
+      repos.jobs.list(500)
+        .filter((job) => job.type === 'sticker.analyze' && (job.status === 'pending' || job.status === 'running'))
+        .map((job) => { try { return String((JSON.parse(job.payload_json) as { stickerId?: unknown }).stickerId ?? ''); } catch { return ''; } })
+        .filter(Boolean)
+    );
+    const pending = repos.stickers.list({ enabledOnly: true })
+      .filter((sticker) => sticker.analysisStatus !== 'ready' && sticker.analysisSource !== 'manual' && !activeAnalysis.has(sticker.id))
+      .slice(0, 100);
+    for (const sticker of pending) repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2 });
   }
 
   const startupCounters = reconcileCounters(dbHandle);
@@ -562,7 +609,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, capabilities, webSearch, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, webSearch, memory, life, proactive, location, weather, world, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -715,5 +762,3 @@ function resolveWebDir(): string | null {
 }
 
 export { VERSION };
-
-

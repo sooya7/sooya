@@ -1236,6 +1236,59 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 30,
+    name: 'sticker_semantics_v2',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE stickers ADD COLUMN description TEXT NOT NULL DEFAULT '';
+        ALTER TABLE stickers ADD COLUMN image_text TEXT NOT NULL DEFAULT '';
+        ALTER TABLE stickers ADD COLUMN name_source TEXT NOT NULL DEFAULT 'legacy'
+          CHECK (name_source IN ('legacy','builtin','manual','auto'));
+        ALTER TABLE stickers ADD COLUMN user_meaning TEXT NOT NULL DEFAULT '';
+        ALTER TABLE stickers ADD COLUMN user_meaning_source TEXT NOT NULL DEFAULT 'none'
+          CHECK (user_meaning_source IN ('none','ai','manual'));
+        ALTER TABLE stickers ADD COLUMN user_meaning_confidence REAL;
+        ALTER TABLE stickers ADD COLUMN user_meaning_updated_at TEXT;
+        ALTER TABLE stickers ADD COLUMN analysis_status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (analysis_status IN ('pending','processing','ready','failed'));
+        ALTER TABLE stickers ADD COLUMN analysis_source TEXT NOT NULL DEFAULT 'legacy'
+          CHECK (analysis_source IN ('legacy','ai','manual'));
+        ALTER TABLE stickers ADD COLUMN analysis_version INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE stickers ADD COLUMN analysis_model TEXT;
+        ALTER TABLE stickers ADD COLUMN analyzed_at TEXT;
+        ALTER TABLE stickers ADD COLUMN analysis_error TEXT;
+        ALTER TABLE stickers ADD COLUMN embedding BLOB;
+        ALTER TABLE stickers ADD COLUMN embedding_dim INTEGER;
+        ALTER TABLE stickers ADD COLUMN embedding_model TEXT;
+        ALTER TABLE stickers ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE stickers ADD COLUMN user_use_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE stickers ADD COLUMN user_last_used_at TEXT;
+        ALTER TABLE stickers ADD COLUMN updated_at TEXT;
+
+        UPDATE stickers SET updated_at = created_at WHERE updated_at IS NULL;
+
+        CREATE INDEX idx_stickers_analysis ON stickers(analysis_status, analysis_version);
+        CREATE INDEX idx_stickers_favorite ON stickers(favorite, enabled);
+        CREATE INDEX idx_stickers_user_recent ON stickers(user_last_used_at DESC);
+
+        CREATE VIRTUAL TABLE sticker_semantics_fts USING fts5(
+          sticker_id UNINDEXED,
+          content,
+          tokenize='trigram'
+        );
+
+        INSERT INTO sticker_semantics_fts(sticker_id, content)
+        SELECT id,
+          '名称：' || name || char(10) ||
+          '标准含义：' || name || char(10) ||
+          '图片文字：' || char(10) ||
+          '标签：' || replace(tags_json, '"', ' ') || char(10) ||
+          '旧情绪：' || emotion
+        FROM stickers;
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

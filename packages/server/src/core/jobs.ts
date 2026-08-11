@@ -18,6 +18,11 @@ import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
 import { extractText } from '../media/text-extractor.js';
 import { cleanupTempFiles } from '../util/fsx.js';
 import { textForMemoryExtraction } from './web-search/isolation.js';
+import type { StickerAnalyzer } from './stickers/analyzer.js';
+import type { StickerRepo } from '../db/repos/sticker.repo.js';
+import { STICKER_ANALYSIS_VERSION } from './stickers/constants.js';
+import { stickerSemanticText } from './stickers/semantic-text.js';
+import type { StickerUserMeaningLearner } from './stickers/user-meaning.js';
 
 export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
 
@@ -105,6 +110,9 @@ export interface JobDeps {
   batches: ReplyBatchRepo;
   proactive: ProactiveComposer;
   capabilities: CapabilityRegistry;
+  stickerAnalyzer: StickerAnalyzer;
+  stickerRepo: StickerRepo;
+  stickerUserMeaning: StickerUserMeaningLearner;
   config: ConfigStore;
   reachOutEnabled: boolean;
   push: PushService;
@@ -127,6 +135,45 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const result = extractText(read.data, read.row.mime, mediaName(read.row.meta_json));
     deps.mediaText.upsert({ mediaId, status: result.status, text: result.status === 'ready' ? result.text : null, metadata: result.metadata, error: result.status === 'failed' ? result.error : null });
     deps.bus.publish('media.updated', { mediaId, textStatus: result.status });
+  });
+
+  worker.register('sticker.analyze', async (payload) => {
+    const stickerId = String(payload.stickerId ?? '');
+    if (!stickerId) return;
+    const result = await deps.stickerAnalyzer.analyze(stickerId);
+    if (result) {
+      deps.jobs.enqueue('sticker.embed', { stickerId }, { maxAttempts: 2 });
+      deps.bus.publish('sticker.analysis.updated', { stickerId, status: 'ready', version: STICKER_ANALYSIS_VERSION });
+    }
+  });
+
+  worker.register('sticker.embed', async (payload) => {
+    const stickerId = String(payload.stickerId ?? '');
+    const sticker = deps.stickerRepo.get(stickerId);
+    if (!sticker || sticker.analysisStatus !== 'ready') return;
+    const provider = deps.capabilities.embeddingProvider();
+    if (!provider.configured) return;
+    const result = await provider.embed([stickerSemanticText(sticker)]);
+    const vector = result.vectors[0];
+    if (!vector) return;
+    deps.stickerRepo.setEmbedding(stickerId, vector, result.model, result.dimensions);
+    deps.bus.publish('sticker.updated', { stickerId, embedding: true, embeddingModel: result.model, embeddingDim: result.dimensions });
+  });
+
+  worker.register('sticker.embed.backfill', async () => {
+    const missing = deps.stickerRepo.list({ enabledOnly: true }).filter((sticker) =>
+      sticker.analysisStatus === 'ready' && (!sticker.embedding || sticker.embeddingModel !== deps.config.getModels().embedding.model)
+    ).slice(0, 20);
+    for (const sticker of missing) deps.jobs.enqueue('sticker.embed', { stickerId: sticker.id }, { maxAttempts: 2 });
+  });
+
+  worker.register('sticker.user-meaning.learn', async (payload) => {
+    const stickerId = String(payload.stickerId ?? '');
+    if (!stickerId) return;
+    if (await deps.stickerUserMeaning.learn(stickerId)) {
+      deps.jobs.enqueue('sticker.embed', { stickerId }, { maxAttempts: 2 });
+      deps.bus.publish('sticker.updated', { stickerId, userMeaning: true });
+    }
   });
 
   worker.register('memory.extract', async (payload) => {

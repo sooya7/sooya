@@ -110,9 +110,10 @@ export class ConfigStore {
   getModels(): ModelsConfig {
     return this.models;
   }  /** Model config for a capability, falling back to the chat model. */
-  chatModelFor(capability: 'chat' | 'vision' | 'summary'): ModelsConfig['chat'] {
+  chatModelFor(capability: 'chat' | 'vision' | 'summary' | 'sticker'): ModelsConfig['chat'] {
     if (capability === 'vision') return this.models.vision ?? this.models.chat;
     if (capability === 'summary') return this.models.summary ?? this.models.chat;
+    if (capability === 'sticker') return this.models.sticker ?? this.models.chat;
     return this.models.chat;
   }
 
@@ -146,7 +147,7 @@ export class ConfigStore {
    * models.json never contains it. Sections without apiKeyEnv pass through.
    */
   private resolveApiKeyEnv(models: ModelsConfig): ModelsConfig {
-    const sections = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'rerank'] as const;
+    const sections = ['chat', 'vision', 'summary', 'sticker', 'embedding', 'image', 'tts', 'rerank'] as const;
     const next = { ...models } as ModelsConfig & Record<string, { apiKeyEnv?: string; apiKey?: string }>;
     for (const name of sections) {
       const section = next[name];

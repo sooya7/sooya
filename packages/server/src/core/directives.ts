@@ -114,6 +114,9 @@ export function parseUserDirectives(text: string): UserDirectives {
 }
 
 export interface ModelDirectives {
+  /** Natural-language sticker intents, in marker order. */
+  stickers?: string[];
+  /** Legacy single-marker alias retained for existing callers. */
   sticker?: string | null;
   imagePrompt?: string | null;
   selfImagePrompt?: string | null;
@@ -238,7 +241,7 @@ export function stripModelDirectives(raw: string): StripResult {
     .replace(MARKER_RE, (_m, kind: string, arg?: string) => {
       const k = canonicalMarkerKind(kind);
       const value = (arg ?? '').trim();
-      if (k === 'sticker') directives.sticker = value || 'auto';
+      if (k === 'sticker') addStickerDirective(directives, value || 'auto');
       else if (k === 'image') directives.imagePrompt = value || null;
       else if (k === 'image-self') directives.selfImagePrompt = value || null;
       else if (k === 'voice') {
@@ -255,7 +258,7 @@ export function stripModelDirectives(raw: string): StripResult {
         const intensity = parseIntensityArg(value);
         if (intensity !== undefined) directives.voiceIntensity = intensity;
       } else if (k === 'sticker-only') {
-        directives.sticker = value || 'auto';
+        addStickerDirective(directives, value || 'auto');
         directives.stickerOnly = true;
       }
       return '';
@@ -264,6 +267,11 @@ export function stripModelDirectives(raw: string): StripResult {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return { text, directives };
+}
+
+function addStickerDirective(directives: ModelDirectives, intent: string): void {
+  directives.sticker = intent;
+  directives.stickers = [...(directives.stickers ?? []), intent].slice(0, 8);
 }
 
 function canonicalMarkerKind(kind: string): 'sticker' | 'image' | 'image-self' | 'voice' | 'voice-only' | 'sticker-only' {

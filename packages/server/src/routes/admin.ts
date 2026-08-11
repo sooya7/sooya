@@ -1,6 +1,7 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import { z } from 'zod';
+import { STICKER_ANALYSIS_VERSION } from '../core/stickers/constants.js';
 import type { SooyaApp } from '../app.js';
 import { requireAdminToken } from './auth.js';
 import { MODEL_SLOTS, ModelPresetsSchema, PersonaSchema, type ModelPreset, type ModelSlot } from '../config/schema.js';
@@ -517,7 +518,31 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { models: config.safeModels(), imagePolicy: config.getPersona().imagePolicy };
   });
 
-  server.get('/api/admin/stickers', guard, async () => ({ stickers: services.stickerLibrary.all() }));
+  server.get('/api/admin/stickers', guard, async (req, reply) => {
+    const parsed = z.object({
+      q: z.string().trim().max(200).optional(),
+      status: z.enum(['pending', 'processing', 'ready', 'failed']).optional(),
+      // Boolean("false") is true, so z.coerce.boolean() would make the
+      // disabled filter impossible to use from a query string.
+      enabled: z.preprocess((value) => value === undefined ? undefined : value === true || value === 'true', z.boolean().optional()),
+      limit: z.coerce.number().int().min(1).max(200).default(100),
+      offset: z.coerce.number().int().min(0).default(0)
+    }).safeParse(req.query);
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    let stickers = parsed.data.q
+      ? repos.stickers.searchFts(parsed.data.q, { enabledOnly: false, limit: 500, offset: 0 })
+      : repos.stickers.list({ enabledOnly: false });
+    if (parsed.data.enabled !== undefined) stickers = stickers.filter((sticker) => sticker.enabled === parsed.data.enabled);
+    if (parsed.data.status) stickers = stickers.filter((sticker) => sticker.analysisStatus === parsed.data.status);
+    const total = stickers.length;
+    const page = stickers.slice(parsed.data.offset, parsed.data.offset + parsed.data.limit).map((sticker) => {
+      const media = repos.media.get(sticker.mediaId);
+      // The vector is an internal retrieval artifact; returning it would make
+      // the admin list needlessly large and expose implementation details.
+      return { ...sticker, embedding: undefined, mime: media?.mime, available: media ? services.mediaStore.exists(media) : false, hasEmbedding: Boolean(sticker.embedding) };
+    });
+    return { stickers: page, total, offset: parsed.data.offset, analysisVersion: STICKER_ANALYSIS_VERSION };
+  });
   server.post('/api/admin/stickers', guard, async (req, reply) => {
     if (!req.isMultipart()) {
       reply.code(400);
@@ -536,7 +561,9 @@ export function registerAdminRoutes(app: SooyaApp): void {
         await services.storage.assertWritable(buffer.length);
         const media = await services.mediaStore.save({ kind: 'sticker', origin: 'upload', data: buffer, declaredMime: part.mimetype, filename: part.filename });
         const unique = repos.stickers.getByName(name) ? `${name}-${Date.now().toString(36)}` : name;
-        created.push(repos.stickers.create({ mediaId: media.id, name: unique, tags: tags.length ? tags : [emotion], emotion }));
+        const sticker = repos.stickers.create({ mediaId: media.id, name: unique, tags: tags.length ? tags : [emotion], emotion, nameSource: 'manual' });
+        created.push(sticker);
+        repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2 });
       } catch (err) {
         failed.push({ filename: part.filename ?? 'unknown', error: (err as Error).message });
       }
@@ -549,17 +576,43 @@ export function registerAdminRoutes(app: SooyaApp): void {
   });
 
   server.patch('/api/admin/stickers/:id', guard, async (req, reply) => {
-    const parsed = z.object({ tags: z.array(z.string()).optional(), emotion: z.string().optional(), enabled: z.boolean().optional(), name: z.string().min(1).max(60).optional() }).safeParse(req.body);
+    const parsed = z.object({ tags: z.array(z.string()).optional(), emotion: z.string().optional(), enabled: z.boolean().optional(), name: z.string().min(1).max(60).optional(), description: z.string().max(500).optional(), imageText: z.string().max(300).optional(), userMeaning: z.string().max(120).optional(), favorite: z.boolean().optional(), userMeaningSource: z.enum(['none', 'ai', 'manual']).optional() }).safeParse(req.body);
     if (!parsed.success) {
       reply.code(400);
       return { error: 'bad_request', issues: parsed.error.issues };
     }
-    const updated = repos.stickers.update((req.params as { id: string }).id, parsed.data);
+    const { favorite, ...stickerPatch } = parsed.data;
+    let updated = repos.stickers.update((req.params as { id: string }).id, stickerPatch);
+    if (updated && favorite !== undefined) updated = repos.stickers.setFavorite(updated.id, favorite);
     if (!updated) {
       reply.code(404);
       return { error: 'not_found' };
     }
+    if (updated && (parsed.data.description !== undefined || parsed.data.imageText !== undefined || parsed.data.tags !== undefined || parsed.data.name !== undefined || parsed.data.userMeaning !== undefined)) {
+      if (updated.analysisStatus === 'ready') repos.jobs.enqueue('sticker.embed', { stickerId: updated.id }, { maxAttempts: 2 });
+      services.bus.publish('sticker.updated', { stickerId: updated.id, semantic: true });
+    }
     return { sticker: updated };
+  });
+
+  server.post('/api/admin/stickers/analyze-batch', guard, async (req, reply) => {
+    const parsed = z.object({ mode: z.enum(['missing_or_stale', 'selected']).default('missing_or_stale'), ids: z.array(z.string().min(1)).max(200).optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
+    const source = parsed.data.ids?.map((id) => repos.stickers.get(id)).filter((sticker): sticker is NonNullable<typeof sticker> => Boolean(sticker)) ?? repos.stickers.list({ enabledOnly: false });
+    const candidates = source.filter((sticker) => sticker.analysisSource !== 'manual' && (parsed.data.mode === 'selected' || sticker.analysisStatus !== 'ready' || sticker.analysisVersion < STICKER_ANALYSIS_VERSION));
+    for (const sticker of candidates) repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2 });
+    return { queued: candidates.length, skipped: source.length - candidates.length };
+  });
+
+  server.post('/api/admin/stickers/:id/analyze', guard, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const sticker = repos.stickers.get(id);
+    if (!sticker) { reply.code(404); return { error: 'not_found' }; }
+    const force = (req.body as { force?: unknown } | null)?.force === true;
+    if (sticker.analysisSource === 'manual' && !force) { reply.code(409); return { error: 'manual_semantics_protected' }; }
+    repos.stickers.setAnalysisState(id, { status: 'pending', error: null });
+    const job = repos.jobs.enqueue('sticker.analyze', { stickerId: id, force }, { maxAttempts: 2 });
+    return { queued: true, jobId: job.id, stickerId: id };
   });
 
   server.delete('/api/admin/stickers/:id', guard, async (req, reply) => {

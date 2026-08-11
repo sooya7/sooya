@@ -4,7 +4,8 @@ export const StickerPolicySchema = z.object({
   enabled: z.boolean().default(true),
   frequency: z.enum(['never', 'low', 'medium', 'high']).default('medium'),
   maxPerReply: z.number().int().min(0).max(3).default(1),
-  avoidRepeatWindow: z.number().int().min(0).max(50).default(5)
+  avoidRepeatWindow: z.number().int().min(0).max(50).default(5),
+  learnUserMeaning: z.boolean().default(true)
 });
 
 export const VoicePolicySchema = z.object({
@@ -193,7 +194,7 @@ export const RerankModelSchema = z.object({
 export type RerankModelConfig = z.infer<typeof RerankModelSchema>;
 
 /** The fixed capability slots a model can be assigned to. */
-export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'embedding', 'image', 'tts', 'rerank'] as const;
+export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'sticker', 'embedding', 'image', 'tts', 'rerank'] as const;
 export const ModelSlotSchema = z.enum(MODEL_SLOTS);
 export type ModelSlot = z.infer<typeof ModelSlotSchema>;
 
@@ -244,6 +245,7 @@ export const ModelsConfigSchema = z.object({
   chat: ChatModelSchema.default({}),
   vision: ChatModelSchema.optional(),
   summary: ChatModelSchema.optional(),
+  sticker: ChatModelSchema.optional(),
   embedding: EmbeddingModelSchema.default({}),
   image: ImageModelSchema.default({}),
   tts: TtsModelSchema.default({}),
