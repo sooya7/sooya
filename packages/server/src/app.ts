@@ -532,17 +532,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     // stuck. The jobs remain durable and will be claimed once this short grace
     // period expires.
     const runAfter = new Date(Date.now() + 30_000).toISOString();
-    const activeAnalysis = new Set(
-      repos.jobs.list(500)
-        .filter((job) => job.type === 'sticker.analyze' && (job.status === 'pending' || job.status === 'running'))
-        .map((job) => { try { return String((JSON.parse(job.payload_json) as { stickerId?: unknown }).stickerId ?? ''); } catch { return ''; } })
-        .filter(Boolean)
+    const jobs = repos.jobs.list(500);
+    const activeAnalysis = jobs.some((job) =>
+      (job.type === 'sticker.analyze' || job.type === 'sticker.analyze.backfill')
+      && (job.status === 'pending' || job.status === 'running')
     );
-    const pending = repos.stickers.list({ enabledOnly: true })
-      .filter((sticker) => sticker.analysisStatus !== 'ready' && sticker.analysisSource !== 'manual' && !activeAnalysis.has(sticker.id))
-      .slice(0, 100);
-    if (capabilities.visionProvider()) {
-      for (const sticker of pending) repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2, runAfter });
+    const hasPendingAnalysis = repos.stickers.list({ enabledOnly: true }).some((sticker) =>
+      sticker.analysisStatus !== 'ready' && sticker.analysisSource !== 'manual'
+    );
+    if (capabilities.visionProvider() && hasPendingAnalysis && !activeAnalysis) {
+      repos.jobs.enqueue('sticker.analyze.backfill', {}, { maxAttempts: 2, runAfter });
     }
     if (capabilities.has('embedding')) {
       const embedding = config.getModels().embedding;
@@ -553,7 +552,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
           || (embedding.dimensions !== undefined && sticker.embeddingDim !== embedding.dimensions)
         )
       );
-      const activeBackfill = repos.jobs.list(500).some((job) => job.type === 'sticker.embed.backfill' && (job.status === 'pending' || job.status === 'running'));
+      const activeBackfill = jobs.some((job) => job.type === 'sticker.embed.backfill' && (job.status === 'pending' || job.status === 'running'));
       if (needsBackfill && !activeBackfill) repos.jobs.enqueue('sticker.embed.backfill', {}, { runAfter });
     }
   };

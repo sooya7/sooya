@@ -1289,6 +1289,44 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 31,
+    name: 'prioritize_durable_jobs',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 50;
+
+        UPDATE jobs SET priority = CASE type
+          WHEN 'reply' THEN 100
+          WHEN 'push.reply' THEN 95
+          WHEN 'media.extract_text' THEN 90
+          WHEN 'life.conversation' THEN 75
+          WHEN 'life.tick' THEN 75
+          WHEN 'weather.refresh' THEN 70
+          WHEN 'sticker.analyze' THEN 20
+          WHEN 'sticker.analyze.backfill' THEN 20
+          WHEN 'sticker.embed' THEN 15
+          WHEN 'sticker.user-meaning.learn' THEN 75
+          WHEN 'sticker.embed.backfill' THEN 10
+          WHEN 'memory.embed.backfill' THEN 10
+          WHEN 'maintenance' THEN 10
+          WHEN 'backup.create' THEN 5
+          ELSE 50
+        END;
+
+        CREATE INDEX idx_jobs_claim ON jobs(status, priority DESC, created_at ASC);
+      `);
+    }
+  },
+  {
+    version: 32,
+    name: 'media_animation_metadata',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE media ADD COLUMN animated INTEGER NOT NULL DEFAULT 0;
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

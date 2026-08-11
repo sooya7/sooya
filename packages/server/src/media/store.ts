@@ -2,6 +2,7 @@ import fsp from 'node:fs/promises';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileTypeFromBuffer } from 'file-type';
+import sharp from 'sharp';
 import type { MediaRepo, MediaRow } from '../db/repos/media.repo.js';
 import { atomicWriteFile, ensureDirSync, safeJoin } from '../util/fsx.js';
 import { newMediaId, sha256 } from '../util/ids.js';
@@ -125,7 +126,9 @@ export class MediaStore {
         duration = Math.round(opts.durationHint * 100) / 100;
       }
     }
-    const dims = opts.kind === 'image' || opts.kind === 'sticker' ? probeImageSize(opts.data) : null;
+    const imageMeta = opts.kind === 'image' || opts.kind === 'sticker' ? await probeImageMetadata(opts.data) : null;
+    const fallbackDims = opts.kind === 'image' || opts.kind === 'sticker' ? probeImageSize(opts.data) : null;
+    const dims = imageMeta ?? { width: fallbackDims?.width ?? null, height: fallbackDims?.height ?? null, animated: false };
 
     try {
       return this.repo.create({
@@ -137,6 +140,7 @@ export class MediaStore {
         sha256: digest,
         width: dims?.width ?? null,
         height: dims?.height ?? null,
+        animated: dims.animated,
         duration,
         origin: opts.origin,
         transcript: opts.transcript ?? null,
@@ -314,4 +318,17 @@ export function probeImageSize(buf: Buffer): { width: number; height: number } |
     return null;
   }
   return null;
+}
+
+async function probeImageMetadata(buf: Buffer): Promise<{ width: number | null; height: number | null; animated: boolean } | null> {
+  try {
+    const metadata = await sharp(buf, { animated: true, failOn: 'none' }).metadata();
+    return {
+      width: metadata.width ?? null,
+      height: metadata.height ?? null,
+      animated: (metadata.pages ?? 1) > 1
+    };
+  } catch {
+    return null;
+  }
 }

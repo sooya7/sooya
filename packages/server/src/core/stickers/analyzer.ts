@@ -34,6 +34,7 @@ export class StickerAnalyzer {
   async analyze(stickerId: string): Promise<StickerAnalysisResult | null> {
     const sticker = this.stickers.get(stickerId);
     if (!sticker) return null;
+    if (sticker.analysisSource === 'manual') return null;
     const provider = this.vision();
     if (!provider || !provider.configured) {
       // A missing vision configuration is retryable, not a permanent analysis
@@ -55,6 +56,7 @@ export class StickerAnalyzer {
       return null;
     }
 
+    if (this.stickers.get(stickerId)?.analysisSource === 'manual') return null;
     this.stickers.setAnalysisState(stickerId, { status: 'processing', error: null });
     this.onLog?.('started', { stickerId, model: provider.name, frameCount: frames.length });
     const content: ChatContentPart[] = [{
@@ -82,10 +84,14 @@ export class StickerAnalyzer {
       });
       const parsed = AnalysisSchema.safeParse(extractJsonObject(result.text));
       if (!parsed.success) throw new Error('invalid_analysis_json');
-      this.stickers.applyAiAnalysis(stickerId, parsed.data, { version: STICKER_ANALYSIS_VERSION, model: result.model || provider.name });
+      const latest = this.stickers.get(stickerId);
+      if (latest?.analysisSource === 'manual') return parsed.data;
+      const applied = this.stickers.applyAiAnalysis(stickerId, parsed.data, { version: STICKER_ANALYSIS_VERSION, model: result.model || provider.name });
+      if (!applied || applied.analysisSource === 'manual') return parsed.data;
       this.onLog?.('completed', { stickerId, model: result.model || provider.name, frameCount: frames.length });
       return parsed.data;
     } catch (error) {
+      if (this.stickers.get(stickerId)?.analysisSource === 'manual') return null;
       const message = error instanceof Error ? error.message : String(error);
       this.stickers.setAnalysisState(stickerId, { status: 'failed', error: message.slice(0, 300) });
       this.onLog?.('failed', { stickerId, errorType: 'provider_or_parse', model: provider.name });

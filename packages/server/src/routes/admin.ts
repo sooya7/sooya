@@ -2,6 +2,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import { z } from 'zod';
 import { STICKER_ANALYSIS_VERSION } from '../core/stickers/constants.js';
+import { JOB_PRIORITY } from '../core/job-priority.js';
 import type { SooyaApp } from '../app.js';
 import { requireAdminToken } from './auth.js';
 import { MODEL_SLOTS, ModelPresetsSchema, PersonaSchema, type ModelPreset, type ModelSlot } from '../config/schema.js';
@@ -566,7 +567,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
       const media = repos.media.get(sticker.mediaId);
       // The vector is an internal retrieval artifact; returning it would make
       // the admin list needlessly large and expose implementation details.
-      return { ...sticker, embedding: undefined, mime: media?.mime, available: media ? services.mediaStore.exists(media) : false, hasEmbedding: Boolean(sticker.embedding) };
+      return { ...sticker, embedding: undefined, mime: media?.mime, animated: media?.animated === 1, available: media ? services.mediaStore.exists(media) : false, hasEmbedding: Boolean(sticker.embedding) };
     });
     return { stickers: page, total, offset: parsed.data.offset, analysisVersion: STICKER_ANALYSIS_VERSION };
   });
@@ -590,7 +591,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
         const unique = repos.stickers.getByName(name) ? `${name}-${Date.now().toString(36)}` : name;
         const sticker = repos.stickers.create({ mediaId: media.id, name: unique, tags: tags.length ? tags : [emotion], emotion, nameSource: 'manual' });
         created.push(sticker);
-        repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2 });
+        repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
       } catch (err) {
         failed.push({ filename: part.filename ?? 'unknown', error: (err as Error).message });
       }
@@ -608,8 +609,17 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'bad_request', issues: parsed.error.issues };
     }
-    const { favorite, ...stickerPatch } = parsed.data;
-    let updated = repos.stickers.update((req.params as { id: string }).id, stickerPatch);
+    const { favorite, userMeaning, userMeaningSource, description, imageText, tags, ...stickerPatch } = parsed.data;
+    const id = (req.params as { id: string }).id;
+    let updated = repos.stickers.update(id, stickerPatch);
+    if (updated && (description !== undefined || imageText !== undefined || tags !== undefined)) {
+      updated = repos.stickers.updateManualSemantics(updated.id, { description, imageText, tags });
+    }
+    if (updated && userMeaning !== undefined) {
+      updated = repos.stickers.setUserMeaning(updated.id, userMeaning, userMeaningSource ?? 'manual');
+    } else if (updated && userMeaningSource !== undefined) {
+      updated = repos.stickers.update(updated.id, { userMeaningSource });
+    }
     if (updated && favorite !== undefined) updated = repos.stickers.setFavorite(updated.id, favorite);
     if (!updated) {
       reply.code(404);
@@ -627,7 +637,9 @@ export function registerAdminRoutes(app: SooyaApp): void {
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
     const source = parsed.data.ids?.map((id) => repos.stickers.get(id)).filter((sticker): sticker is NonNullable<typeof sticker> => Boolean(sticker)) ?? repos.stickers.list({ enabledOnly: false });
     const candidates = source.filter((sticker) => sticker.analysisSource !== 'manual' && (parsed.data.mode === 'selected' || sticker.analysisStatus !== 'ready' || sticker.analysisVersion < STICKER_ANALYSIS_VERSION));
-    for (const sticker of candidates) repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2 });
+    if (candidates.length > 0) {
+      repos.jobs.enqueue('sticker.analyze.backfill', { ids: candidates.map((sticker) => sticker.id) }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
+    }
     return { queued: candidates.length, skipped: source.length - candidates.length };
   });
 
@@ -638,7 +650,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
     const force = (req.body as { force?: unknown } | null)?.force === true;
     if (sticker.analysisSource === 'manual' && !force) { reply.code(409); return { error: 'manual_semantics_protected' }; }
     repos.stickers.setAnalysisState(id, { status: 'pending', error: null });
-    const job = repos.jobs.enqueue('sticker.analyze', { stickerId: id, force }, { maxAttempts: 2 });
+    const job = repos.jobs.enqueue('sticker.analyze', { stickerId: id, force }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
     return { queued: true, jobId: job.id, stickerId: id };
   });
 

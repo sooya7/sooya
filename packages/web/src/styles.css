@@ -208,6 +208,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
+  margin-left: auto;
   gap: 8px;
   min-width: max-content;
   transform: translateY(-1px);
@@ -931,6 +932,17 @@ button {
 .sticker-choice:hover {
   background: var(--surface-hover);
 }
+.sticker-choice-main {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
 .sticker-choice img {
   width: 100%;
   height: auto;
@@ -950,9 +962,13 @@ button {
   position: absolute;
   top: 2px;
   right: 2px;
+  border: 0;
+  background: transparent;
+  padding: 0;
   color: var(--ink-soft);
   font-size: 14px;
   line-height: 1;
+  cursor: pointer;
   text-shadow: 0 1px 2px var(--panel);
 }
 .sticker-favorite.active { color: #e3a33b; }
@@ -1881,20 +1897,10 @@ button {
    .topbar-admin-entry so the two read as one pair of controls. */
 .notification-menu {
   position: relative;
-  margin-left: auto;   /* claims the free space so the pair sits at the right edge */
+  margin-left: 0;
   flex: 0 0 auto;
   display: inline-flex;
 }
-.topbar-actions .notification-menu { margin-left: 0; }
-/* Without the bell (unsupported browser) the gear keeps its own auto margin. */
-.notification-menu + .topbar-admin-entry { margin-left: 8px; }
-/* 搜索按钮插在铃铛和齿轮之间，使上面的相邻选择器失配；若不补这条，齿轮自身的
-   margin-left:auto 会与铃铛的 auto 平分剩余空间，把管理入口推离搜索/提醒一组。 */
-.history-tool-button + .topbar-admin-entry { margin-left: 8px; }
-/* 没有铃铛时（如 iOS Safari 不支持 PushManager，NotificationBridge 不渲染），
-   承担 margin-left:auto 的元素整个消失，搜索/齿轮会贴着昵称；铃铛在时这条
-   相邻选择器失配、不生效，由搜索按钮自己顶上空位把整组推到右侧。 */
-.topbar-identity + .history-tool-button { margin-left: auto; }
 
 .notification-bell {
   width: 30px; height: 30px; padding: 0; cursor: pointer;

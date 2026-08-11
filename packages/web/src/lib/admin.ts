@@ -209,6 +209,7 @@ export interface AdminMedia {
   mime: string;
   bytes: number;
   url: string;
+  animated?: boolean;
   origin: string;
   exists: boolean;
   createdAt: string;
@@ -233,6 +234,7 @@ export interface AdminSticker {
   analysisVersion?: number;
   hasEmbedding?: boolean;
   url: string;
+  animated?: boolean;
   available?: boolean;
 }
 

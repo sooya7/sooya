@@ -302,7 +302,8 @@ function publicSticker(sticker: ReturnType<SooyaApp['services']['stickerLibrary'
     userUseCount: sticker.userUseCount,
     analysisStatus: sticker.analysisStatus,
     userLastUsedAt: sticker.userLastUsedAt,
-    url: sticker.url
+    url: sticker.url,
+    animated: sticker.animated === true
   };
 }
 

@@ -77,4 +77,42 @@ describe('Sticker V2 semantics and user surface', () => {
     const user = await harness.app.server.inject({ method: 'GET', url: '/api/stickers' });
     expect(user.json().stickers.map((item: { id: string }) => item.id)).not.toContain(sticker.id);
   });
+
+  it('keeps manual meaning timestamps and source semantics canonical', async () => {
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false });
+    const sticker = await makeSticker('语义保护');
+
+    const manual = harness.app.repos.stickers.setUserMeaning(sticker.id, '这是我给它的备注', 'manual', 0.7)!;
+    expect(manual.userMeaningSource).toBe('manual');
+    expect(manual.userMeaningConfidence).toBeNull();
+    expect(manual.userMeaningUpdatedAt).toBeTruthy();
+
+    const cleared = harness.app.repos.stickers.setUserMeaning(sticker.id, '   ', 'manual', 0.9)!;
+    expect(cleared.userMeaning).toBe('');
+    expect(cleared.userMeaningSource).toBe('none');
+    expect(cleared.userMeaningConfidence).toBeNull();
+    expect(cleared.userMeaningUpdatedAt).toBeNull();
+
+    const ai = harness.app.repos.stickers.setUserMeaning(sticker.id, '模型备注', 'ai', 0.83)!;
+    expect(ai.userMeaningSource).toBe('ai');
+    expect(ai.userMeaningConfidence).toBe(0.83);
+  });
+
+  it('marks manual semantic edits ready and fences a stale AI result', async () => {
+    harness = await createHarness({ skipStickerImport: true, startWorkers: false });
+    const media = await harness.app.services.mediaStore.save({ kind: 'sticker', origin: 'upload', data: TEST_PNG, filename: 'manual-description.png' });
+    const sticker = harness.app.repos.stickers.create({ mediaId: media.id, name: '人工描述', description: '旧的模型语义', analysisSource: 'ai', analysisStatus: 'processing' });
+    const updated = harness.app.repos.stickers.updateManualSemantics(sticker.id, { tags: ['人工标签'] })!;
+    expect(updated.analysisSource).toBe('manual');
+    expect(updated.analysisStatus).toBe('ready');
+    expect(updated.analysisError).toBeNull();
+
+    const result = harness.app.repos.stickers.applyAiAnalysis(
+      sticker.id,
+      { suggestedName: '模型名', description: '模型不应覆盖这段人工语义', imageText: '', tags: ['模型标签'] },
+      { version: 2, model: 'test' }
+    )!;
+    expect(result.analysisSource).toBe('manual');
+    expect(result.tags).toEqual(['人工标签']);
+  });
 });

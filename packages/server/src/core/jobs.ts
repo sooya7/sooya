@@ -24,8 +24,10 @@ import { STICKER_ANALYSIS_VERSION } from './stickers/constants.js';
 import { stickerSemanticText } from './stickers/semantic-text.js';
 import type { StickerUserMeaningLearner } from './stickers/user-meaning.js';
 import type { WorldPresenceCoordinator } from './world-presence.js';
+import { JOB_PRIORITY } from './job-priority.js';
 
 export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
+export const STICKER_MAINTENANCE_BATCH = 8;
 
 /** Small persisted in-process job worker. */
 export class JobWorker {
@@ -149,6 +151,35 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     }
   });
 
+  worker.register('sticker.analyze.backfill', async (payload) => {
+    if (!deps.capabilities.visionProvider()) return;
+    const requestedIds = Array.isArray(payload.ids)
+      ? payload.ids.map((id) => String(id)).filter(Boolean)
+      : null;
+    const active = new Set(
+      deps.jobs.list(500)
+        .filter((job) => job.type === 'sticker.analyze' && (job.status === 'pending' || job.status === 'running'))
+        .map((job) => stickerIdFromJob(job.payload_json))
+        .filter(Boolean)
+    );
+    const source = requestedIds
+      ? requestedIds.map((id) => deps.stickerRepo.get(id)).filter((sticker): sticker is NonNullable<typeof sticker> => Boolean(sticker))
+      : deps.stickerRepo.list({ enabledOnly: true });
+    const candidates = source.filter((sticker) =>
+      sticker.analysisStatus !== 'ready'
+      && sticker.analysisSource !== 'manual'
+      && !active.has(sticker.id)
+    );
+    const batch = candidates.slice(0, STICKER_MAINTENANCE_BATCH);
+    for (const sticker of batch) {
+      deps.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerAnalyze });
+    }
+    const remaining = candidates.slice(batch.length).map((sticker) => sticker.id);
+    if (remaining.length > 0) {
+      deps.jobs.enqueue('sticker.analyze.backfill', { ids: remaining }, { priority: JOB_PRIORITY.stickerAnalyze });
+    }
+  });
+
   worker.register('sticker.embed', async (payload) => {
     const stickerId = String(payload.stickerId ?? '');
     const sticker = deps.stickerRepo.get(stickerId);
@@ -173,8 +204,10 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
         || (expectedDimensions !== undefined && sticker.embeddingDim !== expectedDimensions)
       )
     );
-    const missing = candidates.slice(0, 20);
-    for (const sticker of missing) deps.jobs.enqueue('sticker.embed', { stickerId: sticker.id }, { maxAttempts: 2 });
+    const missing = candidates.slice(0, STICKER_MAINTENANCE_BATCH);
+    for (const sticker of missing) {
+      deps.jobs.enqueue('sticker.embed', { stickerId: sticker.id }, { maxAttempts: 2, priority: JOB_PRIORITY.stickerEmbed });
+    }
     // Keep draining large catalogues in bounded batches. The next durable job
     // is queued only after this batch is claimed, so startup never floods the
     // job table with one row per sticker.
@@ -268,6 +301,10 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
   });
 
   worker.register('backup.create', async (payload) => { await deps.backups.create(String(payload.reason ?? 'scheduled')); });
+}
+
+function stickerIdFromJob(payloadJson: string): string {
+  try { return String((JSON.parse(payloadJson) as { stickerId?: unknown }).stickerId ?? ''); } catch { return ''; }
 }
 
 function mediaName(metaJson: string): string | undefined {

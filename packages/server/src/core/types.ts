@@ -12,7 +12,7 @@ export const RoleSchema = z.enum(['user', 'assistant', 'system']);
 export type Role = z.infer<typeof RoleSchema>;
 
 export interface MessagePart { id: string; type: PartType; text?: string | null; mediaId?: string | null; status: PartStatus; error?: string | null; duration?: number | null; transcript?: string | null; meta?: Record<string, unknown>; media?: MediaRef | null; }
-export interface MediaRef { id: string; kind: 'image' | 'audio' | 'sticker' | 'file'; mime: string; bytes: number; width?: number | null; height?: number | null; duration?: number | null; url: string; name?: string | null; transcript?: string | null; textStatus?: 'pending' | 'ready' | 'failed' | 'unsupported'; textError?: string | null; }
+export interface MediaRef { id: string; kind: 'image' | 'audio' | 'sticker' | 'file'; mime: string; bytes: number; width?: number | null; height?: number | null; duration?: number | null; url: string; name?: string | null; transcript?: string | null; animated?: boolean; textStatus?: 'pending' | 'ready' | 'failed' | 'unsupported'; textError?: string | null; }
 export interface ChatMessage { id: string; conversationId: string; role: Role; createdAt: string; updatedAt: string; seq: number; status: MessageStatus; clientMsgId?: string | null; replyTo?: string | null; error?: string | null; content: MessagePart[]; meta?: Record<string, unknown>; }
 
 export const InputPartSchema = z.discriminatedUnion('type', [

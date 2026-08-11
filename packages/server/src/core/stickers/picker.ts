@@ -31,12 +31,16 @@ export class StickerPicker {
   ) {}
 
   async pick(input: StickerPickInput): Promise<StickerPickResult> {
-    let retrieved = await this.retriever.retrieve(input.intent, input.excludeIds);
+    let effectiveExcludeIds = input.excludeIds;
+    let repeatRelaxed = false;
+    let retrieved = await this.retriever.retrieve(input.intent, effectiveExcludeIds);
     // A required sticker must still be deliverable when the repeat window
     // contains the entire catalogue. Relax repetition only as the final
     // fallback; ordinary and explicit-null choices keep the exclusion fence.
     if (input.required && retrieved.candidates.length === 0 && input.excludeIds.length > 0) {
-      retrieved = await this.retriever.retrieve(input.intent, []);
+      effectiveExcludeIds = [];
+      repeatRelaxed = true;
+      retrieved = await this.retriever.retrieve(input.intent, effectiveExcludeIds);
     }
     const candidates = retrieved.candidates;
     if (candidates.length === 0) return { stickerId: null, confidence: null, model: null, strategy: 'fallback', reason: 'failed' };
@@ -47,7 +51,7 @@ export class StickerPicker {
       `SOOYA 已生成的文字：${input.assistantText}`,
       `最近聊天：${input.recentContext}`
     ].join('\n').slice(0, STICKER_PICKER_MAX_CONTEXT_CHARS);
-    this.onEvent?.('started', { candidateCount: candidates.length, strategy: retrieved.strategy });
+    this.onEvent?.('started', { candidateCount: candidates.length, strategy: retrieved.strategy, repeatRelaxed });
     const result = await this.client.run({
       task: 'sticker',
       system: STICKER_DIRECTOR_PROMPT,
@@ -65,7 +69,7 @@ export class StickerPicker {
     }
     const stickerId = result.data.stickerId ?? null;
     const selected = stickerId
-      ? candidates.find((candidate) => candidate.id === stickerId && !input.excludeIds.includes(candidate.id))
+      ? candidates.find((candidate) => candidate.id === stickerId && !effectiveExcludeIds.includes(candidate.id))
         : undefined;
     if (!selected) {
       this.onEvent?.('failed', { reason: stickerId === null ? 'explicit_null' : 'invalid_sticker_id', candidateCount: candidates.length });
@@ -77,7 +81,7 @@ export class StickerPicker {
         : { stickerId: null, confidence: result.data.confidence ?? null, model: result.model, strategy: retrieved.strategy, reason: 'failed' };
     }
     const confidence = result.data.confidence ?? null;
-    this.onEvent?.('completed', { stickerId: selected.id, candidateCount: candidates.length, strategy: retrieved.strategy, confidence });
+    this.onEvent?.('completed', { stickerId: selected.id, candidateCount: candidates.length, strategy: retrieved.strategy, confidence, repeatRelaxed });
     return { stickerId: selected.id, sticker: selected, confidence, model: result.model, strategy: retrieved.strategy, reason: 'selected' };
   }
 

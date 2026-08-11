@@ -20,6 +20,7 @@ export interface MediaRow {
   deleted_at: string | null;
   favorite: number;
   tags_json: string;
+  animated: number;
 }
 
 export interface CreateMediaInput {
@@ -36,6 +37,7 @@ export interface CreateMediaInput {
   transcript?: string | null;
   meta?: Record<string, unknown>;
   tags?: string[];
+  animated?: boolean;
 }
 
 export interface GalleryQuery {
@@ -90,11 +92,12 @@ export class MediaRepo {
       meta_json: JSON.stringify(input.meta ?? {}),
       deleted_at: null,
       favorite: 0,
-      tags_json: JSON.stringify(input.tags ?? [])
+      tags_json: JSON.stringify(input.tags ?? []),
+      animated: input.animated ? 1 : 0
     };
     this.db.prepare(`
-      INSERT INTO media (id, kind, rel_path, mime, bytes, sha256, width, height, duration, origin, created_at, transcript, meta_json, deleted_at, favorite, tags_json)
-      VALUES (@id, @kind, @rel_path, @mime, @bytes, @sha256, @width, @height, @duration, @origin, @created_at, @transcript, @meta_json, @deleted_at, @favorite, @tags_json)
+      INSERT INTO media (id, kind, rel_path, mime, bytes, sha256, width, height, duration, origin, created_at, transcript, meta_json, deleted_at, favorite, tags_json, animated)
+      VALUES (@id, @kind, @rel_path, @mime, @bytes, @sha256, @width, @height, @duration, @origin, @created_at, @transcript, @meta_json, @deleted_at, @favorite, @tags_json, @animated)
     `).run(row);
     return row;
   }
@@ -212,7 +215,7 @@ function galleryWhere(input: GalleryQuery): { where: string[]; values: unknown[]
 export function toMediaRef(row: MediaRow): MediaRef {
   let name: string | null = null;
   try { const meta = JSON.parse(row.meta_json) as { name?: string }; name = meta.name ?? null; } catch { /* ignore */ }
-  return { id: row.id, kind: row.kind, mime: row.mime, bytes: row.bytes, width: row.width, height: row.height, duration: row.duration, url: `/api/media/${row.id}`, name, transcript: row.transcript };
+  return { id: row.id, kind: row.kind, mime: row.mime, bytes: row.bytes, width: row.width, height: row.height, duration: row.duration, url: `/api/media/${row.id}`, name, transcript: row.transcript, animated: row.animated === 1 };
 }
 
 export function mediaMeta(row: MediaRow): { tags: string[]; meta: Record<string, unknown> } {

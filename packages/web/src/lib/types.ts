@@ -14,6 +14,7 @@ export interface MediaRef {
   url: string;
   name?: string | null;
   transcript?: string | null;
+  animated?: boolean;
   textStatus?: 'pending' | 'ready' | 'failed' | 'unsupported';
   textError?: string | null;
 }
@@ -71,6 +72,7 @@ export interface StickerInfo {
   userUseCount?: number;
   analysisStatus?: 'pending' | 'processing' | 'ready' | 'failed';
   userLastUsedAt?: string | null;
+  animated?: boolean;
 }
 
 export type ConnectionState = 'connecting' | 'online' | 'offline' | 'unauthorized';

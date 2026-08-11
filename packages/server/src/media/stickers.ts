@@ -106,7 +106,7 @@ export class StickerLibrary {
       .map((s) => {
         const media = this.mediaRepo.get(s.mediaId);
         const ok = media ? this.store.exists(media) : false;
-        return { ...s, available: ok, mime: media?.mime };
+        return { ...s, available: ok, mime: media?.mime, animated: media?.animated === 1 };
       })
       .filter((s) => s.available);
     this.availableCache = result;
@@ -117,7 +117,7 @@ export class StickerLibrary {
     if (this.allCache) return this.allCache;
     const result = this.repo.list().map((s) => {
       const media = this.mediaRepo.get(s.mediaId);
-      return { ...s, available: media ? this.store.exists(media) : false, mime: media?.mime };
+      return { ...s, available: media ? this.store.exists(media) : false, mime: media?.mime, animated: media?.animated === 1 };
     });
     this.allCache = result;
     return result;

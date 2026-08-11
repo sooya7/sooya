@@ -10,6 +10,7 @@ export interface FeatureMedia {
   width?: number | null;
   height?: number | null;
   url: string;
+  animated?: boolean;
   name?: string | null;
   origin: 'upload' | 'generated' | 'builtin' | 'remote';
   exists: boolean;

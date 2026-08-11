@@ -134,31 +134,25 @@ export function StickerPanel({ stickers, onSelect, onNotice }: Props) {
       {!loading && visible.length === 0 && <div className="sticker-empty">还没有可用的表情包</div>}
       <div className="sticker-grid">
         {visible.map((sticker) => (
-          <button
+          <div
             key={sticker.id}
-            type="button"
             className="sticker-choice"
             onClick={() => onSelect(sticker)}
             title={sticker.description || sticker.emotion || sticker.name}
           >
-            <AuthenticatedImage path={mediaThumbnailPath(sticker.url, 96)} scope="user" alt={sticker.name} loading="lazy" />
-            <span className="sticker-choice-name">{sticker.name}</span>
-            <span
+            <button type="button" className="sticker-choice-main" onClick={(event) => { event.stopPropagation(); onSelect(sticker); }}>
+              <AuthenticatedImage path={sticker.animated ? sticker.url : mediaThumbnailPath(sticker.url, 96)} scope="user" alt={sticker.name} loading="lazy" />
+              <span className="sticker-choice-name">{sticker.name}</span>
+            </button>
+            <button
+              type="button"
               className={sticker.favorite ? 'sticker-favorite active' : 'sticker-favorite'}
-              role="button"
-              tabIndex={0}
               aria-label={sticker.favorite ? `取消收藏${sticker.name}` : `收藏${sticker.name}`}
               onClick={(event) => void toggleFavorite(event, sticker)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  void toggleFavorite(event, sticker);
-                }
-              }}
             >
               {sticker.favorite ? '★' : '☆'}
-            </span>
-          </button>
+            </button>
+          </div>
         ))}
       </div>
       {nextCursor && <button type="button" className="sticker-load-more" disabled={loading} onClick={() => void loadMore()}>{loading ? '正在读取…' : '加载更多'}</button>}

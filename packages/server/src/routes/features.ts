@@ -296,7 +296,8 @@ export function registerFeatureRoutes(app: SooyaApp): void {
 
   server.post('/api/admin/life/tick', adminGuard, async () => {
     const result = services.life.tick();
-    return { ...result, snapshot: services.life.snapshot() };
+    const presence = services.presence.sync('admin.life.tick');
+    return { ...result, snapshot: services.life.snapshot(), presence };
   });
 
   /*

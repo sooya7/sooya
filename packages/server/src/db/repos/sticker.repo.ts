@@ -76,6 +76,8 @@ export interface Sticker {
   updatedAt: string;
   url: string;
   mime?: string;
+  /** True when the source media contains more than one image frame. */
+  animated?: boolean;
   /** False when the underlying media file is missing on disk. */
   available?: boolean;
 }
@@ -228,6 +230,7 @@ export class StickerRepo {
   }): Sticker | undefined {
     const sets: string[] = [];
     const values: unknown[] = [];
+    const normalizedMeaning = patch.userMeaning?.trim().slice(0, 120);
     const semanticChanged = patch.tags !== undefined || patch.name !== undefined || patch.emotion !== undefined
       || patch.description !== undefined || patch.imageText !== undefined || patch.userMeaning !== undefined;
     if (patch.tags !== undefined) (sets.push('tags_json = ?'), values.push(JSON.stringify(normalizeTags(patch.tags))));
@@ -237,10 +240,14 @@ export class StickerRepo {
     else if (patch.name !== undefined) (sets.push('name_source = ?'), values.push('manual'));
     if (patch.description !== undefined) (sets.push('description = ?'), values.push(patch.description.trim().slice(0, 500)));
     if (patch.imageText !== undefined) (sets.push('image_text = ?'), values.push(patch.imageText.trim().slice(0, 300)));
-    if (patch.userMeaning !== undefined) (sets.push('user_meaning = ?'), values.push(patch.userMeaning.trim().slice(0, 120)));
-    if (patch.userMeaningSource !== undefined) (sets.push('user_meaning_source = ?'), values.push(patch.userMeaningSource));
-    else if (patch.userMeaning !== undefined) (sets.push('user_meaning_source = ?'), values.push('manual'));
-    if (patch.description !== undefined || patch.imageText !== undefined) {
+    if (patch.userMeaning !== undefined) {
+      sets.push('user_meaning = ?', 'user_meaning_source = ?', 'user_meaning_confidence = NULL', 'user_meaning_updated_at = ?');
+      values.push(normalizedMeaning, normalizedMeaning ? (patch.userMeaningSource ?? 'manual') : 'none', normalizedMeaning ? nowIso() : null);
+    } else if (patch.userMeaningSource !== undefined) {
+      sets.push('user_meaning_source = ?');
+      values.push(patch.userMeaningSource);
+    }
+    if (patch.tags !== undefined || patch.description !== undefined || patch.imageText !== undefined) {
       sets.push('analysis_source = ?', 'analysis_status = ?', 'analysis_error = NULL');
       values.push('manual', 'ready');
     }
@@ -260,9 +267,15 @@ export class StickerRepo {
     return this.update(id, patch);
   }
 
+  /** Apply fields edited by a person and mark the visual analysis as authoritative. */
+  updateManualSemantics(id: string, patch: { description?: string; imageText?: string; tags?: string[] }): Sticker | undefined {
+    return this.update(id, patch);
+  }
+
   applyAiAnalysis(id: string, patch: { suggestedName: string; description: string; imageText: string; tags: string[] }, meta: { version: number; model: string }): Sticker | undefined {
     const current = this.get(id);
     if (!current) return undefined;
+    if (current.analysisSource === 'manual') return current;
     const sets = [
       'description = ?', 'image_text = ?', 'tags_json = ?',
       'analysis_status = \'ready\'', 'analysis_source = \'ai\'',
@@ -285,8 +298,11 @@ export class StickerRepo {
       values.splice(1, 0, patch.suggestedName.trim().slice(0, 60));
     }
     values.push(id);
-    const result = this.db.prepare(`UPDATE stickers SET ${sets.join(', ')} WHERE id = ?`).run(...values);
-    if (result.changes === 0) return undefined;
+    const result = this.db.prepare(`UPDATE stickers SET ${sets.join(', ')} WHERE id = ? AND analysis_source != 'manual'`).run(...values);
+    if (result.changes === 0) {
+      const latest = this.get(id);
+      return latest?.analysisSource === 'manual' ? latest : undefined;
+    }
     this.refreshFts(id);
     this.notify();
     return this.get(id);
@@ -302,7 +318,10 @@ export class StickerRepo {
     if (patch.error !== undefined) (sets.push('analysis_error = ?'), values.push(patch.error));
     if (patch.status === 'ready') sets.push('analysis_error = NULL');
     values.push(id);
-    const result = this.db.prepare(`UPDATE stickers SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    // A worker may still be finishing after an administrator has edited the
+    // sticker. Do not let its processing/failure state erase that manual fence.
+    const manualFence = " AND analysis_source != 'manual'";
+    const result = this.db.prepare(`UPDATE stickers SET ${sets.join(', ')} WHERE id = ?${manualFence}`).run(...values);
     if (result.changes === 0) return undefined;
     this.notify();
     return this.get(id);
@@ -408,10 +427,12 @@ export class StickerRepo {
 
   setUserMeaning(id: string, meaning: string, source: StickerUserMeaningSource, confidence: number | null = null): Sticker | undefined {
     const normalized = meaning.trim().slice(0, 120);
+    const effectiveSource: StickerUserMeaningSource = normalized ? source : 'none';
+    const effectiveConfidence = effectiveSource === 'ai' ? confidence : null;
     const result = this.db.prepare(
       `UPDATE stickers SET user_meaning = ?, user_meaning_source = ?, user_meaning_confidence = ?,
        user_meaning_updated_at = ?, embedding = NULL, embedding_dim = NULL, embedding_model = NULL, updated_at = ? WHERE id = ?`
-    ).run(normalized, source, confidence, normalized ? nowIso() : null, nowIso(), id);
+    ).run(normalized, effectiveSource, effectiveConfidence, normalized ? nowIso() : null, nowIso(), id);
     if (result.changes === 0) return undefined;
     this.refreshFts(id);
     this.notify();
