@@ -44,9 +44,13 @@ jobs:
           retention-days: 1
 
   server-tests:
-    name: Server unit and integration tests
+    name: Server tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/2', '2/2']
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -54,7 +58,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - run: npm run test -w @sooya/server
+      - name: Run server test shard
+        run: npm run test -w @sooya/server -- --shard=${{ matrix.shard }}
 
   web-tests:
     name: Web unit and component tests
