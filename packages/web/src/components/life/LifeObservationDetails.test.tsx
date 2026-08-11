@@ -209,7 +209,8 @@ describe('LifeObservationDetails', () => {
     expect(secondary?.contains(details)).toBe(true);
     expect(secondary?.textContent).toContain('正在发展的事');
     expect(secondary?.textContent).toContain('生活记录');
-    expect(secondary?.textContent).toContain('朋友圈发布');
+    expect(secondary?.textContent).toContain('最近活动与事件');
+    expect(secondary?.textContent).not.toContain('最近活动、事件与朋友圈发布');
     expect(secondary?.textContent).not.toContain('地点与天气');
   });
 
@@ -240,19 +241,20 @@ describe('LifeObservationDetails', () => {
     expect(apiMocks.weatherStatus).not.toHaveBeenCalled();
   });
 
-  it('renders history newest first with Chinese type labels and no mutation UI', async () => {
+  it('renders only Life activities and events, never Moments records', async () => {
     await renderDetails();
     await click(button('生活记录'));
 
     const rows = Array.from(container!.querySelectorAll('[data-testid="life-history-list"] li'));
+    expect(rows).toHaveLength(2);
     expect(rows.map((row) => row.textContent)).toEqual([
       expect.stringContaining('事件'),
-      expect.stringContaining('朋友圈'),
       expect.stringContaining('活动')
     ]);
     expect(rows[0]?.textContent).toContain('把书架整理好了');
-    expect(rows[1]?.textContent).toContain('分享读书感想');
-    expect(rows[2]?.textContent).toContain('吃过早餐');
+    expect(rows[1]?.textContent).toContain('吃过早餐');
+    expect(container!.textContent).not.toContain('分享读书感想');
+    expect(container!.textContent).not.toContain('朋友圈');
 
     const forbiddenLabels = ['新增地点', '删除', '设为当前城市', '立即刷新天气', '调整', '重置', '切换地点'];
     for (const label of forbiddenLabels) expect(container!.textContent).not.toContain(label);
