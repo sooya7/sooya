@@ -518,6 +518,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   }
   const enqueuePendingStickerMaintenance = (): void => {
     if (opts.startWorkers === false || !env.ENABLE_BACKGROUND_JOBS) return;
+    // Startup maintenance must yield to interactive jobs (chat completion,
+    // life bridge, memory and push). A large legacy catalogue can otherwise
+    // occupy the single durable worker long enough to make a fresh reply look
+    // stuck. The jobs remain durable and will be claimed once this short grace
+    // period expires.
+    const runAfter = new Date(Date.now() + 30_000).toISOString();
     const activeAnalysis = new Set(
       repos.jobs.list(500)
         .filter((job) => job.type === 'sticker.analyze' && (job.status === 'pending' || job.status === 'running'))
@@ -528,7 +534,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       .filter((sticker) => sticker.analysisStatus !== 'ready' && sticker.analysisSource !== 'manual' && !activeAnalysis.has(sticker.id))
       .slice(0, 100);
     if (capabilities.visionProvider()) {
-      for (const sticker of pending) repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2 });
+      for (const sticker of pending) repos.jobs.enqueue('sticker.analyze', { stickerId: sticker.id }, { maxAttempts: 2, runAfter });
     }
     if (capabilities.has('embedding')) {
       const embedding = config.getModels().embedding;
@@ -540,7 +546,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
         )
       );
       const activeBackfill = repos.jobs.list(500).some((job) => job.type === 'sticker.embed.backfill' && (job.status === 'pending' || job.status === 'running'));
-      if (needsBackfill && !activeBackfill) repos.jobs.enqueue('sticker.embed.backfill', {});
+      if (needsBackfill && !activeBackfill) repos.jobs.enqueue('sticker.embed.backfill', {}, { runAfter });
     }
   };
   enqueuePendingStickerMaintenance();
