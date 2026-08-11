@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/scripts/compact-operations-summary.py'
+      - '.github/workflows/compact-operations-summary.yml'
 
 permissions:
   contents: write
