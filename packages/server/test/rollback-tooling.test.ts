@@ -38,7 +38,7 @@ describe('rollback tooling (P0-5)', () => {
     for (const m of MIGRATIONS) {
       db.transaction(() => { m.up(db as never); insert.run(m.version, m.name, new Date().toISOString()); })();
     }
-    expect(LATEST_VERSION).toBe(33);
+    expect(LATEST_VERSION).toBe(34);
     db.exec(`
       INSERT INTO messages(id, conversation_id, role, created_at, updated_at, seq, status, client_msg_id, reply_to, error, meta_json)
         VALUES ('msg_rb_1','main','user','2026-08-01T00:00:00.000Z','2026-08-01T00:00:00.000Z',1,'sent',NULL,NULL,NULL,'{}');
@@ -51,21 +51,18 @@ describe('rollback tooling (P0-5)', () => {
     db.close();
 
     try {
-      // Preflight must fail with the open states listed.
       const pre = await runScript('rollback-preflight.mjs', dir);
       expect(pre.code).toBe(1);
       expect(pre.stdout).toContain('generating');
       expect(pre.stdout).toContain('superseded');
       expect(pre.stderr).toContain('open reply batches');
 
-      // Normalize (--yes) converts them.
       const norm = await runScript('rollback-normalize.mjs', dir, ['--yes']);
       expect(norm.code).toBe(0);
       expect(norm.stdout).toContain('generating -> queued');
       expect(norm.stdout).toContain('publishing (visible) -> completed/partial');
       expect(norm.stdout).toContain('superseded -> cancelled');
 
-      // Preflight now passes.
       const after = await runScript('rollback-preflight.mjs', dir);
       expect(after.code).toBe(0);
 
