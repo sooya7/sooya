@@ -1,0 +1,8 @@
+/*
+ * The old mode pill (“简短 / 沉浸 / 关闭”) only changed local presentation and
+ * did not provide a different thought. Keep the compatibility button out of
+ * layout while MessageItem is shared with older builds.
+ */
+.thought-mode-btn {
+  display: none !important;
+}
