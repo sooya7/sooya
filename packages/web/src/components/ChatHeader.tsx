@@ -2,6 +2,7 @@ import type { ConnectionState, LifeState, PersonaInfo, WorldPresence } from '../
 import { AppLink } from './AppLink.js';
 import { HeaderWorldPresence } from './HeaderWorldPresence.js';
 import { NotificationBridge } from './NotificationBridge.js';
+import './ChatHeader.css';
 
 export interface ChatHeaderProps {
   persona: PersonaInfo | null;
@@ -14,7 +15,7 @@ export interface ChatHeaderProps {
 
 export function ChatHeader({ persona, connection, statusLabel, life, presence, onSearch }: ChatHeaderProps) {
   return (
-    <header className="topbar">
+    <header className="topbar chat-topbar">
       <div className="topbar-identity">
         <img className="topbar-avatar" src={persona?.avatar ?? '/avatars/sooya.svg'} alt="" />
         <div className="topbar-text">
