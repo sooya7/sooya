@@ -8,6 +8,10 @@
  * NEVER leak, and NEVER block the normal reply (the caller records the hit and
  * moves on).
  *
+ * It also owns a small output-quality gate. Provider truncation occasionally
+ * returned fragments such as `Won` or `(心`; those are not useful thoughts and
+ * must never be published just because they passed the security checks.
+ *
  * Matching is intentionally strict on structure (keys, prefixes, paths) rather
  * than on single Chinese words, so ordinary first-person Chinese text passes
  * and only genuine leak-shaped content is dropped.
@@ -48,6 +52,21 @@ const INTERNAL_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /(?:OpenAI|Anthropic|volcengine|火山引擎|通义|DeepSeek|apiKey|API_KEY)/iu, label: 'provider_name_or_key_ref' }
 ];
 
+/**
+ * Visible thoughts are expected to be short Chinese prose. We deliberately keep
+ * this gate conservative: it rejects obvious truncation/noise, not stylistic
+ * choices. Four CJK characters is enough for natural snippets such as “有点开心”.
+ */
+export function thoughtQualityReason(text: string): string | null {
+  const sample = String(text ?? '').trim();
+  if (!sample) return 'empty_fragment';
+  const cjk = sample.match(/[\p{Script=Han}]/gu)?.length ?? 0;
+  if (cjk < 4) return 'too_short_or_non_chinese';
+  if (/^[\s([（【「『《〈]/u.test(sample) && !/[)\]）】」』》〉]$/u.test(sample)) return 'unclosed_fragment';
+  if (/^[A-Za-z0-9_./:+-]+$/u.test(sample)) return 'machine_fragment';
+  return null;
+}
+
 export class ThoughtSafetyFilter {
   /**
    * @param refs Actual values known to be sensitive in this deployment. The
@@ -56,6 +75,9 @@ export class ThoughtSafetyFilter {
    */
   check(text: string, refs: SafetyRefs = {}): SafetyVerdict {
     const sample = String(text ?? '').slice(0, 4000);
+
+    const qualityReason = thoughtQualityReason(sample);
+    if (qualityReason) return { safe: false, reason: qualityReason };
 
     if (refs.secrets && refs.secrets.length > 0) {
       for (const secret of refs.secrets) {
