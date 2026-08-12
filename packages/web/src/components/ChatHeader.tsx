@@ -27,8 +27,13 @@ export function ChatHeader({ persona, connection, statusLabel, life, presence, o
       <HeaderWorldPresence presence={presence} />
       <div className="topbar-actions">
         <NotificationBridge />
-        <AppLink className="topbar-admin-entry topbar-moments-entry" href="/moments" aria-label="打开朋友圈" title="朋友圈" data-testid="moments-entry">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="5" width="16" height="14" rx="3" /><circle cx="9" cy="10" r="1.5" /><path d="m6.5 17 4.2-4 2.8 2.4 2.2-2 2.3 2.1" /></svg>
+        <AppLink className="topbar-admin-entry topbar-moments-entry" href="/moments" aria-label="打开动态" title="动态" data-testid="moments-entry">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-testid="moments-entry-icon">
+            <circle cx="12" cy="12" r="1.8" />
+            <circle cx="12" cy="12" r="5" />
+            <path d="M12 3.2a8.8 8.8 0 0 1 8.8 8.8" />
+            <path d="M12 20.8A8.8 8.8 0 0 1 3.2 12" />
+          </svg>
         </AppLink>
         <button type="button" className="history-tool-button" aria-label="搜索和日期跳转" onClick={onSearch} data-testid="history-tools">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-testid="history-search-icon"><circle cx="10.8" cy="10.8" r="6.2" /><path d="m15.5 15.5 5 5" /></svg>
