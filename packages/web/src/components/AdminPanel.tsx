@@ -2,7 +2,7 @@ import { FormEvent, Fragment, type MouseEvent as ReactMouseEvent, useCallback, u
 import { MetricsSummary } from './MetricsSummary.js';
 import { ApiError } from '../lib/api.js';
 import { useAutoNotice } from '../lib/autoNotice.js';
-import { navigate } from '../lib/navigation.js';
+import { navigate, APP_NAVIGATION_EVENT } from '../lib/navigation.js';
 import { AppLink } from './AppLink.js';
 import { formatAdminDateTime } from '../lib/adminDisplay.js';
 import { featureApi } from '../lib/features.js';
@@ -1242,15 +1242,24 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
       setDirtyState(false);
       setTab(next);
     };
+    // In-app links (e.g. the MCP page's "打开她的记忆" button) navigate via
+    // pushState + APP_NAVIGATION_EVENT, which never fires popstate; without
+    // this listener the URL changes but the panel keeps rendering the old tab.
+    const onAppNavigation = () => {
+      if (!window.location.pathname.startsWith('/admin')) return;
+      setTab(tabFromAdminPath(window.location.pathname, initialTab));
+    };
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!dirtyRef.current) return;
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('popstate', onPopState);
+    window.addEventListener(APP_NAVIGATION_EVENT, onAppNavigation);
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => {
       window.removeEventListener('popstate', onPopState);
+      window.removeEventListener(APP_NAVIGATION_EVENT, onAppNavigation);
       window.removeEventListener('beforeunload', onBeforeUnload);
     };
   }, [initialTab, setDirtyState, tab]);
