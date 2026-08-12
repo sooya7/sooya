@@ -234,6 +234,19 @@ export class EventRepo {
     }));
   }
 
+  recent(limit = 50): StreamEvent[] {
+    const rows = this.db
+      .prepare('SELECT * FROM events ORDER BY seq DESC LIMIT ?')
+      .all(Math.max(1, Math.min(500, limit))) as Array<{ id: string; seq: number; type: StreamEventType; payload_json: string; created_at: string }>;
+    return rows.map((r) => ({
+      id: r.id,
+      seq: r.seq,
+      type: r.type,
+      createdAt: r.created_at,
+      payload: safeParse(r.payload_json)
+    }));
+  }
+
   /**
    * High-water mark of issued event sequence numbers.
    * Read from the counter rather than MAX(seq) so pruning (or clearing) the

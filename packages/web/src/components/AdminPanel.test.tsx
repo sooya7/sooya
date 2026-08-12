@@ -34,6 +34,13 @@ const adminMocks = vi.hoisted(() => ({
   })),
   stickers: vi.fn(async () => ({ stickers: [] })),
   media: vi.fn(async () => ({ media: [] })),
+  mcpOverview: vi.fn(async () => ({ configSource: 'test', globalPolicy: { readEnabled: true, writeEnabled: false, maintenanceEnabled: true }, servers: [], tools: [], memory: { backend: 'ombre', connection: 'degraded', health: null, lastCommit: null, pending: 0, uncertain: 0, lastDream: null, dashboardUrl: null }, dashboardUrl: null })),
+  ombreStatus: vi.fn(async () => ({ backend: 'ombre', connection: 'degraded', health: null, lastCommit: null, pending: 0, uncertain: 0, lastDream: null, dashboardUrl: null })),
+  ombreActivity: vi.fn(async () => ({ activity: [] })),
+  legacyMemories: vi.fn(async () => ({ memories: [], total: 0, readOnly: true })),
+  adminStickers: vi.fn(async () => ({ stickers: [], total: 0, offset: 0, facets: { status: {}, source: {}, emotion: {} } })),
+  adminMedia: vi.fn(async () => ({ media: [], total: 0, offset: 0 })),
+  chatHistory: vi.fn(async () => ({ messages: [], total: 0, limit: 40, offset: 0 })),
   models: vi.fn(async () => ({
     models: {
       storageVersion: 2,
@@ -56,6 +63,8 @@ const adminMocks = vi.hoisted(() => ({
   discoverModels: vi.fn(async () => ({ models: [], source: 'test' })),
   testModel: vi.fn(async () => ({ ok: true, provider: 'test', latencyMs: 1, detail: 'ok' })),
   testWebSearch: vi.fn(async (provider: string) => ({ ok: true, provider, latencyMs: 1, resultCount: 1 })),
+  uploadSticker: vi.fn(async () => ({ created: [], failed: [] })),
+  analyzeStickerBatch: vi.fn(async () => ({ queued: 0, skipped: 0 })),
   errors: vi.fn(async () => ({ errors: [
     { id: 'e1', createdAt: '2026-08-12T04:55:00.000Z', scope: 'job.sticker.analyze', message: 'invalid_analysis_json', detail: { raw: 'bad' } },
     { id: 'e2', createdAt: '2026-08-12T04:54:00.000Z', scope: 'job.sticker.analyze', message: 'invalid_analysis_json: schema', detail: null }
@@ -111,6 +120,13 @@ beforeEach(() => {
   adminMocks.updateVoiceBehavior.mockClear();
   adminMocks.modelPresets.mockClear();
   adminMocks.testWebSearch.mockClear();
+  adminMocks.mcpOverview.mockClear();
+  adminMocks.ombreStatus.mockClear();
+  adminMocks.ombreActivity.mockClear();
+  adminMocks.legacyMemories.mockClear();
+  adminMocks.adminStickers.mockClear();
+  adminMocks.adminMedia.mockClear();
+  adminMocks.chatHistory.mockClear();
 });
 
 afterEach(async () => {
@@ -122,6 +138,46 @@ afterEach(async () => {
 });
 
 describe('AdminPanel 子页首屏', () => {
+  it('renders the independent MCP route without exposing schemas in the list', async () => {
+    window.history.replaceState(null, '', '/admin/mcp');
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<AdminPanel initialTab="mcp" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="admin-mcp-page"]')).not.toBeNull();
+    expect(adminMocks.mcpOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses content subroutes and loads only the selected content page', async () => {
+    window.history.replaceState(null, '', '/admin/content/chat');
+    adminMocks.chatHistory.mockImplementationOnce(async () => ({
+      messages: [{
+        id: 'chat-1', conversationId: 'main', role: 'user', createdAt: '2026-08-12T00:00:00.000Z', updatedAt: '2026-08-12T00:00:00.000Z', seq: 1, status: 'sent',
+        content: [{ id: 'part-1', type: 'text', text: 'test chat' }]
+      }],
+      total: 1,
+      limit: 40,
+      offset: 0
+    } as never));
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<AdminPanel initialTab="content" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="admin-content-management"]')).not.toBeNull();
+    await vi.waitFor(() => expect(adminMocks.chatHistory).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(container!.querySelector('[data-testid="admin-chat-history"]')).not.toBeNull());
+    expect(adminMocks.ombreStatus).not.toHaveBeenCalled();
+    expect(adminMocks.adminStickers).not.toHaveBeenCalled();
+  });
+
   it('打开头像页时不等待无关的概览请求', async () => {
     container = document.createElement('div');
     document.body.append(container);

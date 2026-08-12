@@ -62,4 +62,27 @@ describe('ToolPolicy', () => {
     expect(policy.definitions('reply')).toEqual([]);
     expect(policy.check(registry.require('ombre.hold'), 'memory_commit')).toMatchObject({ allowed: false, reason: 'write-disabled' });
   });
+
+  it('allows only read tools in the admin phase', () => {
+    const registry = new ToolRegistry();
+    registry.register(tool({ name: 'ombre.admin-search', modelName: 'ombre__admin_search', phases: ['admin'] }));
+    registry.register(tool({ name: 'ombre.admin-write', modelName: 'ombre__admin_write', risk: 'write', phases: ['admin'] }));
+    const policy = new ToolPolicy(registry);
+
+    expect(policy.check(registry.require('ombre.admin-search'), 'admin')).toEqual({ allowed: true });
+    expect(policy.check(registry.require('ombre.admin-write'), 'admin')).toMatchObject({
+      allowed: false,
+      reason: 'non-read-tool-in-admin-phase'
+    });
+  });
+
+  it('does not grant admin access to a tool from another phase', () => {
+    const registry = new ToolRegistry();
+    registry.register(tool({ phases: ['reply', 'proactive'] }));
+    const policy = new ToolPolicy(registry);
+    expect(policy.check(registry.require('ombre.breath'), 'admin')).toMatchObject({
+      allowed: false,
+      reason: 'phase-not-authorized'
+    });
+  });
 });

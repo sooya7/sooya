@@ -89,4 +89,43 @@ describe('OmbreMemoryBridge', () => {
     expect(searchArgs).toEqual({ query: 'sooya:batch-7:2' });
     expect(marked).toMatchObject({ recovered: true, sourceMarker: 'sooya:batch-7:2' });
   });
+
+  it('keeps an uncertain receipt when the marker cannot prove the remote write', async () => {
+    let started = 0;
+    const bridge = new OmbreMemoryBridge({
+      manager: { health: () => [], getConnection: () => undefined } as never,
+      registry: { get: (name: string) => name === 'ombre.breath_search' ? { handler: async () => 'ordinary result' } : undefined } as never,
+      policy: { check: () => ({ allowed: true }) } as never,
+      runtime: { prepare: async () => { throw new Error('must not write automatically'); } } as never,
+      commits: {
+        get: () => ({ batch_id: 'batch-8', revision: 1, state: 'uncertain', started_at: null, completed_at: null, detail_json: '{}' }),
+        start: () => { started += 1; throw new Error('automatic retry must not start'); },
+        mark: () => { throw new Error('automatic retry must not mark'); }
+      } as never,
+      chatProvider: {} as never
+    });
+
+    await expect(bridge.commit({ batchId: 'batch-8', revision: 1, userText: 'x', assistantText: 'y' })).resolves.toEqual({
+      state: 'uncertain', callsExecuted: 0, rounds: 0
+    });
+    expect(started).toBe(0);
+  });
+
+  it('allows only an explicit retry to pass an unproven receipt through the writer', async () => {
+    let prepared = 0;
+    const bridge = new OmbreMemoryBridge({
+      manager: { health: () => [], getConnection: () => undefined } as never,
+      registry: { get: (name: string) => name === 'ombre.breath_search' ? { handler: async () => 'ordinary result' } : undefined } as never,
+      policy: { check: () => ({ allowed: true }) } as never,
+      runtime: { prepare: async () => { prepared += 1; return { rounds: 1, callsExecuted: 1, exhausted: false }; } } as never,
+      commits: {
+        get: () => ({ batch_id: 'batch-9', revision: 1, state: 'uncertain', started_at: null, completed_at: null, detail_json: '{}' }),
+        start: () => ({ state: 'running' }),
+        mark: (_batchId: string, _revision: number, state: string) => { expect(state).toBe('completed'); return {}; }
+      } as never,
+      chatProvider: () => ({ configured: true, supportsTools: true } as never)
+    });
+    await expect(bridge.commit({ batchId: 'batch-9', revision: 1, userText: 'x', assistantText: 'y', allowUncertainRetry: true })).resolves.toMatchObject({ state: 'completed' });
+    expect(prepared).toBe(1);
+  });
 });

@@ -9,6 +9,8 @@ import { featureApi } from '../lib/features.js';
 import { AvatarEditor, emotionLabel, ReferencesEditor, StorageEditor } from './FeatureAdminPage.js';
 import { LifeObservationPanel } from './life/LifeObservationPanel.js';
 import { WebSearchModelEditor } from './WebSearchModelEditor.js';
+import { McpAdminPage } from './admin/McpAdminPage.js';
+import { ContentManagementPage } from './admin/ContentManagementPage.js';
 import {
   interfaceOptions,
   MODEL_SLOTS,
@@ -49,11 +51,12 @@ export type Tab =
   | 'avatar'
   | 'life'
   | 'models'
+  | 'mcp'
   | 'content'
   | 'storage'
   | 'operations';
 type Dashboard = { system: AdminSystemStatus; capabilities: AdminCapabilities; backups: AdminBackup[] };
-type IconName = 'overview' | 'persona' | 'models' | 'content' | 'operations' | 'message' | 'cpu' | 'storage' | 'backup' | 'lock';
+type IconName = 'overview' | 'persona' | 'models' | 'mcp' | 'content' | 'operations' | 'message' | 'cpu' | 'storage' | 'backup' | 'lock';
 
 const CAPABILITIES = [
   ['chat', '聊天模型'],
@@ -76,6 +79,7 @@ const NAV_GROUPS = ['运行状态', '助手与表达', '内容与系统'] as con
 type NavGroup = (typeof NAV_GROUPS)[number];
 
 const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: IconName; group: NavGroup }> = [
+  { group: NAV_GROUPS[2], id: 'mcp', label: 'MCP 服务', description: '连接、工具与策略观测', icon: 'mcp' },
   { group: '运行状态', id: 'overview', label: '概览', description: '运行状态与资源', icon: 'overview' },
   { group: '助手与表达', id: 'persona', label: '助手配置', description: '人设与表达方式', icon: 'persona' },
   { group: '内容与系统', id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
@@ -87,7 +91,7 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: I
 ];
 
 export function adminPathForTab(tab: Tab): string {
-  return `/admin/${tab}`;
+  return tab === 'content' ? '/admin/content/memory' : `/admin/${tab}`;
 }
 
 export function tabFromAdminPath(pathname: string, fallback: Tab = 'overview'): Tab {
@@ -97,7 +101,12 @@ export function tabFromAdminPath(pathname: string, fallback: Tab = 'overview'): 
   return segment && TABS.some((item) => item.id === segment) ? segment : fallback;
 }
 
+function isContentSubroute(pathname: string): boolean {
+  return /^\/admin\/content\/(memory|stickers|media|chat)\/?$/u.test(pathname.replace(/\/+$/, ''));
+}
+
 const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
+  mcp: { title: 'MCP 服务', description: '观察外部 MCP 连接和安全工具元数据。' },
   overview: { title: '系统概览', description: '查看 SOOYA 当前运行状态和资源使用情况。' },
   persona: { title: '助手配置', description: '调整助手身份、语气和说话方式。' },
   models: { title: '模型配置', description: '管理每项能力对应的接口与模型。' },
@@ -110,6 +119,7 @@ const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
 
 function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, JSX.Element> = {
+    mcp: <><circle cx="7" cy="12" r="3" /><circle cx="17" cy="7" r="3" /><circle cx="17" cy="17" r="3" /><path d="m9.5 10.5 5-2M9.5 13.5l5 2" /></>,
     overview: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
     persona: <><circle cx="12" cy="8" r="4" /><path d="M4.8 21a7.2 7.2 0 0 1 14.4 0" /></>,
     models: <><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" /></>,
@@ -1214,7 +1224,11 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
 
   useEffect(() => {
     const routeTab = tabFromAdminPath(window.location.pathname, initialTab);
-    const canonicalPath = adminPathForTab(routeTab);
+    const normalizedPath = window.location.pathname.replace(/\/+$/, '') || '/admin';
+    const preserveLegacyContent = routeTab === 'content' && normalizedPath === '/admin/content' && initialTab === 'content';
+    const canonicalPath = preserveLegacyContent || (routeTab === 'content' && isContentSubroute(normalizedPath))
+      ? window.location.pathname
+      : adminPathForTab(routeTab);
     if (window.location.pathname !== canonicalPath) {
       navigate(canonicalPath, { replace: true });
     }
@@ -1324,8 +1338,10 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
             ? <LifeObservationPanel onNotice={setNotice} />
             : tab === 'models'
                 ? <ModelsPanel onNotice={setNotice} />
+                : tab === 'mcp'
+                  ? <McpAdminPage onNotice={setNotice} />
                 : tab === 'content'
-                  ? <ContentPanel onNotice={setNotice} />
+                  ? isContentSubroute(window.location.pathname) ? <ContentManagementPage onNotice={setNotice} /> : <ContentPanel onNotice={setNotice} />
                   : tab === 'storage'
                     ? <StorageEditor onNotice={setNotice} />
                     : <OperationsPanel onNotice={setNotice} />;
@@ -1334,6 +1350,7 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
     <main className="admin-page admin-v2" data-testid="admin-dashboard" data-dirty={dirty || undefined} onInputCapture={(event) => {
       const target = event.target as HTMLInputElement;
       if (target instanceof HTMLInputElement && target.type === 'file') return;
+      if (target.closest('.admin-content-management, .admin-mcp-page')) return;
       setDirtyState(true);
     }} onSubmitCapture={() => setDirtyState(false)}>
       <div className="admin-shell">

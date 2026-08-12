@@ -74,6 +74,7 @@ import { ToolPolicy } from './agent/tool-policy.js';
 import { loadMcpConfig } from './mcp/config.js';
 import { McpManager } from './mcp/manager.js';
 import { OmbreMemoryBridge } from './core/ombre-memory.js';
+import { OmbreAdminService } from './core/ombre-admin.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerStreamRoutes } from './routes/stream.js';
@@ -149,6 +150,7 @@ export interface SooyaApp {
     webSearch: WebSearchRegistry;
     memory: MemoryService;
     ombreMemory: OmbreMemoryBridge;
+    ombreAdmin: OmbreAdminService;
     mcpManager: McpManager;
     toolPolicy: ToolPolicy;
     toolRuntime: ToolCallRuntime;
@@ -304,7 +306,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     servers: Object.values(mcpConfig.servers),
     registry: tools,
     env: runtimeEnv,
-    onEvent: (event) => logger.info({ serverId: event.serverId, detail: event.detail }, `mcp.${event.event}`)
+    onEvent: (event) => {
+      logger.info({ serverId: event.serverId, detail: event.detail }, `mcp.${event.event}`);
+      const eventType = `mcp.${event.event}` as import('./core/types.js').StreamEventType;
+      bus.publish(eventType, { serverId: event.serverId, ...(event.detail ? { error: event.detail.slice(0, 300) } : {}) });
+    }
   });
   const toolPolicy = new ToolPolicy(tools, {
     readEnabled: env.MCP_READ_ENABLED,
@@ -335,7 +341,24 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     runtime: toolRuntime,
     commits: repos.ombreCommits,
     chatProvider: () => capabilities.chatProvider(),
-    breathIdleMinutes: env.OMBRE_BREATH_IDLE_MINUTES
+    breathIdleMinutes: env.OMBRE_BREATH_IDLE_MINUTES,
+    bus
+  });
+  const ombreAdmin = new OmbreAdminService({
+    manager: mcpManager,
+    registry: tools,
+    policy: toolPolicy,
+    commits: repos.ombreCommits,
+    memories: repos.memories,
+    events: repos.events,
+    configSource: mcpConfigPath,
+    globalPolicy: {
+      readEnabled: env.MCP_READ_ENABLED,
+      writeEnabled: env.MCP_WRITE_ENABLED,
+      maintenanceEnabled: env.MCP_MAINTENANCE_ENABLED
+    },
+    dashboardUrl: env.OMBRE_DASHBOARD_URL,
+    bus
   });
   // Unit/e2e environments must remain hermetic: the default production
   // connection should never make every buildApp() wait on an absent external
@@ -555,6 +578,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   registerDefaultJobs(worker, {
     jobs: repos.jobs,
     batches: repos.replyBatches,
+    ombreCommits: repos.ombreCommits,
+    settings: repos.settings,
     media: mediaStore,
     memory,
     ombreMemory,
@@ -722,7 +747,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -867,7 +892,14 @@ function scheduleRecurring(app: SooyaApp): void {
   if (env.MEMORY_BACKEND === 'ombre' && env.OMBRE_DREAM_ENABLED && env.OMBRE_DREAM_INTERVAL_MS > 0) {
     const enqueueDreamIfEligible = (reason: string): void => {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      if (repos.ombreCommits.hasCompletedSince(since)) enqueueIfIdle('ombre.dream', { reason });
+      const latest = repos.ombreCommits.latestCompleted();
+      if (!latest?.completed_at || latest.completed_at < since) return;
+      const lastDreamAt = repos.settings.get<string | null>('ombre.lastDreamAt', null);
+      const lastDreamCommitAt = repos.settings.get<string | null>('ombre.lastDreamCommitAt', null);
+      const dreamAt = lastDreamAt ? Date.parse(lastDreamAt) : NaN;
+      if (Number.isFinite(dreamAt) && Date.now() - dreamAt < env.OMBRE_DREAM_INTERVAL_MS) return;
+      if (lastDreamCommitAt && latest.completed_at <= lastDreamCommitAt) return;
+      enqueueIfIdle('ombre.dream', { reason, commitAt: latest.completed_at });
     };
     enqueueDreamIfEligible('startup');
     const dream = setInterval(() => enqueueDreamIfEligible('scheduled'), env.OMBRE_DREAM_INTERVAL_MS);

@@ -12,6 +12,8 @@ import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
 import { redactDiagnostic } from '../core/public-error.js';
 import { DEFAULT_SPEECH_STYLE } from '../core/voice/style.js';
 import { extractJsonObject } from '../util/json-extract.js';
+import { OmbreCatalogUnavailableError } from '../core/ombre-admin.js';
+import { AdminMessageRepo, type AdminHistoryOptions } from '../db/repos/message-admin.js';
 
 function modelRows(payload: unknown): unknown[] {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
@@ -49,6 +51,7 @@ function discoveryUrls(rawBase: string): string[] {
 /** Admin API used by the built-in management panel. */
 export function registerAdminRoutes(app: SooyaApp): void {
   const { server, repos, services, config } = app;
+  const adminMessages = new AdminMessageRepo(app.db, repos.mediaText);
   const admin = requireAdminToken(app);
   const guard = { preHandler: admin };
 
@@ -550,26 +553,26 @@ export function registerAdminRoutes(app: SooyaApp): void {
     const parsed = z.object({
       q: z.string().trim().max(200).optional(),
       status: z.enum(['pending', 'processing', 'ready', 'failed']).optional(),
+      source: z.enum(['legacy', 'ai', 'manual']).optional(),
+      emotion: z.string().trim().max(40).optional(),
       // Boolean("false") is true, so z.coerce.boolean() would make the
       // disabled filter impossible to use from a query string.
       enabled: z.preprocess((value) => value === undefined ? undefined : value === true || value === 'true', z.boolean().optional()),
+      sort: z.enum(['created', 'name', 'recent', 'usage']).default('created'),
       limit: z.coerce.number().int().min(1).max(200).default(100),
       offset: z.coerce.number().int().min(0).default(0)
     }).safeParse(req.query);
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
-    let stickers = parsed.data.q
-      ? repos.stickers.searchFts(parsed.data.q, { enabledOnly: false, limit: 500, offset: 0 })
-      : repos.stickers.list({ enabledOnly: false });
-    if (parsed.data.enabled !== undefined) stickers = stickers.filter((sticker) => sticker.enabled === parsed.data.enabled);
-    if (parsed.data.status) stickers = stickers.filter((sticker) => sticker.analysisStatus === parsed.data.status);
-    const total = stickers.length;
-    const page = stickers.slice(parsed.data.offset, parsed.data.offset + parsed.data.limit).map((sticker) => {
+    const filters = { q: parsed.data.q, enabled: parsed.data.enabled, status: parsed.data.status, source: parsed.data.source, emotion: parsed.data.emotion };
+    const stickers = repos.stickers.list({ ...filters, sort: parsed.data.sort, limit: parsed.data.limit, offset: parsed.data.offset });
+    const total = repos.stickers.countFiltered(filters);
+    const page = stickers.map((sticker) => {
       const media = repos.media.get(sticker.mediaId);
       // The vector is an internal retrieval artifact; returning it would make
       // the admin list needlessly large and expose implementation details.
       return { ...sticker, embedding: undefined, mime: media?.mime, animated: media?.animated === 1, available: media ? services.mediaStore.exists(media) : false, hasEmbedding: Boolean(sticker.embedding) };
     });
-    return { stickers: page, total, offset: parsed.data.offset, analysisVersion: STICKER_ANALYSIS_VERSION };
+    return { stickers: page, total, offset: parsed.data.offset, facets: repos.stickers.facets(filters), analysisVersion: STICKER_ANALYSIS_VERSION };
   });
   server.post('/api/admin/stickers', guard, async (req, reply) => {
     if (!req.isMultipart()) {
@@ -680,11 +683,16 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { deleted: true };
   });
 
-  server.get('/api/admin/mcp/servers', guard, async () => ({
-    servers: services.mcpManager.health(),
-    memory: services.ombreMemory.health(),
-    tools: services.tools.listForAdmin().filter((tool) => tool.source === 'mcp')
-  }));
+  server.get('/api/admin/mcp/servers', guard, async () => services.ombreAdmin.mcpOverview());
+  server.get('/api/admin/mcp/tools/:name', guard, async (req, reply) => {
+    const name = decodeURIComponent((req.params as { name: string }).name);
+    const tool = services.ombreAdmin.toolSchema(name);
+    if (!tool) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    return { tool };
+  });
   server.post('/api/admin/mcp/:serverId/test', guard, async (req, reply) => {
     try {
       const snapshot = await services.mcpManager.test((req.params as { serverId: string }).serverId);
@@ -704,6 +712,79 @@ export function registerAdminRoutes(app: SooyaApp): void {
     }
   });
 
+  server.get('/api/admin/memory/status', guard, async () => services.ombreAdmin.status());
+  server.post('/api/admin/memory/commit/:batchId/:revision/retry', guard, async (req, reply) => {
+    const params = req.params as { batchId?: string; revision?: string };
+    const batchId = String(params.batchId ?? '');
+    const revision = Number(params.revision ?? 0);
+    if (!/^[A-Za-z0-9_-]{1,120}$/u.test(batchId) || !Number.isInteger(revision) || revision < 1) {
+      reply.code(400);
+      return { error: 'bad_request' };
+    }
+    const receipt = repos.ombreCommits.get(batchId, revision);
+    if (!receipt) {
+      reply.code(404);
+      return { error: 'commit_not_found' };
+    }
+    if (receipt.state !== 'uncertain') {
+      reply.code(409);
+      return { error: 'commit_not_uncertain', state: receipt.state };
+    }
+    if (!repos.replyBatches.isCurrentRevision(batchId, revision)) {
+      reply.code(409);
+      return { error: 'revision_fence' };
+    }
+    let detail: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(receipt.detail_json) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) detail = parsed as Record<string, unknown>;
+    } catch { /* malformed detail cannot be used for a safe retry */ }
+    const userMessageIds = Array.isArray(detail.userMessageIds) ? detail.userMessageIds.map(String).filter(Boolean) : [];
+    const assistantMessageId = typeof detail.assistantMessageId === 'string' ? detail.assistantMessageId : '';
+    if (!userMessageIds.length || !assistantMessageId) {
+      reply.code(409);
+      return { error: 'commit_retry_receipt_incomplete' };
+    }
+    repos.jobs.enqueue('ombre.memory_commit', {
+      batchId,
+      revision,
+      userMessageIds,
+      assistantMessageId,
+      manualRetry: true
+    }, { maxAttempts: 1 });
+    repos.audit.add('ombre', 'memory.commit.retry', batchId, { revision });
+    return { queued: true, batchId, revision };
+  });
+  server.get('/api/admin/memory/activity', guard, async (req) => {
+    const limit = Number((req.query as { limit?: string }).limit ?? 50);
+    return { activity: services.ombreAdmin.activity(limit) };
+  });
+  server.get('/api/admin/memory/legacy', guard, async (req) => {
+    const query = req.query as { limit?: string; offset?: string };
+    return services.ombreAdmin.legacy(Number(query.limit ?? 100), Number(query.offset ?? 0));
+  });
+  server.get('/api/admin/memory/ombre/search', guard, async (req, reply) => {
+    const query = req.query as { q?: string; limit?: string };
+    try {
+      return await services.ombreAdmin.search(query.q ?? '', Number(query.limit ?? 10));
+    } catch (error) {
+      reply.code(502);
+      return { error: 'ombre_search_failed', message: 'Ombre 搜索暂时不可用' };
+    }
+  });
+  server.get('/api/admin/memory/ombre/catalog', guard, async (req, reply) => {
+    try {
+      return await services.ombreAdmin.catalog(Number((req.query as { limit?: string }).limit ?? 50));
+    } catch (error) {
+      if (error instanceof OmbreCatalogUnavailableError) {
+        reply.code(409);
+        return { error: error.code, message: '当前 Ombre 版本未提供可读目录接口' };
+      }
+      reply.code(502);
+      return { error: 'ombre_catalog_failed', message: 'Ombre 目录暂时不可用' };
+    }
+  });
+
   server.get('/api/admin/memories', guard, async (req) => {
     const q = req.query as { limit?: string; offset?: string; kind?: string };
     return {
@@ -711,7 +792,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
       backend: app.env.MEMORY_BACKEND,
       readOnly: app.env.MEMORY_BACKEND === 'ombre',
       stats: services.memory.stats(),
-      recall: services.context.memoryRecallTrace()
+      ...(app.env.MEMORY_BACKEND === 'ombre' ? {} : { recall: services.context.memoryRecallTrace() })
     };
   });
   server.patch('/api/admin/memories/:id', guard, async (req, reply) => {
@@ -760,8 +841,16 @@ export function registerAdminRoutes(app: SooyaApp): void {
   });
 
   server.get('/api/admin/media', guard, async (req) => {
-    const q = req.query as { limit?: string; offset?: string; kind?: string };
-    const rows = repos.media.list(Number(q.limit ?? 50), Number(q.offset ?? 0), q.kind as never);
+    const q = req.query as { q?: string; limit?: string; offset?: string; kind?: string; origin?: string; state?: string; sort?: string };
+    const rows = repos.media.listAdmin({
+      q: q.q,
+      limit: Number(q.limit ?? 40),
+      offset: Number(q.offset ?? 0),
+      kind: ['image', 'audio', 'sticker', 'file'].includes(q.kind ?? '') ? q.kind as never : undefined,
+      origin: ['upload', 'generated', 'builtin', 'remote'].includes(q.origin ?? '') ? q.origin as never : undefined,
+      state: q.state === 'trashed' || q.state === 'all' ? q.state : 'active',
+      sort: q.sort === 'size' || q.sort === 'usage' ? q.sort : 'created'
+    });
     return {
       media: rows.map((row) => ({
         ...toMediaRef(row),
@@ -770,15 +859,98 @@ export function registerAdminRoutes(app: SooyaApp): void {
         createdAt: row.created_at,
         deletedAt: row.deleted_at,
         favorite: row.favorite === 1,
+        usageCount: row.usage_count,
+        references: { messageParts: row.message_parts, stickers: row.stickers, moments: row.moments, voiceGenerations: row.voice_generations },
         ...mediaMeta(row)
       })),
-      total: repos.media.count()
+      total: repos.media.countAdmin({ q: q.q, kind: ['image', 'audio', 'sticker', 'file'].includes(q.kind ?? '') ? q.kind as never : undefined, origin: ['upload', 'generated', 'builtin', 'remote'].includes(q.origin ?? '') ? q.origin as never : undefined, state: q.state === 'trashed' || q.state === 'all' ? q.state : 'active' }),
+      offset: Number(q.offset ?? 0)
     };
+  });
+
+  server.get('/api/admin/media/:id/usage', guard, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const row = repos.media.get(id);
+    if (!row) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    const references = repos.media.references(id);
+    return {
+      mediaId: id,
+      usageCount: references.total + (services.storage.isAvatarMedia(id) ? 1 : 0),
+      references,
+      avatar: services.storage.isAvatarMedia(id)
+    };
+  });
+
+  server.get('/api/admin/media/:id', guard, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const row = repos.media.get(id);
+    if (!row) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    const references = repos.media.references(id);
+    const avatar = services.storage.isAvatarMedia(id);
+    return {
+      media: {
+        ...toMediaRef(row),
+        origin: row.origin,
+        exists: services.mediaStore.exists(row),
+        createdAt: row.created_at,
+        deletedAt: row.deleted_at,
+        favorite: row.favorite === 1,
+        tags: mediaMeta(row).tags,
+        meta: mediaMeta(row).meta,
+        references,
+        usageCount: references.total + (avatar ? 1 : 0),
+        avatar
+      }
+    };
+  });
+
+  server.get('/api/admin/chat/history', guard, async (req, reply) => {
+    const parsed = z.object({
+      q: z.string().trim().max(200).optional(),
+      from: z.string().datetime({ offset: true }).optional(),
+      to: z.string().datetime({ offset: true }).optional(),
+      role: z.enum(['user', 'assistant']).optional(),
+      hasMedia: z.preprocess((value) => value === undefined ? undefined : value === true || value === 'true', z.boolean().optional()),
+      mediaKind: z.enum(['image', 'audio', 'sticker', 'file']).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(40),
+      offset: z.coerce.number().int().min(0).default(0)
+    }).safeParse(req.query);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'bad_request', issues: parsed.error.issues };
+    }
+    return adminMessages.page(parsed.data as AdminHistoryOptions);
+  });
+
+  server.get('/api/admin/chat/history/:id/context', guard, async (req, reply) => {
+    const parsed = z.object({ before: z.coerce.number().int().min(0).max(50).default(10), after: z.coerce.number().int().min(0).max(50).default(10) }).safeParse(req.query);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'bad_request', issues: parsed.error.issues };
+    }
+    const context = adminMessages.context((req.params as { id: string }).id, parsed.data.before, parsed.data.after);
+    if (!context) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    return context;
   });
 
   /** Legacy endpoint now performs a reversible soft delete. */
   server.delete('/api/admin/media/:id', guard, async (req, reply) => {
     const id = (req.params as { id: string }).id;
+    const references = repos.media.references(id);
+    const avatar = services.storage.isAvatarMedia(id);
+    if (references.total > 0 || avatar) {
+      reply.code(409);
+      return { error: 'media_in_use', references, avatar };
+    }
     if (!repos.media.trash(id)) {
       reply.code(404);
       return { error: 'not_found' };

@@ -36,7 +36,7 @@ function defaultPolicy(serverId: string, remoteName: string): McpToolPolicy {
       return { risk: 'read', phases: ['reply', 'proactive'], authorized: true };
     }
     if (['breath_search', 'breath_advanced', 'pulse', 'letter_read'].includes(remoteName)) {
-      return { risk: 'read', phases: ['reply', 'proactive', 'memory_commit'], authorized: true };
+      return { risk: 'read', phases: ['reply', 'proactive', 'memory_commit', 'admin'], authorized: true };
     }
     if (remoteName === 'dream') return { risk: 'maintenance', phases: ['maintenance'], authorized: true };
     if (['hold', 'grow', 'trace', 'anchor', 'release', 'plan', 'letter_write', 'I'].includes(remoteName)) {

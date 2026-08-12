@@ -19,7 +19,7 @@ export interface FeatureMedia {
   favorite: boolean;
   tags: string[];
   meta?: Record<string, unknown>;
-  references?: { total: number; messages?: number; messageParts?: number; stickers?: number; moments?: number };
+  references?: { total: number; messageParts?: number; stickers?: number; moments?: number; voiceGenerations?: number };
 }
 
 export interface PersonaReference {

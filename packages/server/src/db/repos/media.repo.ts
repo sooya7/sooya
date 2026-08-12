@@ -69,8 +69,28 @@ export interface MediaReferences {
   messageParts: number;
   stickers: number;
   moments: number;
+  voiceGenerations: number;
   total: number;
 }
+
+export interface AdminMediaQuery {
+  limit?: number;
+  offset?: number;
+  q?: string;
+  kind?: MediaRow['kind'];
+  origin?: MediaRow['origin'];
+  state?: 'active' | 'trashed' | 'all';
+  sort?: 'created' | 'size' | 'usage';
+}
+
+export type AdminMediaRow = MediaRow & {
+  message_parts: number;
+  stickers: number;
+  moments: number;
+  voice_generations: number;
+  avatar: number;
+  usage_count: number;
+};
 
 export class MediaRepo {
   constructor(private readonly db: DbLike) {}
@@ -154,7 +174,43 @@ export class MediaRepo {
     const messageParts = (this.db.prepare('SELECT COUNT(*) c FROM message_parts WHERE media_id = ?').get(id) as { c: number }).c;
     const stickers = (this.db.prepare('SELECT COUNT(*) c FROM stickers WHERE media_id = ?').get(id) as { c: number }).c;
     const moments = (this.db.prepare('SELECT COUNT(*) c FROM moments WHERE image_media_id = ?').get(id) as { c: number }).c;
-    return { messageParts, stickers, moments, total: messageParts + stickers + moments };
+    const voiceGenerations = (this.db.prepare('SELECT COUNT(*) c FROM voice_generations WHERE media_id = ?').get(id) as { c: number }).c;
+    return { messageParts, stickers, moments, voiceGenerations, total: messageParts + stickers + moments + voiceGenerations };
+  }
+
+  /** One SQL projection for the admin library; callers must not issue one usage query per card. */
+  listAdmin(input: AdminMediaQuery = {}): AdminMediaRow[] {
+    const { where, values } = adminMediaWhere(input);
+    const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 40)));
+    const offset = Math.max(0, Math.floor(input.offset ?? 0));
+    const order = input.sort === 'size'
+      ? 'm.bytes DESC, m.created_at DESC, m.id DESC'
+      : input.sort === 'usage'
+        ? 'usage_count DESC, m.created_at DESC, m.id DESC'
+        : 'm.created_at DESC, m.id DESC';
+    const sql = `
+      WITH usage AS (
+        SELECT
+          m.id,
+          (SELECT COUNT(*) FROM message_parts p WHERE p.media_id = m.id) AS message_parts,
+          (SELECT COUNT(*) FROM stickers s WHERE s.media_id = m.id) AS stickers,
+          (SELECT COUNT(*) FROM moments mo WHERE mo.image_media_id = m.id) AS moments,
+          (SELECT COUNT(*) FROM voice_generations vg WHERE vg.media_id = m.id) AS voice_generations,
+          CASE WHEN ${AVATAR_META} IS NULL THEN 0 ELSE 1 END AS avatar
+        FROM media m
+      )
+      SELECT m.*, u.message_parts, u.stickers, u.moments, u.voice_generations, u.avatar,
+        (u.message_parts + u.stickers + u.moments + u.voice_generations + u.avatar) AS usage_count
+      FROM media m JOIN usage u ON u.id = m.id
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY ${order}
+      LIMIT ? OFFSET ?`;
+    return this.db.prepare(sql).all(...values, limit, offset) as AdminMediaRow[];
+  }
+
+  countAdmin(input: Omit<AdminMediaQuery, 'limit' | 'offset' | 'sort'> = {}): number {
+    const { where, values } = adminMediaWhere(input);
+    return (this.db.prepare(`SELECT COUNT(*) c FROM media m${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`).get(...values) as { c: number }).c;
   }
 
   allRows(): MediaRow[] { return this.db.prepare('SELECT * FROM media ORDER BY created_at DESC').all() as MediaRow[]; }
@@ -167,6 +223,7 @@ export class MediaRepo {
         AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM moments mo WHERE mo.image_media_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM voice_generations vg WHERE vg.media_id = m.id)
       ORDER BY m.created_at LIMIT ?
     `).all(limit) as MediaRow[];
   }
@@ -182,6 +239,7 @@ export class MediaRepo {
         AND NOT EXISTS (SELECT 1 FROM message_parts p WHERE p.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM moments mo WHERE mo.image_media_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM voice_generations vg WHERE vg.media_id = m.id)
       ORDER BY m.created_at LIMIT ?
     `).all(cutoff, limit) as MediaRow[];
   }
@@ -211,6 +269,25 @@ function galleryWhere(input: GalleryQuery): { where: string[]; values: unknown[]
       )
     )`);
     const q = literalContainsPattern(search);
+    values.push(q, q, q, q, q, q, q);
+  }
+  return { where, values };
+}
+
+function adminMediaWhere(input: AdminMediaQuery): { where: string[]; values: unknown[] } {
+  const where: string[] = [];
+  const values: unknown[] = [];
+  if (input.kind) { where.push('m.kind = ?'); values.push(input.kind); }
+  if (input.origin) { where.push('m.origin = ?'); values.push(input.origin); }
+  if (input.state === 'trashed') where.push('m.deleted_at IS NOT NULL');
+  else if (input.state !== 'all') where.push('m.deleted_at IS NULL');
+  const search = input.q?.trim();
+  if (search) {
+    const q = literalContainsPattern(search);
+    where.push(`(
+      m.id LIKE ? ESCAPE '\\' OR m.rel_path LIKE ? ESCAPE '\\' OR m.meta_json LIKE ? ESCAPE '\\' OR m.tags_json LIKE ? ESCAPE '\\' OR
+      EXISTS (SELECT 1 FROM message_parts p LEFT JOIN media_text mt ON mt.media_id = p.media_id WHERE p.media_id = m.id AND (p.text LIKE ? ESCAPE '\\' OR p.transcript LIKE ? ESCAPE '\\' OR mt.text LIKE ? ESCAPE '\\'))
+    )`);
     values.push(q, q, q, q, q, q, q);
   }
   return { where, values };

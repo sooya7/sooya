@@ -99,6 +99,7 @@ const EnvSchema = z.object({
   MEMORY_BACKEND: z.enum(['ombre', 'legacy']).default('ombre'),
   OMBRE_MCP_URL: z.string().optional(),
   OMBRE_MCP_TOKEN: z.string().optional(),
+  OMBRE_DASHBOARD_URL: z.string().optional(),
   OMBRE_READ_ENABLED: boolish(true),
   OMBRE_WRITE_ENABLED: boolish(true),
   OMBRE_DREAM_ENABLED: boolish(true),
