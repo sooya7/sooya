@@ -5,7 +5,6 @@ import {
   type AdminMcpServer,
   type AdminMcpTool
 } from '../../lib/admin.js';
-import { navigate } from '../../lib/navigation.js';
 import { AdminState } from './AdminState.js';
 
 function dateText(value: string | undefined | null): string {
@@ -136,11 +135,6 @@ export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void
             ))}
           </div>
         )}
-      </section>
-
-      <section className="admin-card admin-mcp-memory-link">
-        <div><h3>Ombre 记忆业务视图</h3><p>搜索、活动和旧 MemoryRepo 回滚数据位于内容管理的「她的记忆」，与 MCP 运维页分开。</p></div>
-        <button type="button" onClick={() => navigate('/admin/content/memory')}>打开她的记忆</button>
       </section>
 
       {tool && <div className="admin-tool-schema" role="dialog" aria-label={`${tool.name} 参数 schema`}>
