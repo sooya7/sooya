@@ -25,6 +25,22 @@ export interface LifeSimResult {
   endedPrevious: LifeLogRow | null;
 }
 
+type ResolvedLifeActivity = ResolvedActivity & {
+  source: string;
+  activityId?: string | null;
+  planId?: string | null;
+};
+
+interface PendingTravelActivity {
+  activity: string;
+  kind: string;
+  mood: string;
+  source: string;
+  activityId: string | null;
+  planId: string | null;
+  endsAt: string;
+}
+
 /** Local calendar parts (mirrors life.ts internals without exporting them). */
 function localParts(
   at: Date,
@@ -211,9 +227,46 @@ export class LifeSimEngine {
     const current = this.repo.current();
     const endedPrevious: LifeLogRow | null = null;
 
-    // Ongoing activity: keep until its ends_at unless needs override.
+    // Travel is a real current activity. LocationService deliberately keeps
+    // the departure place until arrival; Life must therefore say "在路上"
+    // instead of claiming the destination activity has already begun.
+    const activeTravel = this.location?.currentTravel() ?? null;
+    if (activeTravel) {
+      const currentMeta = current ? safeMeta(current.meta_json) : {};
+      if (current && currentMeta.source === 'travel' && currentMeta.toLocationId === activeTravel.toLocationId) {
+        return { changed: false, activity: current.activity, kind: current.kind, mood: current.mood, endedPrevious };
+      }
+      const pending = current
+        ? this.pendingFromCurrent(current)
+        : this.pendingFromResolved(
+            activeTravel.sourceActivityId && defById(activeTravel.sourceActivityId)
+              ? this.scored(parts, at, activeTravel.sourceActivityId, 'travel:recovered', activeTravel.sourcePlanId ?? undefined)
+              : this.routineActivity(parts, at)
+          );
+      return this.enterTravel(activeTravel, pending).result;
+    }
+
+    // currentTravel() above also performs lazy arrival settlement. If the Life
+    // row is our synthetic travel state and the destination was reached, begin
+    // the exact pending activity now. Do not run location selection again: we
+    // have literally just arrived at the selected compatible place.
+    if (current && safeMeta(current.meta_json).source === 'travel') {
+      const resumed = this.resumeAfterTravel(current, parts, theme);
+      if (resumed) return resumed;
+      // A missing trip with a different current location means an admin
+      // override cancelled travel. Fall through and choose a fresh activity
+      // for that place instead of remaining "在路上" forever.
+    }
+
+    // Ongoing activity: keep until its ends_at. Also repair states created by
+    // older builds: if e.g. "看小说" is currently stored at a park, immediately
+    // start a real trip to a compatible place on the next tick.
     if (current && Date.parse(current.ends_at) > at.getTime() && current.kind !== 'sleep') {
-      return { changed: false, activity: current.activity, kind: current.kind, mood: current.mood, endedPrevious };
+      const repaired = this.repairOngoingLocation(current);
+      if (repaired) return repaired;
+      if (safeMeta(current.meta_json).source !== 'travel') {
+        return { changed: false, activity: current.activity, kind: current.kind, mood: current.mood, endedPrevious };
+      }
     }
 
     const resolved = this.resolveNext(parts, v, theme);
@@ -221,18 +274,38 @@ export class LifeSimEngine {
       return { changed: false, activity: current.activity, kind: current.kind, mood: current.mood, endedPrevious };
     }
 
-    // Leaving an activity: advance first so the filed log row exists, then
-    // roll the outcome event linked to that log (markShared relies on the
-    // event → log linkage to mark both shared).
+    const activityId = resolved.activityId ?? null;
+    const planId = resolved.planId ?? null;
+
+    // Pick/enter the place before beginning the activity. If that requires a
+    // trip, write a travel Life row first and defer the activity until arrival.
+    if (activityId || resolved.source === 'routine') {
+      this.location?.onActivityResolved(activityId ? defById(activityId) : null, resolved.kind, planId, activityId);
+      const startedTravel = this.location?.currentTravel() ?? null;
+      if (startedTravel) {
+        const entered = this.enterTravel(startedTravel, this.pendingFromResolved(resolved));
+        if (current && safeMeta(current.meta_json).source !== 'travel' && current.kind !== 'sleep' && current.kind !== 'wake') {
+          this.finishActivity(current, parts, entered.previous?.id ?? null);
+        }
+        this.v2.expireShareCandidates();
+        this.decayThreads();
+        this.settlePlanWindows(parts);
+        this.ensureSeedThreads();
+        return entered.result;
+      }
+    }
+
+    // No movement required: the activity and current place are already
+    // compatible, so begin it normally.
     const advanced = this.repo.advance({
       activity: resolved.activity,
       kind: resolved.kind,
       mood: resolved.mood,
       startedAt: resolved.startedAt.toISOString(),
       endsAt: resolved.endsAt.toISOString(),
-      meta: { source: resolved.source, activityId: resolved.activityId ?? null, planId: (resolved as { planId?: string }).planId ?? null }
+      meta: { source: resolved.source, activityId, planId }
     }, { recordCompletionEvent: false });
-    if (current && current.kind !== 'sleep' && current.kind !== 'wake') {
+    if (current && safeMeta(current.meta_json).source !== 'travel' && current.kind !== 'sleep' && current.kind !== 'wake') {
       this.finishActivity(current, parts, advanced.previous?.id ?? null);
     }
     this.rollIncident(resolved, parts, theme);
@@ -240,13 +313,132 @@ export class LifeSimEngine {
     this.decayThreads();
     this.settlePlanWindows(parts);
     this.ensureSeedThreads();
-    // Next phase: the resolved activity may move SOOYA to a matching location.
-    const activityId = (resolved as { activityId?: string | null }).activityId ?? null;
-    const planId = (resolved as { planId?: string | null }).planId ?? null;
-    if (activityId || resolved.source === 'routine') {
-      this.location?.onActivityResolved(activityId ? defById(activityId) : null, resolved.kind, planId, activityId);
-    }
     return { changed: true, activity: resolved.activity, kind: resolved.kind, mood: resolved.mood, endedPrevious: advanced.previous };
+  }
+
+  private pendingFromResolved(resolved: ResolvedLifeActivity): PendingTravelActivity {
+    return {
+      activity: resolved.activity,
+      kind: resolved.kind,
+      mood: resolved.mood,
+      source: resolved.source,
+      activityId: resolved.activityId ?? null,
+      planId: resolved.planId ?? null,
+      endsAt: resolved.endsAt.toISOString()
+    };
+  }
+
+  private pendingFromCurrent(current: LifeRepoCurrent): PendingTravelActivity {
+    const meta = safeMeta(current.meta_json);
+    return {
+      activity: current.activity,
+      kind: current.kind,
+      mood: current.mood,
+      source: typeof meta.source === 'string' ? meta.source : 'recovered',
+      activityId: typeof meta.activityId === 'string' ? meta.activityId : null,
+      planId: typeof meta.planId === 'string' ? meta.planId : null,
+      endsAt: current.ends_at
+    };
+  }
+
+  private enterTravel(
+    travel: {
+      toLocationId: string;
+      startedAt: string;
+      expectedArriveAt: string;
+      sourcePlanId?: string | null;
+      sourceActivityId?: string | null;
+    },
+    pending: PendingTravelActivity
+  ): { result: LifeSimResult; previous: LifeLogRow | null } {
+    const destination = this.location?.get(travel.toLocationId) ?? null;
+    const activity = destination?.kind === 'home'
+      ? '回家路上'
+      : destination?.name
+        ? `去${destination.name}路上`
+        : '在路上';
+    const advanced = this.repo.advance({
+      activity,
+      kind: 'out',
+      mood: '在路上',
+      startedAt: travel.startedAt,
+      endsAt: travel.expectedArriveAt,
+      meta: {
+        source: 'travel',
+        toLocationId: travel.toLocationId,
+        pendingActivity: pending
+      }
+    }, { recordCompletionEvent: false });
+    return {
+      previous: advanced.previous,
+      result: { changed: true, activity, kind: 'out', mood: '在路上', endedPrevious: advanced.previous }
+    };
+  }
+
+  private resumeAfterTravel(
+    current: LifeRepoCurrent,
+    parts: { dayIndex: number; hour: number; minute: number; dayStartMs: number; localDate: string },
+    theme: LifeDayThemeRow
+  ): LifeSimResult | null {
+    const meta = safeMeta(current.meta_json);
+    const toLocationId = typeof meta.toLocationId === 'string' ? meta.toLocationId : null;
+    const here = this.location?.current() ?? null;
+    if (!toLocationId || !here || here.id !== toLocationId) return null;
+    const raw = meta.pendingActivity;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const pending = raw as Record<string, unknown>;
+    const activityId = typeof pending.activityId === 'string' ? pending.activityId : null;
+    const planId = typeof pending.planId === 'string' ? pending.planId : null;
+    const now = this.clock();
+    let resolved: ResolvedLifeActivity;
+    if (activityId && defById(activityId)) {
+      resolved = this.scored(parts, now, activityId, 'travel:arrived', planId ?? undefined);
+    } else {
+      const storedEnd = typeof pending.endsAt === 'string' ? Date.parse(pending.endsAt) : Number.NaN;
+      const minEnd = now.getTime() + 15 * 60_000;
+      resolved = {
+        activity: typeof pending.activity === 'string' ? pending.activity : '休息一下',
+        kind: (typeof pending.kind === 'string' ? pending.kind : 'rest') as ResolvedActivity['kind'],
+        mood: typeof pending.mood === 'string' ? pending.mood : '还行',
+        startedAt: now,
+        endsAt: new Date(Number.isFinite(storedEnd) ? Math.max(storedEnd, minEnd) : minEnd),
+        source: 'travel:arrived',
+        activityId: null,
+        planId
+      };
+    }
+    const advanced = this.repo.advance({
+      activity: resolved.activity,
+      kind: resolved.kind,
+      mood: resolved.mood,
+      startedAt: resolved.startedAt.toISOString(),
+      endsAt: resolved.endsAt.toISOString(),
+      meta: { source: resolved.source, activityId: resolved.activityId ?? null, planId: resolved.planId ?? null }
+    }, { recordCompletionEvent: false });
+    this.rollIncident(resolved, parts, theme);
+    this.v2.expireShareCandidates();
+    this.decayThreads();
+    this.settlePlanWindows(parts);
+    this.ensureSeedThreads();
+    return { changed: true, activity: resolved.activity, kind: resolved.kind, mood: resolved.mood, endedPrevious: advanced.previous };
+  }
+
+  private repairOngoingLocation(current: LifeRepoCurrent): LifeSimResult | null {
+    if (!this.location?.isEnabled) return null;
+    const meta = safeMeta(current.meta_json);
+    const activityId = typeof meta.activityId === 'string' ? meta.activityId : null;
+    const def = activityId ? defById(activityId) : undefined;
+    if (!def?.locationAffinity?.length) return null;
+    const here = this.location.current();
+    if (!here || def.locationAffinity.includes(here.kind)) return null;
+    const planId = typeof meta.planId === 'string' ? meta.planId : null;
+    this.location.onActivityResolved(def, current.kind, planId, activityId);
+    const travel = this.location.currentTravel();
+    if (!travel) return null;
+    // This is a repair of an impossible pre-existing state, not completion of
+    // that activity. File the old row for audit/history but do not generate an
+    // outcome/share candidate for something she did not actually finish.
+    return this.enterTravel(travel, this.pendingFromCurrent(current)).result;
   }
 
   private resolveNext(

@@ -62,6 +62,7 @@ export function scoreLocationCandidates(
   clockMs: number
 ): LocationSelection | null {
   const affinityKinds = input.def?.locationAffinity ?? [];
+  const hasCompatibleCandidate = affinityKinds.length > 0 && candidates.some((row) => affinityKinds.includes(row.kind));
   const repeatCutoff = clockMs - input.repeatWindowHours * 3_600_000;
   let best: { row: LifeLocationRow; score: number; breakdown: Record<string, number>; travel: { travelMinutes: number; mode: TravelMode } | null | undefined } | null = null;
 
@@ -69,12 +70,20 @@ export function scoreLocationCandidates(
     const breakdown: Record<string, number> = {};
     let score = 0;
 
-    // Compatibility: affinity kind exact match dominates.
+    // Compatibility is a semantic constraint when at least one valid place is
+    // available. Anti-repeat/weather/current-place bonuses may choose between
+    // compatible places, but must not turn a park into the default reading or
+    // shower location merely because she already happens to be there.
     if (affinityKinds.length > 0) {
       if (affinityKinds.includes(row.kind)) {
-        score += 40;
-        breakdown.affinity = 40;
+        score += 50;
+        breakdown.affinity = 50;
+      } else if (hasCompatibleCandidate) {
+        score -= 60;
+        breakdown.affinity = -60;
       } else if (row.kind === 'home' || row.kind === 'neighborhood') {
+        // Custom/legacy installations can delete all matching kinds. Keep a
+        // graceful living-area fallback instead of returning no location.
         score += 10;
         breakdown.affinity = 10;
       }
