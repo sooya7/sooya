@@ -43,6 +43,15 @@ function toolSummary(tools: AdminMcpTool[]): string {
   return risks.join(' · ') || '暂无已注册工具';
 }
 
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 7v5h-5" />
+      <path d="M19 12a7 7 0 1 0-2.05 4.95" />
+    </svg>
+  );
+}
+
 export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void }) {
   const [overview, setOverview] = useState<AdminMcpOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -97,6 +106,8 @@ export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void
   if (error && !overview) return <AdminState kind="error" message={error} onRetry={() => void load()} testId="mcp-admin-error" />;
   if (!overview) return <AdminState kind="empty" testId="mcp-admin-empty" />;
 
+  const refreshLabel = loading ? '正在刷新 MCP 状态' : '刷新 MCP 状态';
+
   return (
     <section className="admin-mcp-page" data-testid="admin-mcp-page">
       <header className="admin-subpage-header">
@@ -105,7 +116,17 @@ export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void
           <h2>MCP 服务</h2>
           <p>查看 MCP Server 的连接状态、工具刷新和权限概览。工具参数只在需要排查时展开。</p>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading}>{loading ? '刷新中…' : '刷新状态'}</button>
+        <button
+          type="button"
+          className="admin-header-button"
+          aria-label={refreshLabel}
+          title={refreshLabel}
+          aria-busy={loading}
+          onClick={() => void load()}
+          disabled={loading}
+        >
+          <RefreshIcon />
+        </button>
       </header>
 
       {error && <p className="admin-inline-error" role="status">{error}</p>}
