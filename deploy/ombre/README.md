@@ -14,8 +14,8 @@ sudo git clone --branch v2.7.6 --depth 1 https://github.com/P0luz/Ombre-Brain.gi
 cd /opt/ombre-brain/source
 test "$(git rev-parse HEAD)" = "6da5158b70d833626438a6fd5448f839c562d44b"
 sudo install -d -m 0750 /opt/ombre-brain/compose
-sudo install -m 0644 deploy/ombre/docker-compose.yml /opt/ombre-brain/compose/docker-compose.yml
-sudo cp deploy/ombre/.env.example /opt/ombre-brain/.env
+sudo install -m 0644 /opt/sooya/current/deploy/ombre/docker-compose.yml /opt/ombre-brain/compose/docker-compose.yml
+sudo cp /opt/sooya/current/deploy/ombre/.env.example /opt/ombre-brain/.env
 sudo chmod 600 /opt/ombre-brain/.env
 ```
 

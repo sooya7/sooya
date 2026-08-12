@@ -5,6 +5,13 @@ export interface ToolPolicyOptions {
   readEnabled?: boolean;
   writeEnabled?: boolean;
   maintenanceEnabled?: boolean;
+  serverPolicies?: Record<string, ToolServerPolicyOptions>;
+}
+
+export interface ToolServerPolicyOptions {
+  readEnabled?: boolean;
+  writeEnabled?: boolean;
+  maintenanceEnabled?: boolean;
 }
 
 export interface ToolPolicyDecision {
@@ -20,6 +27,7 @@ export class ToolPolicy {
   private readonly readEnabled: boolean;
   private readonly writeEnabled: boolean;
   private readonly maintenanceEnabled: boolean;
+  private readonly serverPolicies: Record<string, ToolServerPolicyOptions>;
 
   constructor(
     private readonly registry: ToolRegistry,
@@ -28,22 +36,29 @@ export class ToolPolicy {
     this.readEnabled = options.readEnabled ?? true;
     this.writeEnabled = options.writeEnabled ?? true;
     this.maintenanceEnabled = options.maintenanceEnabled ?? true;
+    this.serverPolicies = options.serverPolicies ?? {};
   }
 
   check(tool: ToolDescriptor, phase: ToolPhase): ToolPolicyDecision {
     if (!tool.phases.includes(phase)) return { allowed: false, reason: 'phase-not-authorized' };
     if (tool.source === 'mcp' && tool.authorized !== true) return { allowed: false, reason: 'tool-not-authorized' };
+    if (tool.authorize && !tool.authorize(phase)) return { allowed: false, reason: 'tool-not-authorized' };
+    const readEnabled = this.enabledFor(tool, 'readEnabled', this.readEnabled);
+    const writeEnabled = this.enabledFor(tool, 'writeEnabled', this.writeEnabled);
+    const maintenanceEnabled = this.enabledFor(tool, 'maintenanceEnabled', this.maintenanceEnabled);
     if (phase === 'reply' || phase === 'proactive') {
-      if (!this.readEnabled) return { allowed: false, reason: 'read-disabled' };
+      if (!readEnabled) return { allowed: false, reason: 'read-disabled' };
       return tool.risk === 'read' ? { allowed: true } : { allowed: false, reason: 'non-read-tool-in-visible-phase' };
     }
     if (phase === 'memory_commit') {
-      if (isWriteRisk(tool.risk) && !this.writeEnabled) return { allowed: false, reason: 'write-disabled' };
-      if (tool.risk === 'maintenance' && !this.maintenanceEnabled) return { allowed: false, reason: 'maintenance-disabled' };
-      return { allowed: tool.risk !== 'external_side_effect' || this.writeEnabled, reason: 'external-side-effect-disabled' };
+      if (tool.risk === 'read' && !readEnabled) return { allowed: false, reason: 'read-disabled' };
+      if (isWriteRisk(tool.risk) && !writeEnabled) return { allowed: false, reason: 'write-disabled' };
+      if (tool.risk === 'maintenance' && !maintenanceEnabled) return { allowed: false, reason: 'maintenance-disabled' };
+      return { allowed: true };
     }
-    if (!this.maintenanceEnabled) return { allowed: false, reason: 'maintenance-disabled' };
-    if (isWriteRisk(tool.risk) && !this.writeEnabled) return { allowed: false, reason: 'write-disabled' };
+    if (tool.risk === 'read' && !readEnabled) return { allowed: false, reason: 'read-disabled' };
+    if (!maintenanceEnabled) return { allowed: false, reason: 'maintenance-disabled' };
+    if (isWriteRisk(tool.risk) && !writeEnabled) return { allowed: false, reason: 'write-disabled' };
     return { allowed: true };
   }
 
@@ -61,6 +76,11 @@ export class ToolPolicy {
 
   resolve(modelName: string): ToolDescriptor | undefined {
     return this.registry.getByModelName(modelName) ?? this.registry.get(modelName);
+  }
+
+  private enabledFor<K extends keyof ToolServerPolicyOptions>(tool: ToolDescriptor, key: K, global: boolean): boolean {
+    if (tool.source !== 'mcp' || !tool.serverId) return global;
+    return global && (this.serverPolicies[tool.serverId]?.[key] ?? true);
   }
 }
 

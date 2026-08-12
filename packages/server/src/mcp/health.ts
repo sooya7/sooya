@@ -1,7 +1,7 @@
 import type { McpConnectionSnapshot } from './types.js';
 
 export function memoryHealth(snapshots: McpConnectionSnapshot[], serverId = 'ombre'): {
-  backend: 'ombre'; configured: boolean; connected: boolean; degraded: boolean; toolCount: number; lastError?: string;
+  backend: 'ombre'; configured: boolean; connected: boolean; degraded: boolean; toolCount: number; latencyMs?: number; lastConnectedAt?: string; lastRefreshAt?: string; lastError?: string;
 } {
   const snapshot = snapshots.find((item) => item.id === serverId);
   return {
@@ -10,6 +10,9 @@ export function memoryHealth(snapshots: McpConnectionSnapshot[], serverId = 'omb
     connected: snapshot?.state === 'ready',
     degraded: snapshot !== undefined && snapshot.state !== 'ready',
     toolCount: snapshot?.toolCount ?? 0,
+    ...(snapshot?.latencyMs === undefined ? {} : { latencyMs: snapshot.latencyMs }),
+    ...(snapshot?.lastConnectedAt ? { lastConnectedAt: snapshot.lastConnectedAt } : {}),
+    ...(snapshot?.lastRefreshAt ? { lastRefreshAt: snapshot.lastRefreshAt } : {}),
     ...(snapshot?.lastError ? { lastError: snapshot.lastError } : {})
   };
 }

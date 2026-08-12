@@ -6,9 +6,9 @@ import { AnthropicChatProvider, OpenAIChatProvider, OpenAIResponsesProvider } fr
 function cfg(provider: ChatModelConfig['provider']): ChatModelConfig {
   return {
     provider,
-    // The SSRF guard resolves hostnames even when fetch is mocked; use a
-    // stable public fixture host so the test behaves the same on CI runners.
-    baseUrl: 'https://example.com/v1',
+    // The SSRF guard runs even when fetch is mocked; use a public IP so this
+    // protocol-only test does not depend on CI DNS availability.
+    baseUrl: 'https://93.184.216.34/v1',
     apiKey: 'test-key',
     model: 'test-model',
     timeoutMs: 10_000,

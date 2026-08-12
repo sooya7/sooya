@@ -282,6 +282,28 @@ export class MessageRepo {
     return this.hydrate([row])[0];
   }
 
+  /**
+   * Return the timestamp of the latest message before the supplied message
+   * in the same conversation. The idle caller deliberately gets null for an
+   * unknown message instead of treating the conversation as infinitely idle.
+   */
+  lastInteractionBefore(messageId: string): string | null {
+    const current = this.db
+      .prepare('SELECT conversation_id, seq FROM messages WHERE id = ?')
+      .get(messageId) as { conversation_id: string; seq: number } | undefined;
+    if (!current) return null;
+    const previous = this.db
+      .prepare(
+        `SELECT created_at
+         FROM messages
+         WHERE conversation_id = ? AND seq < ?
+         ORDER BY seq DESC
+         LIMIT 1`
+      )
+      .get(current.conversation_id, current.seq) as { created_at: string } | undefined;
+    return previous?.created_at ?? null;
+  }
+
   /** Return a bounded, ordered window around a message used by a quote. */
   context(id: string, before = 20, after = 20): MessageContext | undefined {
     const targetRow = this.db

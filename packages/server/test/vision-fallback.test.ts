@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, TEST_PNG, sendText, type Harness } from './helpers/harness.js';
 import type { FakeChatOptions } from './helpers/harness.js';
+import { textOnlyModelTurns } from '../src/core/replier.js';
 
 /**
  * Regression coverage for the "endpoint declares vision but rejects images"
@@ -45,6 +46,17 @@ afterEach(async () => {
 });
 
 describe('vision input rejection fallback', () => {
+  it('keeps model tool history while replacing only image-bearing chat turns', () => {
+    const retry = textOnlyModelTurns([
+      { role: 'user', content: [{ type: 'text', text: '看这个' }, { type: 'image', data: 'abc', mime: 'image/png' }] },
+      { role: 'assistant_tool_call', calls: [{ id: 'wake-1', name: 'ombre__breath', arguments: {} }] },
+      { role: 'tool_result', callId: 'wake-1', name: 'ombre.breath', content: '历史记忆' }
+    ]);
+    expect(retry[0]).toEqual({ role: 'user', content: [{ type: 'text', text: '看这个\n[图片]' }] });
+    expect(retry[1]).toEqual({ role: 'assistant_tool_call', calls: [{ id: 'wake-1', name: 'ombre__breath', arguments: {} }] });
+    expect(retry[2]).toEqual({ role: 'tool_result', callId: 'wake-1', name: 'ombre.breath', content: '历史记忆' });
+  });
+
   it('reports the degradation and logs it when the text-only retry succeeds', async () => {
     const made = await harnessWithImage({ script: [['看不了图，但我在'], ['看不了图，但我在']], rejectImages: true });
     h = made.h;
@@ -155,4 +167,3 @@ describe('vision input rejection fallback', () => {
     expect(userText).not.toContain('图片未能读取');
   });
 });
-

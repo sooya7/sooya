@@ -38,6 +38,22 @@ describe('ToolPolicy', () => {
     expect(policy.check(hold, 'memory_commit').allowed).toBe(true);
   });
 
+  it('allows explicitly classified memory reads during memory_commit', () => {
+    const registry = new ToolRegistry();
+    registry.register(tool({ phases: ['reply', 'proactive', 'memory_commit'] }));
+    const policy = new ToolPolicy(registry);
+    expect(policy.check(registry.require('ombre.breath'), 'memory_commit')).toEqual({ allowed: true });
+  });
+
+  it('isolates server-specific switches from other MCP servers', () => {
+    const registry = new ToolRegistry();
+    registry.register(tool());
+    registry.register(tool({ name: 'github.search', modelName: 'github__search', serverId: 'github' }));
+    const policy = new ToolPolicy(registry, { serverPolicies: { ombre: { readEnabled: false } } });
+    expect(policy.check(registry.require('ombre.breath'), 'reply')).toMatchObject({ allowed: false, reason: 'read-disabled' });
+    expect(policy.check(registry.require('github.search'), 'reply')).toEqual({ allowed: true });
+  });
+
   it('can disable read or write capability without hiding the whole app', () => {
     const registry = new ToolRegistry();
     registry.register(tool());

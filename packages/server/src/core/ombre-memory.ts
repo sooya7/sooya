@@ -46,8 +46,12 @@ export class OmbreMemoryBridge {
 
   async wakeIfNeeded(lastInteractionAt?: Date | null, signal?: AbortSignal): Promise<string | null> {
     const idleMs = Math.max(1, this.options.breathIdleMinutes ?? 30) * 60_000;
-    const sinceInteraction = lastInteractionAt ? Date.now() - lastInteractionAt.getTime() : Number.POSITIVE_INFINITY;
-    if (this.lastWakeAt > 0 && Date.now() - this.lastWakeAt < idleMs && sinceInteraction < idleMs) return null;
+    const now = Date.now();
+    // The local guard is authoritative when the caller cannot provide
+    // history (fresh process, recovery path, or an older integration). In
+    // particular, undefined must not become Infinity and bypass this guard.
+    if (this.lastWakeAt > 0 && now - this.lastWakeAt < idleMs) return null;
+    if (lastInteractionAt && now - lastInteractionAt.getTime() < idleMs) return null;
     return this.wake(signal);
   }
 
@@ -55,6 +59,9 @@ export class OmbreMemoryBridge {
     const existing = this.options.commits.get(input.batchId, input.revision);
     if (existing?.state === 'completed' || existing?.state === 'skipped') {
       return { state: existing.state, callsExecuted: 0, rounds: 0 };
+    }
+    if (existing?.state === 'uncertain' && await this.reconcileUncertain(input)) {
+      return { state: 'completed', callsExecuted: 0, rounds: 0 };
     }
     const started = this.options.commits.start(input.batchId, input.revision, { userMessageIds: input.userMessageIds ?? [], assistantMessageId: input.assistantMessageId ?? null });
     if (started.state === 'completed' || started.state === 'skipped') return { state: started.state, callsExecuted: 0, rounds: 0 };
@@ -95,7 +102,12 @@ export class OmbreMemoryBridge {
   }
 
   async dream(signal?: AbortSignal): Promise<string | null> {
+    if (!this.hasRecentCompletedCommit()) return null;
     return this.callLifecycleTool('ombre.dream', 'maintenance', {}, signal);
+  }
+
+  hasRecentCompletedCommit(windowMs = 24 * 60 * 60 * 1000): boolean {
+    return this.options.commits.hasCompletedSince(new Date(Date.now() - Math.max(1, windowMs)).toISOString());
   }
 
   async refreshTools(): Promise<ReturnType<McpManager['health']>> {
@@ -110,6 +122,25 @@ export class OmbreMemoryBridge {
     if (!tool || !this.options.policy.check(tool, phase).allowed) return null;
     const result = await tool.handler(input, { phase, signal });
     return normalizeToolResult(result).content || null;
+  }
+
+  private async reconcileUncertain(input: MemoryCommitInput): Promise<boolean> {
+    const tool = this.options.registry.get('ombre.breath_search');
+    if (!tool || !this.options.policy.check(tool, 'memory_commit').allowed) return false;
+    const marker = `sooya:${input.batchId}:${input.revision}`;
+    try {
+      const result = normalizeToolResult(
+        await tool.handler({ query: marker }, { phase: 'memory_commit', signal: input.signal })
+      );
+      if (result.isError || !result.content.includes(marker)) return false;
+      this.options.commits.mark(input.batchId, input.revision, 'completed', { recovered: true, sourceMarker: marker });
+      return true;
+    } catch {
+      // A failed/unreliable lookup is not evidence that the write did not
+      // happen. Continue with the normal commit path, which remains fenced by
+      // the receipt and the stable source marker in commitSystem().
+      return false;
+    }
   }
 }
 

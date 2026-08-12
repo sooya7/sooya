@@ -36,4 +36,55 @@ describe('McpManager', () => {
     const policy = new ToolPolicy(registry);
     expect(policy.definitions('reply').map((item) => item.name)).toEqual(['ombre__breath']);
   });
+
+  it('reconnects once and retries a transport failure through bridged tools', async () => {
+    let factoryCalls = 0;
+    const registry = new ToolRegistry();
+    const manager = new McpManager({
+      servers: [cfg('ombre')],
+      registry,
+      clientFactory: async () => {
+        factoryCalls += 1;
+        if (factoryCalls === 1) {
+          return { client: { ...client('first'), callTool: async () => { throw new Error('transport closed'); } } };
+        }
+        return { client: client('reconnected') };
+      }
+    });
+    await manager.connectAllBestEffort();
+
+    const result = await registry.require('ombre.breath').handler({}, { phase: 'reply' });
+    expect(result).toMatchObject({ value: 'reconnected:ok' });
+    expect(factoryCalls).toBe(2);
+  });
+
+  it('does not reconnect an authentication or parameter failure', async () => {
+    let factoryCalls = 0;
+    const manager = new McpManager({
+      servers: [cfg('ombre')],
+      registry: new ToolRegistry(),
+      clientFactory: async () => {
+        factoryCalls += 1;
+        return {
+          client: {
+            ...client('ombre'),
+            callTool: async () => { throw Object.assign(new Error('unauthorized'), { status: 401 }); }
+          }
+        };
+      }
+    });
+    await manager.connectAllBestEffort();
+    await expect(manager.callTool('ombre', 'breath', {})).rejects.toThrow('unauthorized');
+    expect(factoryCalls).toBe(1);
+  });
+
+  it('fails startup when an enabled required server is not ready', async () => {
+    const required = { ...cfg('required'), required: true };
+    const manager = new McpManager({
+      servers: [required],
+      registry: new ToolRegistry(),
+      clientFactory: async () => { throw new Error('connection refused'); }
+    });
+    await expect(manager.connectAllBestEffort()).rejects.toThrow(/required MCP server required/u);
+  });
 });
