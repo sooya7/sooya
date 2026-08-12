@@ -26,6 +26,7 @@ import type { ThoughtRepo } from '../../db/repos/thought.repo.js';
 import type { EventBus } from '../../events/bus.js';
 import type { ErrorLogRepo } from '../../db/repos/misc.repo.js';
 import type { VisibleThought } from './types.js';
+import { isDisplayableThoughtText } from './quality.js';
 import { ThoughtSafetyFilter, type SafetyRefs } from './safety.js';
 
 export interface ThoughtPrepareInput {
@@ -78,6 +79,7 @@ const THOUGHT_SYSTEM = [
   '要求：只使用提供的信息；不要解释你的输出；不要提“系统”“上下文”“模型”“根据”“指令”这类字眼；不要复述消息原文；不要输出引号、标题或编号。'
 ].join('');
 
+const THOUGHT_RETRY_SUFFIX = '上一版输出不完整。请重新输出一句完整、自然的中文内心想法，不要输出残片、英文占位、标题或未闭合括号。';
 const MAX_MONOLOGUE_CHARS = 60;
 
 export class ThoughtPresenter {
@@ -147,25 +149,37 @@ export class ThoughtPresenter {
     const { signal, cleanup } = mergeSignals(input.signal, this.timeoutMs);
     try {
       const userTurn = this.composeUserTurn(input);
-      const result = await provider.complete({
-        system: THOUGHT_SYSTEM,
-        messages: [{ role: 'user', content: [{ type: 'text', text: userTurn }] }],
-        maxTokens: 100,
-        temperature: 0.9,
-        signal
-      });
-      if (signal.aborted) {
-        this.settleAborted(thoughtId);
-        return this.deps.repo.get(thoughtId) ?? null;
-      }
-      const cleaned = cleanMonologue(result.text);
-      if (!cleaned) {
-        this.deps.errorLog?.add('thoughts.present', 'empty_thought', {
-          batchId: input.batchId, revision: input.revision, messageId: input.messageId
+      let cleaned = '';
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const result = await provider.complete({
+          system: attempt === 0 ? THOUGHT_SYSTEM : `${THOUGHT_SYSTEM}${THOUGHT_RETRY_SUFFIX}`,
+          messages: [{ role: 'user', content: [{ type: 'text', text: userTurn }] }],
+          maxTokens: 100,
+          temperature: 0.9,
+          signal
         });
-        this.fail(thoughtId);
-        return this.deps.repo.get(thoughtId) ?? null;
+        if (signal.aborted) {
+          this.settleAborted(thoughtId);
+          return this.deps.repo.get(thoughtId) ?? null;
+        }
+
+        cleaned = cleanMonologue(result.text);
+        if (isDisplayableThoughtText(cleaned)) break;
+
+        const finalAttempt = attempt === 1;
+        this.deps.errorLog?.add('thoughts.present', finalAttempt ? 'malformed_thought_dropped' : 'malformed_thought_retry', {
+          batchId: input.batchId,
+          revision: input.revision,
+          messageId: input.messageId,
+          outputChars: cleaned.length
+        });
+        if (finalAttempt) {
+          this.fail(thoughtId);
+          return this.deps.repo.get(thoughtId) ?? null;
+        }
       }
+
       const verdict = this.safety.check(cleaned, this.deps.safetyRefs);
       if (!verdict.safe) {
         // Safety hit: drop the thought entirely, record the event, reply is untouched.
