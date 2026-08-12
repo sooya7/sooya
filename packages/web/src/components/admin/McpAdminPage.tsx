@@ -110,7 +110,10 @@ export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void
 
   return (
     <section className="admin-mcp-page" data-testid="admin-mcp-page">
-      <header className="admin-subpage-header">
+      <header
+        className="admin-subpage-header"
+        style={{ gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'start' }}
+      >
         <div>
           <span className="admin-eyebrow">INFRASTRUCTURE</span>
           <h2>MCP 服务</h2>
@@ -119,11 +122,13 @@ export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void
         <button
           type="button"
           className="admin-header-button"
+          data-testid="admin-mcp-status-refresh"
           aria-label={refreshLabel}
           title={refreshLabel}
           aria-busy={loading}
           onClick={() => void load()}
           disabled={loading}
+          style={{ width: 36, minWidth: 36, padding: 0, justifySelf: 'end', alignSelf: 'start' }}
         >
           <RefreshIcon />
         </button>
