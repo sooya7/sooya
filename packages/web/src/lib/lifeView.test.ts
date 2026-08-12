@@ -55,7 +55,7 @@ describe('lifeView', () => {
 
   it('translates every proactive result produced by the current server', () => {
     expect(proactiveReasonText('share_candidate')).toBe('有值得分享的新动态');
-    expect(proactiveReasonText('compose_failed')).toBe('朋友圈文案生成失败');
+    expect(proactiveReasonText('compose_failed')).toBe('动态文案生成失败');
     expect(proactiveReasonText('empty_text')).toBe('模型没有生成可发布文字');
     expect(proactiveReasonText('media_failed')).toBe('动态图片准备失败');
     expect(proactiveReasonText('moment_persist_failed: database busy')).toBe('动态保存失败');
