@@ -21,11 +21,43 @@ function stateClass(state: string): string {
   return state === 'ready' ? 'is-ready' : state === 'degraded' ? 'is-warn' : 'is-muted';
 }
 
+function riskLabel(risk: string): string {
+  return risk === 'read' ? '读取'
+    : risk === 'write' ? '写入'
+      : risk === 'maintenance' ? '维护'
+        : risk === 'external_side_effect' ? '外部操作'
+          : risk === 'destructive' ? '高风险'
+            : risk;
+}
+
+function toolSummary(tools: AdminMcpTool[]): string {
+  const counts = tools.reduce<Record<string, number>>((result, item) => {
+    result[item.risk] = (result[item.risk] ?? 0) + 1;
+    return result;
+  }, {});
+  const risks = ['read', 'write', 'external_side_effect', 'destructive', 'maintenance']
+    .filter((risk) => counts[risk])
+    .map((risk) => `${riskLabel(risk)} ${counts[risk]}`);
+  const disabled = tools.filter((item) => !item.authorized).length;
+  if (disabled > 0) risks.push(`未授权 ${disabled}`);
+  return risks.join(' · ') || '暂无已注册工具';
+}
+
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20 7v5h-5" />
+      <path d="M19 12a7 7 0 1 0-2.05 4.95" />
+    </svg>
+  );
+}
+
 export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void }) {
   const [overview, setOverview] = useState<AdminMcpOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [showTools, setShowTools] = useState(false);
   const [tool, setTool] = useState<(AdminMcpTool & { inputSchema: Record<string, unknown> }) | null>(null);
 
   const load = useCallback(async () => {
@@ -74,15 +106,32 @@ export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void
   if (error && !overview) return <AdminState kind="error" message={error} onRetry={() => void load()} testId="mcp-admin-error" />;
   if (!overview) return <AdminState kind="empty" testId="mcp-admin-empty" />;
 
+  const refreshLabel = loading ? '正在刷新 MCP 状态' : '刷新 MCP 状态';
+
   return (
     <section className="admin-mcp-page" data-testid="admin-mcp-page">
-      <header className="admin-subpage-header">
+      <header
+        className="admin-subpage-header"
+        style={{ gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'start' }}
+      >
         <div>
           <span className="admin-eyebrow">INFRASTRUCTURE</span>
           <h2>MCP 服务</h2>
-          <p>查看外部 MCP Server 的连接、工具刷新和安全元数据。这里不提供任意工具执行入口。</p>
+          <p>查看 MCP Server 的连接状态、工具刷新和权限概览。工具参数只在需要排查时展开。</p>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading}>{loading ? '刷新中…' : '刷新状态'}</button>
+        <button
+          type="button"
+          className="admin-header-button"
+          data-testid="admin-mcp-status-refresh"
+          aria-label={refreshLabel}
+          title={refreshLabel}
+          aria-busy={loading}
+          onClick={() => void load()}
+          disabled={loading}
+          style={{ width: 36, minWidth: 36, padding: 0, justifySelf: 'end', alignSelf: 'start' }}
+        >
+          <RefreshIcon />
+        </button>
       </header>
 
       {error && <p className="admin-inline-error" role="status">{error}</p>}
@@ -101,12 +150,12 @@ export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void
         <article className="admin-card">
           <span className="admin-card-kicker">工具数量</span>
           <strong>{overview.tools.length}</strong>
-          <small>仅展示已注册工具的安全描述</small>
+          <small>{toolSummary(overview.tools)}</small>
         </article>
       </section>
 
       <section className="admin-card admin-mcp-servers" data-testid="admin-mcp-servers">
-        <div className="admin-card-heading"><div><h3>连接中的 MCP Server</h3><p>URL 会移除查询参数和片段；认证只显示是否已配置。</p></div></div>
+        <div className="admin-card-heading"><div><h3>MCP Server</h3><p>日常只需要关注连接状态和错误。URL 会移除查询参数和片段，认证只显示是否已配置。</p></div></div>
         {overview.servers.length === 0 ? <AdminState kind="empty" message="当前没有配置 MCP Server" /> : overview.servers.map((server) => (
           <article className="admin-mcp-server" key={server.id}>
             <div className="admin-mcp-server-main">
@@ -124,17 +173,32 @@ export function McpAdminPage({ onNotice }: { onNotice: (message: string) => void
       </section>
 
       <section className="admin-card admin-mcp-tools" data-testid="admin-mcp-tools">
-        <div className="admin-card-heading"><div><h3>工具注册表</h3><p>列表不返回 inputSchema；点击单项后才请求该工具的参数 schema。</p></div></div>
-        {overview.tools.length === 0 ? <AdminState kind="empty" message="尚未发现工具" /> : (
-          <div className="admin-mcp-tool-list">
+        <div className="admin-card-heading">
+          <div>
+            <h3>工具与权限</h3>
+            <p>{overview.tools.length} 个已注册工具 · {toolSummary(overview.tools)}。仅排查权限或参数时需要查看详情。</p>
+          </div>
+          {overview.tools.length > 0 && (
+            <button
+              type="button"
+              data-testid="admin-mcp-tools-toggle"
+              aria-expanded={showTools}
+              onClick={() => setShowTools((value) => !value)}
+            >
+              {showTools ? '收起详情' : '查看详情'}
+            </button>
+          )}
+        </div>
+        {overview.tools.length === 0 ? <AdminState kind="empty" message="尚未发现工具" /> : showTools ? (
+          <div className="admin-mcp-tool-list" data-testid="admin-mcp-tool-details">
             {overview.tools.map((item) => (
               <button type="button" className="admin-mcp-tool-row" key={item.name} onClick={() => void inspectTool(item.name)} disabled={busy === `tool:${item.name}`}>
-                <span><strong>{item.name}</strong><small>{item.serverId ?? 'local'} · {item.description}</small></span>
-                <span className="admin-mcp-tool-meta"><em>{item.risk}</em><small>{item.phases.join(' · ')}</small></span>
+                <span><strong>{item.name}</strong><small>{item.serverId ?? 'local'} · 点开查看工具说明与参数</small></span>
+                <span className="admin-mcp-tool-meta"><em>{riskLabel(item.risk)}</em><small>{item.phases.join(' · ')}</small></span>
               </button>
             ))}
           </div>
-        )}
+        ) : null}
       </section>
 
       {tool && <div className="admin-tool-schema" role="dialog" aria-label={`${tool.name} 参数 schema`}>
