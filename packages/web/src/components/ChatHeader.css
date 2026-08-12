@@ -6,6 +6,17 @@
   min-width: 0;
 }
 
+/*
+ * Inner thoughts now have one clear affordance: tap “她在想…” to expand or
+ * collapse. The old per-message mode pill (“简短 / 沉浸 / 关闭”) looked like an
+ * action but only changed a local display preference, so keep it out of the UI.
+ * This rule lives here because ChatHeader.css is a small chat-global sheet that
+ * is mounted for every conversation view.
+ */
+.thought-mode-btn {
+  display: none !important;
+}
+
 @media (max-width: 560px) {
   .chat-topbar {
     height: auto;
