@@ -674,9 +674,16 @@ test('admin panel exposes only server-backed management sections', async ({ page
   await expect(page.getByTestId('admin-models-form')).toBeVisible();
 
   await page.getByTestId('admin-tab-content').click();
-  await expect(page.getByTestId('admin-memory-list')).toBeVisible();
-  await expect(page.getByTestId('admin-sticker-list')).toBeVisible();
-  await expect(page.getByTestId('admin-media-list')).toBeVisible();
+  await expect(page).toHaveURL(/\/admin\/content\/memory$/);
+  await expect(page.getByTestId('admin-content-management')).toBeVisible();
+  const contentSubnav = page.locator('.admin-content-subnav');
+  await expect(contentSubnav.getByRole('button', { name: '她的记忆' })).toBeVisible();
+  await contentSubnav.getByRole('button', { name: '表情包' }).click();
+  await expect(page).toHaveURL(/\/admin\/content\/stickers$/);
+  await contentSubnav.getByRole('button', { name: '媒体库' }).click();
+  await expect(page).toHaveURL(/\/admin\/content\/media$/);
+  await contentSubnav.getByRole('button', { name: '聊天记录' }).click();
+  await expect(page).toHaveURL(/\/admin\/content\/chat$/);
 
   await page.getByTestId('admin-tab-operations').click();
   await expect(page.getByTestId('admin-error-list')).toBeVisible();
