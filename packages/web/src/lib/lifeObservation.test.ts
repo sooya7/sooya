@@ -133,7 +133,7 @@ describe('mergeLifeHistory', () => {
     expect(mergeLifeHistory(log, events, proactive)).toEqual([
       {
         kind: 'proactive', id: 'proactive-1', at: '2026-08-09T11:00:00.000Z',
-        title: '朋友圈发布尝试', detail: '暂未发布'
+        title: '动态发布尝试', detail: '暂未发布'
       },
       {
         kind: 'event', id: 'event-1', at: '2026-08-09T10:00:00.000Z',
@@ -162,7 +162,7 @@ describe('mergeLifeHistory', () => {
       proactive('sent', 'sent', '2026-08-09T10:00:00.000Z'),
       proactive('failed', 'failed', '2026-08-09T09:00:00.000Z')
     ]).map(({ title, detail }) => ({ title, detail }))).toEqual([
-      { title: '分享读书心得', detail: '已发布到朋友圈' },
+      { title: '分享读书心得', detail: '已发布动态' },
       { title: '分享读书心得', detail: '发布失败' },
       { title: '读书', detail: '专注' }
     ]);
