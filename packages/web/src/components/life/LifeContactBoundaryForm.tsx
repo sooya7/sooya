@@ -35,7 +35,7 @@ export function LifeContactBoundaryForm({ initial, onNotice }: LifeContactBounda
       const result = await featureApi.updateLifeSettings(contactBoundaryPayload(draft));
       setDraft(result.settings);
       setDirty(false);
-      onNotice('朋友圈设置已保存');
+      onNotice('动态设置已保存');
     } catch (cause) {
       onNotice(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -52,13 +52,13 @@ export function LifeContactBoundaryForm({ initial, onNotice }: LifeContactBounda
         aria-controls="life-boundaries-panel"
         onClick={() => setOpen((value) => !value)}
       >
-        <span><strong>朋友圈发布</strong><small>决定她什么时候把生活分享到朋友圈</small></span>
+        <span><strong>动态发布</strong><small>决定她什么时候记录和分享生活动态</small></span>
         <span aria-hidden="true">{open ? '−' : '＋'}</span>
       </button>
       {open && (
         <form id="life-boundaries-panel" className="life-boundary-form" onSubmit={(event) => void submit(event)}>
           <label>
-            <span>允许发朋友圈</span>
+            <span>允许发动态</span>
             <input name="reachOut" type="checkbox" checked={draft.reachOut} onChange={(event) => change({ reachOut: event.target.checked })} />
           </label>
           <label>
@@ -84,8 +84,8 @@ export function LifeContactBoundaryForm({ initial, onNotice }: LifeContactBounda
               <option value="image">图片动态</option>
             </select>
           </label>
-          <p>朋友圈不会插进聊天记录。旧的“语音 / 文字＋表情包”主动模式会自动按文字动态处理。</p>
-          <button type="submit" disabled={busy || !dirty}>{busy ? '正在保存…' : '保存朋友圈设置'}</button>
+          <p>动态不会插进聊天记录。旧的“语音 / 文字＋表情包”主动模式会自动按文字动态处理。</p>
+          <button type="submit" disabled={busy || !dirty}>{busy ? '正在保存…' : '保存动态设置'}</button>
         </form>
       )}
     </section>
