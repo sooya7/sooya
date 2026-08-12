@@ -98,6 +98,12 @@ describe('McpAdminPage', () => {
     expect(container!.querySelector('[data-testid="admin-mcp-tool-details"]')).toBeNull();
     expect(container!.textContent).not.toContain('UNIQUE LONG TOOL DESCRIPTION');
 
+    const refresh = container!.querySelector('[data-testid="admin-mcp-status-refresh"]') as HTMLButtonElement;
+    expect(refresh.textContent).toBe('');
+    expect(refresh.getAttribute('aria-label')).toBe('刷新 MCP 状态');
+    expect(refresh.style.width).toBe('36px');
+    expect(refresh.style.minWidth).toBe('36px');
+
     const toggle = container!.querySelector('[data-testid="admin-mcp-tools-toggle"]') as HTMLButtonElement;
     await act(async () => toggle.click());
 
