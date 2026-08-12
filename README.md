@@ -1,56 +1,226 @@
 # SOOYA
 
-> 单用户 · 单人格 · 单条永久连续聊天 · 独立运行的私人 AI 聊天机器人
+> 单用户、长期连续、可自托管的私人 AI 伙伴。
 
-SOOYA 不是 ChatGPT 式的多会话平台，也不是多人聊天系统。打开网页就直接进入**唯一的一条聊天**，
-这条聊天永远存在、永远连续。SOOYA 会记得你们聊过什么，并且会自己决定该用文字、表情包、图片
-还是语音来回答你。
+SOOYA 不是一个多会话 ChatGPT 克隆，也不是把模型 API 套进聊天框的 Demo。
 
+它围绕一条长期存在的私人关系构建：**会聊天、会记忆、会主动开口、会感知图片、会发送表情/图片/语音，也能通过 MCP 使用外部工具。**
+
+打开页面后，你面对的始终是同一个 SOOYA，同一条连续聊天，以及一套会随着相处持续积累的上下文。
+
+```text
+你
+ ↓
+SOOYA
+ ├─ 聊天与上下文
+ ├─ Ombre Brain 长期记忆
+ ├─ Life / 主动消息
+ ├─ Vision / Web Search
+ ├─ Media Director
+ │   ├─ 表情包
+ │   ├─ 图片生成
+ │   └─ 语音
+ └─ MCP Host
+     └─ 外部工具与服务
 ```
-你：    在吗
-SOOYA： 我在呢。 [表情包]
-你：    用语音说晚安
-SOOYA： 晚安，好好睡一觉。 [语音 0:04 ▶]
+
+## 现在能做什么
+
+### 💬 一条真正连续的聊天
+
+- 单用户、单人格、单主会话
+- SSE 流式回复与断线补偿
+- 消息持久化、撤回、历史加载
+- 回复 revision fencing，旧任务不会覆盖更新后的回复
+- 移动端、桌面端和 PWA
+
+SOOYA 的目标不是管理几十个聊天窗口，而是让一次关系可以持续很久。
+
+### 🧠 Ombre Brain 长期记忆
+
+默认长期记忆后端是 **Ombre Brain**。
+
+SOOYA 不再把记忆当作“每轮塞几条数据库记录到 Prompt”这么简单，而是把记忆生命周期拆开：
+
+```text
+长时间未互动
+   ↓
+breath / 记忆浮现
+   ↓
+当前对话
+   ↓
+只读记忆工具参与回复
+   ↓
+最终回复发布完成
+   ↓
+后台 memory_commit
+   ↓
+周期性 dream / 维护整理
 ```
+
+聊天阶段和主动消息阶段默认只允许读取记忆。写入发生在最终回复确认完成之后，避免“模型准备说什么”和“用户真正看到什么”产生偏差。
+
+Ombre 以独立 MCP Server 运行，SOOYA 负责连接、工具策略、调用和生命周期编排。生产部署说明见 [deploy/ombre/README.md](deploy/ombre/README.md)。
+
+### 🌱 她也有自己的生活
+
+SOOYA 有独立的 Life / Proactive 系统，不需要等你每次先发消息。
+
+它可以维护当前状态、近期经历和主动开口条件，让“她现在在做什么”和“她为什么想给你发消息”成为系统的一部分，而不是让聊天模型临时编一个背景。
+
+管理后台的 **「她的生活」** 页面可以观察这些状态。
+
+### 🎭 Media Director
+
+媒体输出不再依赖主模型在回复末尾偷偷拼一串特殊标记。
+
+现在由独立的 **Media Director** 负责媒体决策和短结构化任务，包括：
+
+- 是否需要发送表情包
+- 语音内容的口语化处理
+- 图片生成提示词扩写
+- 媒体能力失败时的安全降级
+
+主回复负责“说什么”，Media Director 负责“怎么表达”。两条链路分开，媒体失败不会把整条聊天拖下水。
+
+### 👀 图片、表情、语音与联网搜索
+
+SOOYA 当前支持：
+
+- 图片理解 / Vision
+- 图片生成
+- 本地表情包图库与 AI 分析
+- TTS 语音消息
+- Web Search
+- 图片、音频和其他媒体文件的持久化
+
+这些能力分别配置，可以使用不同模型，也可以在缺失时独立降级。
+
+### 🔌 通用 MCP Host
+
+SOOYA 本身是一个 **通用 MCP Host**，不是“写死 Ombre 的客户端”。
+
+核心链路：
+
+```text
+McpManager
+   ↓
+McpConnection
+   ↓
+ToolRegistry
+   ↓
+ToolPolicy
+   ↓
+ToolCallRuntime
+   ↓
+模型工具调用
+```
+
+目前支持：
+
+- `streamable-http`
+- `sse`
+- 多 MCP Server
+- Bearer Token 从环境变量读取
+- 工具动态发现与刷新
+- Server 连接状态与自动重连
+- 工具超时、轮数、结果大小限制
+- required / best-effort Server
+- 按阶段和风险等级控制工具权限
+
+工具风险分为：
+
+```text
+read
+write
+external_side_effect
+destructive
+maintenance
+```
+
+正常 `reply` 和 `proactive` 阶段默认只开放安全读取能力。写入、外部副作用和维护工具需要对应阶段明确授权。
+
+MCP Server 定义放在 `config/mcp.json`：
+
+```json
+{
+  "servers": {
+    "ombre": {
+      "enabled": true,
+      "transport": "streamable-http",
+      "url": "http://127.0.0.1:18001/mcp",
+      "auth": {
+        "type": "bearer-env",
+        "env": "OMBRE_MCP_TOKEN"
+      },
+      "required": false,
+      "connectTimeoutMs": 10000,
+      "toolTimeoutMs": 15000
+    }
+  }
+}
+```
+
+**不要把 Token 写进 `mcp.json`。** `bearer-env` 只保存环境变量名，真实密钥放在 `.env` / systemd 环境中。
+
+运行时可以通过 `MCP_CONFIG_PATH` 指向运维管理的配置文件。生产 release 布局会优先保留 `shared/config` 中的持久化配置。
+
+### 🛠️ 管理中心
+
+`/admin` 不是一个只有日志的调试页，目前可以管理和观察：
+
+| 页面 | 用途 |
+| --- | --- |
+| 概览 | 系统状态与资源 |
+| 助手配置 | 人设、表达和语音行为 |
+| 模型配置 | Chat / Vision / Summary / Director / Embedding / Rerank / Image / TTS / Web Search |
+| 双方头像 | 助手与用户头像 |
+| 她的生活 | Life 状态与主动消息 |
+| 内容管理 | 记忆、表情包、媒体、聊天记录 |
+| MCP 服务 | Server 状态、连接测试、刷新工具、工具权限详情 |
+| 存储治理 | 媒体清理与空间回收 |
+| 运维与备份 | 后台任务、错误和备份 |
+
+MCP 工具详情默认收起，日常只需要关注 Server 是否正常、工具数量和错误信息。
 
 ---
 
-## 目录
+## 架构
 
-- [核心特性](#核心特性)
-- [快速开始](#快速开始)
-- [配置模型](#配置模型)
-- [让 SOOYA 发表情、图片和语音](#让-sooya-发表情图片和语音)
-- [项目结构](#项目结构)
-- [常用命令](#常用命令)
-- [文档](#文档)
-- [技术栈与取舍](#技术栈与取舍)
-- [许可](#许可)
+```text
+┌─────────────────────────────────────────────┐
+│               React 19 / PWA                │
+│        Chat UI             Admin UI         │
+└──────────────────────┬──────────────────────┘
+                       │ HTTP / SSE
+┌──────────────────────▼──────────────────────┐
+│                 Fastify Server              │
+│                                             │
+│  Conversation / Replier                    │
+│      │                                      │
+│      ├─ Context Builder                     │
+│      │   ├─ Persona                         │
+│      │   ├─ Recent Messages                 │
+│      │   ├─ Life / World Context            │
+│      │   └─ Ombre Memory                    │
+│      │                                      │
+│      ├─ Provider-neutral Model Turns        │
+│      │                                      │
+│      ├─ ToolCallRuntime                     │
+│      │   └─ ToolPolicy / ToolRegistry       │
+│      │       └─ McpManager                  │
+│      │           ├─ Ombre Brain             │
+│      │           └─ Other MCP Servers       │
+│      │                                      │
+│      └─ Final visible stream                │
+│                                             │
+│  Media Director      Background Jobs        │
+│  Media Storage       SQLite / Repositories  │
+│  Backup / Recovery   Persistent Event Bus   │
+└─────────────────────────────────────────────┘
+```
 
----
-
-## 核心特性
-
-**真正的多媒体回复。** SOOYA 自己会发送：纯文字、纯表情包、纯图片、纯语音，以及
-「文字 + 表情包 + 图片 + 语音」的任意组合。用哪种由模型根据聊天内容自主决定，你也可以直接
-要求「发个表情」「用语音说」「生成一张图片」「只发语音」「不要发表情」。
-
-**媒体是真实文件。** 语音是服务端 TTS 生成并落盘的音频文件，刷新页面、重启服务器之后仍然
-可以播放、拖动进度、变速；不是浏览器 `speechSynthesis` 的临时朗读。表情包是本地图库
-（PNG / GIF，随项目附带一套可用的测试表情），不依赖任何外部图片 URL。
-
-**不会「回复写进数据库但页面看不到」。** 每个事件在推送前先持久化并带上单调递增的序号；
-SSE 断线重连时按 `Last-Event-ID` 补发遗漏事件，补不上时前端会自动改用 REST 从数据库对账。
-
-**降级而不是崩溃。** 图片生成失败 → 保留文字并说明原因；TTS 失败 → 自动回退成文字气泡；
-Embedding 不可用 → 回退到全文检索并明确记录原因（0 条记忆绝不会显示成 100% 覆盖率）；
-任何一个能力没配置，机器人依然正常启动。
-
-**可靠性。** 数据库损坏自动检测、隔离并从最近的有效备份恢复；配置与媒体原子写入；
-进程异常退出后未完成任务自动恢复；重复请求幂等；定时 + 手动备份，备份带校验和恢复验证。
-
-**前端。** 简洁浅色界面、左右气泡、双方头像、表情/图片/文件/语音录制、移动端与桌面端适配、
-PWA 可安装到手机桌面、向上加载历史、断线重连补偿，**你在翻旧消息时不会被强制拉到底部**。
+模型工具调用使用统一的内部协议，不把核心回复链绑定到某一家模型厂商。隐藏工具轮次完成后，再进入最终可见的流式回复，因此用户不会看到模型内部的 ToolCall 往返。
 
 ---
 
@@ -58,212 +228,312 @@ PWA 可安装到手机桌面、向上加载历史、断线重连补偿，**你�
 
 ### 环境要求
 
-- Node.js **20.10+**（推荐 20 LTS）
-- Linux / macOS，2 核 2 GB 即可稳定运行
-- 编译 `better-sqlite3` 需要 `python3` / `make` / `g++`
+- Node.js `>= 20.10.0`
+- 推荐使用 **Node.js 22**，与当前 CI / 生产环境保持一致
+- Linux / macOS
+- 构建 `better-sqlite3` 需要可用的本地编译工具链
 
-### 本地运行
+### 1. 安装
 
 ```bash
-git clone <your-repo> sooya && cd sooya
-
-npm ci                        # 安装依赖（会编译 better-sqlite3）
-cp .env.example .env          # 配置
+git clone <your-repo> sooya
+cd sooya
+npm ci
+cp .env.example .env
 chmod 600 .env
-
-npm run build                 # 构建后端 + 前端
-npm start                     # http://127.0.0.1:8788
 ```
 
-打开 <http://127.0.0.1:8788> 就是聊天界面。
+至少先设置管理后台 Token：
 
-> **没有配置任何模型也能启动。** SOOYA 会正常运行，并在回复里明确告诉你还没配置聊天模型，
-> `GET /api/capabilities` 会如实列出每项能力的可用状态。
+```env
+ADMIN_API_TOKEN=换成一个足够长的随机字符串
+```
 
-### 开发模式
+如果服务会暴露到公网，再配置：
+
+```env
+WEB_CHAT_TOKEN=
+CORS_ALLOWED_ORIGINS=
+```
+
+完整配置项都在 [.env.example](.env.example)，不要提交真实 `.env`。
+
+### 2. 启动
+
+生产构建：
 
 ```bash
-npm run dev -w @sooya/server   # 后端，tsx watch，8788
-npm run dev -w @sooya/web      # 前端，Vite，5173（自动代理 /api 到 8788）
+npm run build
+npm start
 ```
 
-### Docker
+默认监听：
+
+```text
+http://127.0.0.1:8788
+```
+
+开发模式：
 
 ```bash
-cp .env.example .env && chmod 600 .env
-docker compose up -d --build
-curl http://127.0.0.1:8788/health/ready
+npm run dev:parallel
 ```
 
-数据挂在 `./data`，配置挂在 `./config`，重建镜像不会丢。
+- Server: `8788`
+- Vite: `5173`
 
-### 生产部署（Linux 原生）
+### 3. 配置模型
 
-```bash
-sudo ./deploy/install.sh          # 安装到 /opt/sooya 并注册 systemd
-sudo systemctl restart sooya
-sudo systemctl restart sooya
+打开：
+
+```text
+/admin/models
 ```
 
-完整说明（Nginx、TLS、升级、回滚、备份）见 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**。
+模型按能力拆分，不要求所有功能都使用同一个模型。
+
+Chat 层目前支持包括：
+
+- OpenAI Chat 风格协议
+- OpenAI Responses 风格协议
+- Anthropic Messages 风格协议
+- OpenAI-compatible 服务
+
+Vision、Summary、Media Director、Embedding、Rerank、Image、TTS 和 Web Search 都可以独立配置。
+
+模型密钥由服务端保存，管理页面只返回是否已配置，不回传明文密钥。
+
+### 4. 启动 Ombre Brain
+
+默认：
+
+```env
+MEMORY_BACKEND=ombre
+OMBRE_MCP_URL=http://127.0.0.1:18001/mcp
+OMBRE_MCP_TOKEN=
+```
+
+完整的 Ombre 安装、固定版本和 loopback 部署方式见：
+
+**[deploy/ombre/README.md](deploy/ombre/README.md)**
+
+当前 `ombre` Server 默认 `required: false`。Ombre 暂时不可用时，基础聊天不会因为记忆服务离线而直接停止，但长期记忆能力会进入降级状态。
 
 ---
 
-## 配置模型与联网搜索
+## MCP 配置
 
-打开 `/admin/models`（管理后台 → 模型配置）即可管理聊天、视觉、总结、Embedding、图片、语音、Rerank 和联网搜索。API Key 只提交给服务端，读取页面时仅返回“已配置”状态，不会回传明文。
+默认配置文件：
 
-联网搜索就在同一能力列表中，可自由选择并排序豆包、Tavily、Responses；只选择一个提供方时不会隐式回退。豆包支持 `custom` / `global` 切换，每个提供方都可在保存后直接测试连接。Responses 复用聊天模型，要求聊天协议为 `openai-responses` 且启用工具能力。
+```text
+config/mcp.json
+```
 
-页面配置保存在 `config/models.json`。运维也可以直接编辑服务器上的这同一份文件，完整校验通过后会自动热加载；无效编辑不会覆盖上一次有效配置。旧版模型/搜索环境变量只在首次升级迁移时读取，迁移后不再覆盖页面或文件。
+可以添加其他 MCP Server，而不用为每个服务重新写一套客户端：
 
-`models.json` 支持 `openai-chat` / `openai-responses` / `anthropic-messages` / `openai-compatible` 等协议，例如：
-
-```jsonc
+```json
 {
-  "chat": {
-    "provider": "openai-chat",
-    "baseUrl": "https://api.openai.com/v1",
-    "apiKey": "",              // 也可直接在管理页面安全保存
-    "model": "gpt-4o-mini",
-    "timeoutMs": 60000,
-    "maxTokens": 1024,
-    "temperature": 0.8,
-    "contextWindow": 128000,
-    "supportsVision": true,    // 打开后 SOOYA 才能看懂你发的图片
-    "supportsTools": false,
-    "supportsStreaming": true,
-    "maxRetries": 2
-  },
-  "vision":  { "...": "可选，不填就复用 chat" },
-  "summary": { "...": "可选，可以指向更便宜的小模型" },
-  "embedding": { "provider": "openai-embeddings", "model": "text-embedding-3-small", "dimensions": 1536 },
-  "image":     { "provider": "openai-images",     "model": "gpt-image-1" },
-  "tts":       { "provider": "openai-tts",        "model": "gpt-4o-mini-tts", "voice": "alloy", "format": "mp3" }
+  "servers": {
+    "example": {
+      "enabled": true,
+      "transport": "streamable-http",
+      "url": "http://127.0.0.1:9000/mcp",
+      "auth": {
+        "type": "bearer-env",
+        "env": "EXAMPLE_MCP_TOKEN"
+      },
+      "required": false,
+      "connectTimeoutMs": 10000,
+      "toolTimeoutMs": 15000
+    }
+  }
 }
 ```
 
-Embedding 维度从配置（或首次响应）读取，**不写死**；配置的维度和实际返回不一致会直接报错，
-而不是悄悄存入脏向量。
+然后在环境中提供：
 
-### 配置人格
-
-`config/persona.json`，首次启动生成。人格不写死在前端，第一版只有一个人格，
-UI 和数据库都不提供人格切换。
-
-```jsonc
-{
-  "name": "SOOYA",
-  "systemPrompt": "你是 SOOYA，用户唯一的私人 AI 伙伴……",
-  "speakingStyle": "口语化中文，句子短，偶尔用语气词……",
-  "relationshipContext": "你和用户是长期相处的朋友……",
-  "stickerPolicy": { "enabled": true, "frequency": "medium", "maxPerReply": 1, "avoidRepeatWindow": 5 },
-  "voicePolicy":   { "enabled": true, "frequency": "low", "maxCharsPerClip": 300 },
-  "imagePolicy":   { "enabled": true, "frequency": "low", "maxPerReply": 1 }
-}
+```env
+EXAMPLE_MCP_TOKEN=...
 ```
+
+通用开关：
+
+```env
+MCP_CONNECT_ON_START=true
+MCP_READ_ENABLED=true
+MCP_WRITE_ENABLED=true
+MCP_MAINTENANCE_ENABLED=true
+MCP_TOOL_REFRESH_INTERVAL_MS=21600000
+```
+
+MCP Admin 页面可以查看连接状态、测试 Server、刷新工具，以及在需要时展开工具与权限详情。
 
 ---
 
-## 让 SOOYA 发表情、图片和语音
+## 数据与持久化
 
-SOOYA 通过在回复末尾输出**内联标记**来触发多媒体，标记会被剥离，用户永远看不到：
+SOOYA 把用户拥有的数据保存在持久化目录，而不是 release 目录里。
 
-| 标记 | 效果 |
-| --- | --- |
-| `[[sticker:开心]]` | 发一个「开心」情绪的表情包 |
-| `[[sticker-only:难过]]` | 这一条只发表情包，不发文字 |
-| `[[image:一只趴在窗台上的猫]]` | 生成并发送一张图片 |
-| `[[voice]]` | 这条文字同时用语音发出来 |
-| `[[voice-only]]` | 只发语音（文字保留为语音文稿） |
+主要包括：
 
-这些标记由系统提示词自动注入，**不需要模型支持 tool calling**，所以任何 OpenAI 兼容的模型
-都能用。用户的显式要求（「不要发表情」）优先级最高，会覆盖模型的决定。
+- SQLite 数据库
+- 媒体文件
+- 模型 / 人格 / MCP 等配置
+- 备份
+- 运行期状态
 
-表情包会避免连续重复；语境里找不到合适的表情时**宁可不发**，不会硬凑一个不相关的。
+生产部署采用 release + shared 结构：
+
+```text
+/opt/sooya/
+├── current -> releases/<timestamp>
+├── releases/
+└── shared/
+    ├── data/
+    └── config/
+```
+
+升级只替换 release，用户数据留在 `shared`。
+
+---
+
+## 生产部署
+
+项目提供 systemd、Nginx、release 打包、升级、回滚、备份和恢复流程。
+
+发布前建议至少执行：
+
+```bash
+npm ci
+npm run typecheck
+npm test
+npm run build
+npm run package
+npm run verify:release
+```
+
+完整生产部署说明：
+
+**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
+
+部署设计遵循一个简单原则：**公网入口和用户数据分开。** 公网通常只暴露 Nginx / App 所需入口，SQLite、配置、备份和本地 MCP 服务不应该直接暴露。
 
 ---
 
 ## 项目结构
 
-```
+```text
 sooya/
 ├── packages/
-│   ├── server/                  Fastify + SQLite 后端
-│   │   ├── src/
-│   │   │   ├── config/          环境变量、persona/models 配置存储
-│   │   │   ├── db/              迁移、连接句柄、各 repository
-│   │   │   ├── core/            能力注册表、上下文、记忆、摘要、回复编排
-│   │   │   ├── providers/       chat / embedding / image / tts 适配器
-│   │   │   ├── media/           媒体落盘、表情包库
-│   │   │   ├── events/          持久化事件总线（SSE 补偿的基础）
-│   │   │   ├── routes/          chat / media / stream / admin / health
-│   │   │   ├── backup/          备份、校验、恢复
-│   │   │   └── agent/           Agent 架构预留（v1 不实现任何 Agent）
-│   │   └── test/                单元 + 集成 + API 测试（138 个）
-│   └── web/                     React + Vite + PWA 前端
-├── e2e/                         Playwright 浏览器端到端测试（36 个）
-├── assets/stickers/             内置表情包（脚本生成，无第三方素材）
-├── deploy/                      install / upgrade / rollback / backup / systemd / nginx
-├── scripts/                     打包、发布包检查、部署验证、素材生成
-└── docs/                        部署 / API / 数据库 / 测试报告 / 审查 / 已知限制
+│   ├── server/
+│   │   └── src/
+│   │       ├── agent/          Tool Registry / Policy / Runtime
+│   │       ├── core/           回复、上下文、Life、记忆、媒体编排
+│   │       ├── mcp/            通用 MCP Host
+│   │       ├── providers/      模型、Embedding、Image、TTS 等适配器
+│   │       ├── db/             SQLite、迁移与 repositories
+│   │       ├── routes/         Chat / Admin / Media / Health API
+│   │       └── backup/         备份与恢复
+│   └── web/                    React 19 + Vite 6 前端
+├── config/                     默认运行配置
+├── deploy/                     systemd / nginx / Ombre / 部署脚本
+├── docs/                       架构与运维文档
+├── e2e/                        Playwright E2E
+├── scripts/                    发布、校验、迁移等脚本
+└── assets/                     内置资源
 ```
 
 ---
 
 ## 常用命令
 
-| 命令 | 说明 |
+| 命令 | 用途 |
 | --- | --- |
-| `npm run build` | 构建后端和前端 |
-| `npm start` | 启动生产服务 |
-| `npm test` | 后端单元 + 集成 + API 测试 |
-| `npm run test:e2e` | Playwright 浏览器端到端测试（需先 build） |
-| `npm run typecheck` | 前后端 TypeScript 类型检查 |
-| `npm run package` | 生成发布包（ZIP + TAR.GZ + SHA256） |
-| `npm run verify:release` | 审计发布包（不含密钥/数据/依赖） |
-| `./scripts/test-deploy.sh` | 真实跑一遍 安装 → 升级 → 回滚 → 备份 → 恢复 |
-| `node scripts/gen-stickers.mjs` | 重新生成内置表情包 |
+| `npm run dev` | 构建 Web 后启动 Server watch |
+| `npm run dev:parallel` | 同时启动 Server 和 Vite 开发服务 |
+| `npm run build` | 构建 Server + Web |
+| `npm start` | 启动生产 Server |
+| `npm test` | Server 测试 |
+| `npm run test:e2e` | Playwright E2E |
+| `npm run typecheck` | 全 workspace TypeScript 检查 |
+| `npm run package` | 生成 release 包 |
+| `npm run verify:release` | 校验 release 包 |
+| `npm run migrate:ombre` | 执行旧 SOOYA 记忆到 Ombre 的迁移工具 |
+
+Web 自身也有独立的 Vitest 测试：
+
+```bash
+npm run test -w @sooya/web
+```
+
+---
+
+## 技术栈
+
+### Server
+
+- Node.js / TypeScript
+- Fastify 5
+- SQLite + better-sqlite3 (WAL)
+- Zod
+- Pino
+- MCP TypeScript SDK
+- Sharp
+- Vitest
+
+### Web
+
+- React 19
+- TypeScript
+- Vite 6
+- TanStack Virtual
+- PWA
+- Playwright
+
+SOOYA 目前仍然刻意保持单用户架构。没有多租户、团队空间、RBAC 或复杂微服务层，这些并不是当前产品目标。
+
+---
+
+## 设计原则
+
+**主回复优先。** 工具、媒体和后台维护不能轻易破坏用户真正看到的回复。
+
+**记忆有生命周期。** 召回、写入和维护不是同一个动作，也不应该挤在一次模型调用里。
+
+**MCP 保持通用。** Ombre 是第一个重要 MCP，但 Host 不围绕 Ombre 写死，未来服务应该通过注册、配置和策略接入。
+
+**能力可以降级。** Vision、Image、TTS、Web Search、MCP 中任何一个不可用，都应该尽可能保住基础聊天链路。
+
+**数据属于部署者。** 聊天、媒体、配置和备份都落在自托管环境里，release 更新不覆盖持久数据。
+
+---
+
+## 安全提示
+
+- 不要提交 `.env`、API Key、MCP Token 或真实生产配置
+- 公网部署请设置 `WEB_CHAT_TOKEN` 和 `ADMIN_API_TOKEN`
+- MCP Token 使用 `bearer-env` 注入，不写入 `mcp.json`
+- 不要把 SQLite、备份目录或本地 Ombre MCP 端口直接暴露到公网
+- 外部副作用 / destructive 工具应保持严格 ToolPolicy，不要为了“方便”全局放开
 
 ---
 
 ## 文档
 
-| 文档 | 内容 |
-| --- | --- |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 部署、Nginx、TLS、升级回滚、备份恢复、故障排查 |
-| [docs/API.md](docs/API.md) | 全部 HTTP 接口、SSE 事件、消息数据结构 |
-| [docs/DATABASE.md](docs/DATABASE.md) | 数据库表结构、索引、迁移机制 |
-| [docs/TEST-REPORT.md](docs/TEST-REPORT.md) | 测试范围与实际执行结果 |
-| [docs/REVIEW.md](docs/REVIEW.md) | 三轮互审记录与裁决 |
-| [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | 已知限制与尚未真实验证的部分 |
+- [生产部署](docs/DEPLOYMENT.md)
+- [Ombre Brain 部署](deploy/ombre/README.md)
+- [API](docs/API.md)
+- [数据库](docs/DATABASE.md)
+- [已知限制](docs/LIMITATIONS.md)
 
 ---
 
-## 技术栈与取舍
+## 项目状态
 
-**后端** Node.js 20 · TypeScript · Fastify 5 · SQLite (better-sqlite3, WAL) · Zod · Pino
-**前端** React 19 · TypeScript · Vite 6 · 原生 CSS · 手写 Service Worker
-**测试** Vitest · Fastify inject · Playwright
+SOOYA 仍在持续开发中。内部结构、管理页面和工具协议可能继续调整。
 
-刻意**没有**引入：Kubernetes、微服务、Redis、消息队列、Elasticsearch、需要登录的云平台。
-目标就是在一台 2 核 2 GB 的 Linux 机器上，用一个进程稳定跑下去。
+如果你只是想找一个通用聊天 UI，这个项目会显得有点重；如果你想让一个 AI 在自己的服务器上长期存在、持续记住同一个人，并逐渐获得更多可控能力，这正是 SOOYA 要做的事。
 
-两处与默认技术栈的偏离，理由如下：
+## License
 
-1. **`better-sqlite3` 锁定 `^12.x`**。13.x 在本项目的构建/运行环境中加载后即段错误
-   （`new Database()` 直接 SIGSEGV）。12.11.1 在同环境下 WAL、FTS5、在线备份全部正常。
-2. **PWA 不用 `vite-plugin-pwa`（Workbox）**，改为手写 `public/sw.js`。该插件的依赖链
-   （`workbox-build → ejs → jake → filelist → minimatch → brace-expansion`）带有一个 high
-   级别漏洞告警；SOOYA 只需要「应用外壳离线 + 媒体缓存 + 不缓存 API」这点逻辑，手写约 90 行，
-   `npm audit` 因此为 0 漏洞。
-
----
-
-## 许可
-
-MIT，见 [LICENSE](LICENSE)。
-
-内置表情包与图标均由 `scripts/gen-stickers.mjs`、`scripts/gen-icons.mjs` 以代码绘制生成，
-不含任何第三方商标或素材。界面参考现代即时通讯软件的通用交互范式，未使用任何厂商的商标、
-图标或美术资源。
+MIT
