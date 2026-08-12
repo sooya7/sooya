@@ -90,7 +90,6 @@ export function ImageViewer({
   const gesture = useRef<{ startX: number; startY: number; panX: number; panY: number; scale: number; pinchDistance: number } | null>(null);
   const dragRef = useRef({ x: 0, y: 0 });
   const onCloseRef = useRef(onClose);
-  const historyMarker = useRef(`viewer_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`);
   const [drag, setDrag] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -137,7 +136,7 @@ export function ImageViewer({
     document.body.style.overflow = 'hidden';
     const baseState = withoutViewerMarker(history.state);
     if (history.state?.sooyaImageViewer) history.replaceState(baseState, '');
-    history.pushState({ ...(baseState && typeof baseState === 'object' ? baseState : {}), sooyaImageViewer: historyMarker.current }, '');
+    history.pushState({ ...(baseState && typeof baseState === 'object' ? baseState : {}), sooyaImageViewer: true }, '');
     const pop = () => onCloseRef.current();
     window.addEventListener('popstate', pop);
     return () => {
@@ -147,7 +146,7 @@ export function ImageViewer({
   }, []);
 
   const requestClose = useCallback(() => {
-    if (history.state?.sooyaImageViewer === historyMarker.current) history.back();
+    if (history.state?.sooyaImageViewer === true) history.back();
     else onCloseRef.current();
   }, []);
 
