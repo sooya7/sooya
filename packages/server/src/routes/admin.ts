@@ -683,7 +683,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
   server.get('/api/admin/mcp/servers', guard, async () => ({
     servers: services.mcpManager.health(),
     memory: services.ombreMemory.health(),
-    tools: services.tools.list().filter((tool) => tool.name.includes('.'))
+    tools: services.tools.listForAdmin().filter((tool) => tool.source === 'mcp')
   }));
   server.post('/api/admin/mcp/:serverId/test', guard, async (req, reply) => {
     try {

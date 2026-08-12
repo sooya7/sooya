@@ -307,9 +307,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     onEvent: (event) => logger.info({ serverId: event.serverId, detail: event.detail }, `mcp.${event.event}`)
   });
   const toolPolicy = new ToolPolicy(tools, {
-    readEnabled: env.OMBRE_READ_ENABLED,
-    writeEnabled: env.OMBRE_WRITE_ENABLED,
-    maintenanceEnabled: env.OMBRE_DREAM_ENABLED
+    readEnabled: env.MCP_READ_ENABLED,
+    writeEnabled: env.MCP_WRITE_ENABLED,
+    maintenanceEnabled: env.MCP_MAINTENANCE_ENABLED,
+    serverPolicies: {
+      ombre: {
+        readEnabled: env.OMBRE_READ_ENABLED,
+        writeEnabled: env.OMBRE_WRITE_ENABLED,
+        maintenanceEnabled: env.OMBRE_DREAM_ENABLED
+      }
+    }
   });
   const toolRuntime = new ToolCallRuntime({
     registry: tools,
@@ -804,6 +811,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
 
 function scheduleRecurring(app: SooyaApp): void {
   const { env, repos, services } = app;
+  const enqueueIfIdle = (type: string, payload: Record<string, unknown>): void => {
+    try {
+      if (!repos.jobs.hasActive(type)) repos.jobs.enqueue(type, payload);
+    } catch { /* scheduling is best effort and never blocks chat */ }
+  };
   const maintenance = setInterval(() => {
     try {
       repos.jobs.enqueue('maintenance', {});
@@ -842,6 +854,25 @@ function scheduleRecurring(app: SooyaApp): void {
     }, env.WEATHER_REFRESH_INTERVAL_MS);
     weather.unref?.();
     app.recurringTimers.push(weather);
+  }
+
+  if (env.MEMORY_BACKEND === 'ombre' && env.MCP_TOOL_REFRESH_INTERVAL_MS > 0) {
+    const refreshTools = setInterval(() => {
+      enqueueIfIdle('ombre.refresh_tools', { reason: 'scheduled' });
+    }, env.MCP_TOOL_REFRESH_INTERVAL_MS);
+    refreshTools.unref?.();
+    app.recurringTimers.push(refreshTools);
+  }
+
+  if (env.MEMORY_BACKEND === 'ombre' && env.OMBRE_DREAM_ENABLED && env.OMBRE_DREAM_INTERVAL_MS > 0) {
+    const enqueueDreamIfEligible = (reason: string): void => {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      if (repos.ombreCommits.hasCompletedSince(since)) enqueueIfIdle('ombre.dream', { reason });
+    };
+    enqueueDreamIfEligible('startup');
+    const dream = setInterval(() => enqueueDreamIfEligible('scheduled'), env.OMBRE_DREAM_INTERVAL_MS);
+    dream.unref?.();
+    app.recurringTimers.push(dream);
   }
 
   if (env.BACKUP_INTERVAL_MS > 0) {

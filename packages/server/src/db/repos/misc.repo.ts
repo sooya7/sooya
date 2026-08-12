@@ -189,6 +189,13 @@ export class JobRepo {
     return (this.db.prepare("SELECT COUNT(*) c FROM jobs WHERE status IN ('pending','running')").get() as { c: number }).c;
   }
 
+  hasActive(type: string): boolean {
+    const row = this.db
+      .prepare("SELECT 1 present FROM jobs WHERE type = ? AND status IN ('pending','running') LIMIT 1")
+      .get(type) as { present: number } | undefined;
+    return row?.present === 1;
+  }
+
   list(limit = 50): JobRow[] {
     return this.db.prepare('SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?').all(limit) as JobRow[];
   }

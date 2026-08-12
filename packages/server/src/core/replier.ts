@@ -339,7 +339,11 @@ export class Replier {
       let modelTurns: ModelTurn[] = built.turns;
       if (this.deps.ombreMemory) {
         try {
-          const surfaced = await this.deps.ombreMemory.wakeIfNeeded(undefined, signal);
+          const previousInteraction = this.deps.messages.lastInteractionBefore(latestUserMessage.id);
+          const surfaced = await this.deps.ombreMemory.wakeIfNeeded(
+            previousInteraction ? new Date(previousInteraction) : null,
+            signal
+          );
           if (surfaced) {
             const wakeId = `wake-${batchId}-${revision}`;
             modelTurns = [
@@ -403,7 +407,7 @@ export class Replier {
             if (built.visionUsed && isImageInputRejection(streamError)) {
               this.deps.errorLog.add('reply.chat', 'vision_input_rejected', { diagnostic: redactDiagnostic(streamError) });
               try {
-                await streamTurns(textOnlyTurns(built.turns));
+                await streamTurns(textOnlyModelTurns(modelTurns));
                 degraded.push('chat:vision_unsupported');
                 streamError = null;
               } catch (retryErr) {
@@ -1121,15 +1125,17 @@ function isImageInputRejection(err: Error): boolean {
   return IMAGE_REJECTION.test(err.message);
 }
 
-/** Same conversation with image parts replaced by a plain-text marker. */
-function textOnlyTurns(turns: ChatTurn[]): ChatTurn[] {
+/** Remove image parts while preserving assistant/tool history for a retry. */
+export function textOnlyModelTurns(turns: ModelTurn[]): ModelTurn[] {
   return turns.map((turn) => {
-    if (turn.content.every((p) => p.type === 'text')) return turn;
-    const text = turn.content
+    if (!('content' in turn) || !Array.isArray(turn.content)) return turn;
+    const chatTurn = turn as ChatTurn;
+    if (chatTurn.content.every((p) => p.type === 'text')) return chatTurn;
+    const text = chatTurn.content
       .map((p) => (p.type === 'text' ? p.text : '[图片]'))
       .filter((part) => part && part.trim())
       .join('\n');
-    return { role: turn.role, content: [{ type: 'text', text: text || '[图片]' }] };
+    return { role: chatTurn.role, content: [{ type: 'text', text: text || '[图片]' }] };
   });
 }
 

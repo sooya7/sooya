@@ -106,6 +106,33 @@ export class ToolRegistry {
     return [...this.tools.values()].map(toPublicDescriptor);
   }
 
+  /** Admin-only metadata; never includes handler closures or MCP auth data. */
+  listForAdmin(): Array<{
+    name: string;
+    modelName?: string;
+    remoteName?: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    source: ToolSource;
+    serverId?: string;
+    risk: ToolRisk;
+    phases: ToolPhase[];
+    authorized: boolean;
+  }> {
+    return [...this.tools.values()].map((tool) => ({
+      name: tool.name,
+      ...(tool.modelName ? { modelName: tool.modelName } : {}),
+      ...(tool.remoteName ? { remoteName: tool.remoteName } : {}),
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      source: tool.source,
+      ...(tool.serverId ? { serverId: tool.serverId } : {}),
+      risk: tool.risk,
+      phases: [...tool.phases],
+      authorized: tool.authorized === true
+    }));
+  }
+
   listForPhase(phase: ToolPhase): ToolDescriptor[] {
     return [...this.tools.values()].filter((tool) =>
       tool.phases.includes(phase) && (tool.authorize === undefined || tool.authorize(phase))

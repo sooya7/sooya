@@ -5,6 +5,17 @@ let h: Harness;
 afterEach(async () => { if (h) await h.cleanup(); });
 
 describe('message history search and date navigation', () => {
+  it('returns the latest interaction before the current message', async () => {
+    h = await createHarness({ startWorkers: false });
+    const first = h.app.repos.messages.create({ role: 'user', parts: [{ type: 'text', text: '第一轮' }] }).message;
+    const assistant = h.app.repos.messages.create({ role: 'assistant', parts: [{ type: 'text', text: '回复' }] }).message;
+    const current = h.app.repos.messages.create({ role: 'user', parts: [{ type: 'text', text: '第二轮' }] }).message;
+
+    expect(h.app.repos.messages.lastInteractionBefore(first.id)).toBeNull();
+    expect(h.app.repos.messages.lastInteractionBefore(current.id)).toBe(assistant.createdAt);
+    expect(h.app.repos.messages.lastInteractionBefore('missing')).toBeNull();
+  });
+
   it('searches Chinese and English text across message parts and returns snippets', async () => {
     h = await createHarness({ startWorkers: false });
     const first = h.app.repos.messages.create({ role: 'user', parts: [{ type: 'text', text: '今天去北京看展览' }, { type: 'text', text: 'museum notes' }] }).message;
