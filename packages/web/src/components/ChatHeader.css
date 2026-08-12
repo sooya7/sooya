@@ -112,6 +112,8 @@
   .chat-topbar .topbar-actions .notification-bell,
   .chat-topbar .topbar-actions .topbar-admin-entry {
     width: 30px;
+    min-width: 30px;
     height: 30px;
+    flex: 0 0 30px;
   }
 }
