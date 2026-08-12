@@ -13,6 +13,7 @@ import {
   parseUserDirectives,
   stripModelDirectives,
   StreamingDirectiveFilter,
+  StreamingPrivateContextFilter,
   type ModelDirectives,
   type UserDirectives
 } from './directives.js';
@@ -271,6 +272,7 @@ export class Replier {
       let rawText = '';
       let visibleText = '';
       const filter = new StreamingDirectiveFilter();
+      const privateContextFilter = new StreamingPrivateContextFilter();
       let published = false;
       let textPartId: string | null = null;
       let shell: ChatMessage | null = null;
@@ -319,7 +321,7 @@ export class Replier {
       const pushDelta = (delta: string): void => {
         if (firstTokenAt === null) firstTokenAt = Date.now();
         rawText += delta;
-        const visible = filter.push(delta);
+        const visible = privateContextFilter.push(filter.push(delta));
         if (!visible) return;
         if (!published) {
           visibleText += visible;
@@ -385,7 +387,7 @@ export class Replier {
         throw err;
       }
 
-      const tail = filter.flush();
+      const tail = privateContextFilter.push(filter.flush()) + privateContextFilter.flush();
       if (tail) {
         rawText += tail;
         if (published) persistDelta(tail);

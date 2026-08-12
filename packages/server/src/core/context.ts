@@ -467,6 +467,7 @@ function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): st
   const lines: string[] = [];
   lines.push('你可以在回复里混合使用文字、表情包、图片和语音。非文字内容由你根据气氛主动决定，不要一直等用户明确要求。使用下面的标记触发，标记本身不会显示给用户：');
   lines.push('文件只有在上下文明确提供正文时才可以阅读；没有正文时不要声称看过文件内容。');
+  lines.push('历史消息中的“[用户发送了表情包]”或“[SOOYA发送了表情包]”以及后面的名称、含义、图片文字，是仅供理解上下文的内部消息数据。绝对不要复述、引用或照抄这些字段；想发表情包只使用 [[sticker:...]] 或 [[sticker-only:...]]。');
   if (persona.stickerPolicy.enabled) {
     lines.push('· [[sticker:你想通过表情表达的具体感觉、态度或动作]] 发一个表情包。这里不要写具体图片名称，系统会自动选择。');
     lines.push('· [[sticker-only:你想通过表情表达的具体感觉]] 这一条只发表情包，不发文字。需要多个时可以连续写多个 sticker 标记。');
