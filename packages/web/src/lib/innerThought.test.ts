@@ -2,22 +2,23 @@
 import { describe, expect, it } from 'vitest';
 import { getInnerThoughtMode, setInnerThoughtMode, limitToThreeSentences, nextInnerThoughtMode } from './innerThought.js';
 
-describe('innerThought mode storage', () => {
-  it('defaults to brief and persists changes', () => {
-    try { localStorage.removeItem('sooya.inner-thought-mode'); } catch { /* ignore */ }
+describe('innerThought legacy mode compatibility', () => {
+  it('always resolves to brief and clears stale stored modes', () => {
+    try { localStorage.setItem('sooya.inner-thought-mode', 'immersive'); } catch { /* ignore */ }
     expect(getInnerThoughtMode()).toBe('brief');
-    setInnerThoughtMode('immersive');
-    expect(getInnerThoughtMode()).toBe('immersive');
+    expect(localStorage.getItem('sooya.inner-thought-mode')).toBeNull();
+
     setInnerThoughtMode('off');
-    expect(getInnerThoughtMode()).toBe('off');
+    expect(getInnerThoughtMode()).toBe('brief');
+    expect(localStorage.getItem('sooya.inner-thought-mode')).toBeNull();
   });
 
-  it('ignores unknown stored values and cycles off -> brief -> immersive', () => {
+  it('keeps the compatibility cycle shim pinned to brief', () => {
     try { localStorage.setItem('sooya.inner-thought-mode', 'banana'); } catch { /* ignore */ }
     expect(getInnerThoughtMode()).toBe('brief');
     expect(nextInnerThoughtMode('off')).toBe('brief');
-    expect(nextInnerThoughtMode('brief')).toBe('immersive');
-    expect(nextInnerThoughtMode('immersive')).toBe('off');
+    expect(nextInnerThoughtMode('brief')).toBe('brief');
+    expect(nextInnerThoughtMode('immersive')).toBe('brief');
   });
 });
 
