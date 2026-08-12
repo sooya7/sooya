@@ -891,7 +891,7 @@ type AdminErrorGroup = {
 function operationAreaLabel(scope: string): string {
   if (scope === 'job.sticker.analyze' || scope.includes('sticker.analy')) return '表情包 AI 分析';
   if (scope.includes('sticker')) return '表情包处理';
-  if (scope.includes('moment') || scope.includes('proactive')) return '朋友圈发布';
+  if (scope.includes('moment') || scope.includes('proactive')) return '动态发布';
   if (scope.includes('life')) return '生活状态更新';
   if (scope.includes('weather')) return '天气更新';
   if (scope.includes('image')) return '图片生成';
@@ -993,7 +993,7 @@ function operationDetailText(detail: unknown): string | null {
 function operationJobLabel(type: string): string {
   if (type.includes('sticker') && type.includes('analy')) return '表情包 AI 分析';
   if (type.includes('sticker')) return '表情包处理';
-  if (type.includes('moment') || type.includes('proactive')) return '朋友圈发布';
+  if (type.includes('moment') || type.includes('proactive')) return '动态发布';
   if (type.includes('life')) return '生活状态更新';
   if (type.includes('weather')) return '天气更新';
   if (type.includes('image')) return '图片生成';

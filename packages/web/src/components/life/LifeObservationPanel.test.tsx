@@ -233,7 +233,7 @@ describe('LifeObservationPanel', () => {
     const secondary = panel.querySelector('[data-testid="life-secondary-card"]')!;
     expect(secondary.textContent).toContain('正在发展的事');
     expect(secondary.textContent).toContain('生活记录');
-    expect(secondary.textContent).toContain('朋友圈发布');
+    expect(secondary.textContent).toContain('动态发布');
     expect(secondary.textContent).not.toContain('慢慢整理房间');
 
     expect(panel.textContent).not.toContain('地点与天气');

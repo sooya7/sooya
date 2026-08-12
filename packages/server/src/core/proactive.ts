@@ -454,17 +454,17 @@ async function composeMomentSharePlan(
       system: [
         personaPrompt.trim(),
         ...lifeLines.map((line) => `【当前状态，仅用于语气连续性】${line}`),
-        '你是 SOOYA，要把一件真实经历过的小事发到只对用户可见的朋友圈。这里不是私人聊天窗口。',
+        '你是 SOOYA，要把一件真实经历过的小事发到只对用户可见的动态。这里不是私人聊天窗口。',
         '【要发布的历史事件】',
         JSON.stringify(eventContext),
         `本次发布方式：${imageMode ? '图片动态' : '文字动态'}。${imageMode ? '请规划一张与正文同一事件的照片。' : 'image 必须为 null。'}`,
-        '【规则】text 是一条自然、完整的朋友圈正文，像随手记录生活，不要标题、标签、冒号前缀、系统/Life/模型内容。',
+        '【规则】text 是一条自然、完整的动态正文，像随手记录生活，不要标题、标签、冒号前缀、系统/Life/模型内容。',
         '不要用“在吗”“睡了吗”“刚想跟你说”“发给你看看”这种私聊式呼叫，也不要为了发动态虚构新事件。',
         '如果有图片，必须与 text 是同一件具体小事：pov 是 SOOYA 手机第一视角且不出现本人，selfie 才出现 SOOYA。只选普通现实生活场景。',
         repairReason ? `上一版未通过检查：${repairReason}。请只重新返回完整 JSON。` : '',
         '只输出 JSON：{"text":"...","image":null 或 {"kind":"pov|selfie","scene":"...","action":"...","mood":"...","framing":"front|side|full-body|environment"}}。'
       ].filter(Boolean).join('\n'),
-      messages: [{ role: 'user', content: [{ type: 'text', text: '为这件真实经历写一条朋友圈动态。' }] }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: '为这件真实经历写一条动态动态。' }] }],
       temperature: 0.8,
       maxTokens: 450,
       jsonMode: true,
@@ -488,7 +488,7 @@ function validateMomentText(text: string): { ok: boolean; reason?: string } {
   const normalized = text.trim().replace(/^["“”「」]|["“”「」]$/gu, '').trim();
   if (Array.from(normalized.replace(/\s/gu, '')).length < 6) return { ok: false, reason: '文本太短或只是残片' };
   if (/^(刚刚|刚才|刚发生的事|刚才发生的事|最近|今天)[：:]?$/u.test(normalized)) return { ok: false, reason: '只是标题或时间残片' };
-  if (/^(在吗|睡了吗|干嘛呢)[？?。.]?$/u.test(normalized)) return { ok: false, reason: '像私聊呼叫，不像朋友圈正文' };
+  if (/^(在吗|睡了吗|干嘛呢)[？?。.]?$/u.test(normalized)) return { ok: false, reason: '像私聊呼叫，不像动态正文' };
   if (/(因为|所以|然后|但是|不过|顺道|本来想|正准备|刚准备)$/u.test(normalized)) return { ok: false, reason: '句子以悬空连接词结尾' };
   return { ok: true };
 }
@@ -503,7 +503,7 @@ function buildGroundedScene(image: NonNullable<MomentSharePlan['image']>, contex
   return [
     `真实生活事件：${context.activity}。`,
     `实际地点：${location}。`,
-    `这条朋友圈要拍：${image.scene}。`,
+    `这条动态要拍：${image.scene}。`,
     image.action ? `动作：${image.action}。` : '',
     `照片类型：${image.kind === 'selfie' ? 'SOOYA 在同一真实事件中的自然生活自拍' : 'SOOYA 手机第一视角拍摄眼前所见，SOOYA 本人不入镜'}。`,
     weather,

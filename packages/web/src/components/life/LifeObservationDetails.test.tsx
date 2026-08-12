@@ -253,7 +253,7 @@ describe('LifeObservationDetails', () => {
     expect(rows[0]?.textContent).toContain('轻松');
     expect(container!.textContent).not.toContain('把书架整理好了');
     expect(container!.textContent).not.toContain('分享读书感想');
-    expect(container!.textContent).not.toContain('朋友圈');
+    expect(container!.textContent).not.toContain('动态');
 
     const forbiddenLabels = ['新增地点', '删除', '设为当前城市', '立即刷新天气', '调整', '重置', '切换地点'];
     for (const label of forbiddenLabels) expect(container!.textContent).not.toContain(label);
