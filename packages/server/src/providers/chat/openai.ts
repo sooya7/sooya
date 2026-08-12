@@ -8,7 +8,9 @@ import {
   type ChatProvider,
   type ChatRequest,
   type ChatResult,
-  type ChatTurn,
+  type ChatToolCall,
+  type ChatToolDefinition,
+  type ModelTurn,
   type HealthStatus
 } from '../types.js';
 
@@ -114,6 +116,10 @@ export class OpenAIChatProvider implements ChatProvider {
     return this.cfg.provider !== 'none' && !!this.cfg.baseUrl && !!this.cfg.model && !!this.cfg.apiKey;
   }
 
+  get supportsTools(): boolean {
+    return this.cfg.supportsTools;
+  }
+
   private endpoint(): string {
     return joinUrl(this.cfg.baseUrl, '/chat/completions');
   }
@@ -143,6 +149,10 @@ export class OpenAIChatProvider implements ChatProvider {
       stream
     };
     if (nativeJson) body.response_format = { type: 'json_object' };
+    if (this.cfg.supportsTools && req.tools && req.tools.length > 0) {
+      body.tools = req.tools.map(toOpenAiTool);
+      if (req.toolChoice !== undefined) body.tool_choice = toOpenAiToolChoice(req.toolChoice);
+    }
     return body;
   }
 
@@ -182,11 +192,16 @@ export class OpenAIChatProvider implements ChatProvider {
           });
           if (!res.ok) throw new ProviderRequestError(`chat request failed with status ${res.status}: ${await safeText(res)}`, res.status);
           const json = (await res.json()) as {
-            choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
+            choices?: Array<{
+              message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string | null } }> };
+              finish_reason?: string;
+            }>;
             usage?: { prompt_tokens?: number; completion_tokens?: number };
           };
+          const message = json.choices?.[0]?.message;
           return {
-            text: json.choices?.[0]?.message?.content ?? '',
+            text: message?.content ?? '',
+            toolCalls: parseOpenAiToolCalls(message?.tool_calls),
             finishReason: json.choices?.[0]?.finish_reason,
             usage: { promptTokens: json.usage?.prompt_tokens, completionTokens: json.usage?.completion_tokens },
             model: this.cfg.model
@@ -288,19 +303,16 @@ export class OpenAIResponsesProvider implements ChatProvider {
     return !!this.cfg.baseUrl && !!this.cfg.model && !!this.cfg.apiKey;
   }
 
+  get supportsTools(): boolean {
+    return this.cfg.supportsTools;
+  }
+
   private endpoint(): string {
     return joinUrl(this.cfg.baseUrl, '/responses');
   }
 
   private body(req: ChatRequest, stream: boolean): Record<string, unknown> {
-    const input = req.messages.map((turn) => ({
-      role: turn.role,
-      content: turn.content.map((p) =>
-        p.type === 'text'
-          ? { type: turn.role === 'assistant' ? 'output_text' : 'input_text', text: p.text }
-          : { type: 'input_image', image_url: `data:${p.mime};base64,${p.data}` }
-      )
-    }));
+    const input = req.messages.flatMap(toResponsesInput);
     const body: Record<string, unknown> = {
       model: this.cfg.model,
       input,
@@ -309,7 +321,12 @@ export class OpenAIResponsesProvider implements ChatProvider {
       stream
     };
     if (req.system) body.instructions = req.system;
-    if (req.webSearch?.enabled) {
+    if (this.cfg.supportsTools && req.tools && req.tools.length > 0) {
+      const tools: Array<Record<string, unknown>> = req.tools.map(toResponsesTool);
+      if (req.webSearch?.enabled) tools.push({ type: 'web_search', ...responsesSearchLocation(req.webSearch.userLocation) });
+      body.tools = tools;
+      if (req.toolChoice !== undefined) body.tool_choice = toResponsesToolChoice(req.toolChoice);
+    } else if (req.webSearch?.enabled) {
       const location = req.webSearch.userLocation;
       const approximate = location
         ? Object.fromEntries(
@@ -351,6 +368,7 @@ export class OpenAIResponsesProvider implements ChatProvider {
           const json = (await res.json()) as ResponsesPayload;
           return {
             text: extractResponsesText(json),
+            toolCalls: parseResponsesToolCalls(json.output),
             model: this.cfg.model,
             ...(req.webSearch?.enabled ? { webSearch: extractResponsesWebSearch(json) } : {})
           };
@@ -446,6 +464,10 @@ interface ResponsesPayload {
   output_text?: string | string[];
   output?: Array<{
     type?: string;
+    id?: string;
+    call_id?: string;
+    name?: string;
+    arguments?: string | Record<string, unknown>;
     status?: string;
     role?: string;
     action?: { type?: string; url?: string };
@@ -455,6 +477,121 @@ interface ResponsesPayload {
       annotations?: Array<{ type?: string; title?: string; url?: string }>;
     }>;
   }>;
+}
+
+function toResponsesInput(turn: ModelTurn): Array<Record<string, unknown>> {
+  if (turn.role === 'assistant_tool_call') {
+    return turn.calls.map((call) => ({
+      type: 'function_call',
+      call_id: call.id,
+      name: call.name,
+      arguments: JSON.stringify(call.arguments)
+    }));
+  }
+  if (turn.role === 'tool_result') {
+    return [{ type: 'function_call_output', call_id: turn.callId, output: turn.content }];
+  }
+  if (turn.role === 'system') return [];
+  return [{
+    role: turn.role,
+    content: turn.content.map((part) =>
+      part.type === 'text'
+        ? { type: turn.role === 'assistant' ? 'output_text' : 'input_text', text: part.text }
+        : { type: 'input_image', image_url: `data:${part.mime};base64,${part.data}` }
+    )
+  }];
+}
+
+function toResponsesTool(tool: ChatToolDefinition): Record<string, unknown> {
+  return {
+    type: 'function',
+    name: tool.name,
+    ...(tool.description ? { description: tool.description } : {}),
+    parameters: tool.inputSchema
+  };
+}
+
+function responsesSearchLocation(location: NonNullable<ChatRequest['webSearch']>['userLocation']): Record<string, unknown> {
+  if (!location || typeof location !== 'object') return {};
+  const approximate = Object.fromEntries(
+    Object.entries({
+      type: 'approximate',
+      country: location.countryCode?.trim().toUpperCase(),
+      region: location.region?.trim(),
+      city: location.city?.trim()
+    }).filter(([, value]) => Boolean(value))
+  );
+  return Object.keys(approximate).length > 1 ? { user_location: approximate } : {};
+}
+
+function toResponsesToolChoice(choice: NonNullable<ChatRequest['toolChoice']>): unknown {
+  if (typeof choice === 'string') return choice;
+  return { type: 'function', name: choice.name };
+}
+
+function parseResponsesToolCalls(output: ResponsesPayload['output']): ChatToolCall[] | undefined {
+  const calls = (output ?? []).filter((item) => item.type === 'function_call');
+  if (calls.length === 0) return undefined;
+  return calls.map((call, index) => {
+    const parsed = parseToolArguments(call.arguments ?? '{}');
+    return {
+      id: call.call_id?.trim() || call.id?.trim() || `tool-call-${index + 1}`,
+      name: call.name?.trim() || 'unknown.tool',
+      arguments: parsed.arguments,
+      ...(parsed.error ? { argumentsError: parsed.error } : {})
+    };
+  });
+}
+
+function toAnthropicMessages(turn: ModelTurn): Array<{ role: string; content: Array<Record<string, unknown>> }> {
+  if (turn.role === 'assistant_tool_call') {
+    return [{
+      role: 'assistant',
+      content: turn.calls.map((call) => ({ type: 'tool_use', id: call.id, name: call.name, input: call.arguments }))
+    }];
+  }
+  if (turn.role === 'tool_result') {
+    return [{
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: turn.callId, content: turn.content, ...(turn.isError ? { is_error: true } : {}) }]
+    }];
+  }
+  return [{
+    role: turn.role,
+    content: turn.content.map((part) =>
+      part.type === 'text'
+        ? { type: 'text', text: part.text }
+        : { type: 'image', source: { type: 'base64', media_type: part.mime, data: part.data } }
+    )
+  }];
+}
+
+function toAnthropicTool(tool: ChatToolDefinition): Record<string, unknown> {
+  return {
+    name: tool.name,
+    ...(tool.description ? { description: tool.description } : {}),
+    input_schema: tool.inputSchema
+  };
+}
+
+function toAnthropicToolChoice(choice: NonNullable<ChatRequest['toolChoice']>): unknown {
+  if (choice === 'none') return { type: 'none' };
+  if (choice === 'auto') return { type: 'auto' };
+  return { type: 'tool', name: choice.name };
+}
+
+function parseAnthropicToolCalls(content: Array<{ type: string; id?: string; name?: string; input?: unknown }> | undefined): ChatToolCall[] | undefined {
+  const calls = (content ?? []).filter((item) => item.type === 'tool_use');
+  if (calls.length === 0) return undefined;
+  return calls.map((call, index) => {
+    const parsed = parseToolArguments(call.input as Record<string, unknown>);
+    return {
+      id: call.id?.trim() || `tool-call-${index + 1}`,
+      name: call.name?.trim() || 'unknown.tool',
+      arguments: parsed.arguments,
+      ...(parsed.error ? { argumentsError: parsed.error } : {})
+    };
+  });
 }
 
 function extractResponsesText(json: ResponsesPayload): string {
@@ -537,6 +674,10 @@ export class AnthropicChatProvider implements ChatProvider {
     return !!this.cfg.baseUrl && !!this.cfg.model && !!this.cfg.apiKey;
   }
 
+  get supportsTools(): boolean {
+    return this.cfg.supportsTools;
+  }
+
   private endpoint(): string {
     return joinUrl(this.cfg.baseUrl, '/messages');
   }
@@ -551,16 +692,7 @@ export class AnthropicChatProvider implements ChatProvider {
   }
 
   private body(req: ChatRequest, stream: boolean): Record<string, unknown> {
-    const messages = req.messages
-      .filter((m) => m.role !== 'system')
-      .map((turn) => ({
-        role: turn.role,
-        content: turn.content.map((p) =>
-          p.type === 'text'
-            ? { type: 'text', text: p.text }
-            : { type: 'image', source: { type: 'base64', media_type: p.mime, data: p.data } }
-        )
-      }));
+    const messages = req.messages.flatMap(toAnthropicMessages).filter((message) => message.role !== 'system');
     const body: Record<string, unknown> = {
       model: this.cfg.model,
       messages,
@@ -569,6 +701,10 @@ export class AnthropicChatProvider implements ChatProvider {
       stream
     };
     if (req.system) body.system = req.system;
+    if (this.cfg.supportsTools && req.tools && req.tools.length > 0) {
+      body.tools = req.tools.map(toAnthropicTool);
+      if (req.toolChoice !== undefined) body.tool_choice = toAnthropicToolChoice(req.toolChoice);
+    }
     return body;
   }
 
@@ -588,7 +724,7 @@ export class AnthropicChatProvider implements ChatProvider {
           if (!res.ok)
             throw new ProviderRequestError(`anthropic request failed with status ${res.status}: ${await safeText(res)}`, res.status);
           const json = (await res.json()) as {
-            content?: Array<{ type: string; text?: string }>;
+            content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
             stop_reason?: string;
             usage?: { input_tokens?: number; output_tokens?: number };
           };
@@ -598,6 +734,7 @@ export class AnthropicChatProvider implements ChatProvider {
             .join('');
           return {
             text,
+            toolCalls: parseAnthropicToolCalls(json.content),
             finishReason: json.stop_reason,
             usage: { promptTokens: json.usage?.input_tokens, completionTokens: json.usage?.output_tokens },
             model: this.cfg.model
@@ -682,6 +819,7 @@ export class AnthropicChatProvider implements ChatProvider {
 export class UnconfiguredChatProvider implements ChatProvider {
   readonly name = 'none';
   readonly configured = false;
+  readonly supportsTools = false;
   async complete(): Promise<ChatResult> {
     throw new ProviderNotConfiguredError('chat');
   }
@@ -775,7 +913,21 @@ export function normalizeAbort(err: unknown, timeoutMs: number): Error {
   return e;
 }
 
-function toOpenAiMessage(turn: ChatTurn): Record<string, unknown> {
+function toOpenAiMessage(turn: ModelTurn): Record<string, unknown> {
+  if (turn.role === 'assistant_tool_call') {
+    return {
+      role: 'assistant',
+      content: null,
+      tool_calls: turn.calls.map((call) => ({
+        id: call.id,
+        type: 'function',
+        function: { name: call.name, arguments: JSON.stringify(call.arguments) }
+      }))
+    };
+  }
+  if (turn.role === 'tool_result') {
+    return { role: 'tool', tool_call_id: turn.callId, name: turn.name, content: turn.content };
+  }
   const onlyText = turn.content.every((p) => p.type === 'text');
   if (onlyText) {
     return { role: turn.role, content: turn.content.map((p) => (p as { text: string }).text).join('\n') };
@@ -786,4 +938,48 @@ function toOpenAiMessage(turn: ChatTurn): Record<string, unknown> {
       p.type === 'text' ? { type: 'text', text: p.text } : { type: 'image_url', image_url: { url: `data:${p.mime};base64,${p.data}` } }
     )
   };
+}
+
+function toOpenAiTool(tool: ChatToolDefinition): Record<string, unknown> {
+  return {
+    type: 'function',
+    function: {
+      name: tool.name,
+      ...(tool.description ? { description: tool.description } : {}),
+      parameters: tool.inputSchema
+    }
+  };
+}
+
+function toOpenAiToolChoice(choice: NonNullable<ChatRequest['toolChoice']>): unknown {
+  if (typeof choice === 'string') return choice;
+  return { type: 'function', function: { name: choice.name } };
+}
+
+function parseOpenAiToolCalls(calls: Array<{ id?: string; function?: { name?: string; arguments?: string | null } }> | undefined): ChatToolCall[] | undefined {
+  if (!calls || calls.length === 0) return undefined;
+  return calls.map((call, index) => {
+    const raw = call.function?.arguments ?? '{}';
+    const parsed = parseToolArguments(raw);
+    return {
+      id: call.id?.trim() || `tool-call-${index + 1}`,
+      name: call.function?.name?.trim() || 'unknown.tool',
+      arguments: parsed.arguments,
+      ...(parsed.error ? { argumentsError: parsed.error } : {})
+    };
+  });
+}
+
+function parseToolArguments(raw: string | Record<string, unknown>): { arguments: Record<string, unknown>; error?: string } {
+  if (typeof raw !== 'string') return isRecord(raw) ? { arguments: raw } : { arguments: {}, error: 'tool arguments must be an object' };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) ? { arguments: parsed } : { arguments: {}, error: 'tool arguments must be an object' };
+  } catch {
+    return { arguments: {}, error: 'invalid JSON arguments' };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

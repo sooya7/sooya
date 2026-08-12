@@ -25,9 +25,36 @@ export interface ChatTurn {
   content: ChatContentPart[];
 }
 
+export interface ChatToolDefinition {
+  name: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  /** Provider returned malformed or non-object arguments; runtime must reject the call. */
+  argumentsError?: string;
+}
+
+export interface ChatToolResult {
+  callId: string;
+  name: string;
+  content: string;
+  isError?: boolean;
+}
+
+/** Core-level model history; providers translate these roles to their wire format. */
+export type ModelTurn =
+  | ChatTurn
+  | { role: 'assistant_tool_call'; calls: ChatToolCall[] }
+  | { role: 'tool_result'; callId: string; name: string; content: string; isError?: boolean };
+
 export interface ChatRequest {
   system?: string;
-  messages: ChatTurn[];
+  messages: ModelTurn[];
   maxTokens?: number;
   temperature?: number;
   /** Abort signal wired to request timeouts. */
@@ -43,6 +70,8 @@ export interface ChatRequest {
       city?: string;
     };
   };
+  tools?: ChatToolDefinition[];
+  toolChoice?: 'auto' | 'none' | { name: string };
 }
 
 export interface ChatChunk {
@@ -51,6 +80,7 @@ export interface ChatChunk {
 
 export interface ChatResult {
   text: string;
+  toolCalls?: ChatToolCall[];
   finishReason?: string;
   usage?: { promptTokens?: number; completionTokens?: number };
   model: string;
@@ -71,6 +101,8 @@ export interface ChatResult {
 export interface ChatProvider {
   readonly name: string;
   readonly configured: boolean;
+  /** Optional because third-party test/dummy providers may not advertise it. */
+  readonly supportsTools?: boolean;
   complete(req: ChatRequest): Promise<ChatResult>;
   stream(req: ChatRequest, onChunk: (c: ChatChunk) => void): Promise<ChatResult>;
   inspectHealth(): Promise<HealthStatus>;

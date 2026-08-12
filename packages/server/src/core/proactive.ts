@@ -14,6 +14,8 @@ import type { MediaDirector } from './mediaDirector.js';
 import type { PersonaReferenceLoader } from '../media/persona-references.js';
 import type { LifeLocationRepo, LifeLocationRow } from '../db/repos/location.repo.js';
 import type { WorldSnapshot } from './world-context.js';
+import type { ToolCallRuntime } from '../agent/tool-runtime.js';
+import type { ChatRequest } from '../providers/types.js';
 import { z } from 'zod';
 import { extractJsonObject } from '../util/json-extract.js';
 
@@ -108,6 +110,7 @@ export class ProactiveComposer {
       personaReferences: PersonaReferenceLoader;
       locations: LifeLocationRepo;
       worldSnapshot: () => WorldSnapshot;
+      toolRuntime?: ToolCallRuntime;
     }
   ) {}
 
@@ -180,7 +183,8 @@ export class ProactiveComposer {
             lifeLines,
             eventContext,
             requestedMode ?? 'text',
-            signal
+            signal,
+            this.deps.toolRuntime
           );
         } catch (error) {
           if (signal.aborted) return { kind: 'discarded' };
@@ -446,11 +450,12 @@ async function composeMomentSharePlan(
   lifeLines: string[],
   eventContext: ProactiveEventContext,
   requestedMode: ProactiveMode,
-  signal: AbortSignal
+  signal: AbortSignal,
+  toolRuntime?: ToolCallRuntime
 ): Promise<MomentSharePlan> {
   const imageMode = requestedMode === 'image';
   const request = async (repairReason?: string): Promise<MomentSharePlan> => {
-    const result = await provider.complete({
+    const request: ChatRequest = {
       system: [
         personaPrompt.trim(),
         ...lifeLines.map((line) => `【当前状态，仅用于语气连续性】${line}`),
@@ -469,7 +474,13 @@ async function composeMomentSharePlan(
       maxTokens: 450,
       jsonMode: true,
       signal
-    });
+    };
+    let finalRequest = request;
+    if (toolRuntime?.hasAuthorizedTools('proactive')) {
+      const prepared = await toolRuntime.prepare(provider, request, { phase: 'proactive', signal });
+      finalRequest = prepared;
+    }
+    const result = await provider.complete(finalRequest);
     const parsed = MomentSharePlanSchema.safeParse(extractJsonObject(result.text));
     if (!parsed.success) throw new Error(`invalid_share_plan: ${parsed.error.issues.map((issue) => issue.path.join('.') + ' ' + issue.message).join('; ')}`);
     return imageMode ? parsed.data : { ...parsed.data, image: null };

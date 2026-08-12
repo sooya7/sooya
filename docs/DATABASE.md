@@ -56,6 +56,7 @@ CREATE TABLE schema_migrations (
 | 1 | `initial_schema` | 全部核心表、索引、FTS5、触发器、计数器 |
 | 2 | `error_log` | 错误日志表 |
 | 3 | `fts_trigram_tokenizer` | FTS5 改用 `trigram` 分词器并重建索引 |
+| 35 | `ombre_commit_receipts` | 记录 Ombre 生命周期提交的 batch/revision、幂等状态和不确定结果 |
 
 > **迁移 3 的原因**：`unicode61` 会把整句中文当成一个 token，导致中文记忆的全文检索
 > 几乎永远命中不了。`trigram` 对中英文都有效。

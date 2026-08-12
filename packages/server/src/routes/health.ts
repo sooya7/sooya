@@ -49,7 +49,10 @@ export function registerHealthRoutes(app: SooyaApp): void {
     return {
       capabilities: statuses,
       stickers: { available: app.services.stickerLibrary.count(), total: app.services.stickerLibrary.all().length },
-      memory: app.services.memory.stats(),
+      memory: app.env.MEMORY_BACKEND === 'ombre'
+        ? app.services.ombreMemory.health()
+        : { backend: 'legacy', ...app.services.memory.stats() },
+      mcp: app.services.mcpManager.health(),
       agent: { active: app.services.agents.active, tools: app.services.tools.size() }
     };
   });
@@ -61,6 +64,8 @@ export function registerHealthRoutes(app: SooyaApp): void {
     return {
       status: integrity ? 'unhealthy' : 'healthy',
       integrity: integrity ?? 'ok',
+      memory: app.env.MEMORY_BACKEND === 'ombre' ? app.services.ombreMemory.health() : { backend: 'legacy' },
+      mcp: app.services.mcpManager.health(),
       capabilities: Object.fromEntries(Object.entries(statuses).map(([k, v]) => [k, { configured: v.configured, ok: v.ok }]))
     };
   });

@@ -1,6 +1,6 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { SummaryRepo } from '../db/repos/misc.repo.js';
-import type { MemoryService, RecallMatch } from './memory.js';
+import type { MemoryService, RecallMatch, RecallResult } from './memory.js';
 import type { Persona } from '../config/schema.js';
 import type { ChatMessage } from './types.js';
 import type { ChatTurn, ChatContentPart } from '../providers/types.js';
@@ -76,7 +76,7 @@ export class ContextBuilder {
   constructor(
     private readonly messages: MessageRepo,
     private readonly summaries: SummaryRepo,
-    private readonly memory: MemoryService,
+    private readonly memory: MemoryService | null,
     private readonly mediaRepo: MediaRepo,
     private readonly mediaStore: MediaStore,
     private readonly mediaText: MediaTextRepo,
@@ -96,7 +96,9 @@ export class ContextBuilder {
     const activeSummaries = this.summaries.active(4);
 
     const recallQuery = latestUserText || recent.map(plainText).join('\n').slice(-500);
-    const recall = await this.memory.recall(recallQuery, opts.memoryLimit);
+    const recall: RecallResult = this.memory
+      ? await this.memory.recall(recallQuery, opts.memoryLimit)
+      : { memories: [], matches: [], strategy: 'none', embeddingCoverage: { withEmbedding: 0, total: 0, ratio: 0 } };
     const inputBudget = Math.max(256, opts.contextWindow - opts.maxOutputTokens - 128);
 
     const systemParts: string[] = [];
@@ -173,8 +175,8 @@ export class ContextBuilder {
     const deduplicated = traceEntries.filter((entry) => entry.droppedReason?.startsWith('deduplicated')).length;
     this.lastTrace = {
       query: recallQuery,
-      strategy: recall.strategy,
-      fallbackReason: recall.fallbackReason,
+      strategy: this.memory ? recall.strategy : 'ombre',
+      ...(this.memory && recall.fallbackReason ? { fallbackReason: recall.fallbackReason } : {}),
       entries: traceEntries,
       stats: {
         recalled: traceEntries.length,
@@ -212,8 +214,8 @@ export class ContextBuilder {
       system: systemParts.filter(Boolean).join('\n\n'),
       turns,
       usedMemories,
-      memoryStrategy: recall.strategy,
-      memoryFallbackReason: recall.fallbackReason,
+      memoryStrategy: this.memory ? recall.strategy : 'ombre',
+      memoryFallbackReason: this.memory ? recall.fallbackReason : undefined,
       summaryCount: usedSummaries,
       recentCount: turns.length,
       visionUsed,

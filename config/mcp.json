@@ -1,0 +1,28 @@
+{
+  "servers": {
+    "ombre": {
+      "enabled": true,
+      "transport": "streamable-http",
+      "url": "http://127.0.0.1:18001/mcp",
+      "auth": {
+        "type": "bearer-env",
+        "env": "OMBRE_MCP_TOKEN"
+      },
+      "required": false,
+      "connectTimeoutMs": 10000,
+      "toolTimeoutMs": 15000
+    },
+    "github": {
+      "enabled": false,
+      "transport": "streamable-http",
+      "url": "http://github-mcp:8000/mcp",
+      "auth": {
+        "type": "bearer-env",
+        "env": "GITHUB_MCP_TOKEN"
+      },
+      "required": false,
+      "connectTimeoutMs": 10000,
+      "toolTimeoutMs": 15000
+    }
+  }
+}

@@ -1359,6 +1359,24 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 35,
+    name: 'ombre_commit_receipts',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE ombre_commits (
+          batch_id     TEXT NOT NULL,
+          revision     INTEGER NOT NULL,
+          state        TEXT NOT NULL CHECK (state IN ('running','completed','uncertain','failed','skipped')),
+          started_at   TEXT,
+          completed_at TEXT,
+          detail_json  TEXT NOT NULL DEFAULT '{}',
+          PRIMARY KEY (batch_id, revision)
+        );
+        CREATE INDEX idx_ombre_commits_state ON ombre_commits(state, started_at);
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

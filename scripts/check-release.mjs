@@ -78,6 +78,10 @@ const REQUIRED_PATHS = [
   'deploy/sooya.service',
   'deploy/nginx.conf.example',
   'deploy/docker-entrypoint.sh',
+  'deploy/ombre/docker-compose.yml',
+  'deploy/ombre/.env.example',
+  'deploy/ombre/README.md',
+  'config/mcp.json',
   'docs/DEPLOYMENT.md',
   'docs/API.md',
   'docs/DATABASE.md',
@@ -242,7 +246,11 @@ async function main() {
     const st = await fsp.stat(path.join(tarRoot, 'deploy', script));
     if (!(st.mode & 0o111)) notExecutable.push(script);
   }
-  check(notExecutable.length === 0, 'deployment scripts are executable', notExecutable.join(', '));
+  if (process.platform === 'win32') {
+    console.log('  (deployment executable-bit checks skipped on Windows; GitHub CI enforces them on Linux)');
+  } else {
+    check(notExecutable.length === 0, 'deployment scripts are executable', notExecutable.join(', '));
+  }
 
   // ---------------------------- archive parity ------------------------------
   const zipRoot = path.join(zipDir, NAME);
@@ -256,7 +264,7 @@ async function main() {
       `only-tar: ${onlyTar.slice(0, 3)}; only-zip: ${onlyZip.slice(0, 3)}`
     );
     const zipScript = await fsp.stat(path.join(zipRoot, 'deploy/install.sh'));
-    check((zipScript.mode & 0o111) !== 0, 'ZIP preserves the executable bit on scripts');
+    if (process.platform !== 'win32') check((zipScript.mode & 0o111) !== 0, 'ZIP preserves the executable bit on scripts');
   }
 
   // -------------------------- buildability smoke test -----------------------

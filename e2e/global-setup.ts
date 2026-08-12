@@ -86,6 +86,10 @@ export default async function globalSetup(): Promise<void> {
       ALLOW_PRIVATE_NETWORK_FETCH: 'true',
       WEB_CHAT_TOKEN: 'e2e-chat-token',
       ADMIN_API_TOKEN: 'e2e-admin-token',
+      // E2E runs SOOYA in isolation; the production default is Ombre, but no
+      // external memory service is part of this test fixture.
+      MEMORY_BACKEND: 'legacy',
+      MCP_CONNECT_ON_START: 'false',
       // The next-phase specs expect the e2e server to run with all next-phase
       // flags on (see next-phase.e2e.ts), proving the stable chat specs are
       // unaffected by them. Default-off behaviour is covered by the unit suites.

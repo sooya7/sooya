@@ -12,6 +12,7 @@
 - [监控与健康检查](#监控与健康检查)
 - [安全清单](#安全清单)
 - [故障排查](#故障排查)
+- [Ombre Brain / MCP Host](#ombre-brain--mcp-host)
 
 ---
 
@@ -29,6 +30,36 @@
 ---
 
 ## 方式一：Linux 原生部署（推荐）
+
+## Ombre Brain / MCP Host
+
+SOOYA 的生产长期记忆默认由独立的 Ombre Brain `v2.7.6`（commit
+`6da5158b70d833626438a6fd5448f839c562d44b`）管理。它使用
+`deploy/ombre/docker-compose.yml` 单独部署，数据落在 `/opt/ombre-brain/buckets`，
+只绑定 `127.0.0.1:18001`；SOOYA 通过 `/mcp` 的 Bearer token 连接，不复用外部代理。
+Ombre 的源码、镜像和 buckets 不由 SOOYA 的 auto-update timer 追踪。
+
+```bash
+# 在服务器固定源码后执行，真实 token 只写入 /opt/ombre-brain/.env（权限 600）
+cd /opt/ombre-brain
+sudo OMBRE_SOURCE_DIR=/opt/ombre-brain/source \
+  docker compose --env-file /opt/ombre-brain/.env \
+  -f /opt/ombre-brain/compose/docker-compose.yml up -d --build
+curl -fsS http://127.0.0.1:18001/health
+```
+
+SOOYA 自动更新仍只负责 `/opt/sooya`：timer 部署通过 CI 的 `main` commit，升级前
+自动做 SQLite/WAL 一致性备份；验收时必须同时确认 `/opt/sooya/shared/.deployed-commit`、
+updater 日志、`/health/ready`、`/api/capabilities` 和 Ombre 容器健康/MCP `tools/list`。
+
+旧 SQLite 记忆在观察窗内保留为只读回滚源。迁移脚本默认 dry-run：
+
+```bash
+npx tsx scripts/migrate-sooya-memory-to-ombre.ts --dry-run
+npx tsx scripts/migrate-sooya-memory-to-ombre.ts --apply   # 明确授权后才写 Ombre
+```
+
+迁移不搬运 embedding；JSONL、manifest、apply receipt 与 Ombre buckets 一起备份。
 
 ### 1. 准备环境
 

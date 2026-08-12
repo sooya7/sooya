@@ -21,7 +21,8 @@
     "rollback:preflight": "node scripts/rollback-preflight.mjs",
     "rollback:normalize": "node scripts/rollback-normalize.mjs",
     "package": "node scripts/make-release.mjs",
-    "verify:release": "node scripts/check-release.mjs"
+    "verify:release": "node scripts/check-release.mjs",
+    "migrate:ombre": "tsx scripts/migrate-sooya-memory-to-ombre.ts"
   },
   "dependencies": {
     "nanoid": "3.3.18"

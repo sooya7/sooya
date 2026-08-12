@@ -1,0 +1,47 @@
+# SOOYA 专用 Ombre Brain 部署。
+# 源码必须在部署前固定到 v2.7.6 / 6da5158b70d833626438a6fd5448f839c562d44b，
+# 不跟随 Ombre main；默认只监听服务器本机 127.0.0.1:18001。
+services:
+  ombre:
+    platform: linux/amd64
+    build:
+      context: ${OMBRE_SOURCE_DIR:-/opt/ombre-brain/source}
+      dockerfile: Dockerfile
+      args:
+        INSTALL_CLOUDFLARED: "0"
+        PIP_INDEX_URL: ${OMBRE_PIP_INDEX_URL:-}
+        PIP_TRUSTED_HOST: ${OMBRE_PIP_TRUSTED_HOST:-}
+    image: sooya-ombre-brain:v2.7.6-6da5158
+    container_name: sooya-ombre-brain
+    restart: unless-stopped
+    env_file:
+      - ${OMBRE_RUNTIME_ENV:-/opt/ombre-brain/.env}
+    environment:
+      OMBRE_TRANSPORT: streamable-http
+      OMBRE_PORT: "8000"
+      OMBRE_BIND_HOST: 0.0.0.0
+      OMBRE_CONFIG_PATH: /app/buckets/config.yaml
+      OMBRE_BUCKETS_DIR: /app/buckets
+      OMBRE_MCP_REQUIRE_AUTH: "true"
+      OMBRE_MCP_AUTH_MODE: token
+    ports:
+      - "127.0.0.1:18001:8000"
+    volumes:
+      - ${OMBRE_BUCKETS_DIR:-/opt/ombre-brain/buckets}:/app/buckets
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); assert json.load(r).get('status') == 'ok'"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

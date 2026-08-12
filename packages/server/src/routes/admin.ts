@@ -680,15 +680,45 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { deleted: true };
   });
 
+  server.get('/api/admin/mcp/servers', guard, async () => ({
+    servers: services.mcpManager.health(),
+    memory: services.ombreMemory.health(),
+    tools: services.tools.list().filter((tool) => tool.name.includes('.'))
+  }));
+  server.post('/api/admin/mcp/:serverId/test', guard, async (req, reply) => {
+    try {
+      const snapshot = await services.mcpManager.test((req.params as { serverId: string }).serverId);
+      return { ok: snapshot.state === 'ready', server: snapshot };
+    } catch (error) {
+      reply.code(502);
+      return { ok: false, error: 'mcp_test_failed', message: 'MCP 连接测试失败。' };
+    }
+  });
+  server.post('/api/admin/mcp/:serverId/refresh-tools', guard, async (req, reply) => {
+    try {
+      const snapshot = await services.mcpManager.refreshTools((req.params as { serverId: string }).serverId);
+      return { ok: true, server: snapshot };
+    } catch (error) {
+      reply.code(502);
+      return { ok: false, error: 'mcp_refresh_failed', message: 'MCP 工具刷新失败。' };
+    }
+  });
+
   server.get('/api/admin/memories', guard, async (req) => {
     const q = req.query as { limit?: string; offset?: string; kind?: string };
     return {
       memories: repos.memories.list({ limit: Number(q.limit ?? 100), offset: Number(q.offset ?? 0), kind: q.kind as never }),
+      backend: app.env.MEMORY_BACKEND,
+      readOnly: app.env.MEMORY_BACKEND === 'ombre',
       stats: services.memory.stats(),
       recall: services.context.memoryRecallTrace()
     };
   });
   server.patch('/api/admin/memories/:id', guard, async (req, reply) => {
+    if (app.env.MEMORY_BACKEND === 'ombre') {
+      reply.code(409);
+      return { error: 'memory_backend_ombre', message: '长期记忆已由 Ombre Brain 管理，请使用 MCP/Dashboard。' };
+    }
     const id = (req.params as { id: string }).id;
     const body = (req.body ?? {}) as { content?: string; importance?: number; confidence?: number };
     if (body.content !== undefined && (typeof body.content !== 'string' || !body.content.trim())) {
@@ -708,6 +738,10 @@ export function registerAdminRoutes(app: SooyaApp): void {
     return { memory: updated };
   });
   server.delete('/api/admin/memories/:id', guard, async (req, reply) => {
+    if (app.env.MEMORY_BACKEND === 'ombre') {
+      reply.code(409);
+      return { error: 'memory_backend_ombre', message: '长期记忆已由 Ombre Brain 管理，请使用 MCP/Dashboard。' };
+    }
     const ok = repos.memories.delete((req.params as { id: string }).id);
     if (!ok) {
       reply.code(404);
@@ -715,7 +749,11 @@ export function registerAdminRoutes(app: SooyaApp): void {
     }
     return { deleted: true };
   });
-  server.post('/api/admin/memories/clear', guard, async () => {
+  server.post('/api/admin/memories/clear', guard, async (_req, reply) => {
+    if (app.env.MEMORY_BACKEND === 'ombre') {
+      reply.code(409);
+      return { cleared: false, error: 'memory_backend_ombre', message: '长期记忆已由 Ombre Brain 管理。' };
+    }
     const result = services.memory.clearAll();
     services.bus.publish('memory.updated', { cleared: true, ...result });
     return { cleared: true, ...result, stats: services.memory.stats() };

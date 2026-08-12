@@ -120,6 +120,10 @@ jobs:
         run: npm run package
       - name: Verify release packages
         run: npm run verify:release
+      - name: Validate Ombre deployment manifest
+        env:
+          OMBRE_RUNTIME_ENV: .env.example
+        run: docker compose -f deploy/ombre/docker-compose.yml --env-file deploy/ombre/.env.example config --quiet
       - name: Build Docker image
         run: docker build -t sooya:ci .
       - name: Start container and exercise real entry points
@@ -129,6 +133,8 @@ jobs:
           docker run -d --name sooya-ci -p 8788:8788 \
             -e WEB_CHAT_TOKEN=ci-chat-token \
             -e ADMIN_API_TOKEN=ci-admin-token \
+            -e MEMORY_BACKEND=legacy \
+            -e MCP_CONNECT_ON_START=false \
             -e BACKUP_INTERVAL_MS=0 \
             sooya:ci
           cleanup() {

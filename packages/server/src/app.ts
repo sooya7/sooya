@@ -15,6 +15,7 @@ import { ConfigStore } from './config/store.js';
 import { MediaRepo } from './db/repos/media.repo.js';
 import { MessageRepo } from './db/repos/message.repo.js';
 import { MemoryRepo } from './db/repos/memory.repo.js';
+import { OmbreCommitRepo } from './db/repos/ombre.repo.js';
 import { StickerRepo } from './db/repos/sticker.repo.js';
 import { ErrorLogRepo, EventRepo, JobRepo, SettingsRepo, SummaryRepo } from './db/repos/misc.repo.js';
 import { MediaTextRepo } from './db/repos/media-text.repo.js';
@@ -68,6 +69,11 @@ import { EventBus } from './events/bus.js';
 import { JobWorker, registerDefaultJobs } from './core/jobs.js';
 import { BackupService } from './backup/service.js';
 import { AgentRegistry, CapabilityRegistryStub, ToolRegistry } from './agent/registry.js';
+import { ToolCallRuntime } from './agent/tool-runtime.js';
+import { ToolPolicy } from './agent/tool-policy.js';
+import { loadMcpConfig } from './mcp/config.js';
+import { McpManager } from './mcp/manager.js';
+import { OmbreMemoryBridge } from './core/ombre-memory.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerStreamRoutes } from './routes/stream.js';
@@ -108,6 +114,7 @@ export interface SooyaApp {
     media: MediaRepo;
     mediaText: MediaTextRepo;
     memories: MemoryRepo;
+    ombreCommits: OmbreCommitRepo;
     stickers: StickerRepo;
     summaries: SummaryRepo;
     jobs: JobRepo;
@@ -141,6 +148,10 @@ export interface SooyaApp {
     mediaDirector: MediaDirector;
     webSearch: WebSearchRegistry;
     memory: MemoryService;
+    ombreMemory: OmbreMemoryBridge;
+    mcpManager: McpManager;
+    toolPolicy: ToolPolicy;
+    toolRuntime: ToolCallRuntime;
     life: LifeRuntime;
     proactive: ProactiveComposer;
     location: LocationService;
@@ -224,6 +235,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     media: new MediaRepo(dbHandle),
     mediaText,
     memories: new MemoryRepo(dbHandle),
+    ombreCommits: new OmbreCommitRepo(dbHandle),
     stickers: new StickerRepo(dbHandle),
     summaries: new SummaryRepo(dbHandle),
     jobs: new JobRepo(dbHandle),
@@ -280,7 +292,48 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     () => capabilities.chatProvider()
   );
   const bus = new EventBus(repos.events);
+  const tools = new ToolRegistry();
+  const runtimeEnv = { ...process.env, ...opts.env } as NodeJS.ProcessEnv;
+  const sharedMcpConfigPath = path.join(env.configDir, 'mcp.json');
+  const bundledMcpConfigPath = path.join(process.cwd(), 'config', 'mcp.json');
+  const mcpConfigPath = env.MCP_CONFIG_PATH
+    ? path.resolve(env.MCP_CONFIG_PATH)
+    : fs.existsSync(sharedMcpConfigPath) ? sharedMcpConfigPath : bundledMcpConfigPath;
+  const mcpConfig = loadMcpConfig(mcpConfigPath, runtimeEnv);
+  const mcpManager = new McpManager({
+    servers: Object.values(mcpConfig.servers),
+    registry: tools,
+    env: runtimeEnv,
+    onEvent: (event) => logger.info({ serverId: event.serverId, detail: event.detail }, `mcp.${event.event}`)
+  });
+  const toolPolicy = new ToolPolicy(tools, {
+    readEnabled: env.OMBRE_READ_ENABLED,
+    writeEnabled: env.OMBRE_WRITE_ENABLED,
+    maintenanceEnabled: env.OMBRE_DREAM_ENABLED
+  });
+  const toolRuntime = new ToolCallRuntime({
+    registry: tools,
+    policy: toolPolicy,
+    maxRounds: env.TOOL_MAX_ROUNDS,
+    maxCallsPerRound: env.TOOL_MAX_CALLS_PER_ROUND,
+    timeoutMs: env.TOOL_CALL_TIMEOUT_MS,
+    resultMaxBytes: env.TOOL_RESULT_MAX_BYTES,
+    totalResultMaxBytes: env.TOOL_TOTAL_RESULT_MAX_BYTES
+  });
   const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE, config });
+  const ombreMemory = new OmbreMemoryBridge({
+    manager: mcpManager,
+    registry: tools,
+    policy: toolPolicy,
+    runtime: toolRuntime,
+    commits: repos.ombreCommits,
+    chatProvider: () => capabilities.chatProvider(),
+    breathIdleMinutes: env.OMBRE_BREATH_IDLE_MINUTES
+  });
+  // Unit/e2e environments must remain hermetic: the default production
+  // connection should never make every buildApp() wait on an absent external
+  // Ombre service. Production and development keep the opt-out flag intact.
+  if (env.MCP_CONNECT_ON_START && env.NODE_ENV !== 'test') await mcpManager.connectAllBestEffort();
   const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
   /*
@@ -369,7 +422,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const context = new ContextBuilder(
     repos.messages,
     repos.summaries,
-    memory,
+    env.MEMORY_BACKEND === 'legacy' ? memory : null,
     repos.media,
     mediaStore,
     repos.mediaText,
@@ -386,7 +439,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
 
-  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, stickerPicker, capabilities, mediaDirector, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot() });
+  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, stickerPicker, capabilities, mediaDirector, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot(), toolRuntime, ombreMemory });
   const thoughtFlags = readThoughtsFlags(process.env);
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
@@ -430,7 +483,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       // The batch is already marked completed by the coordinator (revision-
       // fenced); this hook only enqueues the downstream jobs atomically.
       const tx = dbHandle.transaction(() => {
-        if (!env.DISABLE_MEMORY_PIPELINE) repos.jobs.enqueue('memory.extract', { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId });
+        if (!env.DISABLE_MEMORY_PIPELINE) {
+          repos.jobs.enqueue(
+            env.MEMORY_BACKEND === 'ombre' ? 'ombre.memory_commit' : 'memory.extract',
+            { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId }
+          );
+        }
         repos.jobs.enqueue('push.reply', { batchId, messageId: outcome.messageId }, { maxAttempts: 3 });
         if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
         // Life conversation bridge (§49-50): extracted as a durable job; the
@@ -464,7 +522,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     mediaDirector,
     personaReferences,
     locations: repos.locations,
-    worldSnapshot: () => world.snapshot()
+    worldSnapshot: () => world.snapshot(),
+    toolRuntime
   });
   const backups = new BackupService({
     db: () => dbHandle,
@@ -491,6 +550,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     batches: repos.replyBatches,
     media: mediaStore,
     memory,
+    ombreMemory,
+    memoryBackend: env.MEMORY_BACKEND,
     summarizer,
     messages: repos.messages,
     bus,
@@ -510,7 +571,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     tmpDirs: [env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files, env.dbDir]
   });
 
-  const tools = new ToolRegistry();
   const agents = new AgentRegistry();
   const agentCapabilities = new CapabilityRegistryStub();
   for (const cap of ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'tts'] as const) {
@@ -655,7 +715,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -671,6 +731,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       for (const timer of app.recurringTimers.splice(0)) clearInterval(timer);
       await replyCoordinator.stop();
       await worker.stop();
+      await mcpManager.close();
       try { await server.close(); } catch { /* ignore */ }
       closeDatabase(dbHandle.raw);
     }

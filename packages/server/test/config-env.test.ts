@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { loadEnv } from '../src/config/env.js';
 
 describe('web search environment configuration', () => {
+  it('keeps test and standalone CI harnesses on legacy memory unless opted in', () => {
+    const testDefaults = loadEnv({ NODE_ENV: 'test' });
+    expect(testDefaults.MEMORY_BACKEND).toBe('legacy');
+    expect(testDefaults.MCP_CONNECT_ON_START).toBe(false);
+
+    const explicitOmbre = loadEnv({ NODE_ENV: 'test', MEMORY_BACKEND: 'ombre', MCP_CONNECT_ON_START: 'true' });
+    expect(explicitOmbre.MEMORY_BACKEND).toBe('ombre');
+    expect(explicitOmbre.MCP_CONNECT_ON_START).toBe(true);
+    expect(loadEnv({ NODE_ENV: 'production' }).MEMORY_BACKEND).toBe('ombre');
+  });
+
   it('uses safe disabled defaults and the preferred provider order', () => {
     const env = loadEnv({ NODE_ENV: 'test' });
 

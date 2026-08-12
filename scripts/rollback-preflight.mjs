@@ -23,9 +23,10 @@ function dataDirFromArgs() {
 
 const dataDir = dataDirFromArgs();
 const dbFile = path.join(dataDir, 'database', 'sooya.db');
-// v34 adds the Moments feed. It introduces no new in-flight state that must be
-// normalized for a pre-v15 rollback, so it is safe for this checker to inspect.
-const MAX_SCHEMA_VERSION = 34;
+// v35 adds the Ombre commit receipt table. It introduces no new in-flight state
+// that must be normalized for a pre-v15 rollback, so it is safe for this checker
+// to inspect.
+const MAX_SCHEMA_VERSION = 35;
 if (!fs.existsSync(dbFile)) {
   console.error(`[preflight] database not found: ${dbFile}`);
   console.error(`[preflight] pass --data-dir <dir> or set DATA_DIR`);

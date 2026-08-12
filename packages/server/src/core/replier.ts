@@ -23,6 +23,7 @@ import {
   ImageReferenceError,
   ProviderNotConfiguredError,
   type ChatTurn,
+  type ModelTurn,
   type GeneratedImage
 } from '../providers/types.js';
 import { HttpTimeoutError } from '../util/http.js';
@@ -38,6 +39,8 @@ import { formatWebSearchContext } from './web-search/service.js';
 import type { WebSearchResolver } from './web-search/registry.js';
 import type { WebSearchResult } from './web-search/types.js';
 import type { WorldSnapshot } from './world-context.js';
+import type { ToolCallRuntime } from '../agent/tool-runtime.js';
+import type { OmbreMemoryBridge } from './ombre-memory.js';
 
 export interface ReplyOptions {
   recentMessages: number;
@@ -132,6 +135,8 @@ export class Replier {
       voiceV2Enabled?: boolean;
       webSearch?: WebSearchResolver | null;
       worldSnapshot?: () => WorldSnapshot;
+      toolRuntime?: ToolCallRuntime;
+      ombreMemory?: OmbreMemoryBridge;
     }
   ) {}
 
@@ -331,7 +336,46 @@ export class Replier {
         persistDelta(visible);
       };
 
-      const streamTurns = async (turns: ChatTurn[]): Promise<void> => {
+      let modelTurns: ModelTurn[] = built.turns;
+      if (this.deps.ombreMemory) {
+        try {
+          const surfaced = await this.deps.ombreMemory.wakeIfNeeded(undefined, signal);
+          if (surfaced) {
+            const wakeId = `wake-${batchId}-${revision}`;
+            modelTurns = [
+              ...modelTurns,
+              { role: 'assistant_tool_call', calls: [{ id: wakeId, name: 'ombre__breath', arguments: {} }] },
+              { role: 'tool_result', callId: wakeId, name: 'ombre.breath', content: surfaced }
+            ];
+          }
+        } catch (error) {
+          if (signal.aborted) throw signal.reason ?? error;
+          degraded.push('memory:unavailable');
+          this.deps.errorLog.add('reply.ombre', 'wake_failed', { diagnostic: redactDiagnostic(error) });
+        }
+      }
+
+      if (this.deps.toolRuntime && this.deps.toolRuntime.hasAuthorizedTools('reply') && !nativeSearchAnswer) {
+        try {
+          const prepared = await this.deps.toolRuntime.prepare(provider, {
+            system: requestSystem,
+            messages: modelTurns,
+            maxTokens: requestMaxTokens,
+            temperature: undefined,
+            signal
+          }, { phase: 'reply', signal, batchId, revision });
+          modelTurns = prepared.messages;
+          requestSystem = prepared.system ?? requestSystem;
+          if (prepared.degradedReason === 'provider-tools-unsupported') degraded.push('mcp:provider_tools_unsupported');
+          else if (prepared.degradedReason === 'no-authorized-tools' && this.deps.ombreMemory?.health().degraded) degraded.push('memory:unavailable');
+        } catch (error) {
+          if (signal.aborted) throw signal.reason ?? error;
+          degraded.push('mcp:unavailable');
+          this.deps.errorLog.add('reply.ombre', 'tool_runtime_failed', { diagnostic: redactDiagnostic(error) });
+        }
+      }
+
+      const streamTurns = async (turns: ModelTurn[]): Promise<void> => {
         await provider.stream(
           {
             system: requestSystem,
@@ -353,7 +397,7 @@ export class Replier {
         } else {
           try {
             if (nativeSearchAnswer) pushDelta(nativeSearchAnswer);
-            else await streamTurns(built.turns);
+            else await streamTurns(modelTurns);
           } catch (err) {
             let streamError: Error | null = err as Error;
             if (built.visionUsed && isImageInputRejection(streamError)) {

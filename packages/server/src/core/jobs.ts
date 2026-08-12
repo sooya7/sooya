@@ -1,5 +1,6 @@
 import type { JobRepo, ErrorLogRepo } from '../db/repos/misc.repo.js';
 import type { MemoryService } from './memory.js';
+import type { OmbreMemoryBridge } from './ombre-memory.js';
 import type { Summarizer } from './summarizer.js';
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { EventBus } from '../events/bus.js';
@@ -104,7 +105,9 @@ export interface JobDeps {
   jobs: JobRepo;
   media: MediaStore;
   mediaText: MediaTextRepo;
-  memory: MemoryService;
+  memory?: MemoryService;
+  ombreMemory?: OmbreMemoryBridge;
+  memoryBackend?: 'legacy' | 'ombre';
   summarizer: Summarizer;
   messages: MessageRepo;
   bus: EventBus;
@@ -236,10 +239,25 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     if (userMessages.length === 0) return;
     const userText = userMessages.map(textForMemoryExtraction).filter(Boolean).join('\n');
     const assistantText = assistantMessageId ? textForMemoryExtraction(deps.messages.get(assistantMessageId)) : '';
+    if (!deps.memory) return;
     const candidates = await deps.memory.extractCandidates(userText, assistantText);
     if (candidates.length === 0) return;
     const result = await deps.memory.remember(candidates, userMessageId);
     if (result.stored > 0 || result.merged > 0 || result.superseded > 0) deps.bus.publish('memory.updated', result);
+  });
+
+  worker.register('ombre.memory_commit', async (payload) => {
+    if (!deps.ombreMemory) return;
+    const batchId = String(payload.batchId ?? '');
+    const revision = Number(payload.revision ?? 0);
+    if (!batchId || !Number.isInteger(revision) || revision <= 0) return;
+    if (!deps.batches.isCurrentRevision(batchId, revision)) return;
+    const userMessageIds = Array.isArray(payload.userMessageIds) ? payload.userMessageIds.map((id) => String(id)).filter(Boolean) : [];
+    const assistantMessageId = payload.assistantMessageId ? String(payload.assistantMessageId) : '';
+    const userText = userMessageIds.map((id) => textForMemoryExtraction(deps.messages.get(id))).filter(Boolean).join('\n');
+    const assistantText = assistantMessageId ? textForMemoryExtraction(deps.messages.get(assistantMessageId)) : '';
+    const result = await deps.ombreMemory.commit({ batchId, revision, userText, assistantText, userMessageIds, assistantMessageId });
+    deps.bus.publish('memory.updated', { backend: 'ombre', batchId, revision, ...result });
   });
 
   worker.register('push.reply', async (payload) => {
@@ -286,7 +304,15 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     await deps.proactive.run();
   });
 
-  worker.register('memory.embed.backfill', async () => { await deps.memory.backfillEmbeddings(20); });
+  worker.register('ombre.dream', async () => {
+    if (!deps.ombreMemory) return;
+    await deps.ombreMemory.dream();
+  });
+  worker.register('ombre.refresh_tools', async () => {
+    if (!deps.ombreMemory) return;
+    await deps.ombreMemory.refreshTools();
+  });
+  worker.register('memory.embed.backfill', async () => { if (deps.memory) await deps.memory.backfillEmbeddings(20); });
   worker.register('summary.build', async () => { await deps.summarizer.runOnce(); });
 
   worker.register('maintenance', async () => {
@@ -294,7 +320,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     await cleanupTempFiles(deps.tmpDirs);
     const orphans = await deps.media.collectOrphans(undefined, deps.storage.avatarMediaIds());
     if (orphans.length > 0) deps.bus.publish('system.notice', { notice: 'cleaned orphan media', count: orphans.length });
-    deps.memory.purgeExpired?.();
+    if (deps.memoryBackend === 'legacy') deps.memory?.purgeExpired?.();
     const cleanup = await deps.storage.cleanup({
       apply: true,
       internal: true,

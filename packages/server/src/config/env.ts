@@ -89,6 +89,22 @@ const EnvSchema = z.object({
    */
   SOOYA_HTTP_PROXY: z.string().optional(),
 
+  /* Generic MCP host. Secrets are resolved from bearer-env references at runtime. */
+  MCP_CONFIG_PATH: z.string().optional(),
+  MCP_CONNECT_ON_START: boolish(true),
+  MEMORY_BACKEND: z.enum(['ombre', 'legacy']).default('ombre'),
+  OMBRE_MCP_URL: z.string().optional(),
+  OMBRE_MCP_TOKEN: z.string().optional(),
+  OMBRE_READ_ENABLED: boolish(true),
+  OMBRE_WRITE_ENABLED: boolish(true),
+  OMBRE_DREAM_ENABLED: boolish(true),
+  OMBRE_BREATH_IDLE_MINUTES: intish(30),
+  TOOL_MAX_ROUNDS: intish(6),
+  TOOL_MAX_CALLS_PER_ROUND: intish(4),
+  TOOL_CALL_TIMEOUT_MS: intish(15_000),
+  TOOL_RESULT_MAX_BYTES: intish(32 * 1024),
+  TOOL_TOTAL_RESULT_MAX_BYTES: intish(64 * 1024),
+
   BACKUP_INTERVAL_MS: intish(6 * 60 * 60 * 1000),
   BACKUP_KEEP: intish(7),
   BACKUP_ON_START: boolish(false),
@@ -191,11 +207,20 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     throw new Error(`Invalid environment configuration: ${detail}`);
   }
   const env = parsed.data;
+  // Keep existing unit/e2e harnesses hermetic and preserve the legacy memory
+  // contract unless a test explicitly opts into Ombre. Production defaults to
+  // Ombre, while operators can still select either backend through .env.
+  const explicitMemoryBackend = source.MEMORY_BACKEND?.trim();
+  const memoryBackend = explicitMemoryBackend ? env.MEMORY_BACKEND : env.NODE_ENV === 'test' ? 'legacy' : env.MEMORY_BACKEND;
+  const explicitMcpStartup = source.MCP_CONNECT_ON_START?.trim();
+  const mcpConnectOnStart = explicitMcpStartup ? env.MCP_CONNECT_ON_START : env.NODE_ENV === 'test' ? false : env.MCP_CONNECT_ON_START;
   const dataDir = path.resolve(env.DATA_DIR);
   const configDir = path.resolve(env.CONFIG_DIR);
   const mediaDir = path.join(dataDir, 'media');
   return {
     ...env,
+    MEMORY_BACKEND: memoryBackend,
+    MCP_CONNECT_ON_START: mcpConnectOnStart,
     dataDir,
     configDir,
     dbDir: path.join(dataDir, 'database'),
