@@ -1,6 +1,7 @@
 import type { SooyaApp } from '../app.js';
 import { requireChatToken } from './auth.js';
 import type { VisibleThought } from '../core/thoughts/types.js';
+import { thoughtQualityReason } from '../core/thoughts/safety.js';
 
 /**
  * Read surface for the visible-thoughts layer. The ThoughtsService is wired
@@ -19,7 +20,6 @@ function thoughtsOf(app: SooyaApp): ThoughtsApi | null {
 }
 
 const MESSAGE_ID_RE = /^[A-Za-z0-9_-]{1,80}$/u;
-const BATCH_ID_RE = /^[A-Za-z0-9_-]{1,80}$/u;
 
 export function registerThoughtRoutes(app: SooyaApp): void {
   const { server, repos } = app;
@@ -30,6 +30,10 @@ export function registerThoughtRoutes(app: SooyaApp): void {
    * thought ONLY when the message exists and the thought is a completed,
    * user-visible inner monologue — admin-only decision summaries and
    * not-yet-published thoughts are never served here.
+   *
+   * The quality guard is repeated on read so malformed rows created by an older
+   * release (for example `Won` or `(心`) disappear immediately after deploy;
+   * fixing generation alone would leave those historical fragments visible.
    */
   server.get('/api/thoughts/:messageId', { preHandler: auth }, async (req, reply) => {
     const { messageId } = req.params as { messageId: string };
@@ -44,7 +48,7 @@ export function registerThoughtRoutes(app: SooyaApp): void {
     }
     const thoughts = thoughtsOf(app);
     const thought = thoughts ? thoughts.getUserThought(messageId) : null;
-    if (!thought) {
+    if (!thought || thoughtQualityReason(thought.text)) {
       reply.code(404);
       return { error: 'not_found', message: '该消息没有可见想法' };
     }
