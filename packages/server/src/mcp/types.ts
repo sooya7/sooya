@@ -7,7 +7,7 @@ export type McpAuth =
 
 export interface McpToolPolicy {
   risk: 'read' | 'write' | 'external_side_effect' | 'destructive' | 'maintenance';
-  phases: Array<'reply' | 'memory_commit' | 'proactive' | 'maintenance'>;
+  phases: Array<'reply' | 'memory_commit' | 'proactive' | 'maintenance' | 'admin'>;
   authorized: boolean;
 }
 

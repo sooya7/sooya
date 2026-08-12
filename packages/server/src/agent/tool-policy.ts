@@ -56,6 +56,10 @@ export class ToolPolicy {
       if (tool.risk === 'maintenance' && !maintenanceEnabled) return { allowed: false, reason: 'maintenance-disabled' };
       return { allowed: true };
     }
+    if (phase === 'admin') {
+      if (!readEnabled) return { allowed: false, reason: 'read-disabled' };
+      return tool.risk === 'read' ? { allowed: true } : { allowed: false, reason: 'non-read-tool-in-admin-phase' };
+    }
     if (tool.risk === 'read' && !readEnabled) return { allowed: false, reason: 'read-disabled' };
     if (!maintenanceEnabled) return { allowed: false, reason: 'maintenance-disabled' };
     if (isWriteRisk(tool.risk) && !writeEnabled) return { allowed: false, reason: 'write-disabled' };

@@ -6,6 +6,7 @@ import { ToolPolicy } from '../agent/tool-policy.js';
 import type { OmbreCommitRepo } from '../db/repos/ombre.repo.js';
 import { memoryHealth } from '../mcp/health.js';
 import type { McpManager } from '../mcp/manager.js';
+import type { EventBus } from '../events/bus.js';
 
 export interface MemoryCommitInput {
   batchId: string;
@@ -14,6 +15,8 @@ export interface MemoryCommitInput {
   assistantText: string;
   userMessageIds?: string[];
   assistantMessageId?: string;
+  /** Only an explicit, revision-fenced Admin retry may re-enter an uncertain receipt. */
+  allowUncertainRetry?: boolean;
   signal?: AbortSignal;
 }
 
@@ -24,6 +27,7 @@ export interface OmbreMemoryBridgeOptions {
   runtime: ToolCallRuntime;
   commits: OmbreCommitRepo;
   chatProvider: () => ChatProvider;
+  bus?: EventBus;
   breathIdleMinutes?: number;
 }
 
@@ -39,9 +43,16 @@ export class OmbreMemoryBridge {
   async wake(signal?: AbortSignal): Promise<string | null> {
     const tool = this.options.registry.get('ombre.breath');
     if (!tool || !this.options.policy.check(tool, 'reply').allowed) return null;
-    const result = await tool.handler({}, { phase: 'reply', signal });
-    this.lastWakeAt = Date.now();
-    return normalizeToolResult(result).content || null;
+    try {
+      const result = await tool.handler({}, { phase: 'reply', signal });
+      this.lastWakeAt = Date.now();
+      const normalized = normalizeToolResult(result);
+      this.options.bus?.publish('ombre.memory.wake', { resultCount: normalized.content ? 1 : 0 });
+      return normalized.content || null;
+    } catch (error) {
+      this.options.bus?.publish('ombre.memory.error', { phase: 'wake', error: safeError(error) });
+      throw error;
+    }
   }
 
   async wakeIfNeeded(lastInteractionAt?: Date | null, signal?: AbortSignal): Promise<string | null> {
@@ -55,13 +66,28 @@ export class OmbreMemoryBridge {
     return this.wake(signal);
   }
 
-  async commit(input: MemoryCommitInput): Promise<{ state: 'completed' | 'skipped'; callsExecuted: number; rounds: number }> {
+  async commit(input: MemoryCommitInput): Promise<{ state: 'completed' | 'skipped' | 'uncertain'; callsExecuted: number; rounds: number; recovered?: boolean }> {
     const existing = this.options.commits.get(input.batchId, input.revision);
     if (existing?.state === 'completed' || existing?.state === 'skipped') {
       return { state: existing.state, callsExecuted: 0, rounds: 0 };
     }
-    if (existing?.state === 'uncertain' && await this.reconcileUncertain(input)) {
-      return { state: 'completed', callsExecuted: 0, rounds: 0 };
+    if (existing?.state === 'uncertain') {
+      if (await this.reconcileUncertain(input)) {
+        const recovered = { state: 'completed' as const, callsExecuted: 0, rounds: 0 };
+        this.options.bus?.publish('ombre.memory.commit_recovered', { batchId: input.batchId, revision: input.revision, ...recovered, recovered: true });
+        return recovered;
+      }
+      if (!input.allowUncertainRetry) {
+        const unresolved = { state: 'uncertain' as const, callsExecuted: 0, rounds: 0 };
+        this.options.bus?.publish('ombre.memory.error', {
+          phase: 'commit_reconcile',
+          batchId: input.batchId,
+          revision: input.revision,
+          state: 'uncertain',
+          reason: 'reconciliation_unproven'
+        });
+        return unresolved;
+      }
     }
     const started = this.options.commits.start(input.batchId, input.revision, { userMessageIds: input.userMessageIds ?? [], assistantMessageId: input.assistantMessageId ?? null });
     if (started.state === 'completed' || started.state === 'skipped') return { state: started.state, callsExecuted: 0, rounds: 0 };
@@ -94,16 +120,29 @@ export class OmbreMemoryBridge {
       });
       const detail = { rounds: prepared.rounds, callsExecuted: prepared.callsExecuted, exhausted: prepared.exhausted };
       this.options.commits.mark(input.batchId, input.revision, 'completed', detail);
+      this.options.bus?.publish('ombre.memory.commit', { batchId: input.batchId, revision: input.revision, state: 'completed', ...detail });
       return { state: 'completed', ...detail };
     } catch (error) {
-      this.options.commits.mark(input.batchId, input.revision, 'uncertain', { error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500) });
+      this.options.commits.mark(input.batchId, input.revision, 'uncertain', {
+        userMessageIds: input.userMessageIds ?? [],
+        assistantMessageId: input.assistantMessageId ?? null,
+        error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500)
+      });
+      this.options.bus?.publish('ombre.memory.error', { phase: 'commit', batchId: input.batchId, revision: input.revision, state: 'uncertain', error: safeError(error) });
       throw error;
     }
   }
 
   async dream(signal?: AbortSignal): Promise<string | null> {
     if (!this.hasRecentCompletedCommit()) return null;
-    return this.callLifecycleTool('ombre.dream', 'maintenance', {}, signal);
+    try {
+      const result = await this.callLifecycleTool('ombre.dream', 'maintenance', {}, signal);
+      if (result !== null) this.options.bus?.publish('ombre.memory.dream', { resultCount: result ? 1 : 0 });
+      return result;
+    } catch (error) {
+      this.options.bus?.publish('ombre.memory.error', { phase: 'dream', error: safeError(error) });
+      throw error;
+    }
   }
 
   hasRecentCompletedCommit(windowMs = 24 * 60 * 60 * 1000): boolean {
@@ -113,15 +152,23 @@ export class OmbreMemoryBridge {
   async refreshTools(): Promise<ReturnType<McpManager['health']>> {
     const snapshot = this.options.manager.getConnection('ombre');
     if (!snapshot) return this.options.manager.health();
-    await this.options.manager.refreshTools('ombre');
-    return this.options.manager.health();
+    try {
+      await this.options.manager.refreshTools('ombre');
+      this.options.bus?.publish('ombre.tools.refresh', { serverId: 'ombre' });
+      return this.options.manager.health();
+    } catch (error) {
+      this.options.bus?.publish('ombre.memory.error', { phase: 'tools_refresh', serverId: 'ombre', error: safeError(error) });
+      throw error;
+    }
   }
 
   private async callLifecycleTool(name: string, phase: ToolPhase, input: Record<string, unknown>, signal?: AbortSignal): Promise<string | null> {
     const tool = this.options.registry.get(name);
     if (!tool || !this.options.policy.check(tool, phase).allowed) return null;
     const result = await tool.handler(input, { phase, signal });
-    return normalizeToolResult(result).content || null;
+    // `null` means that the tool was unavailable or denied; an empty string
+    // is still a successful invocation and must advance the dream watermark.
+    return normalizeToolResult(result).content;
   }
 
   private async reconcileUncertain(input: MemoryCommitInput): Promise<boolean> {
@@ -137,11 +184,15 @@ export class OmbreMemoryBridge {
       return true;
     } catch {
       // A failed/unreliable lookup is not evidence that the write did not
-      // happen. Continue with the normal commit path, which remains fenced by
-      // the receipt and the stable source marker in commitSystem().
+      // happen. The caller decides whether this is an explicit, revision-
+      // fenced retry; automatic jobs must keep the receipt uncertain.
       return false;
     }
   }
+}
+
+function safeError(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).replace(/\s+/gu, ' ').slice(0, 300);
 }
 
 function commitSystem(batchId: string, revision: number): string {

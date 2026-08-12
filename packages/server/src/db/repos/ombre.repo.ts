@@ -49,6 +49,10 @@ export class OmbreCommitRepo {
     return this.db.prepare('SELECT * FROM ombre_commits ORDER BY COALESCE(started_at, completed_at) DESC LIMIT ?').all(Math.max(1, Math.min(1000, limit))) as OmbreCommitRow[];
   }
 
+  latestCompleted(): OmbreCommitRow | undefined {
+    return this.db.prepare("SELECT * FROM ombre_commits WHERE state = 'completed' ORDER BY completed_at DESC LIMIT 1").get() as OmbreCommitRow | undefined;
+  }
+
   hasCompletedSince(iso: string): boolean {
     const row = this.db
       .prepare("SELECT 1 present FROM ombre_commits WHERE state = 'completed' AND completed_at >= ? LIMIT 1")

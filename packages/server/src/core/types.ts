@@ -46,6 +46,9 @@ export interface ReplyFailure {
 export type StreamEventType = 'message.received' | 'reply.queued' | 'reply.thinking' | 'reply.text.delta' | 'reply.text.done' | 'reply.sticker.selecting' | 'reply.image.generating' | 'reply.audio.generating' | 'reply.content.done' | 'reply.media.saved' | 'reply.completed' | 'reply.failed' | 'message.updated' | 'media.updated' | 'memory.updated' | 'persona.updated' | 'life.updated' | 'push.updated' | 'storage.updated' | 'sticker.updated' | 'sticker.analysis.updated' | 'system.notice' | 'ping'
   | 'reply.batch.collecting' | 'reply.batch.queued' | 'reply.generation.started' | 'reply.generation.interrupted' | 'reply.generation.retrying' | 'reply.publishing.started' | 'reply.publishing.partial' | 'reply.superseded'
   | 'voice.plan.created' | 'voice.script.completed' | 'voice.synthesis.started' | 'voice.synthesis.completed' | 'voice.synthesis.failed' | 'voice.generation.superseded' | 'voice.published' | 'voice.cancelled'
-  | 'thought.updated' | 'world.updated' | 'moment.created';
+  | 'thought.updated' | 'world.updated' | 'moment.created'
+  | 'ombre.memory.wake' | 'ombre.memory.search' | 'ombre.memory.commit' | 'ombre.memory.commit_recovered'
+  | 'ombre.memory.dream' | 'ombre.memory.error' | 'ombre.tools.refresh'
+  | 'mcp.connect_success' | 'mcp.connect_failure' | 'mcp.reconnect_attempt' | 'mcp.reconnect_success' | 'mcp.reconnect_failure' | 'mcp.tools_refresh' | 'mcp.tools_refresh_failure';
 export interface StreamEvent { id: string; seq: number; type: StreamEventType; createdAt: string; payload: Record<string, unknown>; }
 export interface MemoryRecord { id: string; kind: 'profile' | 'preference' | 'relationship' | 'project' | 'event' | 'summary'; content: string; importance: number; confidence: number; createdAt: string; updatedAt: string; expiresAt?: string | null; hits: number; sources: string[]; hasEmbedding: boolean; supersedesId: string | null; supersededById: string | null; archivedAt: string | null; }

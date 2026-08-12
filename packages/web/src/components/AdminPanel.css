@@ -714,6 +714,91 @@
   gap: 10px;
 }
 
+/* Content/MCP v2 surfaces keep the legacy console shell, but their data
+ * domains stay isolated so a card error never blanks sibling pages. */
+.admin-content-management { display: grid; gap: 14px; }
+.admin-content-subnav { display: flex; gap: 7px; overflow-x: auto; padding: 3px; border: 1px solid var(--admin-line); border-radius: 12px; background: var(--admin-surface); }
+.admin-content-subnav button { flex: 0 0 auto; border: 0; border-radius: 9px; background: transparent; color: var(--admin-muted); padding: 8px 12px; font-size: 12px; font-weight: 650; cursor: pointer; }
+.admin-content-subnav button.active { color: var(--admin-primary-deep); background: var(--admin-primary-soft); }
+.admin-content-page, .admin-mcp-page { display: grid; gap: 14px; min-width: 0; }
+.admin-subpage-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.admin-subpage-header h2 { margin: 3px 0 5px; color: var(--admin-text); font-size: 22px; }
+.admin-subpage-header p { max-width: 760px; margin: 0; color: var(--admin-muted); font-size: 12px; line-height: 1.55; }
+.admin-card-kicker { display: block; color: var(--admin-muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.admin-breakable { overflow-wrap: anywhere; }
+.admin-status-chip { display: inline-flex; align-items: center; width: fit-content; margin-top: 7px; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.admin-status-chip.is-ready { color: #146b4d; background: #e3f5ec; }
+.admin-status-chip.is-warn { color: #8a5a10; background: #fff1d1; }
+.admin-status-chip.is-muted { color: var(--admin-muted); background: var(--admin-line); }
+.admin-content-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--admin-line); border-radius: 12px; background: var(--admin-surface); }
+.admin-content-toolbar input, .admin-content-toolbar select { min-width: 130px; flex: 1 1 130px; }
+.admin-content-toolbar input:first-child { flex-basis: 240px; }
+.admin-file-action { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.admin-file-action input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.admin-filter-facets { display: flex; flex-wrap: wrap; gap: 7px; color: var(--admin-muted); font-size: 11px; }
+.admin-filter-facets span { padding: 4px 8px; border: 1px solid var(--admin-line); border-radius: 999px; }
+.admin-memory-status, .admin-mcp-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.admin-memory-status .admin-card, .admin-mcp-summary .admin-card { display: grid; align-content: start; gap: 4px; min-height: 92px; }
+.admin-memory-status strong, .admin-mcp-summary strong { color: var(--admin-text); font-size: 15px; }
+.admin-memory-status small, .admin-mcp-summary small { color: var(--admin-muted); font-size: 11px; }
+.admin-inline-search { display: flex; gap: 8px; }
+.admin-inline-search input { min-width: 0; flex: 1; }
+.admin-memory-results { display: grid; gap: 8px; margin-top: 12px; }
+.admin-memory-result { padding: 10px; border: 1px solid var(--admin-line); border-radius: 10px; background: var(--admin-surface); }
+.admin-memory-result p { margin: 5px 0; color: var(--admin-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.admin-memory-result small, .admin-list-row span small, .admin-chat-row small { display: block; color: var(--admin-muted); font-size: 10px; }
+.admin-safe-pre { max-height: 300px; margin: 12px 0 0; padding: 10px; overflow: auto; border-radius: 8px; background: var(--admin-bg); color: var(--admin-muted); font-size: 10px; white-space: pre-wrap; }
+.admin-sticker-grid, .admin-media-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.admin-sticker-card, .admin-media-card { display: grid; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--admin-line); border-radius: 12px; background: var(--admin-surface); text-align: left; cursor: pointer; }
+.admin-sticker-card:hover, .admin-media-card:hover { border-color: var(--admin-primary); box-shadow: 0 5px 18px rgba(45, 55, 72, .08); }
+.admin-sticker-card > img, .admin-sticker-card > span[role="img"], .admin-media-card > img, .admin-media-card > span[role="img"] { width: 100%; aspect-ratio: 1; object-fit: contain; background: var(--admin-bg); }
+.admin-sticker-card-copy, .admin-media-card > span:last-child { display: grid; gap: 3px; padding: 9px; }
+.admin-sticker-card-copy strong, .admin-media-card strong { overflow: hidden; color: var(--admin-text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.admin-sticker-card-copy small, .admin-media-card small { color: var(--admin-muted); font-size: 10px; }
+.admin-mcp-servers, .admin-mcp-tools { display: grid; gap: 8px; }
+.admin-mcp-server { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--admin-line); }
+.admin-mcp-server-main { min-width: 0; }
+.admin-mcp-server-title { display: flex; align-items: center; gap: 8px; }
+.admin-mcp-server-main p { margin: 5px 0; color: var(--admin-muted); font-size: 11px; }
+.admin-mcp-server-main small { color: var(--admin-muted); font-size: 10px; }
+.admin-mcp-actions { flex: 0 0 auto; }
+.admin-mcp-tool-list { display: grid; gap: 2px; }
+.admin-mcp-tool-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px; border: 0; border-top: 1px solid var(--admin-line); background: transparent; color: var(--admin-text); text-align: left; cursor: pointer; }
+.admin-mcp-tool-row:hover { background: var(--admin-bg); }
+.admin-mcp-tool-row > span:first-child { min-width: 0; }
+.admin-mcp-tool-row strong, .admin-mcp-tool-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-mcp-tool-row small { max-width: 620px; margin-top: 3px; color: var(--admin-muted); font-size: 10px; }
+.admin-mcp-tool-meta { display: grid; flex: 0 0 auto; gap: 3px; color: var(--admin-muted); text-align: right; }
+.admin-mcp-tool-meta em { color: var(--admin-primary-deep); font-size: 10px; font-style: normal; }
+.admin-mcp-memory-link { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.admin-mcp-memory-link p { margin: 5px 0 0; color: var(--admin-muted); font-size: 11px; }
+.admin-tool-schema { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(15, 23, 42, .35); }
+.admin-tool-schema-inner { position: relative; width: min(720px, 100%); max-height: min(720px, 90vh); overflow: auto; padding: 22px; border-radius: 16px; background: var(--admin-surface); box-shadow: 0 20px 70px rgba(15, 23, 42, .22); }
+.admin-tool-schema-inner h3 { margin: 4px 0; }
+.admin-tool-schema-inner p { color: var(--admin-muted); font-size: 12px; }
+.admin-tool-schema-inner pre { padding: 12px; overflow: auto; border-radius: 8px; background: var(--admin-bg); font-size: 11px; }
+.admin-tool-schema-close { position: absolute; top: 10px; right: 10px; border: 0; background: transparent; color: var(--admin-muted); font-size: 20px; cursor: pointer; }
+.admin-sticker-detail, .admin-media-detail { display: grid; gap: 12px; }
+.admin-sticker-detail > img, .admin-media-detail > img { width: 100%; max-height: 280px; object-fit: contain; border-radius: 10px; background: var(--admin-bg); }
+.admin-sticker-detail label { display: grid; gap: 5px; color: var(--admin-muted); font-size: 11px; }
+.admin-checkbox { display: flex !important; grid-template-columns: auto 1fr; align-items: center; }
+.admin-sticker-detail dl, .admin-media-detail dl { display: grid; grid-template-columns: 95px 1fr; gap: 6px 10px; margin: 0; font-size: 11px; }
+.admin-sticker-detail dt, .admin-media-detail dt { color: var(--admin-muted); }
+.admin-sticker-detail dd, .admin-media-detail dd { margin: 0; color: var(--admin-text); overflow-wrap: anywhere; }
+.admin-media-file { display: grid; place-items: center; aspect-ratio: 1; color: var(--admin-muted); background: var(--admin-bg); font-size: 11px; font-weight: 700; }
+.admin-media-file.large { min-height: 120px; aspect-ratio: auto; border-radius: 10px; }
+.admin-chat-history { display: grid; gap: 5px; }
+.admin-chat-row { display: grid; grid-template-columns: 54px 1fr; gap: 10px; width: 100%; padding: 11px; border: 1px solid var(--admin-line); border-radius: 10px; background: var(--admin-surface); color: var(--admin-text); text-align: left; cursor: pointer; }
+.admin-chat-row:hover { border-color: var(--admin-primary); }
+.admin-chat-row strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-chat-role { align-self: start; padding: 3px 5px; border-radius: 5px; color: var(--admin-primary-deep); background: var(--admin-primary-soft); font-size: 10px; text-align: center; }
+.admin-chat-role.assistant { color: #146b4d; background: #e3f5ec; }
+.admin-chat-context { display: grid; gap: 7px; }
+.admin-chat-context-row { padding: 9px; border-radius: 9px; background: var(--admin-bg); }
+.admin-chat-context-row.selected { outline: 2px solid var(--admin-primary-soft); }
+.admin-chat-context-row p { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.admin-chat-context-row small { color: var(--admin-muted); font-size: 10px; }
+
 .admin-v2 .admin-card {
   min-width: 0;
   padding: 13px 14px;
@@ -1862,6 +1947,15 @@
 }
 
 @media (max-width: 560px) {
+  .admin-subpage-header { display: grid; }
+  .admin-memory-status, .admin-mcp-summary { grid-template-columns: 1fr; }
+  .admin-sticker-grid, .admin-media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-mcp-server, .admin-mcp-memory-link { align-items: stretch; flex-direction: column; }
+  .admin-mcp-actions { width: 100%; }
+  .admin-mcp-actions button { flex: 1; }
+  .admin-mcp-tool-row { align-items: flex-start; flex-direction: column; }
+  .admin-mcp-tool-meta { display: flex; gap: 8px; text-align: left; }
+  .admin-inline-search { align-items: stretch; flex-direction: column; }
   .admin-v2 .admin-log-scroll { max-height: 230px; }
   .admin-v2 .admin-error-summary { padding: 9px 10px; }
   .admin-v2 .admin-log-footer { margin-left: -14px; margin-right: -14px; }

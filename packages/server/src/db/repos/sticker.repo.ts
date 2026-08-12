@@ -86,11 +86,18 @@ export interface Sticker {
 
 export interface StickerListOptions {
   enabledOnly?: boolean;
+  enabled?: boolean;
   scope?: 'recent' | 'favorite' | 'all';
   q?: string;
+  status?: StickerAnalysisStatus;
+  source?: StickerAnalysisSource;
+  emotion?: string;
+  sort?: 'created' | 'name' | 'recent' | 'usage';
   limit?: number;
   offset?: number;
 }
+
+export type StickerFilterOptions = Omit<StickerListOptions, 'limit' | 'offset' | 'sort'>;
 
 export interface StickerAnalysisStatePatch {
   status: StickerAnalysisStatus;
@@ -201,16 +208,9 @@ export class StickerRepo {
   }
 
   list(opts: StickerListOptions = {}): Sticker[] {
-    if (opts.q?.trim()) return this.searchFts(opts.q, { enabledOnly: opts.enabledOnly, scope: opts.scope, limit: opts.limit, offset: opts.offset });
-    const where: string[] = [];
-    const values: unknown[] = [];
-    if (opts.enabledOnly) where.push('enabled = 1');
-    if (opts.scope === 'favorite') where.push('favorite = 1');
-    const order = opts.scope === 'recent'
-      ? 'user_last_used_at IS NULL, user_last_used_at DESC, created_at DESC'
-      : opts.scope === 'favorite'
-        ? 'user_last_used_at IS NULL, user_last_used_at DESC, created_at DESC'
-        : 'created_at';
+    if (opts.q?.trim()) return this.searchFts(opts.q, opts);
+    const { where, values } = stickerWhere(opts);
+    const order = stickerOrder(opts);
     let sql = `SELECT * FROM stickers${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`;
     if (opts.limit !== undefined) {
       sql += ' LIMIT ? OFFSET ?';
@@ -222,6 +222,34 @@ export class StickerRepo {
   count(enabledOnly = true): number {
     const sql = enabledOnly ? 'SELECT COUNT(*) c FROM stickers WHERE enabled = 1' : 'SELECT COUNT(*) c FROM stickers';
     return (this.db.prepare(sql).get() as { c: number }).c;
+  }
+
+  countFiltered(opts: StickerFilterOptions = {}): number {
+    if (opts.q?.trim()) {
+      // FTS is deliberately used for the page, but its MATCH query is not a
+      // portable count source across the old v1-v29 databases. Count the
+      // same semantic projection without a page cap so pagination remains
+      // honest even when the gallery is larger than 500 rows.
+      return this.list({ ...opts, q: undefined, limit: undefined, offset: undefined })
+        .filter((sticker) => stickerSemanticText(sticker).toLocaleLowerCase().includes(opts.q!.trim().toLocaleLowerCase()))
+        .length;
+    }
+    const { where, values } = stickerWhere(opts);
+    const row = this.db.prepare(`SELECT COUNT(*) c FROM stickers${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`).get(...values) as { c: number };
+    return row.c;
+  }
+
+  facets(opts: StickerFilterOptions = {}): { status: Record<string, number>; source: Record<string, number>; emotion: Record<string, number> } {
+    const rows = this.list({ ...opts, limit: undefined, offset: undefined });
+    const status: Record<string, number> = {};
+    const source: Record<string, number> = {};
+    const emotion: Record<string, number> = {};
+    for (const sticker of rows) {
+      status[sticker.analysisStatus] = (status[sticker.analysisStatus] ?? 0) + 1;
+      source[sticker.analysisSource] = (source[sticker.analysisSource] ?? 0) + 1;
+      emotion[sticker.emotion] = (emotion[sticker.emotion] ?? 0) + 1;
+    }
+    return { status, source, emotion };
   }
 
   update(id: string, patch: {
@@ -360,12 +388,14 @@ export class StickerRepo {
     return (this.db.prepare(`SELECT * FROM stickers WHERE ${where.join(' AND ')} ORDER BY created_at`).all(...values) as StickerRow[]).map((r) => this.toSticker(r));
   }
 
-  searchFts(query: string, opts: { enabledOnly?: boolean; scope?: 'recent' | 'favorite' | 'all'; limit?: number; offset?: number } = {}): Sticker[] {
+  searchFts(query: string, opts: StickerListOptions = {}): Sticker[] {
     const normalized = query.trim().slice(0, 200);
-    if (!normalized) return this.list({ enabledOnly: opts.enabledOnly, scope: opts.scope, limit: opts.limit, offset: opts.offset });
-    const filters = [opts.enabledOnly ? 's.enabled = 1' : '', opts.scope === 'favorite' ? 's.favorite = 1' : ''].filter(Boolean);
+    if (!normalized) return this.list({ ...opts, q: undefined });
+    const { where: baseWhere, values: baseValues } = stickerWhere(opts, 's.');
+    const filters = baseWhere;
+    const values = baseValues;
     const where = filters.length ? `AND ${filters.join(' AND ')}` : '';
-    const limit = Math.max(1, Math.min(500, Math.floor(opts.limit ?? 30)));
+    const limit = Math.max(1, Math.min(500, Math.floor(opts.limit ?? 500)));
     const offset = Math.max(0, Math.floor(opts.offset ?? 0));
     if ([...normalized].length < 3) return this.linearSearch(normalized, opts, limit, offset);
     const match = escapeFtsQuery(normalized);
@@ -376,17 +406,17 @@ export class StickerRepo {
       const rows = this.db.prepare(
         `SELECT s.* FROM sticker_semantics_fts f JOIN stickers s ON s.id = f.sticker_id
          WHERE sticker_semantics_fts MATCH ? ${where}
-         ORDER BY ${order} LIMIT ? OFFSET ?`
-      ).all(match, limit, offset) as StickerRow[];
+         ORDER BY ${opts.sort === 'name' ? 's.name COLLATE NOCASE, s.id' : order} LIMIT ? OFFSET ?`
+      ).all(match, ...values, limit, offset) as StickerRow[];
       return rows.map((r) => this.toSticker(r));
     } catch {
       return this.linearSearch(normalized, opts, limit, offset);
     }
   }
 
-  private linearSearch(query: string, opts: { enabledOnly?: boolean; scope?: 'recent' | 'favorite' | 'all' }, limit: number, offset: number): Sticker[] {
+  private linearSearch(query: string, opts: StickerListOptions, limit: number, offset: number): Sticker[] {
     const needle = query.toLocaleLowerCase();
-    return this.list({ enabledOnly: opts.enabledOnly, scope: opts.scope })
+    return this.list({ ...opts, q: undefined, limit: undefined, offset: undefined })
       .filter((sticker) => stickerSemanticText(sticker).toLocaleLowerCase().includes(needle))
       .slice(offset, offset + limit);
   }
@@ -519,4 +549,24 @@ function escapeFtsQuery(query: string): string {
     .map((term) => `"${term}"`)
     .join(' OR ')
     .slice(0, 240) || '""';
+}
+
+function stickerWhere(opts: StickerListOptions, prefix = ''): { where: string[]; values: unknown[] } {
+  const column = (name: string) => `${prefix}${name}`;
+  const where: string[] = [];
+  const values: unknown[] = [];
+  if (opts.enabledOnly || opts.enabled === true) where.push(`${column('enabled')} = 1`);
+  else if (opts.enabled === false) where.push(`${column('enabled')} = 0`);
+  if (opts.scope === 'favorite') where.push(`${column('favorite')} = 1`);
+  if (opts.status) { where.push(`${column('analysis_status')} = ?`); values.push(opts.status); }
+  if (opts.source) { where.push(`${column('analysis_source')} = ?`); values.push(opts.source); }
+  if (opts.emotion?.trim()) { where.push(`${column('emotion')} = ?`); values.push(opts.emotion.trim().slice(0, 40)); }
+  return { where, values };
+}
+
+function stickerOrder(opts: StickerListOptions): string {
+  if (opts.sort === 'name') return 'name COLLATE NOCASE, id';
+  if (opts.sort === 'usage') return 'use_count DESC, user_use_count DESC, created_at DESC';
+  if (opts.sort === 'recent' || opts.scope === 'recent' || opts.scope === 'favorite') return 'user_last_used_at IS NULL, user_last_used_at DESC, created_at DESC';
+  return 'created_at DESC, id DESC';
 }

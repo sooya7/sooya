@@ -32,7 +32,7 @@ export class CapabilityRegistryStub {
 
 export type ToolSource = 'local' | 'mcp' | 'provider';
 export type ToolRisk = 'read' | 'write' | 'external_side_effect' | 'destructive' | 'maintenance';
-export type ToolPhase = 'reply' | 'memory_commit' | 'proactive' | 'maintenance';
+export type ToolPhase = 'reply' | 'memory_commit' | 'proactive' | 'maintenance' | 'admin';
 
 export interface ToolExecutionContext {
   phase: ToolPhase;

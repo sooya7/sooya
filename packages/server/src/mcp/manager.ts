@@ -1,5 +1,6 @@
 import { McpConnection, type McpConnectionOptions } from './connection.js';
 import { bridgeMcpTools } from './tool-bridge.js';
+import { resolveMcpAuth } from './auth.js';
 import type { ToolRegistry } from '../agent/registry.js';
 import type { McpClientFactory, McpConnectionSnapshot, McpServerConfig, McpToolCallResult } from './types.js';
 
@@ -97,6 +98,20 @@ export class McpManager {
 
   health(): McpConnectionSnapshot[] {
     return [...this.connections.values()].map((connection) => connection.snapshot());
+  }
+
+  /** Safe config metadata for administrative observability; auth values stay in the connection. */
+  configs(): McpServerConfig[] {
+    return [...this.connections.values()].map((connection) => ({
+      ...connection.config,
+      ...(connection.config.toolPolicy ? { toolPolicy: { ...connection.config.toolPolicy } } : {})
+    }));
+  }
+
+  /** Whether the configured auth source currently resolves without exposing its value. */
+  authConfigured(serverId: string): boolean {
+    const connection = this.connections.get(serverId);
+    return connection ? resolveMcpAuth(connection.config, this.options.env).configured : false;
   }
 
   async close(): Promise<void> {

@@ -497,6 +497,12 @@ export function registerFeatureRoutes(app: SooyaApp): void {
 
   server.post('/api/admin/media/:id/trash', adminGuard, async (req, reply) => {
     const id = (req.params as { id: string }).id;
+    const references = repos.media.references(id);
+    const avatar = services.storage.isAvatarMedia(id);
+    if (references.total > 0 || avatar) {
+      reply.code(409);
+      return { error: 'media_in_use', references, avatar };
+    }
     if (!repos.media.trash(id)) {
       reply.code(404);
       return { error: 'not_found' };
@@ -559,8 +565,15 @@ export function registerFeatureRoutes(app: SooyaApp): void {
     for (const id of [...new Set(parsed.data.ids)]) {
       const row = repos.media.get(id);
       if (!row) { result.missing.push(id); continue; }
-      if (parsed.data.action === 'trash') result.changed += repos.media.trash(id) ? 1 : 0;
-      else if (parsed.data.action === 'restore') result.changed += repos.media.restore(id) ? 1 : 0;
+      if (parsed.data.action === 'trash') {
+        const refs = repos.media.references(id);
+        const avatar = services.storage.isAvatarMedia(id);
+        if (refs.total > 0 || avatar) {
+          result.blocked.push({ id, reason: 'referenced' });
+          continue;
+        }
+        result.changed += repos.media.trash(id) ? 1 : 0;
+      } else if (parsed.data.action === 'restore') result.changed += repos.media.restore(id) ? 1 : 0;
       else if (parsed.data.action === 'favorite') result.changed += repos.media.setFavorite(id, true) ? 1 : 0;
       else if (parsed.data.action === 'unfavorite') result.changed += repos.media.setFavorite(id, false) ? 1 : 0;
       else {

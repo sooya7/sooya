@@ -339,7 +339,12 @@ export class Replier {
       let modelTurns: ModelTurn[] = built.turns;
       if (this.deps.ombreMemory) {
         try {
-          const previousInteraction = this.deps.messages.lastInteractionBefore(latestUserMessage.id);
+          // A collected reply batch may contain several user messages. Wake
+          // must compare idle time with the beginning of that batch, not its
+          // last line, otherwise a burst after a long idle gap suppresses the
+          // one wake that should surface the memory context.
+          const batchFirstUserMessage = userMessages[0]!;
+          const previousInteraction = this.deps.messages.lastInteractionBefore(batchFirstUserMessage.id);
           const surfaced = await this.deps.ombreMemory.wakeIfNeeded(
             previousInteraction ? new Date(previousInteraction) : null,
             signal

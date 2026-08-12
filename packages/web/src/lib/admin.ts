@@ -63,7 +63,7 @@ export function adminFailureKind(error: unknown): AdminFailureKind {
   return 'error';
 }
 
-async function adminRequest<T>(
+export async function adminRequest<T>(
   path: string,
   options: { method?: string; body?: unknown; headers?: HeadersInit; signal?: AbortSignal } = {}
 ): Promise<T> {
@@ -213,6 +213,13 @@ export interface AdminMedia {
   origin: string;
   exists: boolean;
   createdAt: string;
+  name?: string | null;
+  deletedAt?: string | null;
+  favorite?: boolean;
+  tags?: string[];
+  usageCount?: number;
+  references?: Record<string, number>;
+  avatar?: boolean;
 }
 
 export interface AdminSticker {
@@ -236,6 +243,76 @@ export interface AdminSticker {
   url: string;
   animated?: boolean;
   available?: boolean;
+  mime?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AdminMcpServer {
+  id: string;
+  enabled: boolean;
+  url: string;
+  transport: string;
+  authConfigured: boolean;
+  required: boolean;
+  state: string;
+  toolCount: number;
+  latencyMs?: number;
+  lastConnected?: string;
+  lastRefresh?: string;
+  lastConnectedAt?: string;
+  lastRefreshAt?: string;
+  lastError?: string;
+}
+
+export interface AdminMcpTool {
+  name: string;
+  modelName?: string;
+  remoteName?: string;
+  serverId?: string;
+  description: string;
+  risk: string;
+  phases: string[];
+  authorized: boolean;
+}
+
+export interface AdminMcpOverview {
+  configSource: string;
+  globalPolicy: Record<string, boolean>;
+  servers: AdminMcpServer[];
+  tools: AdminMcpTool[];
+  memory: AdminOmbreStatus;
+  dashboardUrl: string | null;
+}
+
+export interface AdminOmbreStatus {
+  backend: 'ombre';
+  connection: 'connected' | 'degraded';
+  health: Record<string, unknown> | null;
+  lastCommit: Record<string, unknown> | null;
+  pending: number;
+  uncertain: number;
+  lastDream: string | null;
+  dashboardUrl: string | null;
+}
+
+export interface AdminActivityItem {
+  id: string;
+  seq: number;
+  type: string;
+  createdAt: string;
+  detail: Record<string, unknown>;
+}
+
+export interface AdminChatMessage {
+  id: string;
+  conversationId: string;
+  role: 'user' | 'assistant';
+  createdAt: string;
+  updatedAt: string;
+  seq: number;
+  status: string;
+  content: Array<{ id: string; type: string; text?: string | null; transcript?: string | null; media?: { id: string; kind: string; url: string; mime: string } | null }>;
 }
 
 export interface AdminError {
@@ -408,7 +485,13 @@ export const adminApi = {
     if (opts.limit) params.set('limit', String(opts.limit));
     if (opts.offset) params.set('offset', String(opts.offset));
     const query = params.toString();
-    return adminRequest<{ stickers: AdminSticker[]; total: number; offset: number; analysisVersion?: number }>(`/api/admin/stickers${query ? `?${query}` : ''}`);
+    return adminRequest<{ stickers: AdminSticker[]; total: number; offset: number; facets?: { status: Record<string, number>; source: Record<string, number>; emotion: Record<string, number> }; analysisVersion?: number }>(`/api/admin/stickers${query ? `?${query}` : ''}`);
+  },
+  adminStickers: (opts: { q?: string; status?: string; source?: string; emotion?: string; enabled?: boolean; sort?: 'created' | 'name' | 'recent' | 'usage'; limit?: number; offset?: number } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(opts)) if (value !== undefined && value !== '') params.set(key, String(value));
+    const query = params.toString();
+    return adminRequest<{ stickers: AdminSticker[]; total: number; offset: number; facets: { status: Record<string, number>; source: Record<string, number>; emotion: Record<string, number> }; analysisVersion?: number }>(`/api/admin/stickers${query ? `?${query}` : ''}`);
   },
   uploadSticker: (body: FormData) =>
     adminRequest<{ created: AdminSticker[]; failed: Array<{ filename: string; error: string }> }>('/api/admin/stickers', {
@@ -444,10 +527,34 @@ export const adminApi = {
       { method: 'POST' }
     ),
   memories: () => adminRequest<{ memories: AdminMemory[]; stats: Record<string, unknown>; recall?: AdminRecallTrace }>('/api/admin/memories'),
+  mcpOverview: () => adminRequest<{ configSource: string; globalPolicy: Record<string, boolean>; servers: AdminMcpServer[]; tools: AdminMcpTool[]; memory: AdminOmbreStatus; dashboardUrl: string | null }>('/api/admin/mcp/servers'),
+  mcpToolSchema: (name: string) => adminRequest<{ tool: AdminMcpTool & { inputSchema: Record<string, unknown> } }>(`/api/admin/mcp/tools/${encodeURIComponent(name)}`),
+  testMcpServer: (id: string) => adminRequest<{ ok: boolean; server: AdminMcpServer }>(`/api/admin/mcp/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+  refreshMcpTools: (id: string) => adminRequest<{ ok: boolean; server: AdminMcpServer }>(`/api/admin/mcp/${encodeURIComponent(id)}/refresh-tools`, { method: 'POST' }),
+  ombreStatus: () => adminRequest<AdminOmbreStatus>('/api/admin/memory/status'),
+  ombreSearch: (query: string, limit = 10) => adminRequest<{ query: string; results: Array<Record<string, unknown>>; raw: string; resultCount: number }>(`/api/admin/memory/ombre/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+  ombreCatalog: (limit = 50) => adminRequest<Record<string, unknown>>(`/api/admin/memory/ombre/catalog?limit=${limit}`),
+  ombreActivity: (limit = 50) => adminRequest<{ activity: AdminActivityItem[] }>(`/api/admin/memory/activity?limit=${limit}`),
+  legacyMemories: (limit = 100, offset = 0) => adminRequest<{ memories: AdminMemory[]; total: number; readOnly: true }>(`/api/admin/memory/legacy?limit=${limit}&offset=${offset}`),
   deleteMemory: (id: string) =>
     adminRequest<{ deleted: boolean }>(`/api/admin/memories/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   clearMemories: () => adminRequest<{ cleared: boolean }>('/api/admin/memories/clear', { method: 'POST' }),
   media: () => adminRequest<{ media: AdminMedia[]; total: number }>('/api/admin/media'),
+  adminMedia: (opts: { q?: string; kind?: string; origin?: string; state?: 'active' | 'trashed' | 'all'; sort?: 'created' | 'size' | 'usage'; limit?: number; offset?: number } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(opts)) if (value !== undefined && value !== '') params.set(key, String(value));
+    const query = params.toString();
+    return adminRequest<{ media: AdminMedia[]; total: number; offset: number }>(`/api/admin/media${query ? `?${query}` : ''}`);
+  },
+  mediaUsage: (id: string) => adminRequest<{ mediaId: string; usageCount: number; references: Record<string, number>; avatar: boolean }>(`/api/admin/media/${encodeURIComponent(id)}/usage`),
+  mediaDetail: (id: string) => adminRequest<{ media: AdminMedia & { tags: string[]; meta: Record<string, unknown>; references: Record<string, number>; usageCount: number; avatar: boolean } }>(`/api/admin/media/${encodeURIComponent(id)}`),
+  chatHistory: (opts: { q?: string; from?: string; to?: string; role?: 'user' | 'assistant'; hasMedia?: boolean; mediaKind?: string; limit?: number; offset?: number } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(opts)) if (value !== undefined && value !== '') params.set(key, String(value));
+    const query = params.toString();
+    return adminRequest<{ messages: AdminChatMessage[]; total: number; limit: number; offset: number; hasMore: boolean }>(`/api/admin/chat/history${query ? `?${query}` : ''}`);
+  },
+  chatContext: (id: string, before = 10, after = 10) => adminRequest<{ target: AdminChatMessage; messages: AdminChatMessage[]; hasOlder: boolean; hasNewer: boolean }>(`/api/admin/chat/history/${encodeURIComponent(id)}/context?before=${before}&after=${after}`),
   deleteMedia: (id: string) =>
     adminRequest<{ deleted: boolean }>(`/api/admin/media/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   errors: () => adminRequest<{ errors: AdminError[] }>('/api/admin/errors'),

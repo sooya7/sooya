@@ -8,6 +8,8 @@ import type { BackupService } from '../backup/service.js';
 import type { MediaStore } from '../media/store.js';
 import type { LifeRuntime } from './life.js';
 import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
+import type { OmbreCommitRepo } from '../db/repos/ombre.repo.js';
+import type { SettingsRepo } from '../db/repos/misc.repo.js';
 import { LifeSimEngine } from './life2/engine.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ChatProvider } from '../providers/types.js';
@@ -26,6 +28,7 @@ import { stickerSemanticText } from './stickers/semantic-text.js';
 import type { StickerUserMeaningLearner } from './stickers/user-meaning.js';
 import type { WorldPresenceCoordinator } from './world-presence.js';
 import { JOB_PRIORITY } from './job-priority.js';
+import { nowIso } from '../util/ids.js';
 
 export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
 export const STICKER_MAINTENANCE_BATCH = 8;
@@ -107,6 +110,8 @@ export interface JobDeps {
   mediaText: MediaTextRepo;
   memory?: MemoryService;
   ombreMemory?: OmbreMemoryBridge;
+  ombreCommits?: OmbreCommitRepo;
+  settings?: SettingsRepo;
   memoryBackend?: 'legacy' | 'ombre';
   summarizer: Summarizer;
   messages: MessageRepo;
@@ -256,8 +261,21 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const assistantMessageId = payload.assistantMessageId ? String(payload.assistantMessageId) : '';
     const userText = userMessageIds.map((id) => textForMemoryExtraction(deps.messages.get(id))).filter(Boolean).join('\n');
     const assistantText = assistantMessageId ? textForMemoryExtraction(deps.messages.get(assistantMessageId)) : '';
-    const result = await deps.ombreMemory.commit({ batchId, revision, userText, assistantText, userMessageIds, assistantMessageId });
-    deps.bus.publish('memory.updated', { backend: 'ombre', batchId, revision, ...result });
+    try {
+      const result = await deps.ombreMemory.commit({
+        batchId,
+        revision,
+        userText,
+        assistantText,
+        userMessageIds,
+        assistantMessageId,
+        allowUncertainRetry: payload.manualRetry === true
+      });
+      deps.bus.publish('memory.updated', { backend: 'ombre', batchId, revision, ...result });
+    } catch (error) {
+      deps.bus.publish('ombre.memory.error', { phase: 'commit_job', batchId, revision, error: (error instanceof Error ? error.message : String(error)).slice(0, 300) });
+      throw error;
+    }
   });
 
   worker.register('push.reply', async (payload) => {
@@ -304,9 +322,13 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     await deps.proactive.run();
   });
 
-  worker.register('ombre.dream', async () => {
+  worker.register('ombre.dream', async (payload) => {
     if (!deps.ombreMemory) return;
-    await deps.ombreMemory.dream();
+    const result = await deps.ombreMemory.dream();
+    if (result === null) return;
+    const commitAt = typeof payload.commitAt === 'string' ? payload.commitAt : deps.ombreCommits?.latestCompleted()?.completed_at;
+    deps.settings?.set('ombre.lastDreamAt', nowIso());
+    if (commitAt) deps.settings?.set('ombre.lastDreamCommitAt', commitAt);
   });
   worker.register('ombre.refresh_tools', async () => {
     if (!deps.ombreMemory) return;
