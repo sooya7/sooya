@@ -58,7 +58,7 @@ export default function MomentsPage() {
       setMoments(nextMoments.moments);
       setError(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '朋友圈加载失败');
+      setError(cause instanceof Error ? cause.message : '动态加载失败');
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -89,8 +89,8 @@ export default function MomentsPage() {
     <main className="moments-page">
       <header className="moments-topbar">
         <AppLink href="/" className="moments-back" aria-label="返回聊天">‹</AppLink>
-        <div><h1>朋友圈</h1><span>{personaName} 的生活动态</span></div>
-        <button type="button" className="moments-refresh" onClick={() => void load()} aria-label="刷新朋友圈">↻</button>
+        <div><h1>动态</h1><span>{personaName} 的生活动态</span></div>
+        <button type="button" className="moments-refresh" onClick={() => void load()} aria-label="刷新动态">↻</button>
       </header>
 
       <section className="moments-feed" aria-busy={loading}>
