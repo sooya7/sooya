@@ -464,7 +464,7 @@ async function composeMomentSharePlan(
         repairReason ? `上一版未通过检查：${repairReason}。请只重新返回完整 JSON。` : '',
         '只输出 JSON：{"text":"...","image":null 或 {"kind":"pov|selfie","scene":"...","action":"...","mood":"...","framing":"front|side|full-body|environment"}}。'
       ].filter(Boolean).join('\n'),
-      messages: [{ role: 'user', content: [{ type: 'text', text: '为这件真实经历写一条动态动态。' }] }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: '为这件真实经历写一条生活动态。' }] }],
       temperature: 0.8,
       maxTokens: 450,
       jsonMode: true,
