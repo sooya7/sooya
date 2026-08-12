@@ -99,9 +99,9 @@ export function mergeLifeHistory(
       kind: 'proactive',
       id: attempt.id,
       at: attempt.createdAt,
-      title: attempt.candidateActivity ?? '朋友圈发布尝试',
+      title: attempt.candidateActivity ?? '动态发布尝试',
       detail: attempt.status === 'sent'
-        ? '已发布到朋友圈'
+        ? '已发布动态'
         : attempt.status === 'blocked'
           ? '暂未发布'
           : '发布失败'
