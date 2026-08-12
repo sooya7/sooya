@@ -770,8 +770,6 @@
 .admin-mcp-tool-row small { max-width: 620px; margin-top: 3px; color: var(--admin-muted); font-size: 10px; }
 .admin-mcp-tool-meta { display: grid; flex: 0 0 auto; gap: 3px; color: var(--admin-muted); text-align: right; }
 .admin-mcp-tool-meta em { color: var(--admin-primary-deep); font-size: 10px; font-style: normal; }
-.admin-mcp-memory-link { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.admin-mcp-memory-link p { margin: 5px 0 0; color: var(--admin-muted); font-size: 11px; }
 .admin-tool-schema { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(15, 23, 42, .35); }
 .admin-tool-schema-inner { position: relative; width: min(720px, 100%); max-height: min(720px, 90vh); overflow: auto; padding: 22px; border-radius: 16px; background: var(--admin-surface); box-shadow: 0 20px 70px rgba(15, 23, 42, .22); }
 .admin-tool-schema-inner h3 { margin: 4px 0; }
@@ -1950,10 +1948,13 @@
   .admin-subpage-header { display: grid; }
   .admin-memory-status, .admin-mcp-summary { grid-template-columns: 1fr; }
   .admin-sticker-grid, .admin-media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .admin-mcp-server, .admin-mcp-memory-link { align-items: stretch; flex-direction: column; }
+  .admin-mcp-server { align-items: stretch; flex-direction: column; }
   .admin-mcp-actions { width: 100%; }
   .admin-mcp-actions button { flex: 1; }
   .admin-mcp-tool-row { align-items: flex-start; flex-direction: column; }
+  .admin-mcp-tool-row > span:first-child { width: 100%; }
+  /* Single-line ellipsis leaves only a few characters on phones; wrap to two lines instead. */
+  .admin-mcp-tool-row small { display: -webkit-box; max-width: none; white-space: normal; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .admin-mcp-tool-meta { display: flex; gap: 8px; text-align: left; }
   .admin-inline-search { align-items: stretch; flex-direction: column; }
   .admin-v2 .admin-log-scroll { max-height: 230px; }

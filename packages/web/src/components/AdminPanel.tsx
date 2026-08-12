@@ -79,13 +79,13 @@ const NAV_GROUPS = ['运行状态', '助手与表达', '内容与系统'] as con
 type NavGroup = (typeof NAV_GROUPS)[number];
 
 const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: IconName; group: NavGroup }> = [
-  { group: NAV_GROUPS[2], id: 'mcp', label: 'MCP 服务', description: '连接、工具与策略观测', icon: 'mcp' },
   { group: '运行状态', id: 'overview', label: '概览', description: '运行状态与资源', icon: 'overview' },
   { group: '助手与表达', id: 'persona', label: '助手配置', description: '人设与表达方式', icon: 'persona' },
   { group: '内容与系统', id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
   { group: '助手与表达', id: 'avatar', label: '双方头像', description: '助手与用户头像', icon: 'persona' },
   { group: '助手与表达', id: 'life', label: '她的生活', description: '此刻在做什么与主动开口', icon: 'message' },
   { group: '内容与系统', id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
+  { group: '内容与系统', id: 'mcp', label: 'MCP 服务', description: '连接、工具与策略观测', icon: 'mcp' },
   { group: '内容与系统', id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
   { group: '内容与系统', id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' }
 ];
@@ -1242,9 +1242,9 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
       setDirtyState(false);
       setTab(next);
     };
-    // In-app links (e.g. the MCP page's "打开她的记忆" button) navigate via
-    // pushState + APP_NAVIGATION_EVENT, which never fires popstate; without
-    // this listener the URL changes but the panel keeps rendering the old tab.
+    // In-app navigation (pushState + APP_NAVIGATION_EVENT) never fires
+    // popstate; without this listener the URL changes but the panel keeps
+    // rendering the old tab.
     const onAppNavigation = () => {
       if (!window.location.pathname.startsWith('/admin')) return;
       setTab(tabFromAdminPath(window.location.pathname, initialTab));
