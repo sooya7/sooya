@@ -1,11 +1,11 @@
 /**
- * Inner-thought UI preference (chat side). Purely client-side, stored in
- * localStorage; the server keeps deciding whether thoughts exist at all.
+ * Inner-thought UI preference (chat side).
  *
- * Modes:
- *  - off:       nothing is fetched or rendered.
- *  - brief:     a one-line collapsed chip ("⌁ 她在想…") that expands on tap.
- *  - immersive: the thought text is shown expanded by default (still collapsible).
+ * The old three-mode control (off / brief / immersive) was exposed beside
+ * every thought, which made a per-message display affordance look like a
+ * meaningful action. The chat now has one predictable interaction: thoughts
+ * start collapsed and expand/collapse when tapped. Legacy values are accepted
+ * only so existing localStorage does not break after upgrade.
  */
 export type InnerThoughtMode = 'off' | 'brief' | 'immersive';
 
@@ -21,7 +21,12 @@ export const INNER_THOUGHT_MODES: ReadonlyArray<{ value: InnerThoughtMode; label
 export function getInnerThoughtMode(): InnerThoughtMode {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === 'off' || stored === 'brief' || stored === 'immersive') return stored;
+    // Migrate the old always-expanded mode to the single collapsed-by-default UI.
+    if (stored === 'immersive') {
+      localStorage.setItem(STORAGE_KEY, DEFAULT_MODE);
+      return DEFAULT_MODE;
+    }
+    if (stored === 'off' || stored === 'brief') return stored;
   } catch {
     /* private mode */
   }
@@ -30,20 +35,20 @@ export function getInnerThoughtMode(): InnerThoughtMode {
 
 export function setInnerThoughtMode(mode: InnerThoughtMode): void {
   try {
-    localStorage.setItem(STORAGE_KEY, mode);
+    localStorage.setItem(STORAGE_KEY, mode === 'immersive' ? DEFAULT_MODE : mode);
   } catch {
     /* private mode */
   }
 }
 
+/** Kept for compatibility with the existing component; the mode button is no longer shown. */
 export function nextInnerThoughtMode(current: InnerThoughtMode): InnerThoughtMode {
-  const order: InnerThoughtMode[] = ['off', 'brief', 'immersive'];
-  return order[(order.indexOf(current) + 1) % order.length]!;
+  return current === 'off' ? 'brief' : 'off';
 }
 
 /**
- * Keeps the chip to 1–3 sentences so an immersive thought can never blow up the
- * message row; the full text stays available as a tooltip.
+ * Keeps the chip to 1–3 sentences so an expanded thought cannot blow up the
+ * message row.
  */
 export function limitToThreeSentences(text: string): string {
   const trimmed = text.trim();
