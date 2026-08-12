@@ -12,9 +12,9 @@ const base: WorldPresence = {
 };
 
 describe('world display formatters', () => {
-  it('shows city and current place, or the travel destination', () => {
-    expect(formatPresencePlace(base)).toBe('宁波 · 家');
-    expect(formatPresencePlace({ ...base, travel: { fromLocationId: 'loc-1', fromName: '家', toLocationId: 'loc-2', toName: '咖啡店', mode: 'walk', expectedArriveAt: '2026-08-11T01:00:00.000Z' } })).toBe('宁波 · 去咖啡店路上');
+  it('shows the concrete place without repeating the city, including travel', () => {
+    expect(formatPresencePlace(base)).toBe('家');
+    expect(formatPresencePlace({ ...base, travel: { fromLocationId: 'loc-1', fromName: '家', toLocationId: 'loc-2', toName: '咖啡店', mode: 'walk', expectedArriveAt: '2026-08-11T01:00:00.000Z' } })).toBe('去咖啡店路上');
   });
 
   it('rounds header temperatures and hides unknown weather', () => {
