@@ -49,12 +49,12 @@ export function weatherVisual(condition: string): WeatherVisual {
   }
 }
 
+/** Chat header intentionally shows the concrete place only; city is redundant here. */
 export function formatPresencePlace(presence: WorldPresence | null): string | null {
   if (!presence) return null;
-  const place = presence.travel
+  return presence.travel
     ? (presence.travel.toName ? `去${presence.travel.toName}路上` : '路上')
     : presence.location?.name ?? null;
-  return [presence.city?.name, place].filter((value): value is string => Boolean(value)).join(' · ') || null;
 }
 
 export function formatHeaderWeather(weather: WorldPresence['weather']): string | null {
