@@ -12,6 +12,12 @@ interface Props {
   index: number;
   onIndexChange: (index: number) => void;
   onClose: () => void;
+  /** Optional async boundary loaders. Used by paginated galleries/chat history. */
+  onRequestPrevious?: () => void | Promise<void>;
+  onRequestNext?: () => void | Promise<void>;
+  /** Override the local loaded-array count, e.g. `61 / 120` or `60+`. */
+  countLabel?: string;
+  navigationBusy?: boolean;
 }
 
 const SWIPE_X = 52;
@@ -63,14 +69,32 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }): num
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
+function withoutViewerMarker(state: unknown): unknown {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return state;
+  const next = { ...(state as Record<string, unknown>) };
+  delete next.sooyaImageViewer;
+  return next;
+}
+
+export function ImageViewer({
+  images,
+  index,
+  onIndexChange,
+  onClose,
+  onRequestPrevious,
+  onRequestNext,
+  countLabel,
+  navigationBusy = false
+}: Props) {
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ startX: number; startY: number; panX: number; panY: number; scale: number; pinchDistance: number } | null>(null);
   const dragRef = useRef({ x: 0, y: 0 });
+  const onCloseRef = useRef(onClose);
   const [drag, setDrag] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const current = images[index];
+  onCloseRef.current = onClose;
 
   const clampPan = useCallback((x: number, y: number, nextScale = scale) => {
     const maxX = Math.max(0, (window.innerWidth * (nextScale - 1)) / 2);
@@ -79,32 +103,58 @@ export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
   }, [scale]);
 
   const reset = useCallback(() => { dragRef.current = { x: 0, y: 0 }; setScale(1); setPan({ x: 0, y: 0 }); setDrag({ x: 0, y: 0 }); }, []);
-  const previous = useCallback(() => { reset(); onIndexChange((index - 1 + images.length) % images.length); }, [images.length, index, onIndexChange, reset]);
-  const next = useCallback(() => { reset(); onIndexChange((index + 1) % images.length); }, [images.length, index, onIndexChange, reset]);
+  const canPrevious = !navigationBusy && (index > 0 || Boolean(onRequestPrevious));
+  const canNext = !navigationBusy && (index < images.length - 1 || Boolean(onRequestNext));
+  const previous = useCallback(() => {
+    if (navigationBusy) return;
+    reset();
+    if (index > 0) onIndexChange(index - 1);
+    else if (onRequestPrevious) void onRequestPrevious();
+  }, [index, navigationBusy, onIndexChange, onRequestPrevious, reset]);
+  const next = useCallback(() => {
+    if (navigationBusy) return;
+    reset();
+    if (index < images.length - 1) onIndexChange(index + 1);
+    else if (onRequestNext) void onRequestNext();
+  }, [images.length, index, navigationBusy, onIndexChange, onRequestNext, reset]);
   const setZoom = useCallback((value: number) => {
     const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, value));
     setScale(nextScale);
     setPan((before) => nextScale === 1 ? { x: 0, y: 0 } : clampPan(before.x, before.y, nextScale));
   }, [clampPan]);
 
+  /*
+   * A modal owns exactly one history entry. The old effect depended on the
+   * parent's inline onClose callback, so every parent render briefly removed
+   * and re-added the popstate listener. That made same-URL back navigation
+   * flaky under load. Keep one stable listener for the lifetime of the viewer.
+   * Also strip a stale legacy marker before pushing the owned entry so an old
+   * broken session cannot require two Back presses to close the next viewer.
+   */
   useEffect(() => {
     const oldOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    if (!history.state?.sooyaImageViewer) history.pushState({ ...history.state, sooyaImageViewer: true }, '');
-    const pop = () => onClose();
+    const baseState = withoutViewerMarker(history.state);
+    if (history.state?.sooyaImageViewer) history.replaceState(baseState, '');
+    history.pushState({ ...(baseState && typeof baseState === 'object' ? baseState : {}), sooyaImageViewer: true }, '');
+    const pop = () => onCloseRef.current();
     window.addEventListener('popstate', pop);
     return () => {
       document.body.style.overflow = oldOverflow;
       window.removeEventListener('popstate', pop);
     };
-  }, [onClose]);
+  }, []);
+
+  const requestClose = useCallback(() => {
+    if (history.state?.sooyaImageViewer === true) history.back();
+    else onCloseRef.current();
+  }, []);
 
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        if (history.state?.sooyaImageViewer) history.back(); else onClose();
-      } else if (event.key === 'ArrowLeft' && images.length > 1 && scale === 1) previous();
-      else if (event.key === 'ArrowRight' && images.length > 1 && scale === 1) next();
+      if (event.key === 'Escape') requestClose();
+      else if (event.key === 'ArrowLeft' && canPrevious && scale === 1) previous();
+      else if (event.key === 'ArrowRight' && canNext && scale === 1) next();
       else if (event.key === '+' || event.key === '=') setZoom(scale + 0.5);
       else if (event.key === '-') setZoom(scale - 0.5);
       else if (event.key === '0') reset();
@@ -112,22 +162,18 @@ export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [current, images.length, next, onClose, previous, reset, scale, setZoom]);
+  }, [canNext, canPrevious, current, next, previous, requestClose, reset, scale, setZoom]);
 
   useEffect(reset, [index, reset]);
   if (!current) return null;
-
-  const requestClose = () => {
-    if (history.state?.sooyaImageViewer) history.back(); else onClose();
-  };
 
   const finishGesture = () => {
     if (pointers.current.size > 0) return;
     const movement = dragRef.current;
     if (scale === 1) {
       if (Math.abs(movement.y) >= CLOSE_Y && Math.abs(movement.y) > Math.abs(movement.x)) requestClose();
-      else if (images.length > 1 && movement.x <= -SWIPE_X) next();
-      else if (images.length > 1 && movement.x >= SWIPE_X) previous();
+      else if (canNext && movement.x <= -SWIPE_X) next();
+      else if (canPrevious && movement.x >= SWIPE_X) previous();
     }
     dragRef.current = { x: 0, y: 0 };
     setDrag({ x: 0, y: 0 });
@@ -140,6 +186,7 @@ export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
       role="dialog"
       aria-modal="true"
       aria-label="图片查看器"
+      aria-busy={navigationBusy || undefined}
       onClick={(event) => { if (event.target === event.currentTarget && scale === 1) requestClose(); }}
       onWheel={(event) => { event.preventDefault(); setZoom(scale + (event.deltaY < 0 ? 0.25 : -0.25)); }}
       onPointerDown={(event) => {
@@ -187,7 +234,11 @@ export function ImageViewer({ images, index, onIndexChange, onClose }: Props) {
         <button type="button" className="image-viewer-action" onClick={(event) => { event.stopPropagation(); setZoom(scale + 0.5); }} aria-label="放大">＋</button>
         <button type="button" className="image-viewer-close" onClick={requestClose} aria-label="关闭图片">×</button>
       </div>
-      {images.length > 1 && scale === 1 && <><button type="button" className="image-viewer-nav previous" onClick={previous} aria-label="上一张">‹</button><button type="button" className="image-viewer-nav next" onClick={next} aria-label="下一张">›</button><div className="image-viewer-count">{index + 1} / {images.length}</div></>}
+      {(canPrevious || canNext || images.length > 1) && scale === 1 && <>
+        {canPrevious && <button type="button" className="image-viewer-nav previous" onClick={previous} aria-label="上一张">‹</button>}
+        {canNext && <button type="button" className="image-viewer-nav next" onClick={next} aria-label="下一张">›</button>}
+        <div className="image-viewer-count">{countLabel ?? `${index + 1} / ${images.length}`}</div>
+      </>}
       <img
         className="image-viewer-current"
         src={current.src}

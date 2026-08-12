@@ -48,6 +48,8 @@ export default function GalleryPage() {
   const originalPathById = useRef(new Map<string, string>());
   const [token, setTokenState] = useState(() => getAdminToken() ?? '');
   const [media, setMedia] = useState<FeatureMedia[]>([]);
+  const mediaRef = useRef<FeatureMedia[]>([]);
+  mediaRef.current = media;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +63,7 @@ export default function GalleryPage() {
   const [stats, setStats] = useState({ count: 0, bytes: 0 });
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const hasMoreRef = useRef(false);
   useEffect(() => () => {
     for (const url of objectUrls.current) releaseMediaUrl(url);
     objectUrls.current.clear();
@@ -93,26 +96,29 @@ export default function GalleryPage() {
    */
   const generation = useRef(0);
 
-  const load = async (append = false) => {
+  const load = async (append = false): Promise<FeatureMedia[]> => {
     const gen = append ? generation.current : ++generation.current;
     const stale = () => gen !== generation.current;
     setLoading(true);
     setError(null);
     try {
-      const result = await featureApi.gallery(query(append ? media.length : 0));
-      if (stale()) return;
+      const base = append ? mediaRef.current : [];
+      const result = await featureApi.gallery(query(append ? base.length : 0));
+      if (stale()) return [];
       // The counts come from the list response and do not depend on a single byte of
       // image data, so publish them now. Holding them until every blob had
       // transferred made the header read "0 个媒体记录" for the whole download.
       setStats(result.stats ?? { count: 0, bytes: 0 });
       setTotal(result.total);
-      setHasMore(result.media.length === PAGE_SIZE);
+      const more = result.media.length === PAGE_SIZE;
+      hasMoreRef.current = more;
+      setHasMore(more);
 
-      const base = append ? media : [];
       if (!append) {
         for (const url of objectUrls.current) releaseMediaUrl(url);
         objectUrls.current.clear();
         originalPathById.current.clear();
+        mediaRef.current = [];
         setMedia([]);
       }
       // Rows land in server order as their blobs arrive instead of all at once at the
@@ -123,7 +129,9 @@ export default function GalleryPage() {
       const fresh = result.media.filter((item) => !base.some((old) => old.id === item.id));
       const publish = () => {
         const rows = batch.filter((item): item is FeatureMedia => item !== null);
-        setMedia([...base, ...rows]);
+        const next = [...base, ...rows];
+        mediaRef.current = next;
+        setMedia(next);
       };
       let failed = 0;
       // allSettled, not all: one unreadable image used to reject the whole batch and
@@ -157,13 +165,16 @@ export default function GalleryPage() {
           }
         })
       );
-      if (stale()) return;
+      if (stale()) return [];
       const next = [...base, ...batch.filter((item): item is FeatureMedia => item !== null)];
+      mediaRef.current = next;
+      setMedia(next);
       if (failed > 0) setError(`${failed} 张图片加载失败，其余已显示`);
       setSelected((before) => new Set([...before].filter((id) => next.some((item) => item.id === id))));
+      return next;
     } catch (err) {
-      if (stale()) return;
-      setError(err instanceof Error ? err.message : '图库加载失败');
+      if (!stale()) setError(err instanceof Error ? err.message : '图库加载失败');
+      return [];
     } finally {
       // A superseded load must not clear the spinner its successor is using.
       if (!stale()) setLoading(false);
@@ -212,6 +223,23 @@ export default function GalleryPage() {
     finally { setLoading(false); }
   };
 
+  const requestNextViewerImage = async () => {
+    if (!viewerId || loading) return;
+    let rows = mediaRef.current;
+    for (;;) {
+      const loadedImages = rows.filter((item) => item.kind === 'image' && item.exists);
+      const at = loadedImages.findIndex((item) => item.id === viewerId);
+      if (at >= 0 && at < loadedImages.length - 1) {
+        setViewerId(loadedImages[at + 1]!.id);
+        return;
+      }
+      if (!hasMoreRef.current) return;
+      const before = rows.length;
+      rows = await load(true);
+      if (rows.length <= before) return;
+    }
+  };
+
   if (!getAdminToken()) {
     return <main className="gallery-page gallery-gate"><section className="gallery-login"><h1>SOOYA 图库</h1><p>输入管理令牌后查看普通图库与回收站。</p><input type="password" value={token} placeholder="ADMIN_API_TOKEN" onChange={(event) => setTokenState(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') login(); }} /><button type="button" onClick={login}>进入图库</button><AppLink href="/">返回聊天</AppLink></section></main>;
   }
@@ -250,7 +278,15 @@ export default function GalleryPage() {
       </section>
 
       {hasMore && <div className="gallery-empty"><button type="button" disabled={loading} onClick={() => void load(true)}>加载更多</button></div>}
-      {viewerId && viewerImages.length > 0 && <ImageViewer images={shownViewerImages} index={viewerIndex} onIndexChange={(index) => setViewerId(viewerImages[index]?.id ?? viewerId)} onClose={() => setViewerId(null)} />}
+      {viewerId && viewerImages.length > 0 && <ImageViewer
+        images={shownViewerImages}
+        index={viewerIndex}
+        onIndexChange={(index) => setViewerId(viewerImages[index]?.id ?? viewerId)}
+        onRequestNext={hasMore ? requestNextViewerImage : undefined}
+        navigationBusy={loading}
+        countLabel={`${viewerIndex + 1} / ${viewerImages.length}${hasMore ? '+' : ''}`}
+        onClose={() => setViewerId(null)}
+      />}
     </main>
   );
 }
