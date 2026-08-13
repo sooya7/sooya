@@ -510,6 +510,8 @@ export const adminApi = {
   deleteSticker: (id: string) =>
     adminRequest<{ deleted: boolean }>(`/api/admin/stickers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   modelPresets: () => adminRequest<{ presets: ModelPreset[]; slots: ModelSlot[] }>('/api/admin/model-presets'),
+  addModelPreset: (preset: ModelPreset) =>
+    adminRequest<{ preset: ModelPreset }>('/api/admin/model-presets/from-current', { method: 'POST', body: { preset } }),
   discoverModels: (slot: ModelSlot, baseUrl?: string) =>
     adminRequest<{ models: string[]; source: string }>(
       `/api/admin/models/${encodeURIComponent(slot)}/discover`,

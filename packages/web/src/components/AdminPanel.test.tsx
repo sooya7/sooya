@@ -59,6 +59,7 @@ const adminMocks = vi.hoisted(() => ({
   updateModels: vi.fn(async (patch: Record<string, unknown>) => ({ models: patch })),
   modelPresets: vi.fn(async () => ({ presets: [], slots: [] })),
   saveModelPresets: vi.fn(async () => ({ presets: [] })),
+  addModelPreset: vi.fn(async (preset: Record<string, unknown>) => ({ preset: { ...preset, apiKeyConfigured: true } })),
   applyModelPreset: vi.fn(async () => ({ applied: 'chat', models: {} })),
   discoverModels: vi.fn(async () => ({ models: [], source: 'test' })),
   testModel: vi.fn(async () => ({ ok: true, provider: 'test', latencyMs: 1, detail: 'ok' })),
@@ -119,6 +120,7 @@ beforeEach(() => {
   adminMocks.voiceBehavior.mockClear();
   adminMocks.updateVoiceBehavior.mockClear();
   adminMocks.modelPresets.mockClear();
+  adminMocks.addModelPreset.mockClear();
   adminMocks.testWebSearch.mockClear();
   adminMocks.mcpOverview.mockClear();
   adminMocks.ombreStatus.mockClear();
@@ -274,6 +276,33 @@ describe('AdminPanel 子页首屏', () => {
 
     expect(container.querySelector('[data-testid="admin-web-search-editor"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-testid="admin-dashboard"]')).toHaveLength(1);
+  });
+
+  it('存入模型库走服务器绑定接口，并且未保存的新 key 不会被存入', async () => {
+    window.history.replaceState(null, '', '/admin/models');
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<AdminPanel initialTab="models" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const key = container.querySelector('[data-testid="admin-model-apikey"]') as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(key, 'unsaved-secret');
+      key.dispatchEvent(new Event('input', { bubbles: true }));
+      key.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const add = container.querySelector('[data-testid="admin-model-add-preset"]') as HTMLButtonElement;
+    await act(async () => { add.click(); await Promise.resolve(); });
+
+    expect(adminMocks.addModelPreset).not.toHaveBeenCalled();
+    expect(adminMocks.saveModelPresets).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('请先点击“保存模型配置”，再存入模型库');
   });
 
   it('语音收敛后导航不再出现「情绪语音」页', async () => {

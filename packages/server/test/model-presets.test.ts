@@ -87,6 +87,93 @@ describe('model preset library', () => {
     });
   });
 
+  it('creates a preset from the current server-side key without returning the key', async () => {
+    h = await withAdmin();
+    const created = await api('POST', '/api/admin/model-presets/from-current', { preset });
+
+    expect(created.res.statusCode).toBe(200);
+    expect(created.body.preset).toMatchObject({ id: preset.id, apiKeyBound: true, apiKeyConfigured: true });
+    expect(created.body.preset.apiKey).toBeUndefined();
+    expect(JSON.stringify(created.body)).not.toContain('sk-test-key-000000');
+    expect(h.app.repos.settings.get<any[]>('models.presets', [])[0].apiKey).toBe('sk-test-key-000000');
+
+    h.app.config.setModels({ chat: { apiKey: 'sk-other-key-000000' } });
+    const applied = await api('POST', '/api/admin/model-presets/glm-4-6/apply');
+    expect(applied.res.statusCode).toBe(200);
+    expect(h.app.config.getModels().chat.apiKey).toBe('sk-test-key-000000');
+    expect(JSON.stringify(applied.body)).not.toContain('sk-test-key-000000');
+  });
+
+  it('distinguishes a bound empty key from a legacy preset with no key binding', async () => {
+    h = await withAdmin();
+    h.app.config.setModels({ chat: { apiKey: '' } });
+
+    const created = await api('POST', '/api/admin/model-presets/from-current', { preset });
+    expect(created.res.statusCode).toBe(200);
+    expect(created.body.preset).toMatchObject({ apiKeyBound: true, apiKeyConfigured: false });
+    expect(h.app.repos.settings.get<any[]>('models.presets', [])[0]).toHaveProperty('apiKey', '');
+
+    h.app.config.setModels({ chat: { apiKey: 'sk-key-that-must-be-cleared' } });
+    await api('POST', '/api/admin/model-presets/glm-4-6/apply');
+    expect(h.app.config.getModels().chat.apiKey).toBe('');
+
+    await api('PUT', '/api/admin/model-presets', { presets: [{ ...preset, id: 'legacy-unbound' }] });
+    const { body } = await api('GET', '/api/admin/model-presets');
+    expect(body.presets[0]).toMatchObject({ apiKeyBound: false, apiKeyConfigured: false });
+  });
+
+  it('keeps a bound key when the public preset list is edited', async () => {
+    h = await withAdmin();
+    await api('POST', '/api/admin/model-presets/from-current', { preset });
+
+    const edited = await api('PUT', '/api/admin/model-presets', {
+      presets: [{ ...preset, model: 'glm-4.6-edited' }]
+    });
+    expect(edited.res.statusCode).toBe(200);
+
+    h.app.config.setModels({ chat: { apiKey: 'sk-other-key-000000' } });
+    const applied = await api('POST', '/api/admin/model-presets/glm-4-6/apply');
+    expect(applied.res.statusCode).toBe(200);
+    expect(h.app.config.getModels().chat.apiKey).toBe('sk-test-key-000000');
+    expect(h.app.config.getModels().chat.model).toBe('glm-4.6-edited');
+  });
+
+  it('does not carry a bound key across a slot edit', async () => {
+    h = await withAdmin();
+    await api('POST', '/api/admin/model-presets/from-current', { preset });
+
+    const edited = await api('PUT', '/api/admin/model-presets', {
+      presets: [{ ...preset, slot: 'vision', provider: 'openai-compatible' }]
+    });
+    expect(edited.res.statusCode).toBe(200);
+
+    h.app.config.setModels({ vision: { apiKey: 'sk-vision-current-000000' } });
+    const applied = await api('POST', '/api/admin/model-presets/glm-4-6/apply');
+    expect(applied.res.statusCode).toBe(200);
+    expect(h.app.config.getModels().vision?.apiKey).toBe('sk-vision-current-000000');
+  });
+
+  it('clears a TTS environment-key reference when applying a bound key', async () => {
+    h = await createHarness({ env: { ADMIN_API_TOKEN: 'admin-test-token', TTS_LIBRARY_KEY: 'sk-tts-env-000000' } });
+    h.app.config.setModels({
+      tts: {
+        provider: 'openai-tts',
+        baseUrl: 'https://fake.example.com/v1',
+        apiKey: 'sk-tts-file-000000',
+        apiKeyEnv: 'TTS_LIBRARY_KEY',
+        model: 'fake-tts'
+      }
+    });
+    const ttsPreset = { ...preset, id: 'tts-preset', slot: 'tts', provider: 'openai-tts', model: 'fake-tts' };
+    await api('POST', '/api/admin/model-presets/from-current', { preset: ttsPreset });
+
+    h.app.config.setModels({ tts: { apiKey: 'sk-other-tts-000000' } });
+    const applied = await api('POST', '/api/admin/model-presets/tts-preset/apply');
+    expect(applied.res.statusCode).toBe(200);
+    expect(h.app.config.getModels().tts.apiKey).toBe('sk-tts-env-000000');
+    expect(h.app.config.getModels().tts.apiKeyEnv).toBe('');
+  });
+
   it('never stores a secret or an environment variable reference', async () => {
     h = await withAdmin();
     const withSecret = { ...preset, apiKey: 'sk-should-be-dropped', apiKeyEnv: 'LEGACY_API_KEY' };

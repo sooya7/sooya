@@ -201,9 +201,9 @@ export type ModelSlot = z.infer<typeof ModelSlotSchema>;
 /**
  * A named model the operator saved for reuse. The slots above are fixed, so
  * without this a panel user cannot "add a model" at all — only overwrite one of
- * eight. A preset deliberately holds no secret or key reference, so the
- * library can be listed, exported and diffed without spreading credentials.
- * Applying it leaves the target slot's existing key untouched.
+ * eight. The public preset shape deliberately holds no secret; the admin route
+ * may keep a server-only bound key beside it so applying a preset can switch
+ * credentials without ever returning them to the browser.
  */
 export const ModelPresetSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/, 'id 只能包含字母、数字、下划线和连字符'),

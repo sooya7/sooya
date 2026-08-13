@@ -291,6 +291,26 @@ describe('adminRequest 请求体与默认 method', () => {
     expect(calls[0]!.method).toBe('PUT');
     expect(calls[0]!.body).toBe(JSON.stringify({ presets: [preset] }));
   });
+
+  it('addModelPreset sends a public preset to the server-side binding endpoint', async () => {
+    const preset: ModelPreset = {
+      id: 'p1',
+      name: '涓诲姏',
+      slot: 'chat',
+      provider: 'openai-chat',
+      model: 'gpt-4o',
+      baseUrl: '',
+      notes: ''
+    };
+    const calls = recording({ preset: { ...preset, apiKeyConfigured: true } });
+
+    await adminApi.addModelPreset(preset);
+
+    expect(calls[0]!.url).toBe('/api/admin/model-presets/from-current');
+    expect(calls[0]!.method).toBe('POST');
+    expect(calls[0]!.body).toBe(JSON.stringify({ preset }));
+    expect(calls[0]!.body).not.toContain('apiKey');
+  });
 });
 
 describe('adminApi 无参端点的 URL 与 method 契约', () => {

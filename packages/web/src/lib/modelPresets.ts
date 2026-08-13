@@ -79,6 +79,9 @@ export interface ModelPreset {
   model: string;
   baseUrl: string;
   notes: string;
+  /** Server-provided status only; the key itself never crosses this boundary. */
+  apiKeyBound?: boolean;
+  apiKeyConfigured?: boolean;
 }
 
 export const MAX_PRESETS = 60;

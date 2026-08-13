@@ -307,7 +307,7 @@ function VoiceBehaviorEditor({ onNotice }: { onNotice: (v: string) => void }) {
 }
 
 /**
- * The saved model library. The seven capability slots are fixed, so this is the
+ * The saved model library. The eight capability slots are fixed, so this is the
  * only place an operator can add a model rather than overwrite one; applying a
  * preset is what actually assigns it to its slot on the server.
  */
@@ -376,7 +376,7 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
 
   return (
     <section className="admin-model-library" data-testid="admin-model-library">
-      <PanelHeading title="模型库" description="保存任意多个模型预设，随时指派给某项能力。预设不保存或修改密钥，指派后沿用该能力当前的密钥。" />
+      <PanelHeading title="模型库" description="保存模型及其服务器端密钥绑定，指派时一起切换；密钥不会返回浏览器。旧预设仍沿用该能力当前的密钥。" />
       {groups.length === 0 && <p className="admin-muted">还没有预设。把下面的配置填好后点「存入模型库」，就能在不同模型之间随时切换。</p>}
       {groups.map(([slot, items]) => (
         <div className="admin-preset-group" key={slot}>
@@ -386,6 +386,11 @@ function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: st
               <div className="admin-preset-copy">
                 <strong>{preset.name}</strong>
                 <small>{preset.model} · {preset.provider}{preset.baseUrl ? ` · ${preset.baseUrl}` : ''}</small>
+                <small>{preset.apiKeyConfigured
+                  ? '密钥已绑定'
+                  : preset.apiKeyBound
+                    ? '已绑定（无需密钥）'
+                    : '未绑定密钥（旧预设）'}</small>
                 {preset.notes && <small>{preset.notes}</small>}
               </div>
               <div className="admin-preset-actions">
@@ -538,6 +543,10 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   /** Saves what is on screen into the library as a new entry. */
   const addToLibrary = async () => {
     if (selected === 'webSearch') return;
+    if (keyDraft.trim()) {
+      onNotice('请先点击“保存模型配置”，再存入模型库');
+      return;
+    }
     try {
       const current = await adminApi.modelPresets();
       const draft = presetFromConfig(selected, config, current.presets);
@@ -545,7 +554,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         onNotice(draft);
         return;
       }
-      await adminApi.saveModelPresets([...current.presets, draft]);
+      await adminApi.addModelPreset(draft);
       setLibraryKey((k) => k + 1);
       onNotice(`已添加到模型库：${draft.name}`);
     } catch (e) {

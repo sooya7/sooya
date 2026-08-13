@@ -5,7 +5,7 @@ import { STICKER_ANALYSIS_VERSION } from '../core/stickers/constants.js';
 import { JOB_PRIORITY } from '../core/job-priority.js';
 import type { SooyaApp } from '../app.js';
 import { requireAdminToken } from './auth.js';
-import { MODEL_SLOTS, ModelPresetsSchema, PersonaSchema, type ModelPreset, type ModelSlot } from '../config/schema.js';
+import { MODEL_SLOTS, ModelPresetSchema, ModelPresetsSchema, PersonaSchema, type ModelPreset, type ModelSlot } from '../config/schema.js';
 import { assertSafeUrl, HttpTimeoutError, SsrfError } from '../util/http.js';
 import { ProviderNotConfiguredError, ProviderRequestError } from '../providers/types.js';
 import { mediaMeta, toMediaRef } from '../db/repos/media.repo.js';
@@ -107,17 +107,47 @@ export function registerAdminRoutes(app: SooyaApp): void {
 
   /** Saved model library. Settings-backed so it survives config reloads. */
   const PRESETS_KEY = 'models.presets';
-  const readPresets = (): ModelPreset[] => {
+  const StoredModelPresetSchema = ModelPresetSchema.extend({ apiKey: z.string().optional() });
+  const StoredModelPresetsSchema = z.array(StoredModelPresetSchema).max(60);
+  type StoredModelPreset = z.infer<typeof StoredModelPresetSchema>;
+
+  type PublicModelPreset = ModelPreset & { apiKeyBound: boolean; apiKeyConfigured: boolean };
+
+  const publicPreset = (preset: StoredModelPreset): PublicModelPreset => {
+    const { apiKey, ...publicFields } = preset;
+    return {
+      ...publicFields,
+      apiKeyBound: Object.prototype.hasOwnProperty.call(preset, 'apiKey'),
+      apiKeyConfigured: apiKey !== undefined && apiKey.length > 0
+    };
+  };
+
+  const readStoredPresets = (): StoredModelPreset[] => {
     const raw = repos.settings.get<unknown>(PRESETS_KEY, []);
     let legacyFree: unknown = raw;
     if (Array.isArray(raw)) {
       legacyFree = raw.filter((item) => !(item && typeof item === 'object' && (item as { slot?: unknown }).slot === 'stt'));
     }
-    const parsed = ModelPresetsSchema.safeParse(legacyFree);
+    const parsed = StoredModelPresetsSchema.safeParse(legacyFree);
     if (Array.isArray(raw) && Array.isArray(legacyFree) && legacyFree.length !== raw.length) {
       repos.settings.set(PRESETS_KEY, parsed.success ? parsed.data : []);
     }
     return parsed.success ? parsed.data : [];
+  };
+
+  const readPresets = (): PublicModelPreset[] =>
+    readStoredPresets().map(publicPreset);
+
+  const savePublicPresets = (presets: ModelPreset[]): PublicModelPreset[] => {
+    const existing = readStoredPresets();
+    const stored = presets.map((preset) => {
+      const previous = existing.find((item) => item.id === preset.id);
+      return previous && previous.slot === preset.slot && Object.prototype.hasOwnProperty.call(previous, 'apiKey')
+        ? { ...preset, apiKey: previous.apiKey }
+        : preset;
+    });
+    repos.settings.set(PRESETS_KEY, stored);
+    return stored.map(publicPreset);
   };
 
   server.get('/api/admin/model-presets', guard, async () => ({
@@ -139,14 +169,37 @@ export function registerAdminRoutes(app: SooyaApp): void {
       }
       seen.add(preset.id);
     }
-    repos.settings.set(PRESETS_KEY, parsed.data);
-    return { presets: parsed.data };
+    return { presets: savePublicPresets(parsed.data) };
+  });
+
+  server.post('/api/admin/model-presets/from-current', guard, async (req, reply) => {
+    const parsed = ModelPresetSchema.safeParse((req.body as { preset?: unknown } | null)?.preset);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'bad_request', issues: parsed.error.issues };
+    }
+    const existing = readStoredPresets();
+    if (existing.length >= 60) {
+      reply.code(400);
+      return { error: 'too_many_presets', message: '模型库最多保存 60 个预设' };
+    }
+    if (existing.some((item) => item.id === parsed.data.id)) {
+      reply.code(400);
+      return { error: 'duplicate_id', message: `预设 id 重复：${parsed.data.id}` };
+    }
+    const slotConfig = ['chat', 'vision', 'summary', 'director'].includes(parsed.data.slot)
+      ? config.chatModelFor(parsed.data.slot as 'chat' | 'vision' | 'summary' | 'director')
+      : (config.getModels() as unknown as Record<string, { apiKey?: unknown } | undefined>)[parsed.data.slot];
+    const apiKey = typeof slotConfig?.apiKey === 'string' ? slotConfig.apiKey : '';
+    const stored = [...existing, { ...parsed.data, apiKey }];
+    repos.settings.set(PRESETS_KEY, stored);
+    return { preset: publicPreset(stored[stored.length - 1]!) };
   });
 
   /** Assign a saved preset to its capability slot and rebuild the providers. */
   server.post('/api/admin/model-presets/:id/apply', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const preset = readPresets().find((item) => item.id === id);
+    const preset = readStoredPresets().find((item) => item.id === id);
     if (!preset) {
       reply.code(404);
       return { error: 'not_found' };
@@ -156,7 +209,11 @@ export function registerAdminRoutes(app: SooyaApp): void {
         [preset.slot]: {
           provider: preset.provider,
           model: preset.model,
-          ...(preset.baseUrl ? { baseUrl: preset.baseUrl } : {})
+          ...(preset.baseUrl ? { baseUrl: preset.baseUrl } : {}),
+          ...(Object.prototype.hasOwnProperty.call(preset, 'apiKey') ? {
+            apiKey: preset.apiKey,
+            ...(preset.slot === 'tts' ? { apiKeyEnv: '' } : {})
+          } : {})
         }
       });
     } catch (err) {
