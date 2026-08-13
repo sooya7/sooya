@@ -47,7 +47,7 @@ export type StreamEventType = 'message.received' | 'reply.queued' | 'reply.think
   | 'reply.batch.collecting' | 'reply.batch.queued' | 'reply.generation.started' | 'reply.generation.interrupted' | 'reply.generation.retrying' | 'reply.publishing.started' | 'reply.publishing.partial' | 'reply.superseded'
   | 'voice.plan.created' | 'voice.script.completed' | 'voice.synthesis.started' | 'voice.synthesis.completed' | 'voice.synthesis.failed' | 'voice.generation.superseded' | 'voice.published' | 'voice.cancelled'
   | 'thought.updated' | 'world.updated' | 'moment.created'
-  | 'ombre.memory.wake' | 'ombre.memory.search' | 'ombre.memory.commit' | 'ombre.memory.commit_recovered'
+  | 'ombre.memory.wake' | 'ombre.memory.search' | 'ombre.memory.commit' | 'ombre.memory.commit_recovered' | 'ombre.memory.commit_skipped'
   | 'ombre.memory.dream' | 'ombre.memory.error' | 'ombre.tools.refresh'
   | 'mcp.connect_success' | 'mcp.connect_failure' | 'mcp.reconnect_attempt' | 'mcp.reconnect_success' | 'mcp.reconnect_failure' | 'mcp.tools_refresh' | 'mcp.tools_refresh_failure';
 export interface StreamEvent { id: string; seq: number; type: StreamEventType; createdAt: string; payload: Record<string, unknown>; }

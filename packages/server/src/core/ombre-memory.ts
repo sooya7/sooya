@@ -66,7 +66,7 @@ export class OmbreMemoryBridge {
     return this.wake(signal);
   }
 
-  async commit(input: MemoryCommitInput): Promise<{ state: 'completed' | 'skipped' | 'uncertain'; callsExecuted: number; rounds: number; recovered?: boolean }> {
+  async commit(input: MemoryCommitInput): Promise<{ state: 'completed' | 'skipped' | 'uncertain'; callsExecuted: number; rounds: number; succeededCalls?: number; failedCalls?: number; exhausted?: boolean; recovered?: boolean }> {
     const existing = this.options.commits.get(input.batchId, input.revision);
     if (existing?.state === 'completed' || existing?.state === 'skipped') {
       return { state: existing.state, callsExecuted: 0, rounds: 0 };
@@ -118,7 +118,33 @@ export class OmbreMemoryBridge {
         batchId: input.batchId,
         revision: input.revision
       });
-      const detail = { rounds: prepared.rounds, callsExecuted: prepared.callsExecuted, exhausted: prepared.exhausted };
+      const detail = {
+        rounds: prepared.rounds,
+        callsExecuted: prepared.callsExecuted,
+        succeededCalls: prepared.succeededCalls,
+        failedCalls: prepared.failedCalls,
+        exhausted: prepared.exhausted,
+        // Sanitized protocol metadata only; never tool arguments or credentials.
+        protocol: {
+          providerTools: provider.supportsTools,
+          degradedReason: prepared.degradedReason ?? null
+        }
+      };
+      if (prepared.callsExecuted === 0) {
+        // The model never called a memory tool, so nothing was written. This
+        // is an explicit no-op, not a completed commit.
+        this.options.commits.mark(input.batchId, input.revision, 'skipped', { ...detail, reason: 'no_tool_call' });
+        this.options.bus?.publish('ombre.memory.commit_skipped', { batchId: input.batchId, revision: input.revision, state: 'skipped', ...detail, reason: 'no_tool_call' });
+        return { state: 'skipped', ...detail };
+      }
+      if (prepared.succeededCalls === 0) {
+        // Every call failed (denied/unknown/arguments/error/timeout). A
+        // handler tool_result error is not a successful write; keep the
+        // receipt uncertain so reconciliation can still prove a write later.
+        this.options.commits.mark(input.batchId, input.revision, 'uncertain', { ...detail, reason: 'all_tool_calls_failed' });
+        this.options.bus?.publish('ombre.memory.error', { phase: 'commit', batchId: input.batchId, revision: input.revision, state: 'uncertain', reason: 'all_tool_calls_failed', ...detail });
+        return { state: 'uncertain', ...detail };
+      }
       this.options.commits.mark(input.batchId, input.revision, 'completed', detail);
       this.options.bus?.publish('ombre.memory.commit', { batchId: input.batchId, revision: input.revision, state: 'completed', ...detail });
       return { state: 'completed', ...detail };

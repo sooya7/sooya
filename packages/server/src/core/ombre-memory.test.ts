@@ -128,4 +128,71 @@ describe('OmbreMemoryBridge', () => {
     await expect(bridge.commit({ batchId: 'batch-9', revision: 1, userText: 'x', assistantText: 'y', allowUncertainRetry: true })).resolves.toMatchObject({ state: 'completed' });
     expect(prepared).toBe(1);
   });
+
+  it('marks a zero-tool-call commit as skipped instead of completed', async () => {
+    let markState: string | undefined;
+    let markDetail: Record<string, unknown> | undefined;
+    const bridge = new OmbreMemoryBridge({
+      manager: { health: () => [], getConnection: () => undefined } as never,
+      registry: { get: () => undefined } as never,
+      policy: { check: () => ({ allowed: true }) } as never,
+      runtime: { prepare: async () => ({ rounds: 0, callsExecuted: 0, succeededCalls: 0, failedCalls: 0, exhausted: false }) } as never,
+      commits: {
+        get: () => undefined,
+        start: () => ({ state: 'running' }),
+        mark: (_batchId: string, _revision: number, state: string, detail: Record<string, unknown>) => { markState = state; markDetail = detail; return {}; }
+      } as never,
+      chatProvider: () => ({ configured: true, supportsTools: true } as never)
+    });
+
+    const result = await bridge.commit({ batchId: 'batch-zero', revision: 1, userText: '我喜欢猫', assistantText: '记住了' });
+    expect(result).toMatchObject({ state: 'skipped', callsExecuted: 0, succeededCalls: 0, failedCalls: 0 });
+    expect(markState).toBe('skipped');
+    expect(markDetail).toMatchObject({ reason: 'no_tool_call', callsExecuted: 0, succeededCalls: 0 });
+  });
+
+  it('keeps an all-failed commit uncertain, never completed', async () => {
+    let markState: string | undefined;
+    const bridge = new OmbreMemoryBridge({
+      manager: { health: () => [], getConnection: () => undefined } as never,
+      registry: { get: () => undefined } as never,
+      policy: { check: () => ({ allowed: true }) } as never,
+      runtime: { prepare: async () => ({ rounds: 1, callsExecuted: 2, succeededCalls: 0, failedCalls: 2, exhausted: false }) } as never,
+      commits: {
+        get: () => undefined,
+        start: () => ({ state: 'running' }),
+        mark: (_batchId: string, _revision: number, state: string) => { markState = state; return {}; }
+      } as never,
+      chatProvider: () => ({ configured: true, supportsTools: true } as never)
+    });
+
+    const result = await bridge.commit({ batchId: 'batch-fail', revision: 1, userText: 'x', assistantText: 'y' });
+    expect(result).toMatchObject({ state: 'uncertain', callsExecuted: 2, succeededCalls: 0, failedCalls: 2 });
+    expect(markState).toBe('uncertain');
+  });
+
+  it('marks completed only when at least one call succeeded and never records secrets', async () => {
+    let markState: string | undefined;
+    let markDetail: Record<string, unknown> | undefined;
+    const bridge = new OmbreMemoryBridge({
+      manager: { health: () => [], getConnection: () => undefined } as never,
+      registry: { get: () => undefined } as never,
+      policy: { check: () => ({ allowed: true }) } as never,
+      runtime: { prepare: async () => ({ rounds: 1, callsExecuted: 2, succeededCalls: 1, failedCalls: 1, exhausted: false }) } as never,
+      commits: {
+        get: () => undefined,
+        start: () => ({ state: 'running' }),
+        mark: (_batchId: string, _revision: number, state: string, detail: Record<string, unknown>) => { markState = state; markDetail = detail; return {}; }
+      } as never,
+      chatProvider: () => ({ configured: true, supportsTools: true } as never)
+    });
+
+    const result = await bridge.commit({ batchId: 'batch-ok', revision: 1, userText: 'x', assistantText: 'y' });
+    expect(result).toMatchObject({ state: 'completed', callsExecuted: 2, succeededCalls: 1, failedCalls: 1 });
+    expect(markState).toBe('completed');
+    expect(markDetail).toMatchObject({ succeededCalls: 1, failedCalls: 1, protocol: { providerTools: true, degradedReason: null } });
+    // Sanitized detail: numeric counters and protocol flags only, no payloads or credentials.
+    expect(JSON.stringify(markDetail)).not.toContain('api');
+    expect(JSON.stringify(markDetail)).not.toContain('key');
+  });
 });

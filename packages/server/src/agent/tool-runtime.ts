@@ -23,6 +23,8 @@ export interface ToolRuntimeContext {
 export interface PreparedFinalRequest extends ChatRequest {
   rounds: number;
   callsExecuted: number;
+  succeededCalls: number;
+  failedCalls: number;
   exhausted: boolean;
   degradedReason?: 'provider-tools-unsupported' | 'no-authorized-tools';
 }
@@ -61,6 +63,8 @@ export class ToolCallRuntime {
       toolChoice: 'none',
       rounds: 0,
       callsExecuted: 0,
+      succeededCalls: 0,
+      failedCalls: 0,
       exhausted: false
     };
     if (provider.supportsTools === false) return { ...initial, degradedReason: 'provider-tools-unsupported' };
@@ -70,6 +74,8 @@ export class ToolCallRuntime {
     const turns: ModelTurn[] = [...request.messages];
     let totalResultBytes = 0;
     let callsExecuted = 0;
+    let succeededCalls = 0;
+    let failedCalls = 0;
     let rounds = 0;
     let exhausted = false;
     let system = request.system;
@@ -102,6 +108,8 @@ export class ToolCallRuntime {
         isError: true,
         bytes: byteLength('tool call limit reached for this round')
       }))]) {
+        if (item.isError) failedCalls += 1;
+        else succeededCalls += 1;
         const bounded = boundTotalResult(item, Math.max(0, this.totalResultMaxBytes - totalResultBytes));
         turns.push({ role: 'tool_result', callId: bounded.callId ?? '', name: bounded.name ?? 'unknown.tool', content: bounded.content, ...(bounded.isError ? { isError: true } : {}) });
         totalResultBytes += bounded.bytes;
@@ -121,6 +129,8 @@ export class ToolCallRuntime {
       toolChoice: 'none',
       rounds,
       callsExecuted,
+      succeededCalls,
+      failedCalls,
       exhausted
     };
   }
