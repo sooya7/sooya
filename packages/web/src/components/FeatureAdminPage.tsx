@@ -226,61 +226,42 @@ async function adminBackupFetch(path: string, init: RequestInit = {}): Promise<R
   return response;
 }
 
-function fullBackupFilename(response: Response): string {
+function ipaExportFilename(response: Response): string {
   const disposition = response.headers.get('content-disposition') ?? '';
   const match = disposition.match(/filename="?([^";]+)"?/i);
-  return match?.[1] ?? `SOOYA-server-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+  return match?.[1] ?? `SOOYA-server-to-IPA-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
 }
 
-function FullBackupControls({ onNotice }: { onNotice: (s: string) => void }) {
-  const [busy, setBusy] = useState<'export' | 'import' | null>(null);
+function IpaExportControls({ onNotice }: { onNotice: (s: string) => void }) {
+  const [busy, setBusy] = useState(false);
 
-  const exportBackup = async () => {
+  const exportToIpa = async () => {
     if (busy) return;
-    setBusy('export');
+    setBusy(true);
     try {
       const response = await adminBackupFetch('/api/admin/full-backup/export');
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = fullBackupFilename(response);
+      anchor.download = ipaExportFilename(response);
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      onNotice(`完整备份已导出（${bytes(blob.size)}）`);
+      onNotice(`IPA 迁移包已导出（${bytes(blob.size)}）`);
     } catch (error) {
       onNotice(errorText(error));
     } finally {
-      setBusy(null);
-    }
-  };
-
-  const importBackup = async (file?: File) => {
-    if (!file || busy) return;
-    if (!window.confirm(`导入“${file.name}”会用备份中的数据库和媒体替换当前数据。系统会先自动创建一份数据库安全备份，确认继续？`)) return;
-    setBusy('import');
-    try {
-      const form = new FormData();
-      form.append('backup', file, file.name);
-      const response = await adminBackupFetch('/api/admin/full-backup/import', { method: 'POST', body: form });
-      const result = await response.json() as { safetyBackup?: string };
-      onNotice(`完整备份已导入${result.safetyBackup ? `，导入前数据保存在 ${result.safetyBackup}` : ''}。页面即将刷新。`);
-      window.setTimeout(() => window.location.reload(), 500);
-    } catch (error) {
-      onNotice(errorText(error));
-    } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
   return (
-    <section className="admin-form-card" data-testid="full-backup-settings">
-      <div className="admin-panel-heading"><div><h2>完整导入 / 导出</h2><p>打包数据库与原始媒体为一个 ZIP。不会导出服务器 .env、API Key 或其他运行环境密钥。</p></div></div>
+    <section className="admin-form-card" data-testid="ipa-export-settings">
+      <div className="admin-panel-heading"><div><h2>导出到 IPA</h2><p>把服务器聊天与普通图片、语音、文件打包成 IPA 可直接选择导入的 ZIP。服务器记忆与表情包不重复迁移，也不会导出 .env、API Key 或其他服务器密钥。</p></div></div>
       <div className="admin-actions">
-        <button type="button" disabled={busy !== null} onClick={() => void exportBackup()}>{busy === 'export' ? '正在打包…' : '导出完整备份'}</button>
-        <label className="admin-button-like" aria-disabled={busy !== null}>选择备份导入<input type="file" accept=".zip,application/zip" disabled={busy !== null} style={{ display: 'none' }} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; void importBackup(file); }} /></label>
+        <button type="button" disabled={busy} onClick={() => void exportToIpa()}>{busy ? '正在生成 IPA 迁移包…' : '导出到 IPA'}</button>
       </div>
-      <small>导入会先完整校验 ZIP 与 SQLite，再替换现有数据；失败会自动回滚数据库和媒体。</small>
+      <small>下载完成后，在 IPA 的「管理 → 运维与备份 → 导入完整备份」中选择这个 SOOYA-server-to-IPA-*.zip。</small>
     </section>
   );
 }
@@ -315,6 +296,6 @@ export function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
       <div className="admin-actions"><button type="button" onClick={() => void featureApi.updateStorage(policy).then(() => { void load(); onNotice('存储策略已保存'); }).catch((error) => onNotice(errorText(error)))}>保存策略</button><button type="button" onClick={() => void preview(false)}>预览清理</button><button type="button" className="admin-danger" disabled={!report || report.applied} onClick={() => { if (window.confirm('只会删除预览报告中仍满足安全条件的项目，确认执行？')) void preview(true); }}>执行安全清理</button></div>
       {report && <CleanupReportView result={report} />}
     </section>
-    <FullBackupControls onNotice={onNotice} />
+    <IpaExportControls onNotice={onNotice} />
   </>;
 }
