@@ -12,6 +12,7 @@ import { atomicWriteFile } from '../util/fsx.js';
 import { createStoredZip, type ZipSource } from './zip.js';
 
 const FORMAT = 'sooya-full-backup/v1' as const;
+const MIGRATION_SECRETS_SETTING_KEY = 'migration:server-secrets:v1';
 
 interface MediaRow {
   id: string;
@@ -26,6 +27,19 @@ interface MediaRow {
   meta_json: string;
 }
 
+/**
+ * Plaintext credentials intentionally carried only by the one-way server -> IPA
+ * migration package. They are staged inside the migration database so Native
+ * Base 11 can import the package unchanged; the IPA Web layer immediately moves
+ * them into Keychain and deletes this staging setting after restore.
+ */
+export interface IpaMigrationSecretsPayload {
+  version: 1;
+  providerKeys: Record<string, string>;
+  webSearchKeys: Record<string, string>;
+  mcpTokens: Record<string, string>;
+}
+
 export interface IpaMigrationExportResult {
   name: string;
   path: string;
@@ -37,6 +51,7 @@ export interface IpaMigrationExportResult {
   mediaIncluded: true;
   format: typeof FORMAT;
   source: 'server';
+  plainSecretsIncluded: boolean;
 }
 
 /**
@@ -47,15 +62,21 @@ export interface IpaMigrationExportResult {
  * Deliberately excluded:
  * - server memories: IPA keeps its own local/Ombre hybrid memory state
  * - sticker library/binaries: IPA re-seeds its bundled sticker pack on boot
- * - .env, API keys and other server secrets
+ * - .env and deployment/admin secrets
+ *
+ * Selected model/search API keys and the Ombre MCP token may be staged in the
+ * migration snapshot when explicitly supplied by the caller. This migration
+ * package is intentionally not password-encrypted.
  */
 export async function createIpaMigrationArchive(options: {
   db: DbHandle;
   backupDir: string;
   mediaDir: string;
+  secrets?: IpaMigrationSecretsPayload;
   maxBytes?: number;
 }): Promise<IpaMigrationExportResult> {
   const maxBytes = options.maxBytes ?? 512 * 1024 * 1024;
+  const plainSecretsIncluded = hasMigrationSecrets(options.secrets);
   return await maintenanceCoordinator.run('backup.ipa-export', async () => {
     const id = randomUUID().toLowerCase();
     const staging = path.join(options.backupDir, `.ipa-export-${id}`);
@@ -72,7 +93,7 @@ export async function createIpaMigrationArchive(options: {
     try {
       const databaseFile = path.join(staging, 'database.sqlite3');
       await options.db.backup(databaseFile);
-      const media = prepareMigrationDatabase(databaseFile);
+      const media = prepareMigrationDatabase(databaseFile, options.secrets);
 
       const sources: ZipSource[] = [];
       for (const row of media) {
@@ -118,6 +139,12 @@ export async function createIpaMigrationArchive(options: {
         sources.push({ name: 'Media/metadata/.keep', path: keep });
       }
 
+      // Media rel_path rewrites above open the snapshot again. Re-normalize the
+      // finished database to DELETE journal mode so the ZIP contains one truly
+      // standalone SQLite file. A WAL-mode database opened read-only on iOS can
+      // otherwise try to open a missing/unwritable -wal/-shm companion during
+      // sqlite3_prepare_v2 and surface SQLITE_CANTOPEN (code 14).
+      makeDatabasePortable(databaseFile);
       assertValidDatabase(databaseFile);
       const createdAt = new Date().toISOString();
       const manifestFile = path.join(staging, 'manifest.json');
@@ -126,13 +153,17 @@ export async function createIpaMigrationArchive(options: {
         createdAt,
         schemaVersion: LATEST_VERSION,
         mediaIncluded: true,
+        // Keep the native v1 secrets flag false. Base 11 interprets true as
+        // password-encrypted secrets.enc.json. Plain server migration secrets
+        // ride in the DB staging setting and are handled by the Web layer.
         secretsIncluded: false,
         databaseFile: 'database.sqlite3',
         source: 'server',
         migration: {
           stickersIncluded: false,
           memoriesIncluded: false,
-          mediaLayout: 'ios-native-v1'
+          mediaLayout: 'ios-native-v1',
+          plainSecretsIncluded
         }
       }, null, 2));
 
@@ -163,7 +194,8 @@ export async function createIpaMigrationArchive(options: {
         schemaVersion: LATEST_VERSION,
         mediaIncluded: true,
         format: FORMAT,
-        source: 'server'
+        source: 'server',
+        plainSecretsIncluded
       };
     } finally {
       await fsp.rm(staging, { recursive: true, force: true }).catch(() => undefined);
@@ -171,7 +203,7 @@ export async function createIpaMigrationArchive(options: {
   });
 }
 
-function prepareMigrationDatabase(file: string): MediaRow[] {
+function prepareMigrationDatabase(file: string, secrets?: IpaMigrationSecretsPayload): MediaRow[] {
   const db = new Database(file, { fileMustExist: true });
   try {
     db.pragma('foreign_keys = ON');
@@ -202,12 +234,40 @@ function prepareMigrationDatabase(file: string): MediaRow[] {
       if (tableExists(db, 'memories_fts')) {
         try { db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')"); } catch { /* FTS is derived */ }
       }
+
+      // Never trust a stale value from the live DB if one somehow exists. The
+      // migration snapshot gets exactly the credential payload supplied for
+      // this export, or no credential staging row at all.
+      db.prepare('DELETE FROM settings WHERE key=?').run(MIGRATION_SECRETS_SETTING_KEY);
+      if (hasMigrationSecrets(secrets)) {
+        db.prepare(`INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)`)
+          .run(MIGRATION_SECRETS_SETTING_KEY, JSON.stringify(secrets), new Date().toISOString());
+      }
     });
     transaction();
     return db.prepare("SELECT id,kind,rel_path,mime,bytes,width,height,duration,created_at,meta_json FROM media WHERE kind!='sticker'").all() as MediaRow[];
   } finally {
     db.close();
   }
+}
+
+function makeDatabasePortable(file: string): void {
+  const db = new Database(file, { fileMustExist: true });
+  try {
+    // No other connection points at this migration snapshot, so switching away
+    // from WAL is safe and folds every committed page into database.sqlite3.
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* not in WAL mode */ }
+    const mode = db.pragma('journal_mode = DELETE', { simple: true });
+    if (String(mode).toLowerCase() !== 'delete') throw new Error(`无法生成独立 SQLite 迁移快照（journal_mode=${String(mode)}）`);
+  } finally {
+    db.close();
+  }
+}
+
+function hasMigrationSecrets(value?: IpaMigrationSecretsPayload): boolean {
+  if (!value) return false;
+  return [value.providerKeys, value.webSearchKeys, value.mcpTokens]
+    .some((group) => Object.values(group).some((item) => typeof item === 'string' && item.trim().length > 0));
 }
 
 function setPhysicalMediaId(file: string, businessId: string, physicalId: string, bytes: number): void {
@@ -242,6 +302,8 @@ function assertValidDatabase(file: string): void {
   try {
     const failure = checkIntegrity(db);
     if (failure) throw new Error(`IPA 迁移数据库校验失败：${failure}`);
+    const journalMode = String(db.pragma('journal_mode', { simple: true })).toLowerCase();
+    if (journalMode !== 'delete') throw new Error(`IPA 迁移数据库不是独立快照：journal_mode=${journalMode}`);
     const row = db.prepare('SELECT COUNT(*) c FROM messages').get() as { c?: unknown };
     if (typeof row.c !== 'number') throw new Error('messages table is unavailable');
   } finally { db.close(); }
