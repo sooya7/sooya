@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { SooyaApp } from '../app.js';
+import { ensureFullBackupRoutes } from './full-backup.js';
 
 function timingSafeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
@@ -47,7 +48,7 @@ export function requireChatToken(app: SooyaApp) {
  * reads included, not just writes.
  */
 export function requireAdminToken(app: SooyaApp) {
-  return async (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void> => {
+  const guard = async (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void> => {
     const expected = app.env.ADMIN_API_TOKEN;
     if (!expected) {
       return reply.code(503).send({
@@ -60,4 +61,6 @@ export function requireAdminToken(app: SooyaApp) {
       return reply.code(401).send({ error: 'unauthorized', message: 'valid ADMIN_API_TOKEN required' });
     }
   };
+  ensureFullBackupRoutes(app, guard);
+  return guard;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AdminPersona } from '../lib/admin.js';
+import { getAdminToken, invalidateAdminSession, type AdminPersona } from '../lib/admin.js';
 import { featureApi, type PersonaReference } from '../lib/features.js';
 import { mediaThumbnailPath } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia, type AuthenticatedMediaState } from '../lib/useAuthenticatedMedia.js';
@@ -208,6 +208,64 @@ function CleanupReportView({ result }: { result: Record<string, any> }) {
   );
 }
 
+async function adminBackupFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = getAdminToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set('X-Admin-Token', token);
+  const response = await fetch(path, { ...init, headers });
+  if (response.status === 401 || response.status === 403) invalidateAdminSession(token);
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || `request failed (${response.status})`;
+    try {
+      const body = JSON.parse(text) as { message?: string; error?: string };
+      message = body.message ?? body.error ?? message;
+    } catch { /* plain-text error */ }
+    throw new Error(message);
+  }
+  return response;
+}
+
+function ipaExportFilename(response: Response): string {
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return match?.[1] ?? `SOOYA-server-to-IPA-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+}
+
+function IpaExportControls({ onNotice }: { onNotice: (s: string) => void }) {
+  const [busy, setBusy] = useState(false);
+
+  const exportToIpa = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const response = await adminBackupFetch('/api/admin/full-backup/export');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = ipaExportFilename(response);
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      onNotice(`IPA 迁移包已导出（${bytes(blob.size)}）`);
+    } catch (error) {
+      onNotice(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="admin-form-card" data-testid="ipa-export-settings">
+      <div className="admin-panel-heading"><div><h2>导出到 IPA</h2><p>把服务器聊天与普通图片、语音、文件打包成 IPA 可直接选择导入的 ZIP。服务器记忆与表情包不重复迁移，也不会导出 .env、API Key 或其他服务器密钥。</p></div></div>
+      <div className="admin-actions">
+        <button type="button" disabled={busy} onClick={() => void exportToIpa()}>{busy ? '正在生成 IPA 迁移包…' : '导出到 IPA'}</button>
+      </div>
+      <small>下载完成后，在 IPA 的「管理 → 运维与备份 → 导入完整备份」中选择这个 SOOYA-server-to-IPA-*.zip。</small>
+    </section>
+  );
+}
+
 export function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
   const [data, setData] = useState<Record<string, any> | null>(null);
   const [report, setReport] = useState<Record<string, any> | null>(null);
@@ -226,7 +284,7 @@ export function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
     }
   };
   if (!data) return <section className="admin-card">正在读取存储状态…</section>;
-  return (
+  return <>
     <section className="admin-form-card" data-testid="storage-settings">
       <div className="admin-panel-heading"><div><p>当前媒体 {bytes(data.mediaBytes)}，备份 {bytes(data.backupBytes)}，可用空间 {data.freeBytes == null ? '未知' : bytes(data.freeBytes)}。</p></div></div>
       {data.warning && <div className="admin-inline-error">已达到{data.warning === 'hard' ? '硬' : '软'}限额</div>}
@@ -238,5 +296,6 @@ export function StorageEditor({ onNotice }: { onNotice: (s: string) => void }) {
       <div className="admin-actions"><button type="button" onClick={() => void featureApi.updateStorage(policy).then(() => { void load(); onNotice('存储策略已保存'); }).catch((error) => onNotice(errorText(error)))}>保存策略</button><button type="button" onClick={() => void preview(false)}>预览清理</button><button type="button" className="admin-danger" disabled={!report || report.applied} onClick={() => { if (window.confirm('只会删除预览报告中仍满足安全条件的项目，确认执行？')) void preview(true); }}>执行安全清理</button></div>
       {report && <CleanupReportView result={report} />}
     </section>
-  );
+    <IpaExportControls onNotice={onNotice} />
+  </>;
 }
