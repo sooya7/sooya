@@ -257,11 +257,11 @@ function IpaExportControls({ onNotice }: { onNotice: (s: string) => void }) {
 
   return (
     <section className="admin-form-card" data-testid="ipa-export-settings">
-      <div className="admin-panel-heading"><div><h2>导出到 IPA</h2><p>把服务器聊天与普通图片、语音、文件打包成 IPA 可直接选择导入的 ZIP。服务器记忆与表情包不重复迁移，也不会导出 .env、API Key 或其他服务器密钥。</p></div></div>
+      <div className="admin-panel-heading"><div><h2>导出到 IPA</h2><p>把服务器聊天与普通图片、语音、文件打包成 IPA 可直接选择导入的 ZIP。服务器记忆与表情包不重复迁移；当前模型/搜索 API Key 与 Ombre Token 会直接随包迁移（未加密），不会导出 ADMIN/WEB 访问令牌或整个 .env。</p></div></div>
       <div className="admin-actions">
         <button type="button" disabled={busy} onClick={() => void exportToIpa()}>{busy ? '正在生成 IPA 迁移包…' : '导出到 IPA'}</button>
       </div>
-      <small>下载完成后，在 IPA 的「管理 → 运维与备份 → 导入完整备份」中选择这个 SOOYA-server-to-IPA-*.zip。</small>
+      <small>迁移包包含明文 API Key，请只在自己的设备间传递。下载完成后，在 IPA 的「管理 → 运维与备份 → 导入完整备份」中选择这个 SOOYA-server-to-IPA-*.zip。</small>
     </section>
   );
 }
