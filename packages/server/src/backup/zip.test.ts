@@ -27,7 +27,7 @@ describe('backup zip utility', () => {
 
     const created = await createStoredZip([
       { name: 'manifest.json', path: sourceA },
-      { name: 'Media/images/image.bin', path: sourceB }
+      { name: 'Media/objects/8f6eabf3-452d-4ed7-81f5-e3675d4e4db3', path: sourceB }
     ], archive);
     expect(created.fileCount).toBe(2);
 
@@ -35,7 +35,7 @@ describe('backup zip utility', () => {
     const extracted = await extractZip(archive, out, { maxBytes: 1024, maxFiles: 10 });
     expect(extracted.fileCount).toBe(2);
     expect(await fsp.readFile(path.join(out, 'manifest.json'), 'utf8')).toBe('{"format":"test"}');
-    expect([...await fsp.readFile(path.join(out, 'Media/images/image.bin'))]).toEqual([0, 1, 2, 3, 254, 255]);
+    expect([...await fsp.readFile(path.join(out, 'Media/objects/8f6eabf3-452d-4ed7-81f5-e3675d4e4db3'))]).toEqual([0, 1, 2, 3, 254, 255]);
   });
 
   it('refuses traversal names before writing an archive', async () => {
@@ -43,6 +43,14 @@ describe('backup zip utility', () => {
     const file = path.join(root, 'payload.txt');
     await fsp.writeFile(file, 'payload');
     await expect(createStoredZip([{ name: '../outside.txt', path: file }], path.join(root, 'bad.zip'))).rejects.toThrow(/unsafe zip entry name/);
+  });
+
+  it('refuses absolute paths before writing an archive', async () => {
+    const root = await tempRoot();
+    const file = path.join(root, 'payload.txt');
+    await fsp.writeFile(file, 'payload');
+    await expect(createStoredZip([{ name: '/tmp/outside.txt', path: file }], path.join(root, 'absolute.zip'))).rejects.toThrow(/unsafe zip entry name/);
+    await expect(createStoredZip([{ name: 'C:\\outside.txt', path: file }], path.join(root, 'windows-absolute.zip'))).rejects.toThrow(/unsafe zip entry name/);
   });
 
   it('enforces expanded byte limits', async () => {
