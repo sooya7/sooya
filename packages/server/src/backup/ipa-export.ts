@@ -139,6 +139,12 @@ export async function createIpaMigrationArchive(options: {
         sources.push({ name: 'Media/metadata/.keep', path: keep });
       }
 
+      // Media rel_path rewrites above open the snapshot again. Re-normalize the
+      // finished database to DELETE journal mode so the ZIP contains one truly
+      // standalone SQLite file. A WAL-mode database opened read-only on iOS can
+      // otherwise try to open a missing/unwritable -wal/-shm companion during
+      // sqlite3_prepare_v2 and surface SQLITE_CANTOPEN (code 14).
+      makeDatabasePortable(databaseFile);
       assertValidDatabase(databaseFile);
       const createdAt = new Date().toISOString();
       const manifestFile = path.join(staging, 'manifest.json');
@@ -245,6 +251,19 @@ function prepareMigrationDatabase(file: string, secrets?: IpaMigrationSecretsPay
   }
 }
 
+function makeDatabasePortable(file: string): void {
+  const db = new Database(file, { fileMustExist: true });
+  try {
+    // No other connection points at this migration snapshot, so switching away
+    // from WAL is safe and folds every committed page into database.sqlite3.
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* not in WAL mode */ }
+    const mode = db.pragma('journal_mode = DELETE', { simple: true });
+    if (String(mode).toLowerCase() !== 'delete') throw new Error(`无法生成独立 SQLite 迁移快照（journal_mode=${String(mode)}）`);
+  } finally {
+    db.close();
+  }
+}
+
 function hasMigrationSecrets(value?: IpaMigrationSecretsPayload): boolean {
   if (!value) return false;
   return [value.providerKeys, value.webSearchKeys, value.mcpTokens]
@@ -283,6 +302,8 @@ function assertValidDatabase(file: string): void {
   try {
     const failure = checkIntegrity(db);
     if (failure) throw new Error(`IPA 迁移数据库校验失败：${failure}`);
+    const journalMode = String(db.pragma('journal_mode', { simple: true })).toLowerCase();
+    if (journalMode !== 'delete') throw new Error(`IPA 迁移数据库不是独立快照：journal_mode=${journalMode}`);
     const row = db.prepare('SELECT COUNT(*) c FROM messages').get() as { c?: unknown };
     if (typeof row.c !== 'number') throw new Error('messages table is unavailable');
   } finally { db.close(); }
