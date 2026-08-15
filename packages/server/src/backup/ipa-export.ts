@@ -186,6 +186,9 @@ function prepareMigrationDatabase(file: string): MediaRow[] {
       `).run();
       db.prepare('DELETE FROM stickers').run();
       db.prepare("DELETE FROM media WHERE kind='sticker'").run();
+      if (tableExists(db, 'sticker_semantics_fts')) {
+        try { db.exec('DELETE FROM sticker_semantics_fts'); } catch { /* derived search index */ }
+      }
       // Make the IPA bundled pack seed itself again after the migrated DB boots.
       db.prepare("DELETE FROM settings WHERE key LIKE 'builtin-stickers:%'").run();
 
