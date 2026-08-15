@@ -3,6 +3,7 @@ import * as fsp from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
+import type BetterSqlite3 from 'better-sqlite3';
 import type { DbHandle } from '../db/handle.js';
 import { checkIntegrity } from '../db/index.js';
 import { LATEST_VERSION } from '../db/migrations.js';
@@ -45,7 +46,7 @@ export interface IpaMigrationExportResult {
  *
  * Deliberately excluded:
  * - server memories: IPA keeps its own local/Ombre hybrid memory state
- * - sticker library/binaries: IPA keeps its existing sticker pack
+ * - sticker library/binaries: IPA re-seeds its bundled sticker pack on boot
  * - .env, API keys and other server secrets
  */
 export async function createIpaMigrationArchive(options: {
@@ -85,7 +86,7 @@ export async function createIpaMigrationArchive(options: {
           continue;
         }
         const physicalId = randomUUID().toLowerCase();
-        setPhysicalMediaId(databaseFile, row.id, physicalId);
+        setPhysicalMediaId(databaseFile, row.id, physicalId, stat.size);
         sources.push({ name: `Media/objects/${physicalId}`, path: source });
 
         const sidecar = path.join(metadataDir, `${physicalId}.json`);
@@ -105,8 +106,7 @@ export async function createIpaMigrationArchive(options: {
       }
 
       // ZIP writer stores files rather than directory entries. Keep empty Media
-      // roots materialized so an archive with text-only history is still a valid
-      // IPA full-backup payload. Dotfiles are ignored by the migration merge.
+      // roots materialized so a text-only history is still accepted by the IPA.
       if (!sources.some((entry) => entry.name.startsWith('Media/objects/'))) {
         const keep = path.join(objectsDir, '.keep');
         await fsp.writeFile(keep, '');
@@ -186,13 +186,16 @@ function prepareMigrationDatabase(file: string): MediaRow[] {
       `).run();
       db.prepare('DELETE FROM stickers').run();
       db.prepare("DELETE FROM media WHERE kind='sticker'").run();
+      // Make the IPA bundled pack seed itself again after the migrated DB boots.
+      db.prepare("DELETE FROM settings WHERE key LIKE 'builtin-stickers:%'").run();
 
       // Server/Ombre is already the remote memory source for IPA. Do not clone
       // server legacy memory into the phone and create duplicates on first sync.
       if (tableExists(db, 'memory_sources')) db.prepare('DELETE FROM memory_sources').run();
       db.prepare('DELETE FROM memories').run();
+      if (tableExists(db, 'ombre_commits')) db.prepare('DELETE FROM ombre_commits').run();
       if (tableExists(db, 'ombre_commit_receipts')) db.prepare('DELETE FROM ombre_commit_receipts').run();
-      if (tableExists(db, 'jobs')) db.prepare("DELETE FROM jobs WHERE type IN ('memory.extract','memory.embed')").run();
+      if (tableExists(db, 'jobs')) db.prepare("DELETE FROM jobs WHERE type LIKE 'memory.%' OR type LIKE 'sticker.%'").run();
       if (tableExists(db, 'memories_fts')) {
         try { db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')"); } catch { /* FTS is derived */ }
       }
@@ -204,10 +207,14 @@ function prepareMigrationDatabase(file: string): MediaRow[] {
   }
 }
 
-function setPhysicalMediaId(file: string, businessId: string, physicalId: string): void {
+function setPhysicalMediaId(file: string, businessId: string, physicalId: string, bytes: number): void {
   const db = new Database(file, { fileMustExist: true });
-  try { db.prepare('UPDATE media SET rel_path=? WHERE id=?').run(physicalId, businessId); }
-  finally { db.close(); }
+  try {
+    // Native LocalMediaResolver treats origin='builtin' as a bundle asset and
+    // ignores rel_path. A server file is a real imported object on iOS, so any
+    // non-sticker builtin row must become ordinary imported media.
+    db.prepare("UPDATE media SET rel_path=?, bytes=?, origin=CASE WHEN origin='builtin' THEN 'upload' ELSE origin END WHERE id=?").run(physicalId, bytes, businessId);
+  } finally { db.close(); }
 }
 
 function removeMissingMedia(file: string, mediaId: string, kind: MediaRow['kind']): void {
@@ -223,7 +230,7 @@ function removeMissingMedia(file: string, mediaId: string, kind: MediaRow['kind'
   } finally { db.close(); }
 }
 
-function tableExists(db: Database.Database, name: string): boolean {
+function tableExists(db: BetterSqlite3.Database, name: string): boolean {
   return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name=?").get(name));
 }
 
@@ -256,7 +263,8 @@ function originalName(row: MediaRow): string | null {
 
 function normalizeIso(value: string): string {
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : new Date(0).toISOString();
+  const iso = Number.isFinite(parsed) ? new Date(parsed).toISOString() : new Date(0).toISOString();
+  return iso.replace(/\.\d{3}Z$/u, 'Z');
 }
 
 async function sha256File(file: string): Promise<string> {
