@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import fsp from 'node:fs/promises';
+import * as fsp from 'node:fs/promises';
 import path from 'node:path';
 import { createInflateRaw } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
