@@ -111,6 +111,20 @@ const EnvSchema = z.object({
   TOOL_RESULT_MAX_BYTES: intish(32 * 1024),
   TOOL_TOTAL_RESULT_MAX_BYTES: intish(64 * 1024),
 
+  /*
+   * QQ 官方 Bot 单通道（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md）。
+   * Secret 只存在于服务器环境变量：不进 git / 数据库导出 / 日志，Admin 只显示"已配置"。
+   * QQ_CALLBACK_SECRET 是开放平台控制台的 Bot Secret，用于 webhook Ed25519 签名校验；
+   * QQ_APP_SECRET 用于 OAuth 换取 Access Token（出站 API，PR3 使用）。
+   */
+  QQ_BOT_ENABLED: boolish(false),
+  QQ_APP_ID: z.string().optional(),
+  QQ_APP_SECRET: z.string().optional(),
+  QQ_CALLBACK_SECRET: z.string().optional(),
+  QQ_ENV: z.enum(['sandbox', 'production']).default('production'),
+  QQ_ALLOWED_USERS: z.string().optional(),
+  QQ_PROACTIVE_ENABLED: boolish(true),
+
   BACKUP_INTERVAL_MS: intish(6 * 60 * 60 * 1000),
   BACKUP_KEEP: intish(7),
   BACKUP_ON_START: boolish(false),

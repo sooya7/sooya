@@ -62,6 +62,10 @@ import { VoiceService } from './core/voice/service.js';
 import { ReplyCoordinator } from './core/reply-coordinator.js';
 import { MessageIngressService } from './core/message-ingress.js';
 import { PushService } from './core/push.js';
+import { ChannelEventRepo } from './db/repos/channel-event.repo.js';
+import { ChannelIdentityRepo } from './db/repos/channel-identity.repo.js';
+import { QqChannel } from './channels/qq/channel.js';
+import { qqBotConfigFromEnv } from './channels/qq/config.js';
 import { ProactiveComposer } from './core/proactive.js';
 import { StorageService } from './core/storage.js';
 import { maintenanceCoordinator } from './core/maintenance.js';
@@ -77,6 +81,7 @@ import { McpManager } from './mcp/manager.js';
 import { OmbreMemoryBridge } from './core/ombre-memory.js';
 import { OmbreAdminService } from './core/ombre-admin.js';
 import { registerChatRoutes } from './routes/chat.js';
+import { registerQqRoutes } from './routes/qq.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -136,6 +141,8 @@ export interface SooyaApp {
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
     replyBatches: ReplyBatchRepo;
+    channelEvents: ChannelEventRepo;
+    channelIdentities: ChannelIdentityRepo;
   };
   services: {
     mediaStore: MediaStore;
@@ -177,6 +184,7 @@ export interface SooyaApp {
     tools: ToolRegistry;
     agentCapabilities: CapabilityRegistryStub;
     ingress: MessageIngressService;
+    qq: QqChannel;
   };
   state: {
     startedAt: string;
@@ -258,7 +266,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     thoughts: new ThoughtRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle),
-    replyBatches: new ReplyBatchRepo(dbHandle)
+    replyBatches: new ReplyBatchRepo(dbHandle),
+    channelEvents: new ChannelEventRepo(dbHandle),
+    channelIdentities: new ChannelIdentityRepo(dbHandle)
   };
 
   const mediaStore = new MediaStore(env.mediaDirs, repos.media, { maxUploadBytes: env.MAX_UPLOAD_BYTES });
@@ -554,6 +564,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     replyOptions: { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }
   });
 
+  const qq = new QqChannel({
+    config: qqBotConfigFromEnv({ ...process.env, ...opts.env }),
+    events: repos.channelEvents,
+    identities: repos.channelIdentities,
+    ingress,
+    errors: repos.errors
+  });
+
   const proactive = new ProactiveComposer({
     attempts: repos.proactive,
     replyBatches: repos.replyBatches,
@@ -756,6 +774,19 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   // 不设 limits.files：multipart 库会在第 N+1 个文件直接抛 413，打断 media.ts 对超限分片的
   // resume 排空。文件数上限由业务计数接管；请求总大小仍受 bodyLimit 与 fileSize 双重约束。
   await server.register(multipart, { limits: { fileSize: env.MAX_UPLOAD_BYTES, fields: 20, fieldSize: 64 * 1024 } });
+  /*
+   * QQ webhook 的 Ed25519 签名覆盖「timestamp + 原始 Body 字节」，所以 JSON 解析
+   * 必须保留原始字节。这里替换默认 JSON 解析器：解析语义不变（utf8 → JSON.parse 同
+   * Fastify 默认），只是把原始 Buffer 挂在 req.rawBody 上供 routes/qq.ts 校验。
+   */
+  server.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
+    (req as { rawBody?: Buffer }).rawBody = body as Buffer;
+    try {
+      done(null, JSON.parse((body as Buffer).toString('utf8')));
+    } catch (error) {
+      done(error as Error);
+    }
+  });
 
   let stopModelWatcher: (() => void) | null = null;
   const app: SooyaApp = {
@@ -764,7 +795,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -795,6 +826,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   replyCoordinator.recover({ recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
 
   registerHealthRoutes(app);
+  registerQqRoutes(app);
   registerChatRoutes(app);
   registerMediaRoutes(app);
   registerStreamRoutes(app);

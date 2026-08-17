@@ -1377,6 +1377,54 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 36,
+    name: 'channel_event',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE channel_event (
+          id                TEXT PRIMARY KEY,
+          channel           TEXT NOT NULL,
+          event_id          TEXT NOT NULL,
+          remote_message_id TEXT,
+          event_type        TEXT NOT NULL,
+          conversation_key  TEXT,
+          message_id        TEXT,
+          received_at       TEXT NOT NULL,
+          processed_at      TEXT,
+          status            TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received','processed','failed','rejected')),
+          error_code        TEXT
+        );
+        CREATE UNIQUE INDEX idx_channel_event_channel_id ON channel_event(channel, event_id);
+        CREATE INDEX idx_channel_event_status ON channel_event(status, processed_at);
+        CREATE INDEX idx_channel_event_message ON channel_event(message_id);
+        CREATE INDEX idx_channel_event_remote ON channel_event(remote_message_id);
+      `);
+    }
+  },
+  {
+    version: 37,
+    name: 'channel_identity',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE channel_identity (
+          id                       TEXT PRIMARY KEY,
+          channel                  TEXT NOT NULL,
+          external_user_id         TEXT NOT NULL,
+          external_conversation_id TEXT NOT NULL,
+          scene                    TEXT NOT NULL DEFAULT 'c2c',
+          sooya_conversation_id    TEXT NOT NULL DEFAULT 'main',
+          role                     TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('owner','user')),
+          enabled                  INTEGER NOT NULL DEFAULT 1,
+          created_at               TEXT NOT NULL,
+          updated_at               TEXT NOT NULL,
+          last_seen_at             TEXT
+        );
+        CREATE UNIQUE INDEX idx_channel_identity_channel_user ON channel_identity(channel, external_user_id);
+        CREATE INDEX idx_channel_identity_conversation ON channel_identity(channel, external_conversation_id);
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
