@@ -111,6 +111,14 @@ export class ChannelDeliveryRepo {
       .run(errorCode, errorSummary.slice(0, 500), nowIso(), id);
   }
 
+  /** 是否有待投递/在途投递（冲突控制：QQ 还有未完成消息时不插队）。 */
+  hasInFlight(channel: string): boolean {
+    const row = this.db
+      .prepare("SELECT 1 AS hit FROM channel_delivery WHERE channel = ? AND status IN ('pending','sending','retry') LIMIT 1")
+      .get(channel) as { hit: number } | undefined;
+    return row !== undefined;
+  }
+
   /** 启动恢复：把中断在 sending 的投递放回 pending，由后续扫描/任务重新领取。 */
   recoverInFlight(): void {
     this.db

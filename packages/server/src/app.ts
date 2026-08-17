@@ -617,7 +617,10 @@ repos.jobs.enqueue(
     personaReferences,
     locations: repos.locations,
     worldSnapshot: () => world.snapshot(),
-    toolRuntime
+    toolRuntime,
+    jobs: repos.jobs,
+    deliveries: repos.channelDeliveries,
+    qqDeliveryEnabled: qqConfig.enabled
   });
   const backups = new BackupService({
     db: () => dbHandle,
