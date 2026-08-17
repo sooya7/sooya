@@ -60,6 +60,7 @@ import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
 import { VoiceGenerationRepo } from './db/repos/voice.repo.js';
 import { VoiceService } from './core/voice/service.js';
 import { ReplyCoordinator } from './core/reply-coordinator.js';
+import { MessageIngressService } from './core/message-ingress.js';
 import { PushService } from './core/push.js';
 import { ProactiveComposer } from './core/proactive.js';
 import { StorageService } from './core/storage.js';
@@ -175,6 +176,7 @@ export interface SooyaApp {
     agents: AgentRegistry;
     tools: ToolRegistry;
     agentCapabilities: CapabilityRegistryStub;
+    ingress: MessageIngressService;
   };
   state: {
     startedAt: string;
@@ -537,6 +539,21 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     }
   });
 
+  const ingress = new MessageIngressService({
+    db: dbHandle,
+    messages: repos.messages,
+    replyBatches: repos.replyBatches,
+    media: repos.media,
+    stickers: repos.stickers,
+    jobs: repos.jobs,
+    errors: repos.errors,
+    bus,
+    config,
+    mediaStore,
+    replyCoordinator,
+    replyOptions: { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }
+  });
+
   const proactive = new ProactiveComposer({
     attempts: repos.proactive,
     replyBatches: repos.replyBatches,
@@ -747,7 +764,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress },
     state,
     fetchImpl,
     recurringTimers: [],
