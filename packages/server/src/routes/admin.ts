@@ -1073,7 +1073,6 @@ export function registerAdminRoutes(app: SooyaApp): void {
       media: repos.media.count(),
       memories: repos.memories.count(),
       summaries: repos.summaries.count(),
-      pushSubscriptions: repos.pushSubscriptions.count(),
       pendingJobs: repos.jobs.pendingCount()
     },
     storage: await services.storage.status(),

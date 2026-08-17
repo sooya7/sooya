@@ -19,7 +19,11 @@ describe('merged admin console', () => {
     expect(PANEL).toContain("if (normalized === '/admin/features') return 'avatar'");
     expect(NAVIGATION).toContain("normalized === '/admin'");
     expect(NAVIGATION).toContain("normalized.startsWith('/admin/')");
-    expect(SHELL).toContain("route === 'admin'");
+    // QQ 单通道后（§13/§14）：Web 只剩管理控制台与 /gallery；聊天/Moments 路由不再渲染。
+    expect(SHELL).toContain('AdminPanel');
+    expect(SHELL).toContain("route === 'gallery'");
+    expect(SHELL).not.toContain('ChatSessionHost');
+    expect(SHELL).not.toContain('MomentsPage');
     expect(SHELL).not.toContain('FeatureAdminPage');
   });
 

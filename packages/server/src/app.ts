@@ -19,7 +19,7 @@ import { OmbreCommitRepo } from './db/repos/ombre.repo.js';
 import { StickerRepo } from './db/repos/sticker.repo.js';
 import { ErrorLogRepo, EventRepo, JobRepo, SettingsRepo, SummaryRepo } from './db/repos/misc.repo.js';
 import { MediaTextRepo } from './db/repos/media-text.repo.js';
-import { AuditRepo, PushSubscriptionRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
+import { AuditRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
 import { MediaStore } from './media/store.js';
 import { StickerLibrary } from './media/stickers.js';
 import { StickerAnalyzer } from './core/stickers/analyzer.js';
@@ -60,7 +60,14 @@ import { ReplyBatchRepo } from './db/repos/reply-batch.repo.js';
 import { VoiceGenerationRepo } from './db/repos/voice.repo.js';
 import { VoiceService } from './core/voice/service.js';
 import { ReplyCoordinator } from './core/reply-coordinator.js';
-import { PushService } from './core/push.js';
+import { MessageIngressService } from './core/message-ingress.js';
+import { ChannelEventRepo } from './db/repos/channel-event.repo.js';
+import { ChannelIdentityRepo } from './db/repos/channel-identity.repo.js';
+import { ChannelDeliveryRepo } from './db/repos/channel-delivery.repo.js';
+import { QqChannel } from './channels/qq/channel.js';
+import { qqBotConfigFromEnv } from './channels/qq/config.js';
+import { QqApiClient } from './channels/qq/client.js';
+import { QqDeliveryService } from './channels/qq/outbound.js';
 import { ProactiveComposer } from './core/proactive.js';
 import { StorageService } from './core/storage.js';
 import { maintenanceCoordinator } from './core/maintenance.js';
@@ -76,6 +83,8 @@ import { McpManager } from './mcp/manager.js';
 import { OmbreMemoryBridge } from './core/ombre-memory.js';
 import { OmbreAdminService } from './core/ombre-admin.js';
 import { registerChatRoutes } from './routes/chat.js';
+import { registerQqRoutes } from './routes/qq.js';
+import { registerQqAdminRoutes } from './routes/qq-admin.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -122,7 +131,6 @@ export interface SooyaApp {
     settings: SettingsRepo;
     events: EventRepo;
     errors: ErrorLogRepo;
-    pushSubscriptions: PushSubscriptionRepo;
     life: LifeRepo;
     proactive: ProactiveAttemptRepo;
     moments: MomentRepo;
@@ -135,6 +143,9 @@ export interface SooyaApp {
     audit: AuditRepo;
     storageSamples: StorageSampleRepo;
     replyBatches: ReplyBatchRepo;
+    channelEvents: ChannelEventRepo;
+    channelIdentities: ChannelIdentityRepo;
+    channelDeliveries: ChannelDeliveryRepo;
   };
   services: {
     mediaStore: MediaStore;
@@ -163,7 +174,6 @@ export interface SooyaApp {
     metrics: MetricsService;
     thoughts: ThoughtsService;
     voice: VoiceService;
-    push: PushService;
     storage: StorageService;
     context: ContextBuilder;
     summarizer: Summarizer;
@@ -175,6 +185,9 @@ export interface SooyaApp {
     agents: AgentRegistry;
     tools: ToolRegistry;
     agentCapabilities: CapabilityRegistryStub;
+    ingress: MessageIngressService;
+    qq: QqChannel;
+    qqDelivery: QqDeliveryService;
   };
   state: {
     startedAt: string;
@@ -197,7 +210,7 @@ const VERSION = '1.0.0';
 /** Vite 产物：`index-D9-2lj-S.js` 这类文件名里带内容哈希，内容变了文件名一定会变。 */
 const HASHED_ASSET = /\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
 /** 文件名固定、内容会随发布改变的入口文件：缓存住就等于发布不上去。 */
-const ALWAYS_REVALIDATE = /(?:\.html|\/sw\.js|\.webmanifest)$/;
+const ALWAYS_REVALIDATE = /(?:\.html)$/;
 /** 图标、头像这类文件名带版本后缀（sooya-photo-v2-192.png），一天足够短也足够省。 */
 const STATIC_ASSET_MAX_AGE_S = 86400;
 
@@ -244,7 +257,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     settings: new SettingsRepo(dbHandle),
     events: new EventRepo(dbHandle),
     errors: new ErrorLogRepo(dbHandle),
-    pushSubscriptions: new PushSubscriptionRepo(dbHandle),
     life: new LifeRepo(dbHandle),
     proactive: new ProactiveAttemptRepo(dbHandle),
     moments: new MomentRepo(dbHandle),
@@ -256,7 +268,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     thoughts: new ThoughtRepo(dbHandle),
     audit: new AuditRepo(dbHandle),
     storageSamples: new StorageSampleRepo(dbHandle),
-    replyBatches: new ReplyBatchRepo(dbHandle)
+    replyBatches: new ReplyBatchRepo(dbHandle),
+    channelEvents: new ChannelEventRepo(dbHandle),
+    channelIdentities: new ChannelIdentityRepo(dbHandle),
+    channelDeliveries: new ChannelDeliveryRepo(dbHandle)
   };
 
   const mediaStore = new MediaStore(env.mediaDirs, repos.media, { maxUploadBytes: env.MAX_UPLOAD_BYTES });
@@ -364,7 +379,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   // connection should never make every buildApp() wait on an absent external
   // Ombre service. Production and development keep the opt-out flag intact.
   if (env.MCP_CONNECT_ON_START && env.NODE_ENV !== 'test') await mcpManager.connectAllBestEffort();
-  const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
   /*
    * Env vars stay the deployment default; anything the user set in the panel wins
@@ -514,16 +528,20 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       // fenced); this hook only enqueues the downstream jobs atomically.
       const tx = dbHandle.transaction(() => {
         if (!env.DISABLE_MEMORY_PIPELINE) {
-          repos.jobs.enqueue(
-            env.MEMORY_BACKEND === 'ombre' ? 'ombre.memory_commit' : 'memory.extract',
-            { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId }
-          );
-        }
-        repos.jobs.enqueue('push.reply', { batchId, messageId: outcome.messageId }, { maxAttempts: 3 });
-        if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
-        // Life conversation bridge (§49-50): extracted as a durable job; the
-        // handler re-checks the revision so only the final one applies.
-        if (env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_V2) {
+repos.jobs.enqueue(
+          env.MEMORY_BACKEND === 'ombre' ? 'ombre.memory_commit' : 'memory.extract',
+          { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId }
+        );
+      }
+      // QQ 单通道（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8.2/§16）：回复完成后入队
+      // durable qq.deliver，由 outbox 负责幂等/重试；Browser Push（push.reply）已下线。
+      if (qqConfig.enabled) {
+        repos.jobs.enqueue('qq.deliver', { messageId: outcome.messageId });
+      }
+      if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
+      // Life conversation bridge (§49-50): extracted as a durable job; the
+      // handler re-checks the revision so only the final one applies.
+      if (env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_V2) {
           repos.jobs.enqueue('life.conversation', {
             batchId,
             revision,
@@ -535,6 +553,47 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       });
       tx();
     }
+  });
+
+  const ingress = new MessageIngressService({
+    db: dbHandle,
+    messages: repos.messages,
+    replyBatches: repos.replyBatches,
+    media: repos.media,
+    stickers: repos.stickers,
+    jobs: repos.jobs,
+    errors: repos.errors,
+    bus,
+    config,
+    mediaStore,
+    replyCoordinator,
+    replyOptions: { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }
+  });
+
+  const qqConfig = qqBotConfigFromEnv({ ...process.env, ...opts.env });
+
+  const qq = new QqChannel({
+    config: qqConfig,
+    events: repos.channelEvents,
+    identities: repos.channelIdentities,
+    ingress,
+    errors: repos.errors,
+    metrics
+  });
+
+  const qqApi = new QqApiClient(qqConfig, { fetchImpl });
+  const qqDelivery = new QqDeliveryService({
+    deliveries: repos.channelDeliveries,
+    identities: repos.channelIdentities,
+    events: repos.channelEvents,
+    messages: repos.messages,
+    replyBatches: repos.replyBatches,
+    media: repos.media,
+    mediaStore,
+    jobs: repos.jobs,
+    errors: repos.errors,
+    client: qqApi,
+    metrics
   });
 
   const proactive = new ProactiveComposer({
@@ -553,7 +612,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     personaReferences,
     locations: repos.locations,
     worldSnapshot: () => world.snapshot(),
-    toolRuntime
+    toolRuntime,
+    jobs: repos.jobs,
+    deliveries: repos.channelDeliveries,
+    qqDeliveryEnabled: qqConfig.enabled
   });
   const backups = new BackupService({
     db: () => dbHandle,
@@ -597,10 +659,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     stickerUserMeaning,
     config,
     reachOutEnabled: env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT,
-    push,
     storage,
     mediaText: repos.mediaText,
-    tmpDirs: [env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files, env.dbDir]
+    tmpDirs: [env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files, env.dbDir],
+    qqDelivery
   });
 
   const agents = new AgentRegistry();
@@ -739,6 +801,19 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   // 不设 limits.files：multipart 库会在第 N+1 个文件直接抛 413，打断 media.ts 对超限分片的
   // resume 排空。文件数上限由业务计数接管；请求总大小仍受 bodyLimit 与 fileSize 双重约束。
   await server.register(multipart, { limits: { fileSize: env.MAX_UPLOAD_BYTES, fields: 20, fieldSize: 64 * 1024 } });
+  /*
+   * QQ webhook 的 Ed25519 签名覆盖「timestamp + 原始 Body 字节」，所以 JSON 解析
+   * 必须保留原始字节。这里替换默认 JSON 解析器：解析语义不变（utf8 → JSON.parse 同
+   * Fastify 默认），只是把原始 Buffer 挂在 req.rawBody 上供 routes/qq.ts 校验。
+   */
+  server.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
+    (req as { rawBody?: Buffer }).rawBody = body as Buffer;
+    try {
+      done(null, JSON.parse((body as Buffer).toString('utf8')));
+    } catch (error) {
+      done(error as Error);
+    }
+  });
 
   let stopModelWatcher: (() => void) | null = null;
   const app: SooyaApp = {
@@ -747,7 +822,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -775,17 +850,20 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
 
   repos.voice.recoverInFlight();
+  repos.channelDeliveries.recoverInFlight();
   replyCoordinator.recover({ recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
 
   registerHealthRoutes(app);
+  registerQqRoutes(app);
   registerChatRoutes(app);
+  registerAdminRoutes(app);
+  registerQqAdminRoutes(app);
   registerMediaRoutes(app);
   registerStreamRoutes(app);
   registerVoiceRoutes(app);
   registerLifeAdminRoutes(app);
   registerThoughtRoutes(app);
   registerMomentRoutes(app);
-  registerAdminRoutes(app);
   registerFeatureRoutes(app);
 
   const configuredWebDir = env.webDir;
@@ -841,10 +919,26 @@ function scheduleRecurring(app: SooyaApp): void {
       if (!repos.jobs.hasActive(type)) repos.jobs.enqueue(type, payload);
     } catch { /* scheduling is best effort and never blocks chat */ }
   };
+  /*
+   * 到期待投递的兜底扫描（QQ 单通道 §9.2）：主路径是失败重试时自行重新入队；
+   * 这里覆盖「入队后进程崩溃 / 定时器丢失 / 重启」等漏网场景。deliver() 内部
+   * 用条件领取保证并发安全，重复入队无副作用。
+   */
+  const enqueueDueQqDeliveries = (): void => {
+    if (!env.QQ_BOT_ENABLED) return;
+    try {
+      for (const row of repos.channelDeliveries.dueNow('qq', 20)) {
+        repos.jobs.enqueue('qq.deliver', { messageId: row.message_id }, { runAfter: row.next_retry_at ?? undefined, maxAttempts: 1 });
+      }
+    } catch { /* best effort */ }
+  };
+  // 启动即兜底扫描一次：恢复重启前已在 outbox 里的待发消息。
+  enqueueDueQqDeliveries();
   const maintenance = setInterval(() => {
     try {
       repos.jobs.enqueue('maintenance', {});
       services.bus.prune(env.EVENTS_KEEP);
+      enqueueDueQqDeliveries();
       // 周期性兜底：入队后因进程内异常或计时器丢失而滞留的批次，靠重启之外的另一条
       // 路径重新拉起，避免「消息发出去了但永远等不到回复」。recover 只碰开放批次，幂等。
       services.replyCoordinator.recover({ recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });

@@ -1,13 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const CHAT_TOKEN = 'e2e-chat-token';
 const ADMIN_TOKEN = 'e2e-admin-token';
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(({ chat, admin }) => {
-    localStorage.setItem('sooya.token', chat);
+  await page.addInitScript(({ admin }) => {
     localStorage.setItem('sooya.admin-token', admin);
-  }, { chat: CHAT_TOKEN, admin: ADMIN_TOKEN });
+  }, { admin: ADMIN_TOKEN });
 });
 
 async function gotoAdmin(page: Page, path: string): Promise<void> {
@@ -15,11 +13,10 @@ async function gotoAdmin(page: Page, path: string): Promise<void> {
 }
 
 /**
- * Next-phase surfaces (P0-P3): the world-context admin and
- * metrics panels are reachable by exact
- * path, render against the live server, and their controls round-trip through
- * the admin API. The stable chat flows are covered by the other specs running
- * against the same server with these flags on.
+ * Next-phase admin surfaces (P0-P3): the world-context admin and metrics panels
+ * are reachable by exact path, render against the live server, and their
+ * controls round-trip through the admin API. Web 只保留 Admin / Gallery；
+ * QQ 消息链路由 server 集成测试覆盖，浏览器 E2E 不再触碰 Web Chat。
  */
 test.describe('next-phase admin surfaces', () => {
   test('old /admin/life/console canonicalizes to the autonomous observation page', async ({ page }) => {
@@ -35,31 +32,10 @@ test.describe('next-phase admin surfaces', () => {
   });
 
   test('overview embeds the base runtime metrics', async ({ page }) => {
-    // Send a message first so the metrics have something to aggregate.
-    await page.goto('/');
-    await expect(page.getByTestId('scroller')).toBeVisible();
-    await page.getByTestId('composer-input').fill('你好');
-    await page.getByTestId('btn-send').click();
-    await expect(page.getByTestId('scroller')).toContainText('你好', { timeout: 20_000 });
-
+    // Web Chat 已下线：直接进入 Admin，验证运行状态与指标面板可渲染。
     await gotoAdmin(page, '/admin');
     await expect(page.getByTestId('admin-dashboard')).toBeVisible();
     await expect(page.getByTestId('metrics-summary')).toBeVisible();
-  });
-
-  test('visible thought is served to the plain chat token user (no admin token)', async ({ page, request }) => {
-    await page.goto('/');
-    await expect(page.getByTestId('scroller')).toBeVisible();
-    await page.getByTestId('composer-input').fill('今天天气怎么样');
-    await page.getByTestId('btn-send').click();
-    // The inner thought chip appears; it is collapsed by default, so expand it.
-    const chip = page.getByRole('button', { name: /她在想/ }).first();
-    await expect(chip).toBeVisible({ timeout: 20_000 });
-    await chip.click();
-    await expect(page.getByTestId('scroller')).toContainText('她好像有点在意这件事', { timeout: 10_000 });
-    // The chat API carries the chat token, not the admin token.
-    const thought = await request.get('/api/thoughts/msg_e2e_nonexistent', { headers: { 'x-sooya-token': CHAT_TOKEN } });
-    expect(thought.status()).toBe(404); // endpoint reachable under chat token
   });
 
   test('admin switches the active city: movement cleared, weather target follows, restart keeps it', async ({ page, request }) => {

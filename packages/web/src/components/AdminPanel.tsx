@@ -11,6 +11,7 @@ import { LifeObservationPanel } from './life/LifeObservationPanel.js';
 import { WebSearchModelEditor } from './WebSearchModelEditor.js';
 import { McpAdminPage } from './admin/McpAdminPage.js';
 import { ContentManagementPage } from './admin/ContentManagementPage.js';
+import { QqAdminPage } from './admin/QqAdminPage.js';
 import {
   interfaceOptions,
   MODEL_SLOTS,
@@ -54,7 +55,8 @@ export type Tab =
   | 'mcp'
   | 'content'
   | 'storage'
-  | 'operations';
+  | 'operations'
+  | 'qq';
 type Dashboard = { system: AdminSystemStatus; capabilities: AdminCapabilities; backups: AdminBackup[] };
 type IconName = 'overview' | 'persona' | 'models' | 'mcp' | 'content' | 'operations' | 'message' | 'cpu' | 'storage' | 'backup' | 'lock';
 
@@ -87,7 +89,8 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: I
   { group: '内容与系统', id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
   { group: '内容与系统', id: 'mcp', label: 'MCP 服务', description: '连接、工具与策略观测', icon: 'mcp' },
   { group: '内容与系统', id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
-  { group: '内容与系统', id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' }
+  { group: '内容与系统', id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' },
+  { group: '运行状态', id: 'qq', label: 'QQ 通道', description: '官方 Bot 通道与投递状态', icon: 'message' }
 ];
 
 export function adminPathForTab(tab: Tab): string {
@@ -114,7 +117,8 @@ const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
   life: { title: '她的生活', description: '她此刻在做什么、今天做过什么，以及她为什么还没主动开口。' },
   content: { title: '内容管理', description: '管理长期记忆、表情包、媒体和聊天记录。' },
   storage: { title: '存储治理', description: '预览并执行媒体清理，回收磁盘空间。' },
-  operations: { title: '运维与备份', description: '检查错误与后台任务，并管理数据备份。' }
+  operations: { title: '运维与备份', description: '检查错误与后台任务，并管理数据备份。' },
+  qq: { title: 'QQ 通道', description: 'QQ 官方 Bot 是唯一消息通道与出口；只显示状态摘要，Secret 永不显示。' }
 };
 
 function Icon({ name }: { name: IconName }) {
@@ -1358,6 +1362,8 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
                 ? <ModelsPanel onNotice={setNotice} />
                 : tab === 'mcp'
                   ? <McpAdminPage onNotice={setNotice} />
+                : tab === 'qq'
+                  ? <QqAdminPage onNotice={setNotice} />
                 : tab === 'content'
                   ? isContentSubroute(window.location.pathname) ? <ContentManagementPage onNotice={setNotice} /> : <ContentPanel onNotice={setNotice} />
                   : tab === 'storage'
@@ -1368,7 +1374,7 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
     <main className="admin-page admin-v2" data-testid="admin-dashboard" data-dirty={dirty || undefined} onInputCapture={(event) => {
       const target = event.target as HTMLInputElement;
       if (target instanceof HTMLInputElement && target.type === 'file') return;
-      if (target.closest('.admin-content-management, .admin-mcp-page')) return;
+      if (target.closest('.admin-content-management, .admin-mcp-page, .admin-qq-page')) return;
       setDirtyState(true);
     }} onSubmitCapture={() => setDirtyState(false)}>
       <div className="admin-shell">

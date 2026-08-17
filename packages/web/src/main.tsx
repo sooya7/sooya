@@ -16,16 +16,3 @@ createRoot(container).render(
     <AppShell />
   </StrictMode>
 );
-
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => {
-    void import('./lib/serviceWorkerUpdate.js')
-      .then(({ registerServiceWorkerUpdate }) =>
-        registerServiceWorkerUpdate((controller) => {
-          // App.tsx renders the prompt; the worker keeps waiting until the user answers.
-          window.dispatchEvent(new CustomEvent('sooya:sw-update-ready', { detail: controller }));
-        })
-      )
-      .catch(() => { /* PWA is optional */ });
-  });
-}

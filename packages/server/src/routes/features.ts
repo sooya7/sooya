@@ -6,7 +6,6 @@ import type { SooyaApp } from '../app.js';
 import { resolveReferencesDir } from '../app.js';
 import { requireAdminToken, requireChatToken } from './auth.js';
 import { mediaMeta, toMediaRef, type MediaRow } from '../db/repos/media.repo.js';
-import type { BrowserPushSubscription } from '../core/push.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from '../core/voice.js';
 import { fishCueForMood } from '../core/voice/fishCue.js';
 import { LifePolicySchema } from '../config/schema.js';
@@ -284,7 +283,6 @@ export function registerFeatureRoutes(app: SooyaApp): void {
     return { deleted: true, removedFile, referenceImages: config.getPersona().referenceImages };
   });
 
-  /* -------------------------------- push ----------------------------------- */
   /*
    * What she is doing, for the header in the client. Behind the chat guard
    * rather than the admin guard: this is hers to show the user, not a setting.
@@ -420,40 +418,6 @@ export function registerFeatureRoutes(app: SooyaApp): void {
         proactiveMode: settings.proactiveMode ?? 'auto'
       }
     };
-  });
-
-  server.get('/api/push/public-key', chatGuard, async () => ({ publicKey: services.push.publicKey(), status: services.push.status() }));
-  server.get('/api/push/status', chatGuard, async () => services.push.status());
-  server.post('/api/push/subscribe', chatGuard, async (req, reply) => {
-    const parsed = z.object({
-      endpoint: z.string().url().max(2048),
-      expirationTime: z.number().nullable().optional(),
-      keys: z.object({ p256dh: z.string().min(8).max(512), auth: z.string().min(4).max(256) })
-    }).safeParse(req.body);
-    if (!parsed.success) {
-      reply.code(400);
-      return { error: 'bad_subscription', issues: parsed.error.issues };
-    }
-    services.push.subscribe(parsed.data as BrowserPushSubscription);
-    repos.audit.add('push', 'subscribed', new URL(parsed.data.endpoint).origin);
-    return { subscribed: true, status: services.push.status() };
-  });
-  server.post('/api/push/unsubscribe', chatGuard, async (req, reply) => {
-    const parsed = z.object({ endpoint: z.string().url().max(2048) }).safeParse(req.body);
-    if (!parsed.success) {
-      reply.code(400);
-      return { error: 'bad_request' };
-    }
-    return { unsubscribed: services.push.unsubscribe(parsed.data.endpoint), status: services.push.status() };
-  });
-  server.post('/api/push/visibility', chatGuard, async (req, reply) => {
-    const parsed = z.object({ endpoint: z.string().url().max(2048), visible: z.boolean() }).safeParse(req.body);
-    if (!parsed.success) {
-      reply.code(400);
-      return { error: 'bad_request' };
-    }
-    services.push.setVisibility(parsed.data.endpoint, parsed.data.visible);
-    return { ok: true };
   });
 
   /* -------------------------------- gallery -------------------------------- */

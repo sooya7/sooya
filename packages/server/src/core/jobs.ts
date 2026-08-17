@@ -14,7 +14,6 @@ import { LifeSimEngine } from './life2/engine.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ChatProvider } from '../providers/types.js';
 import type { ConfigStore } from '../config/store.js';
-import type { PushService } from './push.js';
 import type { ProactiveComposer } from './proactive.js';
 import type { StorageService } from './storage.js';
 import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
@@ -27,6 +26,7 @@ import { STICKER_ANALYSIS_VERSION } from './stickers/constants.js';
 import { stickerSemanticText } from './stickers/semantic-text.js';
 import type { StickerUserMeaningLearner } from './stickers/user-meaning.js';
 import type { WorldPresenceCoordinator } from './world-presence.js';
+import type { QqDeliveryService } from '../channels/qq/outbound.js';
 import { JOB_PRIORITY } from './job-priority.js';
 import { nowIso } from '../util/ids.js';
 
@@ -127,9 +127,9 @@ export interface JobDeps {
   stickerUserMeaning: StickerUserMeaningLearner;
   config: ConfigStore;
   reachOutEnabled: boolean;
-  push: PushService;
   storage: StorageService;
   tmpDirs: string[];
+  qqDelivery?: QqDeliveryService;
 }
 
 export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
@@ -278,12 +278,18 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     }
   });
 
-  worker.register('push.reply', async (payload) => {
-    const messageId = String(payload.messageId ?? '');
-    const message = deps.messages.get(messageId);
-    if (!message || message.role !== 'assistant' || message.status !== 'sent') return;
-    const result = await deps.push.notifyReply(message);
-    if (result.delivered || result.removed || result.failed) deps.bus.publish('push.updated', { ...result });
+  /*
+   * 通道投递（QQ 单通道，docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8.3）：
+   * 回复完成后只入队这一个 job，其余（outbox、幂等、重试、媒体）都在
+   * QqDeliveryService 内完成。重试由其内部按退避重新入队 runAfter 任务，
+   * 不依赖本 job 的 maxAttempts 阶梯。
+   */
+  worker.register('qq.deliver', async (payload) => {
+    if (!deps.qqDelivery) return;
+    await deps.qqDelivery.deliver({
+      messageId: String(payload.messageId ?? ''),
+      conversationId: payload.conversationId ? String(payload.conversationId) : undefined
+    });
   });
 
   /*

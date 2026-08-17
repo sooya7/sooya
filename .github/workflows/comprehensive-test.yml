@@ -131,7 +131,6 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name sooya-ci -p 8788:8788 \
-            -e WEB_CHAT_TOKEN=ci-chat-token \
             -e ADMIN_API_TOKEN=ci-admin-token \
             -e MEMORY_BACKEND=legacy \
             -e MCP_CONNECT_ON_START=false \
@@ -154,14 +153,16 @@ jobs:
             sleep 1
           done
 
-          # Readiness alone only proves that the process started. Exercise the
-          # three entry points a real deployment needs: static web, chat API and
-          # authenticated admin API.
-          curl -fsS http://127.0.0.1:8788/ >/dev/null
-          curl -fsS -H 'x-sooya-token: ci-chat-token' \
-            http://127.0.0.1:8788/api/bootstrap >/dev/null
+          # QQ 单通道（§30）：Web 只保留 Admin，聊天走 QQ 官方 Bot 而非 Web Chat API。
+          # Readiness alone only proves that the process started. Exercise the real
+          # entry points: readiness, Admin 静态页, 鉴权 Admin API 与 QQ 状态摘要。
+          curl -fsS http://127.0.0.1:8788/health/ready >/dev/null
+          curl -fsS http://127.0.0.1:8788/admin >/dev/null
           curl -fsS -H 'x-admin-token: ci-admin-token' \
             http://127.0.0.1:8788/api/admin/persona >/dev/null
+          # QQ 未配置时应返回配置状态摘要（disabled），不联网、不失败。
+          curl -fsS -H 'x-admin-token: ci-admin-token' \
+            http://127.0.0.1:8788/api/admin/qq/status >/dev/null
 
   dependency-audit:
     name: Dependency vulnerability audit

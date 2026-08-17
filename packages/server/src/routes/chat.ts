@@ -2,8 +2,8 @@ import { z } from 'zod';
 import type { FastifyReply } from 'fastify';
 import type { SooyaApp } from '../app.js';
 import { requireChatToken } from './auth.js';
-import { SendMessageSchema, type ChatMessage, type InputPart } from '../core/types.js';
-import { parseUserDirectives } from '../core/directives.js';
+import { SendMessageSchema } from '../core/types.js';
+import { MessageIngressValidationError, toIngressInput } from '../core/message-ingress.js';
 import { maintenanceCoordinator } from '../core/maintenance.js';
 
 const HistoryQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30), before: z.coerce.number().int().min(0).optional(), since: z.coerce.number().int().min(0).optional() });
@@ -81,48 +81,17 @@ export function registerChatRoutes(app: SooyaApp): void {
     if (blocked) return blocked;
     const parsed = SendMessageSchema.safeParse(req.body);
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
-    const input = parsed.data;
-    const validation = validateInput(app, input.content, input.replyTo);
-    if (validation) { reply.code(400); return validation; }
-    const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
-    const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
-    const tx = app.db.transaction(() => {
-      const parts = storedInputParts(app, input.content);
-      const created = repos.messages.createInTransaction({
-        role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-        parts,
-        meta: { directives }
-      });
-      if (created.created) {
-        enqueueStickerMeaningJobs(app, parts);
+    try {
+      const result = await services.ingress.accept(toIngressInput(parsed.data));
+      const message = repos.messages.get(result.messageId)!;
+      if (result.duplicate) {
+        return { message, duplicate: true, replyPending: result.replyPending, ...(result.replyPending ? { batchId: result.batchId } : {}) };
       }
-      const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
-      const admission = created.created
-        ? repos.replyBatches.appendOrCreateMessage(
-            created.message.id,
-            services.replyCoordinator.dueAt(Date.now(), false),
-            services.replyCoordinator.dueAt(Date.now(), true)
-          )
-        : null;
-      return { ...created, event, admission };
-    });
-    const { message, created, event, admission } = tx();
-    if (!created) {
-      const batch = repos.replyBatches.findByMessage(message.id);
-      const pending = batch !== undefined
-        && (batch.status === 'collecting' || batch.status === 'queued'
-          || batch.status === 'generating' || batch.status === 'publishing');
-      return { message, duplicate: true, replyPending: pending, ...(pending ? { batchId: batch.id } : {}) };
+      return { message, duplicate: false, replyPending: true };
+    } catch (error) {
+      if (error instanceof MessageIngressValidationError) { reply.code(400); return error.details; }
+      throw error;
     }
-    services.bus.fanout(event!);
-    const options = { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT };
-    if (admission) {
-      // Never block the HTTP response on coordination; errors are logged.
-      void services.replyCoordinator.onMessageAccepted(admission.action, admission.batch.id, options).catch((error) => {
-        repos.errors.add('reply-coordinator', error instanceof Error ? error.message : String(error));
-      });
-    }
-    return { message, duplicate: false, replyPending: true };
   });
 
   server.post('/api/messages/sync', { preHandler: auth }, async (req, reply) => {
@@ -130,46 +99,15 @@ export function registerChatRoutes(app: SooyaApp): void {
     if (blocked) return blocked;
     const parsed = SendMessageSchema.safeParse(req.body);
     if (!parsed.success) { reply.code(400); return { error: 'bad_request', issues: parsed.error.issues }; }
-    const input = parsed.data;
-    const validation = validateInput(app, input.content, input.replyTo);
-    if (validation) { reply.code(400); return validation; }
-    const text = input.content.filter((part) => part.type === 'text').map((part) => (part as { text: string }).text).join('\n');
-    const directives = { ...parseUserDirectives(text), ...(input.directives ?? {}) };
-    const tx = app.db.transaction(() => {
-      const parts = storedInputParts(app, input.content);
-      const created = repos.messages.createInTransaction({
-        role: 'user', status: 'sent', clientMsgId: input.clientMsgId, replyTo: input.replyTo ?? null,
-        parts,
-        meta: { directives }
-      });
-      if (created.created) {
-        enqueueStickerMeaningJobs(app, parts);
-      }
-      const event = created.created ? services.bus.persist('message.received', { message: created.message }) : null;
-      const admission = created.created
-        ? repos.replyBatches.appendOrCreateMessage(
-            created.message.id,
-            services.replyCoordinator.dueAt(Date.now(), false),
-            services.replyCoordinator.dueAt(Date.now(), true)
-          )
-        : null;
-      return { ...created, event, admission };
-    });
-    const { message, created, event, admission } = tx();
-    if (!created) return { message, duplicate: true, reply: findReply(app, message.id) };
-    services.bus.fanout(event!);
-    const options = { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT };
-    // The sync endpoint waits for the reply: tests and the API contract
-    // expect the finished assistant message (with its outcome) in the body.
-    const outcome = admission
-      ? await services.replyCoordinator.enqueue(admission.batch.id, options)
-      : null;
-    return {
-      message,
-      duplicate: false,
-      reply: outcome?.messageId ? repos.messages.get(outcome.messageId) : null,
-      outcome
-    };
+    try {
+      const result = await services.ingress.acceptAndReply(toIngressInput(parsed.data));
+      const message = repos.messages.get(result.messageId)!;
+      if (result.duplicate) return { message, duplicate: true, reply: result.reply };
+      return { message, duplicate: false, reply: result.reply, outcome: result.outcome };
+    } catch (error) {
+      if (error instanceof MessageIngressValidationError) { reply.code(400); return error.details; }
+      throw error;
+    }
   });
 
   server.post('/api/reply-batches/:id/retry', { preHandler: auth }, async (req, reply) => {
@@ -310,53 +248,4 @@ function rejectBlockedWrite(reply: FastifyReply): Record<string, unknown> | null
   const state = maintenanceCoordinator.state();
   reply.code(503).header('retry-after', '1');
   return { error: 'maintenance_in_progress', operation: state?.operation ?? 'maintenance', message: '系统正在执行恢复或清理，请稍后重试' };
-}
-
-function validateInput(app: SooyaApp, content: Array<{ type: string; mediaId?: string }>, replyTo?: string): Record<string, unknown> | null {
-  for (const part of content) {
-    if (!part.mediaId) continue;
-    const media = app.repos.media.get(part.mediaId);
-    if (!media) return part.type === 'sticker' ? { error: 'unknown_sticker', mediaId: part.mediaId } : { error: 'unknown_media', mediaId: part.mediaId };
-    if (part.type === 'sticker') {
-      const sticker = app.repos.stickers.getByMediaId(part.mediaId);
-      if (media.kind !== 'sticker' || !sticker || !sticker.enabled || !app.services.mediaStore.exists(media)) return { error: 'unknown_sticker', mediaId: part.mediaId };
-    }
-  }
-  if (replyTo && !app.repos.messages.get(replyTo)) return { error: 'unknown_reply_target', replyTo };
-  return null;
-}
-
-function storedInputParts(app: SooyaApp, content: Array<InputPart>): Array<{
-  type: InputPart['type']; text?: string | null; mediaId?: string | null; status: 'sent'; duration: null; transcript: null; meta?: Record<string, unknown>
-}> {
-  return content.map((part) => {
-    if (part.type !== 'sticker') return { type: part.type, text: part.type === 'text' ? part.text : null, mediaId: 'mediaId' in part ? part.mediaId : null, status: 'sent', duration: null, transcript: null };
-    const sticker = app.repos.stickers.getByMediaId(part.mediaId)!;
-    return {
-      type: 'sticker', text: null, mediaId: part.mediaId, status: 'sent', duration: null, transcript: null,
-      meta: { stickerId: sticker.id, stickerName: sticker.name, stickerMeaning: (sticker.description || sticker.emotion).slice(0, 120) }
-    };
-  });
-}
-
-function enqueueStickerMeaningJobs(app: SooyaApp, parts: Array<{ type: string; meta?: Record<string, unknown> }>): void {
-  if (!app.config.getPersona().stickerPolicy.learnUserMeaning) return;
-  for (const part of parts) {
-    if (part.type !== 'sticker') continue;
-    const id = String(part.meta?.stickerId ?? '');
-    const sticker = app.repos.stickers.markUserUsed(id);
-    if (sticker && sticker.userUseCount >= 3 && sticker.userUseCount % 3 === 0) {
-      app.repos.jobs.enqueue('sticker.user-meaning.learn', { stickerId: id }, { maxAttempts: 2 });
-    }
-  }
-}
-
-function findReply(app: SooyaApp, userMessageId: string): ChatMessage | null {
-  const batch = app.repos.replyBatches.findByMessage(userMessageId);
-  if (batch?.assistant_message_id) return app.repos.messages.get(batch.assistant_message_id) ?? null;
-  for (const message of app.repos.messages.recent(20).reverse()) {
-    const batchMessageIds = message.meta?.batchMessageIds;
-    if (message.role === 'assistant' && (message.replyTo === userMessageId || (Array.isArray(batchMessageIds) && batchMessageIds.includes(userMessageId)))) return message;
-  }
-  return null;
 }

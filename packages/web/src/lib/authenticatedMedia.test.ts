@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import {
   AuthenticatedMediaError,
   blobForMediaUrl,
@@ -20,7 +18,6 @@ import {
 } from './authenticatedMedia.js';
 import { mediaUrl } from './api.js';
 import { adminMediaUrl } from './features.js';
-import { buildStreamRequest } from './stream.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -67,43 +64,6 @@ describe('authenticated media', () => {
     expect(adminMediaUrl('/api/media/media_1?admin_token=admin-secret#leak')).toBe('/api/media/media_1');
   });
 
-  it('authenticates the event stream by header without putting credentials in its URL', () => {
-    const request = buildStreamRequest(42, 'chat-secret');
-    expect(request.url).toBe('/api/stream?lastEventId=42');
-    expect(request.url).not.toContain('chat-secret');
-    expect(new Headers(request.init.headers).get('authorization')).toBe('Bearer chat-secret');
-    expect(request.init.cache).toBe('no-store');
-  });
-
-  it('keeps protected media network-only in the service worker', () => {
-    const source = fs.readFileSync(fileURLToPath(new URL('../../public/sw.js', import.meta.url)), 'utf8');
-    const mediaBranch = source.slice(source.indexOf("url.pathname.startsWith('/api/media/')"), source.indexOf("if (url.pathname.startsWith('/api/'))"));
-    expect(mediaBranch).toContain('fetch(request)');
-    expect(mediaBranch).not.toContain('cache.put');
-    expect(mediaBranch).not.toContain('cache.match');
-    // The shell list is injected at build time; the source must keep the placeholder
-    // and derive the cache name from it, so a new build cannot reuse a stale cache.
-    expect(source).toContain('const BUILD_MANIFEST = /*__SOOYA_BUILD_MANIFEST__*/');
-    expect(source).toContain('const SHELL_CACHE = `sooya-shell-${BUILD_MANIFEST.version}`');
-    expect(source).toContain("keys.filter((key) => key !== SHELL_CACHE && key.startsWith('sooya'))");
-  });
-
-  it('hands over only when the page asks, and keeps the old shell until it confirms', () => {
-    const source = fs.readFileSync(fileURLToPath(new URL('../../public/sw.js', import.meta.url)), 'utf8');
-    const install = source.slice(source.indexOf("addEventListener('install'"), source.indexOf("addEventListener('activate'"));
-    const activate = source.slice(source.indexOf("addEventListener('activate'"), source.indexOf("addEventListener('message'"));
-    // Taking over unasked would swap the app out from under a live conversation.
-    // Matching the call, not the word, so an explanatory comment cannot satisfy it.
-    expect(install).not.toMatch(/skipWaiting\s*\(/);
-    // Deleting the previous shell before the reload succeeds leaves nothing to fall back to.
-    expect(activate).not.toMatch(/caches\.delete\s*\(/);
-    expect(activate).not.toMatch(/deleteObsoleteShellCaches\s*\(/);
-    expect(source).toContain("if (type === 'SKIP_WAITING')");
-    expect(source).toContain("if (type === 'CLIENT_READY')");
-    expect(source).toContain('event.waitUntil(deleteObsoleteShellCaches())');
-    // Credentialed requests are per-user and must never reach a shared cache.
-    expect(source).toContain("request.headers.has('authorization') || url.searchParams.has('token')");
-  });
   it('uses scoped headers without putting credentials in the URL', async () => {
     const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:media-1');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);

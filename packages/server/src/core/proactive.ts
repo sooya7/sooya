@@ -1,8 +1,11 @@
-import type { MessageRepo } from '../db/repos/message.repo.js';
+import type { MessageRepo, CreatePartInput } from '../db/repos/message.repo.js';
 import type { ProactiveAttemptRepo, ProactiveMode } from '../db/repos/proactive.repo.js';
 import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
 import type { LifeLogRow } from '../db/repos/life.repo.js';
 import type { MomentRepo, MomentImageKind } from '../db/repos/moment.repo.js';
+import type { JobRepo } from '../db/repos/misc.repo.js';
+import type { ChannelDeliveryRepo } from '../db/repos/channel-delivery.repo.js';
+import { QQ_CHANNEL_NAME } from '../channels/qq/types.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ConfigStore } from '../config/store.js';
 import type { LifeRuntime } from './life.js';
@@ -111,6 +114,10 @@ export class ProactiveComposer {
       locations: LifeLocationRepo;
       worldSnapshot: () => WorldSnapshot;
       toolRuntime?: ToolCallRuntime;
+      /** QQ 单通道：主动消息要成为可投递的 assistant 消息（§12.2）。 */
+      jobs?: JobRepo;
+      deliveries?: ChannelDeliveryRepo;
+      qqDeliveryEnabled?: boolean;
     }
   ) {}
 
@@ -141,6 +148,10 @@ export class ProactiveComposer {
     // User replies still get model/provider priority. The candidate remains
     // unshared and will be retried on a later Life tick.
     if (this.deps.replyBatches.openBatch()) return { reach: false, reason: 'reply_in_progress', ...base };
+    // §12.3：QQ 通道还有待投递（用户回复/上一条主动消息尚未发出）时，不插队。
+    if (this.deps.qqDeliveryEnabled && this.deps.deliveries && this.deps.deliveries.hasInFlight(QQ_CHANNEL_NAME)) {
+      return { reach: false, reason: 'qq_delivery_in_flight', ...base };
+    }
     if (this.recentlyDiscussed(decision.candidate, recent) || this.recentlyShared(decision.candidate)) {
       return { reach: false, reason: 'recent_topic', ...base };
     }
@@ -244,7 +255,31 @@ export class ProactiveComposer {
             return { moment, event };
           });
           this.deps.bus.fanout(persisted.event);
-          this.deps.attempts.update(attempt.id, { detail: { ...prepared.detail, destination: 'moments' } });
+          let proactiveMessageId: string | null = null;
+          if (this.deps.qqDeliveryEnabled && this.deps.jobs) {
+            // §12.2：Moments 仍是内部时间线；QQ 启用时再把同一内容发布成可投递的
+            // assistant 消息并走 durable qq.deliver outbox。发布失败不影响 Moment
+            // 已持久化（best-effort，Admin 仍可观察）。
+            const published = this.deps.coordinator.publishProactiveMessage({
+              parts: this.proactiveParts(sharePlan.text, prepared.imageMediaId),
+              meta: {
+                proactive: true,
+                candidateId: candidate.id,
+                momentId: persisted.moment.id,
+                activity: candidate.activity
+              },
+              onPersisted: () => undefined
+            });
+            if (published) {
+              proactiveMessageId = published.message.id;
+              this.deps.jobs.enqueue('qq.deliver', { messageId: published.message.id });
+              this.deps.metrics?.record('qq', 'proactive.sent');
+            }
+          }
+          this.deps.attempts.update(attempt.id, {
+            messageId: proactiveMessageId,
+            detail: { ...prepared.detail, destination: 'moments', proactiveMessageId }
+          });
           return { kind: 'sent', messageId: persisted.moment.id };
         } catch (error) {
           if (isUniqueConstraint(error)) {
@@ -310,6 +345,13 @@ export class ProactiveComposer {
       fallbackReason: null,
       sendSuccess: false
     };
+  }
+
+  /** 主动消息内容段：文本（+ 可选图片）。走 coordinator.publishProactiveMessage 落库。 */
+  private proactiveParts(text: string, imageMediaId: string | null): CreatePartInput[] {
+    const parts: CreatePartInput[] = [{ type: 'text', text, status: 'sent' }];
+    if (imageMediaId) parts.push({ type: 'image', mediaId: imageMediaId, status: 'sent' });
+    return parts;
   }
 
   private resolveMode(requested?: ProactiveMode): ProactiveMode {

@@ -84,15 +84,13 @@ export default async function globalSetup(): Promise<void> {
       CONFIG_DIR: configDir,
       WEB_DIR: path.join(ROOT, 'packages/web/dist'),
       ALLOW_PRIVATE_NETWORK_FETCH: 'true',
-      WEB_CHAT_TOKEN: 'e2e-chat-token',
       ADMIN_API_TOKEN: 'e2e-admin-token',
       // E2E runs SOOYA in isolation; the production default is Ombre, but no
       // external memory service is part of this test fixture.
       MEMORY_BACKEND: 'legacy',
       MCP_CONNECT_ON_START: 'false',
-      // The next-phase specs expect the e2e server to run with all next-phase
-      // flags on (see next-phase.e2e.ts), proving the stable chat specs are
-      // unaffected by them. Default-off behaviour is covered by the unit suites.
+      // The e2e specs drive the Admin / Gallery surfaces (QQ 单通道后 Web 只保留
+      // 管理能力)），因此服务器带 next-phase 旗标运行。默认关闭的行为由单测覆盖。
       WORLD_CONTEXT_ENABLED: 'true',
       LOCATION_MODEL_ENABLED: 'true',
       WEATHER_ENABLED: 'true',
