@@ -19,9 +19,11 @@ const HERE = __dirname;
 /**
  * Browser end-to-end tests.
  *
- * The suite boots a real SOOYA server (built server + built web client) backed
- * by a local OpenAI-compatible mock model, so streaming, media files, SSE and
- * the PWA are exercised over real HTTP, not mocked in the page.
+ * QQ 单通道后（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §13/§14）：Web 只保留
+ * Admin / Gallery，普通聊天与 PWA 已下线。该套件启动一个真实 SOOYA server
+ * （built server + built web client）+ 本地 OpenAI-compatible mock model，
+ * 只覆盖仍然存在的浏览器界面（管理后台 / 图库）；QQ 消息链路由
+ * server 集成测试（packages/server/test/qq-*.test.ts）覆盖，不在浏览器里测。
  *
  * General product behaviour runs once on desktop. Responsive coverage has its
  * own mobile contract in mobile-admin-ux.e2e.ts, while theme.e2e.ts explicitly

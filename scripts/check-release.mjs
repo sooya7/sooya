@@ -92,12 +92,10 @@ const REQUIRED_PATHS = [
   'packages/server/src/app.ts',
   'packages/server/test',
   'packages/server/test/regression.test.ts',
-  'packages/web/src/App.tsx',
+  // QQ 单通道（§13/§14）：Web 只保留 Admin，入口是 AppShell 而非已删除的聊天 App.tsx。
+  'packages/web/src/AppShell.tsx',
   'packages/web/index.html',
-  'packages/web/public/manifest.webmanifest',
-  'packages/web/public/sw.js',
   'assets/stickers/manifest.json',
-  'e2e/chat.e2e.ts',
   'scripts/make-release.mjs'
 ];
 

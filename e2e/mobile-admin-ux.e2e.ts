@@ -1,18 +1,16 @@
 import { expect, test } from '@playwright/test';
 
 const ADMIN_TOKEN = 'e2e-admin-token';
-const CHAT_TOKEN = 'e2e-chat-token';
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
 test.use({ viewport: { width: 375, height: 812 } });
 
-test('375px 下管理子页与表情面板保持可读且按需加载', async ({ page, request }, testInfo) => {
+test('375px 下管理子页保持可读且按需加载', async ({ page, request }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', '移动端布局只在 mobile project 验证');
 
-  await page.addInitScript(({ chat, admin }) => {
-    localStorage.setItem('sooya.token', chat);
+  await page.addInitScript(({ admin }) => {
     localStorage.setItem('sooya.admin-token', admin);
-  }, { chat: CHAT_TOKEN, admin: ADMIN_TOKEN });
+  }, { admin: ADMIN_TOKEN });
 
   for (const slot of ['assistant', 'user'] as const) {
     const uploaded = await request.post(`/api/admin/persona/avatar/${slot}`, {
@@ -72,21 +70,5 @@ test('375px 下管理子页与表情面板保持可读且按需加载', async ({
   await expect(ttsPreview).toBeVisible();
   await expect(ttsPreview.getByRole('button', { name: '试听' })).toBeEnabled();
   expect(await ttsPreview.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
-
-  await page.goto('/');
-  await expect(page.getByTestId('connection-status')).toContainText('在线');
-  const beforeStickers = requested.length;
-  await page.getByTestId('btn-sticker').click();
-  const choices = page.locator('.sticker-choice');
-  await expect(choices.nth(8)).toBeVisible();
-  const panelBox = await page.getByTestId('sticker-panel').boundingBox();
-  const thirdRowBox = await choices.nth(8).boundingBox();
-  expect(panelBox).not.toBeNull();
-  expect(thirdRowBox).not.toBeNull();
-  expect(thirdRowBox!.y + thirdRowBox!.height).toBeLessThanOrEqual(panelBox!.y + panelBox!.height);
-  await expect.poll(() => requested.slice(beforeStickers).some((url) => {
-    const parsed = new URL(url);
-    return parsed.pathname.startsWith('/api/media/') && parsed.searchParams.has('w');
-  })).toBeTruthy();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

@@ -1,13 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const CHAT_TOKEN = 'e2e-chat-token';
 const ADMIN_TOKEN = 'e2e-admin-token';
 
 async function installTokens(page: Page): Promise<void> {
-  await page.addInitScript(({ chat, admin }) => {
-    localStorage.setItem('sooya.token', chat);
+  await page.addInitScript(({ admin }) => {
     localStorage.setItem('sooya.admin-token', admin);
-  }, { chat: CHAT_TOKEN, admin: ADMIN_TOKEN });
+  }, { admin: ADMIN_TOKEN });
 }
 
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {
@@ -21,9 +19,9 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 test.beforeEach(async ({ page }) => { await installTokens(page); });
 
 test('follows the system light and warm-dark palettes', async ({ page }) => {
+  // 根 CSS 变量是全局主题；Admin 页面加载后即可验证（Web Chat 已下线）。
   await page.emulateMedia({ colorScheme: 'light' });
-  await page.goto('/');
-  await expect(page.getByTestId('scroller')).toBeVisible();
+  await page.goto('/admin');
   expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()))
     .toBe('#f8f3f8');
 
@@ -31,16 +29,12 @@ test('follows the system light and warm-dark palettes', async ({ page }) => {
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()))
     .toBe('#1b171d');
   const dark = await page.evaluate(() => ({
-    topbar: getComputedStyle(document.querySelector('.topbar')!).backgroundColor,
-    composer: getComputedStyle(document.querySelector('.composer')!).backgroundColor,
     body: getComputedStyle(document.body).color
   }));
-  expect(dark.topbar).not.toBe('rgb(255, 255, 255)');
-  expect(dark.composer).not.toBe('rgb(255, 255, 255)');
   expect(dark.body).toBe('rgb(244, 237, 245)');
 });
 
-test('themes chat, gallery and admin without horizontal overflow', async ({ page }) => {
+test('themes gallery and admin without horizontal overflow', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   for (const viewport of [
     { width: 375, height: 812 },
@@ -48,12 +42,6 @@ test('themes chat, gallery and admin without horizontal overflow', async ({ page
     { width: 1280, height: 860 }
   ]) {
     await page.setViewportSize(viewport);
-
-    await page.goto('/');
-    await expect(page.getByTestId('scroller')).toBeVisible();
-    await expectNoHorizontalOverflow(page);
-    const appWidth = await page.locator('.app').evaluate((element) => element.getBoundingClientRect().width);
-    expect(appWidth).toBeLessThanOrEqual(900);
 
     await page.goto('/gallery');
     await expect(page.locator('.gallery-page')).toBeVisible();
@@ -67,7 +55,7 @@ test('themes chat, gallery and admin without horizontal overflow', async ({ page
 
 test('reduces shimmer and transition motion without hiding loading surfaces', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'dark' });
-  await page.goto('/');
+  await page.goto('/admin');
   const motion = await page.evaluate(() => {
     const placeholder = document.createElement('span');
     placeholder.className = 'image-part-placeholder';

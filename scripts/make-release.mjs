@@ -46,8 +46,7 @@ const INCLUDE = [
   'packages/web/tsconfig.json',
   'packages/web/vite.config.ts',
   'packages/web/index.html',
-  'packages/web/src',
-  'packages/web/public'
+  'packages/web/src'
 ];
 
 /** Never copied, at any depth. */
