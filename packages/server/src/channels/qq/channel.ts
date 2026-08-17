@@ -31,6 +31,7 @@ export interface QqChannelDeps {
   identities: ChannelIdentityRepo;
   ingress: MessageIngressService;
   errors: ErrorLogRepo;
+  metrics?: import('../../core/metrics.js').MetricsService;
 }
 
 export interface QqDispatchOutcome {
@@ -85,6 +86,7 @@ export class QqChannel {
     });
     if (!claimed.inserted) {
       // 重推 / 重放：幂等消费，不重复写消息、不重复触发模型。
+      this.deps.metrics?.record('qq', 'inbound.duplicate');
       return { ack: { op: QQ_OP_ACK }, eventStatus: claimed.row.status };
     }
     try {
@@ -94,6 +96,7 @@ export class QqChannel {
           { externalUserId: openid, externalConversationId: openid, scene: 'c2c' }
         );
         if (identity.role === 'denied') {
+          this.deps.metrics?.record('qq', 'inbound.rejected_user');
           this.deps.events.markRejected(QQ_CHANNEL_NAME, eventId, identity.reason);
           return { ack: { op: QQ_OP_ACK }, eventStatus: 'rejected' };
         }
@@ -107,6 +110,7 @@ export class QqChannel {
         const replyTo = resolveQuoteReplyTo(quoted, this.deps.events);
         const result = await this.deps.ingress.accept({ ...inbound.ingress, replyTo });
         this.deps.events.markProcessed(QQ_CHANNEL_NAME, eventId, result.messageId);
+        this.deps.metrics?.record('qq', 'inbound.accepted');
         return { ack: { op: QQ_OP_ACK }, eventStatus: 'processed' };
       }
       // 其它事件类型暂不订阅；记录后视为已消费，避免平台反复重推。

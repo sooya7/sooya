@@ -85,6 +85,7 @@ import { OmbreMemoryBridge } from './core/ombre-memory.js';
 import { OmbreAdminService } from './core/ombre-admin.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerQqRoutes } from './routes/qq.js';
+import { registerQqAdminRoutes } from './routes/qq-admin.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -584,7 +585,8 @@ repos.jobs.enqueue(
     events: repos.channelEvents,
     identities: repos.channelIdentities,
     ingress,
-    errors: repos.errors
+    errors: repos.errors,
+    metrics
   });
 
   const qqApi = new QqApiClient(qqConfig, { fetchImpl });
@@ -598,7 +600,8 @@ repos.jobs.enqueue(
     mediaStore,
     jobs: repos.jobs,
     errors: repos.errors,
-    client: qqApi
+    client: qqApi,
+    metrics
   });
 
   const proactive = new ProactiveComposer({
@@ -862,13 +865,14 @@ repos.jobs.enqueue(
   registerHealthRoutes(app);
   registerQqRoutes(app);
   registerChatRoutes(app);
+  registerAdminRoutes(app);
+  registerQqAdminRoutes(app);
   registerMediaRoutes(app);
   registerStreamRoutes(app);
   registerVoiceRoutes(app);
   registerLifeAdminRoutes(app);
   registerThoughtRoutes(app);
   registerMomentRoutes(app);
-  registerAdminRoutes(app);
   registerFeatureRoutes(app);
 
   const configuredWebDir = env.webDir;

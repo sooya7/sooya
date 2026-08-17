@@ -445,6 +445,50 @@ export interface MetricsDistribution {
 
 export interface MetricAggregate { category: string; metric: string; sum: number; count: number; avg: number; }
 
+/** QQ 通道状态（GET /api/admin/qq/status，UI 契约）。只含摘要，绝不含 Secret。 */
+export interface AdminQqStatus {
+  enabled: boolean;
+  env: 'sandbox' | 'production';
+  appIdSummary: string;
+  credentialConfigured: boolean;
+  allowedUserCount: number;
+  proactiveEnabled: boolean;
+  owner: { externalUserId: string; boundAt: string; lastSeenAt: string | null } | null;
+  counts: { pending: number; retry: number; sending: number; failed: number; sent: number };
+  metrics: MetricAggregate[];
+}
+
+export interface AdminQqEvent {
+  eventId: string;
+  eventType: string;
+  status: string;
+  errorCode: string | null;
+  messageId: string | null;
+  receivedAt: string;
+  processedAt: string | null;
+}
+
+export interface AdminQqDelivery {
+  id: string;
+  messageId: string;
+  externalConversationId: string;
+  status: string;
+  attempts: number;
+  nextRetryAt: string | null;
+  remoteMessageId: string | null;
+  lastErrorCode: string | null;
+  lastErrorSummary: string | null;
+  createdAt: string;
+  deliveredAt: string | null;
+}
+
+export interface AdminQqTestSendResult {
+  ok: boolean;
+  messageId?: string;
+  errorCode?: string;
+  errorSummary?: string;
+}
+
 export const adminApi = {
   system: () => adminRequest<AdminSystemStatus>('/api/admin/system'),
   capabilities: () => adminRequest<AdminCapabilities>('/api/admin/capabilities'),
@@ -587,5 +631,16 @@ export const adminApi = {
   metrics: (days: number) => adminRequest<{ aggregates: MetricAggregate[] }>(`/api/admin/metrics?days=${days}`),
   metricsDistributions: (days: number) =>
     adminRequest<{ distributions: MetricsDistribution[] }>(`/api/admin/metrics/distributions?days=${days}`),
+
+  /* ---- QQ 官方 Bot 通道（PR 6/8）---- */
+  qqStatus: () => adminRequest<AdminQqStatus>('/api/admin/qq/status'),
+  qqEvents: () => adminRequest<{ events: AdminQqEvent[] }>('/api/admin/qq/events'),
+  qqDeliveries: (status?: string) =>
+    adminRequest<{ deliveries: AdminQqDelivery[] }>(status ? `/api/admin/qq/deliveries?status=${encodeURIComponent(status)}` : '/api/admin/qq/deliveries'),
+  qqRetryDelivery: (id: string) =>
+    adminRequest<{ deliveryId: string; status: string }>(`/api/admin/qq/deliveries/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
+  qqTestSend: (content: string) =>
+    adminRequest<AdminQqTestSendResult>('/api/admin/qq/test-send', { method: 'POST', body: { content } }),
+  qqErrors: () => adminRequest<{ errors: Array<{ scope: string; message: string; detail: unknown; createdAt: string }> }>('/api/admin/qq/errors')
 
 };

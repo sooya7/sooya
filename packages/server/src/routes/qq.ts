@@ -39,6 +39,7 @@ export function registerQqRoutes(app: SooyaApp): void {
     const signature = req.headers['x-signature-ed25519'];
     const eventId = typeof payload.id === 'string' ? payload.id : null;
     if (!qq.verifyEvent(timestamp, signature, rawBody)) {
+      app.services.metrics?.record?.('qq', 'inbound.invalid_signature');
       app.repos.errors.add('qq.verify', 'rejected event push', {
         eventId,
         appId: qqAppIdSummary(qq.config.appId),
@@ -47,6 +48,7 @@ export function registerQqRoutes(app: SooyaApp): void {
       return reply.code(401).send({ error: 'unauthorized' });
     }
 
+    app.services.metrics?.record?.('qq', 'inbound.received');
     await qq.handleDispatch(payload);
     // 无论事件是否真正被消费，都回 op 12 确认收到；未消费的重复事件走 channel_event 幂等。
     return { op: QQ_OP_ACK };

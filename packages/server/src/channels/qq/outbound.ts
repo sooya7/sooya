@@ -34,6 +34,7 @@ export interface QqDeliveryDeps {
   jobs: JobRepo;
   errors: ErrorLogRepo;
   client: QqApiClient;
+  metrics?: import('../../core/metrics.js').MetricsService;
 }
 
 export class QqDeliveryService {
@@ -80,6 +81,7 @@ export class QqDeliveryService {
     const msgId = this.passiveReplyMsgId(row);
     let msgSeq = 1;
     let lastRemoteMessageId = '';
+    const startedAt = Date.now();
     try {
       if (text) {
         const sent = await this.deps.client.sendC2cTextMessage({ openid, content: text, msgId, msgSeq: msgId ? msgSeq : undefined });
@@ -92,6 +94,8 @@ export class QqDeliveryService {
         if (msgId) msgSeq += 1;
       }
       this.deps.deliveries.markSent(row.id, lastRemoteMessageId);
+      this.deps.metrics?.record('qq', 'outbound.sent');
+      this.deps.metrics?.record('qq', 'outbound.latency', Date.now() - startedAt);
       return 'sent';
     } catch (error) {
       return this.classifyFailure(error, row, input.messageId);
@@ -113,9 +117,11 @@ export class QqDeliveryService {
     try {
       const uploaded = await this.deps.client.uploadMedia({ openid, fileType: plan.fileType, bytes: plan.bytes, filename: plan.filename });
       const sent = await this.deps.client.sendC2cMediaMessage({ openid, fileUuid: uploaded.fileUuid, fileInfo: uploaded.fileInfo, msgId, msgSeq });
+      this.deps.metrics?.record('qq', 'media.upload_success');
       return sent.messageId;
     } catch (error) {
       // 媒体上传/发送失败：降级为文本，不让整条回复失败（§11.3）。
+      this.deps.metrics?.record('qq', 'media.upload_failed');
       this.deps.errors.add('qq.media', error instanceof Error ? error.message : String(error), {
         mediaId: part.mediaId,
         mime: media.mime,
@@ -153,19 +159,46 @@ export class QqDeliveryService {
     if (!retryable) {
       this.deps.deliveries.markFailed(row.id, code, summary);
       this.deps.errors.add('qq.send', summary, { messageId, code, retryable: false });
+      this.deps.metrics?.record('qq', 'outbound.failed');
       return 'failed';
     }
     const attempts = row.attempts; // claim 已 +1
     if (attempts >= MAX_DELIVERY_ATTEMPTS) {
       this.deps.deliveries.markFailed(row.id, code, `${summary} (attempts=${attempts})`);
       this.deps.errors.add('qq.send', summary, { messageId, code, attempts });
+      this.deps.metrics?.record('qq', 'outbound.failed');
       return 'failed';
     }
     this.deps.deliveries.markRetry(row.id, code, summary, attempts + 1);
     const nextRetryAt = this.deps.deliveries.getById(row.id)!.next_retry_at!;
     // 重新入队 durable job：runAfter 让 Worker 到期再拉；DB 侧 next_retry_at 兜底。
     this.deps.jobs.enqueue('qq.deliver', { messageId, conversationId: row.external_conversation_id }, { runAfter: nextRetryAt, maxAttempts: 1 });
+    this.deps.metrics?.record('qq', 'outbound.retry');
     return 'retry';
+  }
+
+  /** Admin 测试发送（§17）：发给绑定 owner，返回脱敏结果，绝不回传 token/Secret。 */
+  async testSendToOwner(content: string): Promise<{
+    ok: boolean;
+    messageId?: string;
+    errorCode?: string;
+    errorSummary?: string;
+  }> {
+    const owner = this.deps.identities.findOwner(QQ_CHANNEL_NAME);
+    if (!owner?.enabled) return { ok: false, errorCode: 'no_owner_bound', errorSummary: '还没有绑定授权用户' };
+    try {
+      const sent = await this.deps.client.sendC2cTextMessage({ openid: owner.external_user_id, content });
+      return { ok: true, messageId: sent.messageId };
+    } catch (error) {
+      const apiError = error instanceof QqApiError ? error : null;
+      const code =
+        apiError?.errCode !== null && apiError?.errCode !== undefined
+          ? `err_${apiError.errCode}`
+          : apiError?.httpStatus !== null && apiError?.httpStatus !== undefined
+            ? `http_${apiError.httpStatus}`
+            : 'network';
+      return { ok: false, errorCode: code, errorSummary: (error instanceof Error ? error.message : String(error)).slice(0, 200) };
+    }
   }
 
   /** Server 重启 / 长时间停摆恢复：把卡在 sending 的投递放回 pending，由下次扫描重投。 */

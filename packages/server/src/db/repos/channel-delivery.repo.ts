@@ -111,6 +111,18 @@ export class ChannelDeliveryRepo {
       .run(errorCode, errorSummary.slice(0, 500), nowIso(), id);
   }
 
+  /** Admin 手动重试：failed/retry 行重置为 pending，清空退避。 */
+  resetForRetry(id: string): boolean {
+    const result = this.db
+      .prepare(`
+        UPDATE channel_delivery
+        SET status = 'pending', next_retry_at = NULL, updated_at = ?
+        WHERE id = ? AND status IN ('failed', 'retry')
+      `)
+      .run(nowIso(), id);
+    return result.changes === 1;
+  }
+
   /** 是否有待投递/在途投递（冲突控制：QQ 还有未完成消息时不插队）。 */
   hasInFlight(channel: string): boolean {
     const row = this.db

@@ -273,6 +273,7 @@ export class ProactiveComposer {
             if (published) {
               proactiveMessageId = published.message.id;
               this.deps.jobs.enqueue('qq.deliver', { messageId: published.message.id });
+              this.deps.metrics?.record('qq', 'proactive.sent');
             }
           }
           this.deps.attempts.update(attempt.id, {
