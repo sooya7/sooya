@@ -1425,6 +1425,31 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 38,
+    name: 'channel_delivery',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE channel_delivery (
+          id                      TEXT PRIMARY KEY,
+          channel                 TEXT NOT NULL,
+          message_id              TEXT NOT NULL,
+          external_conversation_id TEXT NOT NULL,
+          status                  TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sending','retry','sent','failed')),
+          attempts                INTEGER NOT NULL DEFAULT 0,
+          next_retry_at           TEXT,
+          remote_message_id       TEXT,
+          last_error_code         TEXT,
+          last_error_summary      TEXT,
+          created_at              TEXT NOT NULL,
+          updated_at              TEXT NOT NULL,
+          delivered_at            TEXT
+        );
+        CREATE UNIQUE INDEX idx_channel_delivery_target ON channel_delivery(channel, message_id, external_conversation_id);
+        CREATE INDEX idx_channel_delivery_due ON channel_delivery(status, next_retry_at);
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

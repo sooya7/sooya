@@ -101,6 +101,13 @@ export class ChannelEventRepo {
       .get(remoteMessageId) as ChannelEventRow | undefined;
   }
 
+  /** 按 SOOYA 消息 id 反查（被动回复：从触发消息找到其 QQ 平台消息 id）。 */
+  findByMessageId(messageId: string): ChannelEventRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM channel_event WHERE message_id = ? ORDER BY received_at DESC LIMIT 1')
+      .get(messageId) as ChannelEventRow | undefined;
+  }
+
   markProcessed(channel: string, eventId: string, messageId: string | null): void {
     this.db
       .prepare(`
