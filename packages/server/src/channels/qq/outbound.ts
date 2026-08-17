@@ -3,16 +3,21 @@ import type { ErrorLogRepo } from '../../db/repos/misc.repo.js';
 import type { ChannelDeliveryRepo, ChannelDeliveryRow } from '../../db/repos/channel-delivery.repo.js';
 import type { ChannelEventRepo } from '../../db/repos/channel-event.repo.js';
 import type { ChannelIdentityRepo } from '../../db/repos/channel-identity.repo.js';
+import type { MediaRepo } from '../../db/repos/media.repo.js';
 import type { MessageRepo } from '../../db/repos/message.repo.js';
 import type { ReplyBatchRepo } from '../../db/repos/reply-batch.repo.js';
+import type { MediaStore } from '../../media/store.js';
+import type { MessagePart } from '../../core/types.js';
 import { QQ_CHANNEL_NAME } from './types.js';
 import { QqApiClient, QqApiError } from './client.js';
+import { prepareQqMedia } from './media.js';
 
 /*
- * 出站投递（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8-9）。
+ * 出站投递（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8-9、§11）。
  * ReplyCoordinator 不直接调 QQ API：回复完成后只入队 qq.deliver job，
  * 由这里读写 channel_delivery outbox、条件领取、调 QQ、记录/重试。
- * Life 主动消息在 PR5 走同一路径。
+ * 文本先发，随后逐个媒体（图片/语音/贴纸/文件）；媒体失败走降级
+ * （贴纸→文案、语音→文字稿、图片→跳过），不让整条回复失败。
  */
 export type QqDeliveryStatus = 'sent' | 'skipped' | 'retry' | 'failed';
 
@@ -24,6 +29,8 @@ export interface QqDeliveryDeps {
   events: ChannelEventRepo;
   messages: MessageRepo;
   replyBatches: ReplyBatchRepo;
+  media: MediaRepo;
+  mediaStore: MediaStore;
   jobs: JobRepo;
   errors: ErrorLogRepo;
   client: QqApiClient;
@@ -40,13 +47,12 @@ export class QqDeliveryService {
    */
   async deliver(input: { messageId: string; conversationId?: string }): Promise<QqDeliveryStatus> {
     const owner = this.deps.identities.findOwner(QQ_CHANNEL_NAME);
-    if (!owner || !owner.enabled) return 'skipped'; // 尚未绑定授权用户，等 PR5/授权后再投。
-    const externalConversationId = owner.external_user_id;
+    if (!owner || !owner.enabled) return 'skipped'; // 尚未绑定授权用户，等授权后再投。
 
     const { inserted, row } = this.deps.deliveries.enqueue({
       channel: QQ_CHANNEL_NAME,
       messageId: input.messageId,
-      externalConversationId
+      externalConversationId: owner.external_user_id
     });
     if (row.status === 'sent') return 'skipped';
     if (!inserted && row.status === 'failed') return 'failed'; // 历史失败不再自动复活
@@ -62,47 +68,104 @@ export class QqDeliveryService {
       .map((part) => part.text ?? '')
       .filter(Boolean)
       .join('\n');
-    if (!text) {
-      // 纯媒体回复（图片/语音/贴纸）由 PR4 处理；先标记失败让 Admin 可见，不静默吞掉。
-      this.deps.deliveries.markFailed(row.id, 'media_only_not_supported', 'assistant message has no text to deliver');
+    const mediaParts = message.content.filter(
+      (part) => part.type === 'image' || part.type === 'audio' || part.type === 'sticker' || part.type === 'file'
+    );
+    if (!text && mediaParts.length === 0) {
+      this.deps.deliveries.markFailed(row.id, 'nothing_to_deliver', 'assistant message has no text or media');
       return 'failed';
     }
 
+    const openid = owner.external_user_id;
     const msgId = this.passiveReplyMsgId(row);
+    let msgSeq = 1;
+    let lastRemoteMessageId = '';
     try {
-      const sent = await this.deps.client.sendC2cTextMessage({
-        openid: externalConversationId,
-        content: text,
-        msgId
-      });
-      this.deps.deliveries.markSent(row.id, sent.messageId);
+      if (text) {
+        const sent = await this.deps.client.sendC2cTextMessage({ openid, content: text, msgId, msgSeq: msgId ? msgSeq : undefined });
+        lastRemoteMessageId = sent.messageId;
+        if (msgId) msgSeq += 1;
+      }
+      for (const part of mediaParts) {
+        const remoteId = await this.deliverMediaPart(part, openid, msgId ? msgId : null, msgSeq);
+        if (remoteId) lastRemoteMessageId = remoteId;
+        if (msgId) msgSeq += 1;
+      }
+      this.deps.deliveries.markSent(row.id, lastRemoteMessageId);
       return 'sent';
     } catch (error) {
-      const apiError = error instanceof QqApiError ? error : null;
-      const code = apiError?.errCode !== null && apiError?.errCode !== undefined
+      return this.classifyFailure(error, row, input.messageId);
+    }
+  }
+
+  /** 单个媒体段投递；失败/不支持时降级，返回 null 表示未发出。 */
+  private async deliverMediaPart(
+    part: MessagePart,
+    openid: string,
+    msgId: string | null,
+    msgSeq: number
+  ): Promise<string | null> {
+    if (!part.mediaId) return null;
+    const media = this.deps.media.get(part.mediaId);
+    if (!media) return null;
+    const plan = await prepareQqMedia(this.deps.mediaStore, media);
+    if (!plan) return this.mediaFallback(part, media, openid, msgId, msgSeq);
+    try {
+      const uploaded = await this.deps.client.uploadMedia({ openid, fileType: plan.fileType, bytes: plan.bytes, filename: plan.filename });
+      const sent = await this.deps.client.sendC2cMediaMessage({ openid, fileUuid: uploaded.fileUuid, fileInfo: uploaded.fileInfo, msgId, msgSeq });
+      return sent.messageId;
+    } catch (error) {
+      // 媒体上传/发送失败：降级为文本，不让整条回复失败（§11.3）。
+      this.deps.errors.add('qq.media', error instanceof Error ? error.message : String(error), {
+        mediaId: part.mediaId,
+        mime: media.mime,
+        code: error instanceof QqApiError ? `err_${error.errCode ?? `http_${error.httpStatus}`}` : 'network'
+      });
+      return this.mediaFallback(part, media, openid, msgId, msgSeq);
+    }
+  }
+
+  /** 降级文本：贴纸→含义文案、语音→文字稿；都没有则跳过。 */
+  private async mediaFallback(
+    part: MessagePart,
+    media: { transcript: string | null },
+    openid: string,
+    msgId: string | null,
+    msgSeq: number
+  ): Promise<string | null> {
+    const fallbackText =
+      part.type === 'sticker' ? String(part.meta?.stickerMeaning ?? '') : media.transcript?.trim() ?? '';
+    if (!fallbackText) return null;
+    const sent = await this.deps.client.sendC2cTextMessage({ openid, content: fallbackText, msgId, msgSeq: msgId ? msgSeq : undefined });
+    return sent.messageId;
+  }
+
+  private classifyFailure(error: unknown, row: ChannelDeliveryRow, messageId: string): QqDeliveryStatus {
+    const apiError = error instanceof QqApiError ? error : null;
+    const code =
+      apiError?.errCode !== null && apiError?.errCode !== undefined
         ? `err_${apiError.errCode}`
         : apiError?.httpStatus !== null && apiError?.httpStatus !== undefined
           ? `http_${apiError.httpStatus}`
           : 'network';
-      const summary = (error instanceof Error ? error.message : String(error)).slice(0, 300);
-      const retryable = apiError ? apiError.retryable : true;
-      if (!retryable) {
-        this.deps.deliveries.markFailed(row.id, code, summary);
-        this.deps.errors.add('qq.send', summary, { messageId: input.messageId, code, retryable: false });
-        return 'failed';
-      }
-      const attempts = row.attempts; // claim 已 +1
-      if (attempts >= MAX_DELIVERY_ATTEMPTS) {
-        this.deps.deliveries.markFailed(row.id, code, `${summary} (attempts=${attempts})`);
-        this.deps.errors.add('qq.send', summary, { messageId: input.messageId, code, attempts });
-        return 'failed';
-      }
-      this.deps.deliveries.markRetry(row.id, code, summary, attempts + 1);
-      const nextRetryAt = this.deps.deliveries.getById(row.id)!.next_retry_at!;
-      // 重新入队 durable job：runAfter 让 Worker 到期再拉；DB 侧 next_retry_at 兜底。
-      this.deps.jobs.enqueue('qq.deliver', { messageId: input.messageId, conversationId: input.conversationId ?? null }, { runAfter: nextRetryAt, maxAttempts: 1 });
-      return 'retry';
+    const summary = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+    const retryable = apiError ? apiError.retryable : true;
+    if (!retryable) {
+      this.deps.deliveries.markFailed(row.id, code, summary);
+      this.deps.errors.add('qq.send', summary, { messageId, code, retryable: false });
+      return 'failed';
     }
+    const attempts = row.attempts; // claim 已 +1
+    if (attempts >= MAX_DELIVERY_ATTEMPTS) {
+      this.deps.deliveries.markFailed(row.id, code, `${summary} (attempts=${attempts})`);
+      this.deps.errors.add('qq.send', summary, { messageId, code, attempts });
+      return 'failed';
+    }
+    this.deps.deliveries.markRetry(row.id, code, summary, attempts + 1);
+    const nextRetryAt = this.deps.deliveries.getById(row.id)!.next_retry_at!;
+    // 重新入队 durable job：runAfter 让 Worker 到期再拉；DB 侧 next_retry_at 兜底。
+    this.deps.jobs.enqueue('qq.deliver', { messageId, conversationId: row.external_conversation_id }, { runAfter: nextRetryAt, maxAttempts: 1 });
+    return 'retry';
   }
 
   /** Server 重启 / 长时间停摆恢复：把卡在 sending 的投递放回 pending，由下次扫描重投。 */

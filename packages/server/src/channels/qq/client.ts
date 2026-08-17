@@ -134,6 +134,72 @@ export class QqApiClient {
     this.token = null;
   }
 
+  /**
+   * 上传富媒体文件（rich-media.html）：file_data 传 base64 二进制。
+   * 返回 file_uuid/file_info，用于 msg_type=7 富媒体消息发送。
+   */
+  async uploadMedia(input: {
+    openid: string;
+    fileType: 1 | 2 | 3 | 4;
+    bytes: Buffer;
+    filename?: string;
+  }): Promise<{ fileUuid: string; fileInfo: string; ttl: number }> {
+    const response = await this.post(
+      `${this.baseUrl}/v2/users/${encodeURIComponent(input.openid)}/files`,
+      {
+        file_type: input.fileType,
+        srv_send_msg: true,
+        file_data: input.bytes.toString('base64'),
+        ...(input.filename ? { filename: input.filename } : {})
+      },
+      { authorization: `QQBot ${await this.getAccessToken()}` }
+    );
+    const fileUuid = typeof response.json.file_uuid === 'string' ? response.json.file_uuid : '';
+    const fileInfo = typeof response.json.file_info === 'string' ? response.json.file_info : '';
+    if (!fileUuid || !fileInfo) {
+      throw new QqApiError(
+        response.kind,
+        response.httpStatus,
+        asErrCode(response.json.err_code),
+        classifyQqSendError(response.kind, response.httpStatus, asErrCode(response.json.err_code)),
+        'qq media upload failed',
+        asTraceId(response.json)
+      );
+    }
+    return { fileUuid, fileInfo, ttl: Number(response.json.ttl ?? 0) };
+  }
+
+  /** 发富媒体消息（msg_type=7）。 */
+  async sendC2cMediaMessage(input: {
+    openid: string;
+    fileUuid: string;
+    fileInfo: string;
+    msgId?: string | null;
+    msgSeq?: number;
+  }): Promise<{ messageId: string }> {
+    const response = await this.post(
+      `${this.baseUrl}/v2/users/${encodeURIComponent(input.openid)}/messages`,
+      {
+        msg_type: 7,
+        media: { file_uuid: input.fileUuid, file_info: input.fileInfo },
+        ...(input.msgId ? { msg_id: input.msgId, msg_seq: input.msgSeq ?? 1 } : {})
+      },
+      { authorization: `QQBot ${await this.getAccessToken()}` }
+    );
+    if (response.httpStatus === 200 && (response.json.err_code === undefined || response.json.err_code === 0)) {
+      return { messageId: typeof response.json.id === 'string' ? response.json.id : '' };
+    }
+    const errCode = asErrCode(response.json.err_code);
+    throw new QqApiError(
+      response.kind,
+      response.httpStatus,
+      errCode,
+      classifyQqSendError(response.kind, response.httpStatus, errCode),
+      typeof response.json.message === 'string' ? response.json.message : 'qq media send failed',
+      asTraceId(response.json)
+    );
+  }
+
   private async post(
     url: string,
     body: Record<string, unknown>,

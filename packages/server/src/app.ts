@@ -594,6 +594,8 @@ repos.jobs.enqueue(
     events: repos.channelEvents,
     messages: repos.messages,
     replyBatches: repos.replyBatches,
+    media: repos.media,
+    mediaStore,
     jobs: repos.jobs,
     errors: repos.errors,
     client: qqApi
