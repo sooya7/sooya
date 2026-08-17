@@ -1,19 +1,6 @@
 import type { DbLike } from '../handle.js';
 import { nowIso, randomId } from '../../util/ids.js';
 
-export interface PushSubscriptionRow { endpoint: string; p256dh: string; auth: string; expiration_time: number | null; visible: number; last_seen_at: string | null; fail_count: number; created_at: string; updated_at: string; }
-export class PushSubscriptionRepo {
-  constructor(private readonly db: DbLike) {}
-  upsert(input: { endpoint: string; p256dh: string; auth: string; expirationTime?: number | null }): PushSubscriptionRow { const ts = nowIso(); this.db.prepare(`INSERT INTO push_subscriptions(endpoint,p256dh,auth,expiration_time,visible,last_seen_at,fail_count,created_at,updated_at) VALUES(?,?,?,?,0,?,0,?,?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh,auth=excluded.auth,expiration_time=excluded.expiration_time,fail_count=0,updated_at=excluded.updated_at`).run(input.endpoint,input.p256dh,input.auth,input.expirationTime ?? null,ts,ts,ts); return this.get(input.endpoint)!; }
-  get(endpoint: string): PushSubscriptionRow | undefined { return this.db.prepare('SELECT * FROM push_subscriptions WHERE endpoint = ?').get(endpoint) as PushSubscriptionRow | undefined; }
-  list(): PushSubscriptionRow[] { return this.db.prepare('SELECT * FROM push_subscriptions ORDER BY updated_at DESC').all() as PushSubscriptionRow[]; }
-  count(): number { return (this.db.prepare('SELECT COUNT(*) c FROM push_subscriptions').get() as { c: number }).c; }
-  remove(endpoint: string): boolean { return this.db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint).changes > 0; }
-  markVisibility(endpoint: string, visible: boolean): void { const ts = nowIso(); this.db.prepare('UPDATE push_subscriptions SET visible=?,last_seen_at=?,updated_at=? WHERE endpoint=?').run(visible ? 1 : 0,ts,ts,endpoint); }
-  markSuccess(endpoint: string): void { this.db.prepare('UPDATE push_subscriptions SET fail_count=0,updated_at=? WHERE endpoint=?').run(nowIso(),endpoint); }
-  markFailure(endpoint: string): number { this.db.prepare('UPDATE push_subscriptions SET fail_count=fail_count+1,updated_at=? WHERE endpoint=?').run(nowIso(),endpoint); return this.get(endpoint)?.fail_count ?? 0; }
-}
-
 export class AuditRepo {
   constructor(private readonly db: DbLike) {}
   add(category: string, action: string, target?: string | null, detail: Record<string, unknown> = {}): void { this.db.prepare('INSERT INTO audit_log(id,category,action,target,detail_json,created_at) VALUES(?,?,?,?,?,?)').run(`audit_${randomId(14)}`,category.slice(0,60),action.slice(0,80),target?.slice(0,160) ?? null,JSON.stringify(detail),nowIso()); this.db.prepare('DELETE FROM audit_log WHERE id NOT IN (SELECT id FROM audit_log ORDER BY created_at DESC LIMIT 1000)').run(); }

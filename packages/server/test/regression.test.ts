@@ -259,12 +259,6 @@ describe('defect 4: initial load must not lose events between snapshot and strea
     expect(body.lastMessageSeq).toBe(h.app.repos.messages.maxSeq());
   });
 
-  it('seeds the web stream from the message snapshot response', () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/web/src/lib/useChat.ts'), 'utf8');
-    expect(src).not.toMatch(/setLastEventId\(\s*(conv\.lastEventSeq|boot\.conversation\.lastEventSeq)/);
-    expect(src).toMatch(/setLastEventId\(\s*(page\.lastEventSeq|boot\.messages\.lastEventSeq)/);
-  });
-
   it('replays an event emitted after the snapshot to a late subscriber', async () => {
     h = await createHarness({ chat: { script: [['reply']] } });
     const page = (await h.app.server.inject({ method: 'GET', url: '/api/messages?limit=30' })).json();

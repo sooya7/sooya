@@ -6,7 +6,6 @@
 export const JOB_PRIORITY = {
   interactive: 100,
   reply: 100,
-  push: 95,
   media: 90,
   life: 75,
   weather: 70,
@@ -19,7 +18,7 @@ export const JOB_PRIORITY = {
 
 const JOB_PRIORITIES: Record<string, number> = {
   reply: JOB_PRIORITY.reply,
-  'push.reply': JOB_PRIORITY.push,
+  'qq.deliver': JOB_PRIORITY.reply,
   'media.extract_text': JOB_PRIORITY.media,
   'life.conversation': JOB_PRIORITY.life,
   'life.tick': JOB_PRIORITY.life,

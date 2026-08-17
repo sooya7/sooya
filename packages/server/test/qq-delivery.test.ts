@@ -241,7 +241,6 @@ describe('QQ delivery: via durable job', () => {
       stickerUserMeaning: h.app.services.stickerUserMeaning,
       config: h.app.config,
       reachOutEnabled: false,
-      push: h.app.services.push,
       storage: h.app.services.storage,
       tmpDirs: [],
       qqDelivery: delivery

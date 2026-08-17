@@ -14,7 +14,6 @@ import { LifeSimEngine } from './life2/engine.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ChatProvider } from '../providers/types.js';
 import type { ConfigStore } from '../config/store.js';
-import type { PushService } from './push.js';
 import type { ProactiveComposer } from './proactive.js';
 import type { StorageService } from './storage.js';
 import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
@@ -128,7 +127,6 @@ export interface JobDeps {
   stickerUserMeaning: StickerUserMeaningLearner;
   config: ConfigStore;
   reachOutEnabled: boolean;
-  push: PushService;
   storage: StorageService;
   tmpDirs: string[];
   qqDelivery?: QqDeliveryService;
@@ -278,14 +276,6 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
       deps.bus.publish('ombre.memory.error', { phase: 'commit_job', batchId, revision, error: (error instanceof Error ? error.message : String(error)).slice(0, 300) });
       throw error;
     }
-  });
-
-  worker.register('push.reply', async (payload) => {
-    const messageId = String(payload.messageId ?? '');
-    const message = deps.messages.get(messageId);
-    if (!message || message.role !== 'assistant' || message.status !== 'sent') return;
-    const result = await deps.push.notifyReply(message);
-    if (result.delivered || result.removed || result.failed) deps.bus.publish('push.updated', { ...result });
   });
 
   /*

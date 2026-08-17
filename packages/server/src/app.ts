@@ -19,7 +19,7 @@ import { OmbreCommitRepo } from './db/repos/ombre.repo.js';
 import { StickerRepo } from './db/repos/sticker.repo.js';
 import { ErrorLogRepo, EventRepo, JobRepo, SettingsRepo, SummaryRepo } from './db/repos/misc.repo.js';
 import { MediaTextRepo } from './db/repos/media-text.repo.js';
-import { AuditRepo, PushSubscriptionRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
+import { AuditRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
 import { MediaStore } from './media/store.js';
 import { StickerLibrary } from './media/stickers.js';
 import { StickerAnalyzer } from './core/stickers/analyzer.js';
@@ -61,7 +61,6 @@ import { VoiceGenerationRepo } from './db/repos/voice.repo.js';
 import { VoiceService } from './core/voice/service.js';
 import { ReplyCoordinator } from './core/reply-coordinator.js';
 import { MessageIngressService } from './core/message-ingress.js';
-import { PushService } from './core/push.js';
 import { ChannelEventRepo } from './db/repos/channel-event.repo.js';
 import { ChannelIdentityRepo } from './db/repos/channel-identity.repo.js';
 import { ChannelDeliveryRepo } from './db/repos/channel-delivery.repo.js';
@@ -132,7 +131,6 @@ export interface SooyaApp {
     settings: SettingsRepo;
     events: EventRepo;
     errors: ErrorLogRepo;
-    pushSubscriptions: PushSubscriptionRepo;
     life: LifeRepo;
     proactive: ProactiveAttemptRepo;
     moments: MomentRepo;
@@ -176,7 +174,6 @@ export interface SooyaApp {
     metrics: MetricsService;
     thoughts: ThoughtsService;
     voice: VoiceService;
-    push: PushService;
     storage: StorageService;
     context: ContextBuilder;
     summarizer: Summarizer;
@@ -213,7 +210,7 @@ const VERSION = '1.0.0';
 /** Vite 产物：`index-D9-2lj-S.js` 这类文件名里带内容哈希，内容变了文件名一定会变。 */
 const HASHED_ASSET = /\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
 /** 文件名固定、内容会随发布改变的入口文件：缓存住就等于发布不上去。 */
-const ALWAYS_REVALIDATE = /(?:\.html|\/sw\.js|\.webmanifest)$/;
+const ALWAYS_REVALIDATE = /(?:\.html)$/;
 /** 图标、头像这类文件名带版本后缀（sooya-photo-v2-192.png），一天足够短也足够省。 */
 const STATIC_ASSET_MAX_AGE_S = 86400;
 
@@ -260,7 +257,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     settings: new SettingsRepo(dbHandle),
     events: new EventRepo(dbHandle),
     errors: new ErrorLogRepo(dbHandle),
-    pushSubscriptions: new PushSubscriptionRepo(dbHandle),
     life: new LifeRepo(dbHandle),
     proactive: new ProactiveAttemptRepo(dbHandle),
     moments: new MomentRepo(dbHandle),
@@ -383,7 +379,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   // connection should never make every buildApp() wait on an absent external
   // Ombre service. Production and development keep the opt-out flag intact.
   if (env.MCP_CONNECT_ON_START && env.NODE_ENV !== 'test') await mcpManager.connectAllBestEffort();
-  const push = new PushService(repos.pushSubscriptions, repos.settings, repos.errors, fetchImpl, env.SOOYA_PUSH_SUBJECT);
   const storage = new StorageService(env, repos.media, mediaStore, repos.settings, repos.audit, repos.storageSamples, config, repos.errors, maintenanceCoordinator);
   /*
    * Env vars stay the deployment default; anything the user set in the panel wins
@@ -538,13 +533,10 @@ repos.jobs.enqueue(
           { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId }
         );
       }
-      // QQ 单通道（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8.2）：回复完成后入队
-      // durable qq.deliver，由 outbox 负责幂等/重试；push.reply 在 QQ 停用（回滚/降级）
-      // 时保留，直到 PR7 彻底下线。
+      // QQ 单通道（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8.2/§16）：回复完成后入队
+      // durable qq.deliver，由 outbox 负责幂等/重试；Browser Push（push.reply）已下线。
       if (qqConfig.enabled) {
         repos.jobs.enqueue('qq.deliver', { messageId: outcome.messageId });
-      } else {
-        repos.jobs.enqueue('push.reply', { batchId, messageId: outcome.messageId }, { maxAttempts: 3 });
       }
       if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
       // Life conversation bridge (§49-50): extracted as a durable job; the
@@ -667,7 +659,6 @@ repos.jobs.enqueue(
     stickerUserMeaning,
     config,
     reachOutEnabled: env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT,
-    push,
     storage,
     mediaText: repos.mediaText,
     tmpDirs: [env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files, env.dbDir],
@@ -831,7 +822,7 @@ repos.jobs.enqueue(
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, push, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery },
     state,
     fetchImpl,
     recurringTimers: [],

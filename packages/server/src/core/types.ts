@@ -43,7 +43,7 @@ export interface ReplyFailure {
   incidentId?: string;
 }
 
-export type StreamEventType = 'message.received' | 'reply.queued' | 'reply.thinking' | 'reply.text.delta' | 'reply.text.done' | 'reply.sticker.selecting' | 'reply.image.generating' | 'reply.audio.generating' | 'reply.content.done' | 'reply.media.saved' | 'reply.completed' | 'reply.failed' | 'message.updated' | 'media.updated' | 'memory.updated' | 'persona.updated' | 'life.updated' | 'push.updated' | 'storage.updated' | 'sticker.updated' | 'sticker.analysis.updated' | 'system.notice' | 'ping'
+export type StreamEventType = 'message.received' | 'reply.queued' | 'reply.thinking' | 'reply.text.delta' | 'reply.text.done' | 'reply.sticker.selecting' | 'reply.image.generating' | 'reply.audio.generating' | 'reply.content.done' | 'reply.media.saved' | 'reply.completed' | 'reply.failed' | 'message.updated' | 'media.updated' | 'memory.updated' | 'persona.updated' | 'life.updated' | 'storage.updated' | 'sticker.updated' | 'sticker.analysis.updated' | 'system.notice' | 'ping'
   | 'reply.batch.collecting' | 'reply.batch.queued' | 'reply.generation.started' | 'reply.generation.interrupted' | 'reply.generation.retrying' | 'reply.publishing.started' | 'reply.publishing.partial' | 'reply.superseded'
   | 'voice.plan.created' | 'voice.script.completed' | 'voice.synthesis.started' | 'voice.synthesis.completed' | 'voice.synthesis.failed' | 'voice.generation.superseded' | 'voice.published' | 'voice.cancelled'
   | 'thought.updated' | 'world.updated' | 'moment.created'

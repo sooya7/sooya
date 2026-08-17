@@ -28,8 +28,6 @@ async function makeWebDir(): Promise<string> {
   await fsp.mkdir(path.join(dir, 'assets'), { recursive: true });
   await fsp.mkdir(path.join(dir, 'icons'), { recursive: true });
   await fsp.writeFile(path.join(dir, 'index.html'), '<!doctype html><title>SOOYA</title>');
-  await fsp.writeFile(path.join(dir, 'sw.js'), '// service worker');
-  await fsp.writeFile(path.join(dir, 'manifest.webmanifest'), '{"name":"SOOYA"}');
   await fsp.writeFile(path.join(dir, 'assets', 'index-D9-2lj-S.js'), 'export const a = 1;');
   await fsp.writeFile(path.join(dir, 'icons', 'sooya-photo-v2-192.png'), 'not-a-real-png');
   return dir;
@@ -43,8 +41,6 @@ describe('staticCacheControl', () => {
 
   it('入口文件必须每次验证，否则发新版用户拿不到', () => {
     expect(staticCacheControl('/srv/web/index.html')).toBe('no-cache');
-    expect(staticCacheControl('/srv/web/sw.js')).toBe('no-cache');
-    expect(staticCacheControl('/srv/web/manifest.webmanifest')).toBe('no-cache');
   });
 
   it('其余静态文件缓存一天，而不是 max-age=0', () => {
@@ -69,8 +65,6 @@ describe('静态资源响应头', () => {
     const cases: Array<[string, string]> = [
       ['/assets/index-D9-2lj-S.js', 'public, max-age=31536000, immutable'],
       ['/index.html', 'no-cache'],
-      ['/sw.js', 'no-cache'],
-      ['/manifest.webmanifest', 'no-cache'],
       ['/icons/sooya-photo-v2-192.png', 'public, max-age=86400']
     ];
     for (const [url, expected] of cases) {

@@ -142,7 +142,6 @@ export function registerVoiceRoutes(app: SooyaApp): void {
       quietHours: parsed.data.quietHours === null ? undefined : parsed.data.quietHours
     };
     repos.settings.set('voice.preferences', next);
-    services.bus.publish('push.updated', { scope: 'voice.preferences' });
     return { preferences: next };
   });
 }
