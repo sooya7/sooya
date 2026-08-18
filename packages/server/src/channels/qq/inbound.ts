@@ -1,11 +1,12 @@
 import type { MessageIngressInput } from '../../core/message-ingress.js';
+import type { InputPart } from '../../core/types.js';
 import type { QqIdentityDecision } from './mapping.js';
 import { QQ_CHANNEL_NAME, type QqC2cMessageData, type QqPayload } from './types.js';
 
 /*
  * QQ 原始 Event → SOOYA 标准输入（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §5.3）。
  * QQ 原始事件不允许直接进入 Replier；统一由 MessageIngressService 接手。
- * 第一阶段：C2C / 私聊文字；媒体（图片/文件/语音/表情）在 PR4 接入。
+ * C2C 文本和可下载图片统一转换后交给 MessageIngress。
  */
 
 export interface QqInboundResult {
@@ -19,22 +20,43 @@ export function qqClientMessageId(qqMsgId: string): string {
   return `${QQ_CHANNEL_NAME}:${qqMsgId}`;
 }
 
+const FACE_TAG_RE = /<faceType=\d+[^>]*>/gu;
+const FACE_EXT_RE = /\bext="([^"]*)"/u;
+
+export function normalizeQqContent(content: string): string {
+  return content.replace(FACE_TAG_RE, (tag) => {
+    const encoded = FACE_EXT_RE.exec(tag)?.[1];
+    if (encoded) {
+      try {
+        const parsed = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as { text?: unknown };
+        if (typeof parsed.text === 'string' && parsed.text.trim()) {
+          const summary = parsed.text.trim().replace(/^\[|\]$/gu, '');
+          return `[QQ表情：${summary}]`;
+        }
+      } catch { /* malformed ext -> generic marker */ }
+    }
+    return '[QQ表情]';
+  }).trim();
+}
+
 export function c2cMessageToIngress(
   payload: QqPayload,
-  identity: Extract<QqIdentityDecision, { role: 'owner' | 'user' }>
+  identity: Extract<QqIdentityDecision, { role: 'owner' | 'user' }>,
+  mediaParts: InputPart[] = []
 ): QqInboundResult | null {
   const d = payload.d as QqC2cMessageData | undefined;
   const openid = d?.author?.user_openid?.trim() || d?.author?.openid?.trim();
   if (!openid || !d?.id) return null;
-  const text = String(d.content ?? '').trim();
-  if (!text) return null; // PR2 只处理文字；纯媒体消息等 PR4。
+  const text = normalizeQqContent(String(d.content ?? ''));
+  const content: InputPart[] = [...(text ? [{ type: 'text' as const, text }] : []), ...mediaParts];
+  if (content.length === 0) return null;
   return {
     ingress: {
       clientMessageId: qqClientMessageId(d.id),
       source: 'qq',
       conversationId: identity.sooyaConversationId,
       senderId: openid,
-      content: [{ type: 'text', text }],
+      content,
       metadata: {
         qqMsgId: d.id,
         qqEventId: payload.id ?? null,

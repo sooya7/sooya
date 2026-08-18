@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { createHarness, type Harness } from './helpers/harness.js';
+import { createHarness, TEST_PNG, type Harness } from './helpers/harness.js';
 import { signEventBody, signValidationResponse, verifyEventSignature } from '../src/channels/qq/verify.js';
 import { QQ_OP_ACK, type QqPayload } from '../src/channels/qq/types.js';
 import type { ChatMessage } from '../src/core/types.js';
@@ -14,15 +14,17 @@ const SECRET = 'test-callback-secret-2026';
 const APP_ID = '102000000';
 const OWNER = 'owner-openid-uuid';
 
-async function qqHarness(overrides: Record<string, string> = {}) {
+async function qqHarness(overrides: Record<string, string> = {}, options: Parameters<typeof createHarness>[0] = {}) {
   return createHarness({
-    chat: { script: [['在的，我在。']] },
+    ...options,
+    chat: options.chat ?? { script: [['在的，我在。']] },
     env: {
       QQ_BOT_ENABLED: 'true',
       QQ_APP_ID: APP_ID,
       QQ_APP_SECRET: 'app-secret',
       QQ_CALLBACK_SECRET: SECRET,
       QQ_ALLOWED_USERS: OWNER,
+      ...(options.env ?? {}),
       ...overrides
     }
   });
@@ -90,6 +92,49 @@ describe('QQ webhook callback', () => {
 
     const reply = await waitForAssistant();
     expect(reply?.content[0].text).toBe('在的，我在。');
+  });
+
+  it('decodes QQ face ext text instead of leaking the protocol tag', async () => {
+    h = await qqHarness();
+    const ext = Buffer.from(JSON.stringify({ text: '[满头问号]' })).toString('base64');
+    await postCallback(c2cPayload({ d: { id: 'msg-face', author: { user_openid: OWNER }, content: `<faceType=4,faceId=\"\",ext=\"${ext}\">` } }));
+    const user = h.app.repos.messages.page(20).messages.find((m) => m.role === 'user');
+    expect(user?.content[0]?.text).toBe('[QQ表情：满头问号]');
+  });
+
+  it('uses a generic QQ face marker when ext has no summary', async () => {
+    h = await qqHarness();
+    const ext = Buffer.from(JSON.stringify({ text: '' })).toString('base64');
+    await postCallback(c2cPayload({ d: { id: 'msg-face-empty', author: { user_openid: OWNER }, content: `<faceType=6,faceId=\"0\",ext=\"${ext}\">` } }));
+    const user = h.app.repos.messages.page(20).messages.find((m) => m.role === 'user');
+    expect(user?.content[0]?.text).toBe('[QQ表情]');
+  });
+
+  it('downloads a QQ image attachment into MediaStore for vision', async () => {
+    const url = 'https://qq.example/sticker.png';
+    h = await qqHarness({}, { httpFixtures: { [url]: { body: TEST_PNG, contentType: 'image/png' } } });
+    await postCallback(c2cPayload({ d: { id: 'msg-image', author: { user_openid: OWNER }, content: '', attachments: [{ content_type: 'image/png', filename: 'sticker.png', url }] } }));
+    const user = h.app.repos.messages.page(20).messages.find((m) => m.role === 'user');
+    const image = user?.content.find((part) => part.type === 'image');
+    expect(image?.mediaId).toBeTruthy();
+    expect(image?.media?.mime).toBe('image/png');
+  });
+
+  it('recognizes .png when QQ labels the attachment as file', async () => {
+    const url = 'https://qq.example/as-file.png';
+    h = await qqHarness({}, { httpFixtures: { [url]: { body: TEST_PNG, contentType: 'application/octet-stream' } } });
+    await postCallback(c2cPayload({ d: { id: 'msg-file-image', author: { user_openid: OWNER }, content: '', attachments: [{ content_type: 'file', filename: 'as-file.png', url }] } }));
+    const user = h.app.repos.messages.page(20).messages.find((m) => m.role === 'user');
+    expect(user?.content.some((part) => part.type === 'image')).toBe(true);
+  });
+
+  it('keeps text when a QQ attachment download fails', async () => {
+    const url = 'https://qq.example/fail.png';
+    h = await qqHarness({}, { httpFixtures: { [url]: { body: 'nope', status: 503 } } });
+    await postCallback(c2cPayload({ d: { id: 'msg-image-fail', author: { user_openid: OWNER }, content: '文字还在', attachments: [{ content_type: 'image/png', filename: 'fail.png', url }] } }));
+    const user = h.app.repos.messages.page(20).messages.find((m) => m.role === 'user');
+    expect(user?.content[0]?.text).toBe('文字还在');
+    expect(user?.content.some((part) => part.type === 'image')).toBe(false);
   });
 
   it('treats a replayed event as already consumed (no duplicate message)', async () => {
