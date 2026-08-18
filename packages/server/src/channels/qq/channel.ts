@@ -1,4 +1,4 @@
-import type { ErrorLogRepo } from '../../db/repos/misc.repo.js';
+import type { ErrorLogRepo, JobRepo } from '../../db/repos/misc.repo.js';
 import type { ChannelEventRepo, ChannelEventStatus } from '../../db/repos/channel-event.repo.js';
 import type { ChannelIdentityRepo } from '../../db/repos/channel-identity.repo.js';
 import type { MessageIngressService } from '../../core/message-ingress.js';
@@ -33,6 +33,7 @@ export interface QqChannelDeps {
   events: ChannelEventRepo;
   identities: ChannelIdentityRepo;
   ingress: MessageIngressService;
+  jobs: JobRepo;
   mediaStore: MediaStore;
   fetchImpl: typeof fetch;
   maxAttachmentBytes: number;
@@ -130,6 +131,13 @@ export class QqChannel {
         const quoted = typeof inbound.ingress.metadata?.quotedQqMsgId === 'string' ? inbound.ingress.metadata.quotedQqMsgId : null;
         const replyTo = resolveQuoteReplyTo(quoted, this.deps.events);
         const result = await this.deps.ingress.accept({ ...inbound.ingress, replyTo });
+        for (const part of mediaParts) {
+          if (part.type !== 'image') continue;
+          this.deps.jobs.enqueue('sticker.auto-collect', { mediaId: part.mediaId, messageId: result.messageId }, {
+            maxAttempts: 2,
+            runAfter: new Date(Date.now() + 12_000).toISOString()
+          });
+        }
         this.deps.events.markProcessed(QQ_CHANNEL_NAME, eventId, result.messageId);
         this.deps.metrics?.record('qq', 'inbound.accepted');
         return { ack: { op: QQ_OP_ACK }, eventStatus: 'processed' };

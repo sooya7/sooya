@@ -11,6 +11,7 @@ export const JOB_PRIORITY = {
   weather: 70,
   default: 50,
   stickerAnalyze: 20,
+  stickerCollect: 18,
   stickerEmbed: 15,
   maintenance: 10,
   backup: 5
@@ -25,6 +26,7 @@ const JOB_PRIORITIES: Record<string, number> = {
   'weather.refresh': JOB_PRIORITY.weather,
   'sticker.analyze': JOB_PRIORITY.stickerAnalyze,
   'sticker.analyze.backfill': JOB_PRIORITY.stickerAnalyze,
+  'sticker.auto-collect': JOB_PRIORITY.stickerCollect,
   'sticker.embed': JOB_PRIORITY.stickerEmbed,
   'sticker.user-meaning.learn': JOB_PRIORITY.life,
   'sticker.embed.backfill': JOB_PRIORITY.maintenance,

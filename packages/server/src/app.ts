@@ -23,6 +23,7 @@ import { AuditRepo, StorageSampleRepo } from './db/repos/feature.repo.js';
 import { MediaStore } from './media/store.js';
 import { StickerLibrary } from './media/stickers.js';
 import { StickerAnalyzer } from './core/stickers/analyzer.js';
+import { StickerAutoCollector } from './core/stickers/auto-collector.js';
 import { StickerRetriever } from './core/stickers/retriever.js';
 import { StickerPicker } from './core/stickers/picker.js';
 import { StickerUserMeaningLearner } from './core/stickers/user-meaning.js';
@@ -287,6 +288,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     mediaStore,
     () => capabilities.visionProvider(),
     (event, data) => logger.info({ ...data }, `sticker.analysis.${event}`)
+  );
+  const stickerAutoCollector = new StickerAutoCollector(
+    repos.media,
+    repos.stickers,
+    mediaStore,
+    () => capabilities.visionProvider(),
+    (event, data) => logger.info({ ...data }, `sticker.auto_collect.${event}`)
   );
   const stickerRetriever = new StickerRetriever(
     repos.stickers,
@@ -573,6 +581,7 @@ repos.jobs.enqueue(
     events: repos.channelEvents,
     identities: repos.channelIdentities,
     ingress,
+    jobs: repos.jobs,
     mediaStore,
     fetchImpl: directFetchImpl,
     maxAttachmentBytes: env.MAX_UPLOAD_BYTES,
@@ -654,6 +663,7 @@ repos.jobs.enqueue(
     proactive,
     capabilities,
     stickerAnalyzer,
+    stickerAutoCollector,
     stickerRepo: repos.stickers,
     stickerUserMeaning,
     config,

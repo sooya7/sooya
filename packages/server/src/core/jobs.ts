@@ -21,6 +21,7 @@ import { extractText } from '../media/text-extractor.js';
 import { cleanupTempFiles } from '../util/fsx.js';
 import { textForMemoryExtraction } from './web-search/isolation.js';
 import type { StickerAnalyzer } from './stickers/analyzer.js';
+import type { StickerAutoCollector } from './stickers/auto-collector.js';
 import type { StickerRepo } from '../db/repos/sticker.repo.js';
 import { STICKER_ANALYSIS_VERSION } from './stickers/constants.js';
 import { stickerSemanticText } from './stickers/semantic-text.js';
@@ -123,6 +124,7 @@ export interface JobDeps {
   proactive: ProactiveComposer;
   capabilities: CapabilityRegistry;
   stickerAnalyzer: StickerAnalyzer;
+  stickerAutoCollector: StickerAutoCollector;
   stickerRepo: StickerRepo;
   stickerUserMeaning: StickerUserMeaningLearner;
   config: ConfigStore;
@@ -147,6 +149,16 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const result = extractText(read.data, read.row.mime, mediaName(read.row.meta_json));
     deps.mediaText.upsert({ mediaId, status: result.status, text: result.status === 'ready' ? result.text : null, metadata: result.metadata, error: result.status === 'failed' ? result.error : null });
     deps.bus.publish('media.updated', { mediaId, textStatus: result.status });
+  });
+
+  worker.register('sticker.auto-collect', async (payload) => {
+    const mediaId = String(payload.mediaId ?? '');
+    if (!mediaId) return;
+    const result = await deps.stickerAutoCollector.collect(mediaId);
+    if (result.collected && result.stickerId) {
+      deps.jobs.enqueue('sticker.embed', { stickerId: result.stickerId }, { maxAttempts: 2 });
+      deps.bus.publish('sticker.updated', { stickerId: result.stickerId, autoCollected: true });
+    }
   });
 
   worker.register('sticker.analyze', async (payload) => {

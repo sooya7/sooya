@@ -118,6 +118,9 @@ describe('QQ webhook callback', () => {
     const image = user?.content.find((part) => part.type === 'image');
     expect(image?.mediaId).toBeTruthy();
     expect(image?.media?.mime).toBe('image/png');
+    const collectJob = h.app.repos.jobs.list(20).find((job) => job.type === 'sticker.auto-collect');
+    expect(collectJob).toBeTruthy();
+    expect(JSON.parse(collectJob!.payload_json)).toMatchObject({ mediaId: image?.mediaId, messageId: user?.id });
   });
 
   it('recognizes .png when QQ labels the attachment as file', async () => {
