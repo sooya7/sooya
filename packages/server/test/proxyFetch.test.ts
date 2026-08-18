@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createProxyFetch, socks5Handshake } from '../src/util/proxyFetch.js';
+import { UserInterruptedError } from '../src/util/abort.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_KEY = readFileSync(join(HERE, 'fixtures', 'proxy-test-key.pem'), 'utf8');
@@ -21,14 +22,23 @@ interface Fixture {
   close: () => Promise<void>;
   socksPort: number;
   originPort: number;
+  originConnected: Promise<void>;
 }
 
 /** HTTPS origin + forwarding SOCKS5 proxy. */
-async function startFixture(): Promise<Fixture> {
+async function startFixture(originDelayMs = 0): Promise<Fixture> {
   // 1. HTTPS origin (fixture cert committed with the test).
+  let markOriginConnected!: () => void;
+  const originConnected = new Promise<void>((resolve) => { markOriginConnected = resolve; });
   const origin = createTlsServer({ key: FIXTURE_KEY, cert: FIXTURE_CERT }, (socket) => {
-    socket.write('HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok');
-    socket.end();
+    markOriginConnected();
+    const send = () => {
+      if (socket.destroyed) return;
+      socket.write('HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok');
+      socket.end();
+    };
+    if (originDelayMs > 0) setTimeout(send, originDelayMs);
+    else send();
   });
   await new Promise<void>((resolve) => origin.listen(0, '127.0.0.1', resolve));
   const originPort = (origin.address() as { port: number }).port;
@@ -84,6 +94,7 @@ async function startFixture(): Promise<Fixture> {
   return {
     socksPort,
     originPort,
+    originConnected,
     close: async () => {
       proxy.close();
       origin.close();
@@ -100,6 +111,27 @@ describe('createProxyFetch (real SOCKS5 → TLS → HTTPS)', () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe('ok');
     } finally {
+      await fixture.close();
+    }
+  });
+
+  it('aborts an in-flight SOCKS request without an uncaught socket error and preserves the reason', async () => {
+    const fixture = await startFixture(250);
+    const fetchImpl = createProxyFetch(`socks5h://127.0.0.1:${fixture.socksPort}`, { rejectUnauthorized: false });
+    const controller = new AbortController();
+    const reason = new UserInterruptedError('superseded by newer user message');
+    const uncaught: unknown[] = [];
+    const onUncaught = (error: unknown) => uncaught.push(error);
+    process.on('uncaughtException', onUncaught);
+    try {
+      const pending = fetchImpl(`https://127.0.0.1:${fixture.originPort}/slow`, { signal: controller.signal });
+      await fixture.originConnected;
+      controller.abort(reason);
+      await expect(pending).rejects.toBe(reason);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.removeListener('uncaughtException', onUncaught);
       await fixture.close();
     }
   });
