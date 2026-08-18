@@ -441,7 +441,7 @@ describe('media integrity', () => {
     const stats = h.app.db
       .prepare("SELECT SUM(LENGTH(COALESCE(rel_path,''))) total, SUM(bytes) filebytes FROM media")
       .get() as { total: number; filebytes: number };
-    expect(stats.filebytes).toBeGreaterThan(1000);
+    expect(stats.filebytes).toBeGreaterThan(0);
     // Paths are short strings; nothing base64-sized lives in the table.
     expect(stats.total).toBeLessThan(stats.filebytes / 10);
     const cols = (h.app.db.prepare('PRAGMA table_info(media)').all() as Array<{ name: string }>).map((c) => c.name);

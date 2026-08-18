@@ -13,6 +13,7 @@ import { registerVoiceRoutes as registerLegacyVoiceRoutes } from './legacy-voice
 import { registerLegacyMediaUploadRoute } from './legacy-media-upload-route.js';
 
 export const ASSETS_DIR = fileURLToPath(new URL('../fixtures/stickers/', import.meta.url));
+export const REFERENCES_DIR = fileURLToPath(new URL('../fixtures/references/', import.meta.url));
 
 export interface FakeChatOptions {
   /** Text chunks streamed back for each successive chat call. */
@@ -361,6 +362,7 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       ENABLE_BACKGROUND_JOBS: 'false',
       ALLOW_PRIVATE_NETWORK_FETCH: 'true',
       ADMIN_API_TOKEN: 'test-admin-token',
+      SOOYA_REFERENCES_DIR: REFERENCES_DIR,
       ...(opts.env ?? {})
     },
     logger: pino({ level: 'silent' }),
