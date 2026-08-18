@@ -9,18 +9,17 @@ import type { EventBus } from '../events/bus.js';
 import type { MediaStore } from '../media/store.js';
 import type { ReplyCoordinator } from './reply-coordinator.js';
 import type { ReplyOutcome, ReplyOptions } from './replier.js';
-import type { ChatMessage, InputPart, SendMessageInput } from './types.js';
+import type { ChatMessage, InputPart } from './types.js';
 import { parseUserDirectives } from './directives.js';
 
 /*
  * 唯一的用户消息入口。
  *
- * /api/messages、/api/messages/sync 与将来的 QQ inbound 都只负责协议转换，
- * 消息落库、去重、message.received 事件、reply batch 准入与协调器唤醒
- * 全部收敛在这里，避免聊天入口逻辑继续绑定在某个 Route 上。
+ * QQ inbound 只负责协议转换；消息落库、去重、message.received 事件、
+ * reply batch 准入与协调器唤醒全部收敛在这里。
  */
 
-export type MessageIngressSource = 'web' | 'qq';
+export type MessageIngressSource = 'qq';
 
 /** 与 InputPart 对齐的入站内容段；QQ 媒体段在接入时再扩展。 */
 export type MessageIngressContentPart = InputPart;
@@ -34,14 +33,14 @@ export interface MessageIngressInput {
   senderId: string;
   replyTo?: string | null;
   content: MessageIngressContentPart[];
-  /** 通道特定元信息；web 路由透传 { directives }。 */
+  /** 通道特定元信息。 */
   metadata?: Record<string, unknown>;
 }
 
 export interface MessageIngressResult {
   messageId: string;
   duplicate: boolean;
-  /** 仅重复且回复仍在途时返回，与既有 HTTP 契约一致。 */
+  /** 仅重复且回复仍在途时返回。 */
   batchId?: string;
   replyPending: boolean;
 }
@@ -81,9 +80,7 @@ type StoredPart = {
 export class MessageIngressService {
   constructor(private readonly deps: MessageIngressDeps) {}
 
-  /**
-   * 落库并异步唤醒回复协调器；不等待回复（对应 POST /api/messages）。
-   */
+  /** 落库并异步唤醒回复协调器；不等待回复。 */
   async accept(input: MessageIngressInput): Promise<MessageIngressResult> {
     const { message, created, admission } = this.core(input);
     if (!created) return this.duplicateResult(message);
@@ -98,10 +95,7 @@ export class MessageIngressService {
     return { messageId: message.id, duplicate: false, replyPending: true };
   }
 
-  /**
-   * 落库并等待回复完成（对应 POST /api/messages/sync）。重复消息直接返回
-   * 已有关联回复，不重复触发模型调用。
-   */
+  /** 落库并等待回复完成；重复消息直接返回已有关联回复，不重复触发模型调用。 */
   async acceptAndReply(input: MessageIngressInput): Promise<MessageIngressSyncResult> {
     const { message, created, admission } = this.core(input);
     if (!created) {
@@ -221,16 +215,4 @@ export class MessageIngressService {
     }
     return null;
   }
-}
-
-export function toIngressInput(input: SendMessageInput, source: MessageIngressSource = 'web'): MessageIngressInput {
-  return {
-    clientMessageId: input.clientMsgId,
-    source,
-    conversationId: 'main',
-    senderId: 'web-user',
-    replyTo: input.replyTo ?? null,
-    content: input.content,
-    metadata: { directives: input.directives }
-  };
 }

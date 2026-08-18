@@ -75,12 +75,9 @@ describe('warm system theme', () => {
     expect(CSS).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*animation-duration:\s*0\.01ms\s*!important/);
   });
 
-  it('routes key chat surfaces through semantic tokens', () => {
-    expect(CSS).toMatch(/\.topbar\s*\{[^}]*background:\s*var\(--surface-glass\)/s);
-    expect(CSS).toMatch(/\.composer\s*\{[^}]*background:\s*var\(--surface-glass\)/s);
-    expect(CSS).toMatch(/\.bubble-text\.theirs\s*\{[^}]*background:\s*var\(--theirs\)/s);
-    expect(CSS).toMatch(/\.bubble-text\.mine\s*\{[^}]*background:\s*var\(--mine\)/s);
-    expect(CSS).toMatch(/\.sticker-part\s*\{[^}]*background:\s*var\(--sticker-surface\)/s);
-    expect(CSS).toMatch(/\.image-part-placeholder\s*\{[^}]*var\(--shimmer-base\)[^}]*var\(--shimmer-highlight\)/s);
+  it('routes key admin surfaces through semantic tokens', () => {
+    expect(CSS).toMatch(/\.admin-page\s*\{[^}]*min-height:\s*100dvh/s);
+    expect(CSS).toMatch(/\.admin-status-card[\s\S]*background:\s*var\(--panel\)/s);
+    expect(CSS).toMatch(/\.admin-model-item\.active\s*\{[^}]*background:\s*var\(--panel-alt\)/s);
   });
 });

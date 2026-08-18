@@ -1,7 +1,7 @@
-import type { SooyaApp } from '../app.js';
-import { requireChatToken } from './auth.js';
-import type { VisibleThought } from '../core/thoughts/types.js';
-import { isDisplayableThoughtText } from '../core/thoughts/quality.js';
+import type { SooyaApp } from '../../src/app.js';
+import { requireChatToken } from './legacy-auth.js';
+import type { VisibleThought } from '../../src/core/thoughts/types.js';
+import { isDisplayableThoughtText } from '../../src/core/thoughts/quality.js';
 
 /**
  * Read surface for the visible-thoughts layer. The ThoughtsService is wired

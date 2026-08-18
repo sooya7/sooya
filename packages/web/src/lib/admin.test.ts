@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ADMIN_UNAUTHORIZED_EVENT, adminApi, clearAdminToken, getAdminToken, setAdminToken } from './admin.js';
-import { ApiError, getToken, setToken } from './api.js';
+import { ApiError } from './api.js';
 import { acquireAuthenticatedMedia, clearMediaCache, takeCachedMedia } from './authenticatedMedia.js';
 import type { ModelPreset } from './modelPresets.js';
 
@@ -67,19 +67,6 @@ describe('admin 令牌存取', () => {
     expect(getAdminToken()).toBeNull();
   });
 
-  it('令牌存在 sooya.admin-token 键上，与 api.ts 的用户令牌互不干扰', () => {
-    setAdminToken('admin-secret');
-    setToken('user-secret');
-
-    expect(localStorage.getItem('sooya.admin-token')).toBe('admin-secret');
-    expect(getAdminToken()).toBe('admin-secret');
-    expect(getToken()).toBe('user-secret');
-
-    clearAdminToken();
-    expect(getAdminToken()).toBeNull();
-    expect(getToken()).toBe('user-secret');
-  });
-
   it('getItem 抛异常（隐私模式）时 getAdminToken 返回 null 而不外抛', () => {
     setAdminToken('admin-secret');
     const spy = denyStorage('getItem');
@@ -112,9 +99,7 @@ describe('admin 令牌存取', () => {
       status: 200,
       headers: { 'content-type': 'image/png' }
     })));
-    setToken('user-secret');
     setAdminToken('admin-secret');
-    await acquireAuthenticatedMedia('/api/media/user-admin-test', { scope: 'user', token: 'user-secret', expected: 'image' });
     await acquireAuthenticatedMedia('/api/media/admin-admin-test', { scope: 'admin', token: 'admin-secret', expected: 'image' });
 
     setAdminToken('admin-secret');
@@ -122,7 +107,6 @@ describe('admin 令牌存取', () => {
 
     setAdminToken('next-secret');
     expect(takeCachedMedia('/api/media/admin-admin-test', { scope: 'admin', expected: 'image' })).toBeNull();
-    expect(takeCachedMedia('/api/media/user-admin-test', { scope: 'user', expected: 'image' })).not.toBeNull();
 
     await acquireAuthenticatedMedia('/api/media/admin-after-replace', { scope: 'admin', token: 'next-secret', expected: 'image' });
     clearAdminToken();

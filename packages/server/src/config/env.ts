@@ -67,7 +67,6 @@ const EnvSchema = z.object({
    * 这样管理面板上传的参考图不会被代码升级覆盖。 */
   SOOYA_REFERENCES_DIR: z.string().optional(),
 
-  WEB_CHAT_TOKEN: z.string().optional(),
   ADMIN_API_TOKEN: z.string().optional(),
   CORS_ALLOWED_ORIGINS: originList,
 

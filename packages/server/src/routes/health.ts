@@ -2,7 +2,7 @@ import type { SooyaApp } from '../app.js';
 import { checkIntegrity } from '../db/index.js';
 
 /**
- * Health endpoints are intentionally NOT behind WEB_CHAT_TOKEN so deployment
+ * Health endpoints intentionally require no Admin token so deployment
  * scripts and container probes can call them on localhost without a secret.
  * They expose no chat content and no secrets.
  */

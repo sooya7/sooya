@@ -31,73 +31,6 @@
 .gallery-batchbar span { font-weight: 700; color: var(--accent-deep); }
 .gallery-item-actions { flex-wrap: wrap; }
 .gallery-item-actions button { flex: 1 1 auto; padding: 7px 8px; font-size: 12px; }
-.notification-optin small { display: block; color: var(--ink-soft); }
-.notification-optin button:disabled { opacity: 0.6; }
-
-.message-menu-button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  opacity: 0.64;
-  padding: 0 4px;
-}
-
-.message-action-menu {
-  width: 210px;
-  display: grid;
-  gap: 2px;
-  padding: 7px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface-glass);
-  box-shadow: var(--shadow-raised);
-  backdrop-filter: blur(16px);
-}
-
-.message-action-menu button {
-  border: 0;
-  border-radius: 9px;
-  padding: 10px 12px;
-  background: transparent;
-  text-align: left;
-  color: var(--ink);
-}
-
-.message-action-menu button:hover,
-.message-action-menu button:focus-visible { background: var(--surface-hover); }
-.message-action-menu button.danger { color: var(--danger-ink); }
-
-.message-reply-preview {
-  max-width: 330px;
-  margin: 0 0 4px;
-  padding: 5px 9px;
-  border-left: 3px solid var(--accent);
-  border-radius: 7px;
-  background: var(--surface-hover);
-  font-size: 11px;
-  color: var(--ink-meta);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-quote {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 auto;
-  padding: 8px 14px;
-  width: min(100%, 760px);
-  border-top: 1px solid var(--line);
-  background: var(--surface-glass);
-  color: var(--ink);
-  font-size: 12px;
-}
-
-.composer-quote div { min-width: 0; display: flex; gap: 8px; }
-.composer-quote span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-meta); }
-.composer-quote button { border: 0; background: transparent; font-size: 22px; color: var(--ink-soft); }
 .image-viewer-current { transform-origin: center center; }
 .image-viewer-actions { max-width: calc(100vw - 24px); flex-wrap: wrap; justify-content: flex-end; }
 .admin-form-card audio { width: 100%; margin-top: 8px; }
@@ -110,8 +43,6 @@
   .gallery-batchbar { align-items: stretch; }
   .gallery-toolbar > * { flex: 1 1 44%; }
   .gallery-toolbar input[type='search'] { flex-basis: 100%; }
-  .message-action-menu { width: min(78vw, 240px); }
-  .composer-quote { width: 100%; }
   .admin-summary { grid-template-columns: 1fr; }
   .image-viewer-action { font-size: 12px; min-width: 42px; padding: 0 9px; }
 }

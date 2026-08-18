@@ -14,9 +14,9 @@ import {
   MEDIA_CACHE_MAX_ENTRIES,
   MEDIA_RETRY_DELAYS_MS,
   mediaThumbnailPath,
-  BUBBLE_IMAGE_CSS_WIDTH
+  BUBBLE_IMAGE_CSS_WIDTH,
+  credentialFreeMediaPath
 } from './authenticatedMedia.js';
-import { mediaUrl } from './api.js';
 import { adminMediaUrl } from './features.js';
 
 afterEach(() => {
@@ -60,7 +60,7 @@ describe('authenticated media', () => {
   });
 
   it('never appends long-lived credentials to media URLs', () => {
-    expect(mediaUrl('/api/media/media_1?token=user-secret&v=1')).toBe('/api/media/media_1?v=1');
+    expect(credentialFreeMediaPath('/api/media/media_1?token=user-secret&v=1')).toBe('/api/media/media_1?v=1');
     expect(adminMediaUrl('/api/media/media_1?admin_token=admin-secret#leak')).toBe('/api/media/media_1');
   });
 

@@ -119,7 +119,7 @@ if [[ "$INSTALL_SERVICE" -eq 1 ]]; then
   PORT="$(grep -E '^PORT=' "$SHARED_DIR/.env" | tail -1 | cut -d= -f2 || true)"
   PORT="${PORT:-8788}"
   for _ in $(seq 1 40); do
-    # /health/ready is deliberately not behind WEB_CHAT_TOKEN, so this probe
+    # /health/ready deliberately requires no Admin token, so this probe
     # works regardless of whether a chat token is configured.
     if curl -fsS "http://127.0.0.1:${PORT}/health/ready" >/dev/null 2>&1; then
       log "SOOYA is ready on port $PORT"

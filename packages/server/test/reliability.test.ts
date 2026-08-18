@@ -357,7 +357,8 @@ describe('crash recovery', () => {
       LOG_LEVEL: 'silent',
       DATA_DIR: path.join(dir, 'data'),
       CONFIG_DIR: path.join(dir, 'config'),
-      ENABLE_BACKGROUND_JOBS: 'false'
+      ENABLE_BACKGROUND_JOBS: 'false',
+      ADMIN_API_TOKEN: 'persist-admin-token'
     };
     const first = await buildApp({ env, logger: pino({ level: 'silent' }), assetsDir: ASSETS_DIR, startWorkers: false });
     const sticker = first.services.stickerLibrary.available()[0]!;
@@ -375,7 +376,7 @@ describe('crash recovery', () => {
     const restored = second.repos.messages.get(created.id)!;
     expect(restored.content).toHaveLength(2);
     expect(restored.content[1]!.media!.url).toBe(`/api/media/${sticker.mediaId}`);
-    const res = await second.server.inject({ method: 'GET', url: `/api/media/${sticker.mediaId}` });
+    const res = await second.server.inject({ method: 'GET', url: `/api/media/${sticker.mediaId}`, headers: { 'x-admin-token': 'persist-admin-token' } });
     expect(res.statusCode).toBe(200);
     expect(res.rawPayload.length).toBeGreaterThan(100);
     // Stickers are not re-imported into duplicates on the second boot.

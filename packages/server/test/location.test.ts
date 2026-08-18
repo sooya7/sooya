@@ -35,7 +35,7 @@ describe('location model (P0)', () => {
     harness = await createHarness({
       skipStickerImport: true,
       startWorkers: false,
-      env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true' },
+      env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true', ADMIN_API_TOKEN: 'test-admin-token' },
       clock: () => localTime('2026-08-08T10:00')
     });
     expect(harness.app.services.location.isEnabled).toBe(true);
@@ -263,14 +263,14 @@ describe('location model (P0)', () => {
     expect(harness.app.services.location.activeCity()?.timeZone).toBe('Asia/Shanghai');
   });
 
-  it('GET /api/life/locations exposes the known locations without inventing details', async () => {
+  it('GET /api/admin/life/locations exposes the known locations without inventing details', async () => {
     harness = await createHarness({
       skipStickerImport: true,
       startWorkers: false,
       env: { WORLD_CONTEXT_ENABLED: 'true', LOCATION_MODEL_ENABLED: 'true' },
       clock: () => localTime('2026-08-08T10:00')
     });
-    const res = await harness.app.server.inject({ method: 'GET', url: '/api/life/locations' });
+    const res = await harness.app.server.inject({ method: 'GET', url: '/api/admin/life/locations', headers: { 'x-admin-token': 'test-admin-token' } });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { locations: Array<{ name: string; kind: string }>; current: unknown };
     expect(body.locations.length).toBeGreaterThanOrEqual(6);

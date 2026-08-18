@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import type { FastifyReply } from 'fastify';
-import type { SooyaApp } from '../app.js';
-import { requireChatToken } from './auth.js';
-import type { UserVoicePreferences } from '../core/voice/types.js';
-import { DEFAULT_VOICE_PREFERENCES } from '../core/voice/types.js';
-import { DEFAULT_VOICE_EMOTIONS } from '../core/voice.js';
+import type { SooyaApp } from '../../src/app.js';
+import { requireChatToken } from './legacy-auth.js';
+import type { UserVoicePreferences } from '../../src/core/voice/types.js';
+import { DEFAULT_VOICE_PREFERENCES } from '../../src/core/voice/types.js';
+import { DEFAULT_VOICE_EMOTIONS } from '../../src/core/voice.js';
 
 const VoicePreviewSchema = z.object({
   text: z.string().trim().min(1).max(2000),
@@ -139,7 +139,7 @@ export function registerVoiceRoutes(app: SooyaApp): void {
       ...current,
       ...parsed.data,
       // quietHours accepts explicit null to clear; the stored shape never holds null.
-      quietHours: parsed.data.quietHours === null ? undefined : parsed.data.quietHours
+      quietHours: parsed.data.quietHours === null ? undefined : parsed.data.quietHours as UserVoicePreferences['quietHours']
     };
     repos.settings.set('voice.preferences', next);
     return { preferences: next };

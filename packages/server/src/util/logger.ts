@@ -66,7 +66,7 @@ export function createLogger(opts: { level: string; logDir?: string | null; pret
         log: (obj) => redactSecrets(obj) as Record<string, unknown>
       },
       redact: {
-        paths: ['apiKey', 'api_key', 'headers.authorization', 'headers["x-sooya-token"]', 'headers["x-admin-token"]', '*.apiKey'],
+        paths: ['apiKey', 'api_key', 'headers.authorization', 'headers["x-admin-token"]', '*.apiKey'],
         censor: '[redacted]'
       }
     },

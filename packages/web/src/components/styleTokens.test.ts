@@ -42,28 +42,17 @@ describe('shared colour tokens', () => {
     expect(literals).toEqual([]);
   });
 
-  it('leaves the remove badge somewhere to sit on a text attachment chip', () => {
-    // A voice attachment is a chip as narrow as '🎤 8s', and the badge is pinned
-    // to the top-right corner, so without reserved padding it covers the label.
-    expect(CHAT).toMatch(/\.attachment-generic \{[^}]*padding: 10px 28px 10px 12px;/);
-  });
 
-  it('gives the send button the shared gradient and a readable idle glyph', () => {
-    expect(CHAT).toMatch(/\.send-btn\.active \{\s*background: var\(--grad\);/);
-    // --ink-faint on --line measured about 1.7:1 in the static preview and the
-    // glyph simply was not there; --ink-soft is the floor for this chip.
-    expect(CHAT).toMatch(/\.send-btn \{[^}]*color: var\(--ink-soft\);/);
-  });
 
-  it('keeps three complete sticker rows visible on phone widths', () => {
-    expect(CHAT).toMatch(/@media \(max-width:\s*560px\)[\s\S]*\.sticker-panel\s*\{[^}]*max-height:\s*264px/s);
-  });
 
-  it('keeps enhanced chat/gallery surfaces free of literal colours', () => {
+
+
+
+  it('keeps enhanced gallery/admin surfaces free of literal colours', () => {
     expect(FEATURE).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
   });
 
-  it('themes gallery and notification surfaces while preserving fixed viewer chrome', () => {
+  it('themes gallery surfaces while preserving fixed viewer chrome', () => {
     const themedOverlays = OVERLAYS.slice(OVERLAYS.indexOf('.gallery-page'));
     expect(themedOverlays).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
   });

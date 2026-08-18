@@ -32,8 +32,8 @@ describe('头像图片与图库分离', () => {
   it('上传的头像不进图库，普通上传的图片仍在图库里', async () => {
     harness = await createHarness({ env: { ADMIN_API_TOKEN: 'admin-test-token' } });
     const app = harness.app;
-    // 走普通上传接口，顺带钉住 e2e 用来种图库数据的契约（字段名 image、返回 media 数组）。
-    const uploadRes = await app.server.inject({ method: 'POST', url: '/api/media', ...multipartFile('image', 'chat.png', TEST_PNG, 'image/png') });
+    // QQ 单通道后，普通图库导入只允许走 Admin 媒体接口。
+    const uploadRes = await app.server.inject({ method: 'POST', url: '/api/admin/media', ...multipartFile('image', 'chat.png', TEST_PNG, 'image/png') });
     expect(uploadRes.statusCode).toBe(200);
     const uploadBody = uploadRes.json() as { media: Array<{ id: string; bytes: number }> };
     expect(uploadBody.media).toHaveLength(1);

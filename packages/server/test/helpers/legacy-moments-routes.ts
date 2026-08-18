@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { SooyaApp } from '../app.js';
-import type { MomentRow } from '../db/repos/moment.repo.js';
-import { requireChatToken } from './auth.js';
+import type { SooyaApp } from '../../src/app.js';
+import type { MomentRow } from '../../src/db/repos/moment.repo.js';
+import { requireChatToken } from './legacy-auth.js';
 
 const ListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50)
