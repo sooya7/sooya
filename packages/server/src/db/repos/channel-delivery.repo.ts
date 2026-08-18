@@ -23,6 +23,22 @@ export interface ChannelDeliveryRow {
   created_at: string;
   updated_at: string;
   delivered_at: string | null;
+  progress_json: string;
+}
+
+export interface ChannelDeliveryProgress {
+  completed: string[];
+}
+
+export function parseChannelDeliveryProgress(raw: string | null | undefined): ChannelDeliveryProgress {
+  if (!raw) return { completed: [] };
+  try {
+    const parsed = JSON.parse(raw) as { completed?: unknown };
+    if (!Array.isArray(parsed.completed)) return { completed: [] };
+    return { completed: parsed.completed.filter((v): v is string => typeof v === 'string') };
+  } catch {
+    return { completed: [] };
+  }
 }
 
 export interface ChannelDeliveryInsert {
@@ -63,6 +79,22 @@ export class ChannelDeliveryRepo {
 
   getById(id: string): ChannelDeliveryRow | undefined {
     return this.db.prepare('SELECT * FROM channel_delivery WHERE id = ?').get(id) as ChannelDeliveryRow | undefined;
+  }
+
+  /** Durable per-step checkpoint for resumable channel delivery. */
+  markStepCompleted(id: string, stepKey: string, remoteMessageId: string | null = null): void {
+    const row = this.getById(id);
+    if (!row) return;
+    const progress = parseChannelDeliveryProgress(row.progress_json);
+    if (!progress.completed.includes(stepKey)) progress.completed.push(stepKey);
+    const now = nowIso();
+    this.db.prepare(`
+      UPDATE channel_delivery
+      SET progress_json = ?,
+          remote_message_id = CASE WHEN ? IS NULL OR ? = '' THEN remote_message_id ELSE ? END,
+          updated_at = ?
+      WHERE id = ?
+    `).run(JSON.stringify(progress), remoteMessageId, remoteMessageId, remoteMessageId, now, id);
   }
 
   /**

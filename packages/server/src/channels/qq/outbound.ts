@@ -1,6 +1,10 @@
 import type { JobRepo } from '../../db/repos/misc.repo.js';
 import type { ErrorLogRepo } from '../../db/repos/misc.repo.js';
-import type { ChannelDeliveryRepo, ChannelDeliveryRow } from '../../db/repos/channel-delivery.repo.js';
+import {
+  parseChannelDeliveryProgress,
+  type ChannelDeliveryRepo,
+  type ChannelDeliveryRow
+} from '../../db/repos/channel-delivery.repo.js';
 import type { ChannelEventRepo } from '../../db/repos/channel-event.repo.js';
 import type { ChannelIdentityRepo } from '../../db/repos/channel-identity.repo.js';
 import type { MediaRepo } from '../../db/repos/media.repo.js';
@@ -58,6 +62,7 @@ export class QqDeliveryService {
     if (row.status === 'sent') return 'skipped';
     if (!inserted && row.status === 'failed') return 'failed'; // 历史失败不再自动复活
     if (!this.deps.deliveries.claim(row.id)) return 'skipped'; // 已被另一个执行者领取
+    const claimedRow = this.deps.deliveries.getById(row.id) ?? row;
 
     const message = this.deps.messages.get(input.messageId);
     if (!message) {
@@ -78,19 +83,29 @@ export class QqDeliveryService {
     }
 
     const openid = owner.external_user_id;
-    const msgId = this.passiveReplyMsgId(row);
+    const msgId = this.passiveReplyMsgId(claimedRow);
+    const completed = new Set(parseChannelDeliveryProgress(claimedRow.progress_json).completed);
     let msgSeq = 1;
-    let lastRemoteMessageId = '';
+    let lastRemoteMessageId = claimedRow.remote_message_id ?? '';
     const startedAt = Date.now();
     try {
       if (text) {
-        const sent = await this.deps.client.sendC2cTextMessage({ openid, content: text, msgId, msgSeq: msgId ? msgSeq : undefined });
-        lastRemoteMessageId = sent.messageId;
+        if (!completed.has('text')) {
+          const sent = await this.deps.client.sendC2cTextMessage({ openid, content: text, msgId, msgSeq: msgId ? msgSeq : undefined });
+          lastRemoteMessageId = sent.messageId || lastRemoteMessageId;
+          this.deps.deliveries.markStepCompleted(row.id, 'text', sent.messageId || null);
+          completed.add('text');
+        }
         if (msgId) msgSeq += 1;
       }
       for (const part of mediaParts) {
-        const remoteId = await this.deliverMediaPart(part, openid, msgId ? msgId : null, msgSeq);
-        if (remoteId) lastRemoteMessageId = remoteId;
+        const stepKey = `part:${part.id}`;
+        if (!completed.has(stepKey)) {
+          const remoteId = await this.deliverMediaPart(part, openid, msgId ? msgId : null, msgSeq);
+          if (remoteId) lastRemoteMessageId = remoteId;
+          this.deps.deliveries.markStepCompleted(row.id, stepKey, remoteId);
+          completed.add(stepKey);
+        }
         if (msgId) msgSeq += 1;
       }
       this.deps.deliveries.markSent(row.id, lastRemoteMessageId);
@@ -98,7 +113,7 @@ export class QqDeliveryService {
       this.deps.metrics?.record('qq', 'outbound.latency', Date.now() - startedAt);
       return 'sent';
     } catch (error) {
-      return this.classifyFailure(error, row, input.messageId);
+      return this.classifyFailure(error, claimedRow, input.messageId);
     }
   }
 
