@@ -130,6 +130,10 @@ describe('ProactiveComposer -> Moments', () => {
     const prompt = JSON.stringify(harness.state.imageRequests[0]!.body);
     expect(prompt).toContain('社区公园');
     expect(prompt).toContain('橘猫');
+    expect(prompt).toContain('POV identity constraint');
+    expect(prompt).toContain('Keep the photographer completely out of frame');
+    expect(prompt).toContain("hands, arms, legs, feet");
+    expect(prompt).toContain('not by a male companion');
     expect(harness.state.imageRequests[0]!.body.input_images).toBeUndefined();
   });
 
@@ -142,6 +146,7 @@ describe('ProactiveComposer -> Moments', () => {
     const result = await harness.app.services.proactive.run({ mode: 'image' });
     expect(result.status).toBe('sent');
     expect(harness.state.imageRequests[0]!.body.input_images).toBeDefined();
+    expect(JSON.stringify(harness.state.imageRequests[0]!.body)).not.toContain('POV identity constraint');
     expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({ photoKind: 'selfie', referenceUsed: true, destination: 'moments' });
   });
 

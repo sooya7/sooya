@@ -386,8 +386,9 @@ export class ProactiveComposer {
           ? 'casual Moments-feed selfie from the same real lived event'
           : 'casual first-person smartphone photo for a Moments feed from the same real lived event'
       }, { signal });
-      const finalImagePrompt = directed.prompt.trim();
-      if (!finalImagePrompt) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_director_failed' };
+      const directedPrompt = directed.prompt.trim();
+      if (!directedPrompt) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_director_failed' };
+      const finalImagePrompt = applyMomentPhotoConstraints(directedPrompt, imagePlan);
       const referenceImages = imagePlan.kind === 'selfie' ? await this.deps.personaReferences.load(finalImagePrompt) : [];
       const referenceUsed = referenceImages.length > 0;
       const image = await this.deps.capabilities.imageProvider().generate(finalImagePrompt, {
@@ -507,7 +508,7 @@ async function composeMomentSharePlan(
         `本次发布方式：${imageMode ? '图片动态' : '文字动态'}。${imageMode ? '请规划一张与正文同一事件的照片。' : 'image 必须为 null。'}`,
         '【规则】text 是一条自然、完整的动态正文，像随手记录生活，不要标题、标签、冒号前缀、系统/Life/模型内容。',
         '不要用“在吗”“睡了吗”“刚想跟你说”“发给你看看”这种私聊式呼叫，也不要为了发动态虚构新事件。',
-        '如果有图片，必须与 text 是同一件具体小事：pov 是 SOOYA 手机第一视角且不出现本人，selfie 才出现 SOOYA。只选普通现实生活场景。',
+        '如果有图片，必须与 text 是同一件具体小事：pov 是 SOOYA 手机第一视角，默认只拍场景和物件，不安排手、手臂、腿、衣物、倒影等摄影者身体入镜；只有事件动作确实必须露手时才允许少量自然女性手部。selfie 才出现 SOOYA。只选普通现实生活场景。',
         repairReason ? `上一版未通过检查：${repairReason}。请只重新返回完整 JSON。` : '',
         '只输出 JSON：{"text":"...","image":null 或 {"kind":"pov|selfie","scene":"...","action":"...","mood":"...","framing":"front|side|full-body|environment"}}。'
       ].filter(Boolean).join('\n'),
@@ -562,6 +563,21 @@ function buildGroundedScene(image: NonNullable<MomentSharePlan['image']>, contex
     weather,
     '必须是现实世界普通生活环境、自然手机照片；禁止幻想建筑、漂浮建筑、旅游海报、概念艺术、动漫世界和不可能的地理关系。'
   ].filter(Boolean).join('\n');
+}
+
+function applyMomentPhotoConstraints(prompt: string, image: NonNullable<MomentSharePlan['image']>): string {
+  if (image.kind !== 'pov') return prompt;
+  const explicitHandAction = /(?:必须|特写|伸手|手里|手中|握住|拿着|举着|碰触|触摸|hand|holding|gripping|reaching)/iu.test(
+    `${image.scene} ${image.action ?? ''}`
+  );
+  const framingRule = explicitHandAction
+    ? 'If a hand is essential to the described action, show at most a small, natural feminine hand belonging to SOOYA, a young East Asian woman. Do not invent masculine arms, watches, bulky clothing, legs, torso, or another photographer.'
+    : "Keep the photographer completely out of frame. Do not show the photographer's hands, arms, legs, feet, torso, clothing, watch, jewelry, reflection, mirror image, or body shadow. Frame only the scene, objects, and environment.";
+  return [
+    prompt,
+    'POV identity constraint: this is a photo taken by SOOYA herself with her phone, not by a male companion or an unknown photographer.',
+    framingRule
+  ].join('\n');
 }
 
 function isUniqueConstraint(error: unknown): boolean {
