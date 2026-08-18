@@ -51,15 +51,15 @@ describe('feature flag rollback (P1-1)', () => {
     expect(body.reply?.content.some((p: { type: string }) => p.type === 'text')).toBe(true);
   });
 
-  it('ENABLE_LIFE_V2=false keeps the legacy life engine panel contract', async () => {
+  it('ENABLE_LIFE_V2=false keeps the Admin life panel contract', async () => {
     harness = await createHarness({
-      env: { ENABLE_LIFE_V2: 'false', ENABLE_LIFE_ENGINE: 'true' },
+      env: { ENABLE_LIFE_V2: 'false', ENABLE_LIFE_ENGINE: 'true', ADMIN_API_TOKEN: 'test-admin-token' },
       clock: () => new Date('2026-07-31T12:00:00+08:00')
     });
-    const res = await harness.app.server.inject({ method: 'GET', url: '/api/life' });
+    const res = await harness.app.server.inject({ method: 'GET', url: '/api/admin/life', headers: { 'x-admin-token': 'test-admin-token' } });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(typeof body.activity).toBe('string');
-    expect(body.recent).toBeDefined();
+    expect(typeof body.snapshot.activity).toBe('string');
+    expect(body.log).toBeDefined();
   });
 });
