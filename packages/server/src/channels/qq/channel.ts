@@ -2,6 +2,8 @@ import type { ErrorLogRepo } from '../../db/repos/misc.repo.js';
 import type { ChannelEventRepo, ChannelEventStatus } from '../../db/repos/channel-event.repo.js';
 import type { ChannelIdentityRepo } from '../../db/repos/channel-identity.repo.js';
 import type { MessageIngressService } from '../../core/message-ingress.js';
+import type { MediaStore } from '../../media/store.js';
+import type { InputPart } from '../../core/types.js';
 import type { QqBotConfig } from './config.js';
 import {
   QQ_CHANNEL_NAME,
@@ -15,6 +17,7 @@ import {
 import { signValidationResponse, verifyEventSignature } from './verify.js';
 import { resolveQqIdentity } from './mapping.js';
 import { c2cMessageToIngress, resolveQuoteReplyTo } from './inbound.js';
+import { downloadQqImageAttachment } from './inbound-media.js';
 
 /*
  * QQ 通道编排层：把 verify / mapping / inbound / MessageIngress 串起来，
@@ -30,6 +33,9 @@ export interface QqChannelDeps {
   events: ChannelEventRepo;
   identities: ChannelIdentityRepo;
   ingress: MessageIngressService;
+  mediaStore: MediaStore;
+  fetchImpl: typeof fetch;
+  maxAttachmentBytes: number;
   errors: ErrorLogRepo;
   metrics?: import('../../core/metrics.js').MetricsService;
 }
@@ -100,7 +106,22 @@ export class QqChannel {
           this.deps.events.markRejected(QQ_CHANNEL_NAME, eventId, identity.reason);
           return { ack: { op: QQ_OP_ACK }, eventStatus: 'rejected' };
         }
-        const inbound = c2cMessageToIngress(payload, identity);
+        const mediaParts: InputPart[] = [];
+        for (const attachment of d?.attachments ?? []) {
+          try {
+            const part = await downloadQqImageAttachment(attachment, {
+              mediaStore: this.deps.mediaStore,
+              fetchImpl: this.deps.fetchImpl,
+              maxBytes: this.deps.maxAttachmentBytes
+            });
+            if (part) mediaParts.push(part);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.deps.errors.add('qq.inbound', message, { eventId, code: 'attachment_download_failed' });
+            this.deps.metrics?.record('qq', 'inbound.attachment_failed');
+          }
+        }
+        const inbound = c2cMessageToIngress(payload, identity, mediaParts);
         if (!inbound) {
           // 空内容 / 缺消息 id：不产生消息，视为已消费。
           this.deps.events.markProcessed(QQ_CHANNEL_NAME, eventId, null);

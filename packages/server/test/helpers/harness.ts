@@ -60,6 +60,8 @@ export interface HarnessOptions {
   rerank?: 'ok' | 'fail' | 'off';
   /** Custom rerank ordering: indexes into the request's documents array. */
   rerankOrder?: (documents: string[]) => number[];
+  /** Exact URL fixtures for channel/media download tests. */
+  httpFixtures?: Record<string, { body: string | Buffer; status?: number; contentType?: string }>;
   /** Fake payloads for the server-side web search adapters. */
   webSearch?: {
     doubao?: unknown | { status?: number; payload?: unknown };
@@ -166,6 +168,12 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const body = init?.body && typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : null;
+
+    const fixture = opts.httpFixtures?.[url];
+    if (fixture) {
+      const payload = typeof fixture.body === 'string' ? fixture.body : new Uint8Array(fixture.body);
+      return new Response(payload, { status: fixture.status ?? 200, headers: { 'content-type': fixture.contentType ?? 'application/octet-stream' } });
+    }
 
     if (url.includes('feedcoopapi.com') || url.includes('tavily.com/search')) {
       const provider = url.includes('feedcoopapi.com') ? 'doubao' : 'tavily';

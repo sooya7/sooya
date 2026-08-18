@@ -230,7 +230,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   // directly (SOOYA_HTTP_PROXY=socks5h://127.0.0.1:8082 for Fish from a CN
   // host). Node's native fetch ignores HTTPS_PROXY, so the providers receive
   // this implementation through the injectable fetchImpl seam instead.
-  const fetchImpl = env.SOOYA_HTTP_PROXY ? createProxyFetch(env.SOOYA_HTTP_PROXY) : (opts.fetchImpl ?? fetch);
+  const directFetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = env.SOOYA_HTTP_PROXY ? createProxyFetch(env.SOOYA_HTTP_PROXY) : directFetchImpl;
 
   for (const dir of [env.dataDir, env.dbDir, env.mediaDir, env.backupDir, env.logDir, ...Object.values(env.mediaDirs)]) ensureDirSync(dir);
 
@@ -572,6 +573,9 @@ repos.jobs.enqueue(
     events: repos.channelEvents,
     identities: repos.channelIdentities,
     ingress,
+    mediaStore,
+    fetchImpl: directFetchImpl,
+    maxAttachmentBytes: env.MAX_UPLOAD_BYTES,
     errors: repos.errors,
     metrics
   });
