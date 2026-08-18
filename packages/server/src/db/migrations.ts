@@ -1450,6 +1450,13 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 39,
+    name: 'channel_delivery_progress',
+    up: (db) => {
+      db.exec(`ALTER TABLE channel_delivery ADD COLUMN progress_json TEXT NOT NULL DEFAULT '{}';`);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

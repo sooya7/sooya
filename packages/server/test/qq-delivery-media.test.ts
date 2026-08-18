@@ -168,3 +168,69 @@ describe('QQ delivery: media fallback', () => {
     expect(parseJson(textSends[0]!)).toMatchObject({ msg_type: 0, content: '语音内容：我在散步' });
   });
 });
+
+describe('QQ delivery: partial retry checkpoints', () => {
+  it('does not resend text when a later media fallback fails and is retried', async () => {
+    let fallbackAttempts = 0;
+    const { delivery, calls } = await buildDelivery({
+      files: () => ({ status: 500, body: { err_code: 0, message: 'upload failed' } }),
+      messages: (init) => {
+        const body = JSON.parse(String(init?.body)) as { msg_type?: number; content?: string };
+        if (body.content === '开心地笑了') {
+          fallbackAttempts += 1;
+          if (fallbackAttempts === 1) return { status: 500, body: { err_code: 0, message: 'fallback failed' } };
+        }
+        return { status: 200, body: { id: `ROBOT1.0_msg_${fallbackAttempts}` } };
+      }
+    });
+    const media = await h!.app.services.mediaStore.save({ kind: 'sticker', data: Buffer.from(TEST_PNG), filename: 's.png', origin: 'builtin' });
+    const message = await assistantWithParts([
+      { type: 'text', text: '文字先发成功' },
+      { type: 'sticker', mediaId: media.id, status: 'sent', meta: { stickerMeaning: '开心地笑了' } }
+    ]);
+
+    expect(await delivery.deliver({ messageId: message.id })).toBe('retry');
+    const afterFirst = h!.app.repos.channelDeliveries.find('qq', message.id, 'owner-uuid')!;
+    expect(JSON.parse(afterFirst.progress_json).completed).toContain('text');
+
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    const bodies = calls.filter((c) => c.url.includes('/messages')).map(parseJson);
+    expect(bodies.filter((b) => b.content === '文字先发成功')).toHaveLength(1);
+    expect(bodies.filter((b) => b.content === '开心地笑了')).toHaveLength(2);
+    expect(calls.filter((c) => c.url.includes('/files'))).toHaveLength(2);
+  });
+
+  it('does not resend an earlier successful media part when a later media part retries', async () => {
+    let fileCalls = 0;
+    let fallbackAttempts = 0;
+    const { delivery, calls } = await buildDelivery({
+      files: () => {
+        fileCalls += 1;
+        if (fileCalls === 1) return { status: 200, body: { file_uuid: 'uuid-image', file_info: 'info-image', ttl: 600 } };
+        return { status: 500, body: { err_code: 0, message: 'later upload failed' } };
+      },
+      messages: (init) => {
+        const body = JSON.parse(String(init?.body)) as { msg_type?: number; content?: string };
+        if (body.content === '第二个媒体降级') {
+          fallbackAttempts += 1;
+          if (fallbackAttempts === 1) return { status: 500, body: { err_code: 0, message: 'fallback failed' } };
+        }
+        return { status: 200, body: { id: `ROBOT1.0_${body.msg_type ?? 0}_${fallbackAttempts}` } };
+      }
+    });
+    const image = await h!.app.services.mediaStore.save({ kind: 'image', data: Buffer.from(TEST_PNG), filename: 'a.png', origin: 'upload' });
+    const sticker = await h!.app.services.mediaStore.save({ kind: 'sticker', data: Buffer.from(TEST_PNG), filename: 's.png', origin: 'builtin' });
+    const message = await assistantWithParts([
+      { type: 'image', mediaId: image.id, status: 'sent' },
+      { type: 'sticker', mediaId: sticker.id, status: 'sent', meta: { stickerMeaning: '第二个媒体降级' } }
+    ]);
+
+    expect(await delivery.deliver({ messageId: message.id })).toBe('retry');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+
+    const bodies = calls.filter((c) => c.url.includes('/messages')).map(parseJson);
+    expect(bodies.filter((b) => b.msg_type === 7)).toHaveLength(1);
+    expect(bodies.filter((b) => b.content === '第二个媒体降级')).toHaveLength(2);
+    expect(calls.filter((c) => c.url.includes('/files'))).toHaveLength(3);
+  });
+});
