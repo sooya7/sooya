@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileTypeFromBuffer } from 'file-type';
 import type { SooyaApp } from '../app.js';
 import { resolveReferencesDir } from '../app.js';
-import { requireAdminToken, requireChatToken } from './auth.js';
+import { requireAdminToken } from './auth.js';
 import { mediaMeta, toMediaRef, type MediaRow } from '../db/repos/media.repo.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from '../core/voice.js';
 import { fishCueForMood } from '../core/voice/fishCue.js';
@@ -16,9 +16,7 @@ const IdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,80}$/);
 export function registerFeatureRoutes(app: SooyaApp): void {
   const { server, repos, services, config } = app;
   const admin = requireAdminToken(app);
-  const chat = requireChatToken(app);
   const adminGuard = { preHandler: admin };
-  const chatGuard = { preHandler: chat };
 
   /* -------------------------------- avatars -------------------------------- */
   server.post('/api/admin/persona/avatar/:slot', adminGuard, async (req, reply) => {
@@ -282,15 +280,6 @@ export function registerFeatureRoutes(app: SooyaApp): void {
     repos.audit.add('persona', 'reference.deleted', name, { removedFile });
     return { deleted: true, removedFile, referenceImages: config.getPersona().referenceImages };
   });
-
-  /*
-   * What she is doing, for the header in the client. Behind the chat guard
-   * rather than the admin guard: this is hers to show the user, not a setting.
-   */
-  server.get('/api/life', chatGuard, async () => services.life.snapshot());
-  server.get('/api/life/locations', chatGuard, async () => ({ locations: services.location.list(), current: services.location.current() }));
-  server.get('/api/life/world', chatGuard, async () => services.world.snapshot());
-  server.get('/api/life/presence', chatGuard, async () => services.presence.current());
 
   server.post('/api/admin/life/tick', adminGuard, async () => {
     const result = services.life.tick();

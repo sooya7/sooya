@@ -5,6 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pino from 'pino';
 import { buildApp, type SooyaApp } from '../../src/app.js';
+import { registerChatRoutes as registerLegacyChatRoutes } from './legacy-chat-routes.js';
+import { registerStreamRoutes as registerLegacyStreamRoutes } from './legacy-stream-routes.js';
+import { registerMomentRoutes as registerLegacyMomentRoutes } from './legacy-moments-routes.js';
+import { registerThoughtRoutes as registerLegacyThoughtRoutes } from './legacy-thoughts-routes.js';
+import { registerVoiceRoutes as registerLegacyVoiceRoutes } from './legacy-voice-routes.js';
+import { registerLegacyMediaUploadRoute } from './legacy-media-upload-route.js';
 
 export const ASSETS_DIR = fileURLToPath(new URL('../../../../assets/stickers/', import.meta.url));
 
@@ -354,6 +360,7 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       WEB_DIR: path.join(dir, 'nonexistent-web'),
       ENABLE_BACKGROUND_JOBS: 'false',
       ALLOW_PRIVATE_NETWORK_FETCH: 'true',
+      ADMIN_API_TOKEN: 'test-admin-token',
       ...(opts.env ?? {})
     },
     logger: pino({ level: 'silent' }),
@@ -364,6 +371,29 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     startWorkers: opts.startWorkers ?? false,
     replyDebounceMs: 0
   });
+
+  // Production no longer exposes Web chat/user HTTP routes. Tests keep a private
+  // compatibility surface so core ingress/reply/media regressions can still drive
+  // the same internals without shipping those routes in src/.
+  registerLegacyChatRoutes(app);
+  registerLegacyStreamRoutes(app);
+  registerLegacyMomentRoutes(app);
+  registerLegacyThoughtRoutes(app);
+  registerLegacyVoiceRoutes(app);
+  registerLegacyMediaUploadRoute(app);
+
+  // Production media reads are Admin-only. Core tests are not auth tests, so the
+  // harness attaches its fixed admin token to media reads unless the caller
+  // supplied explicit credentials.
+  const rawInject = app.server.inject.bind(app.server);
+  (app.server as any).inject = (options: any) => {
+    if (options && String(options.url ?? '').startsWith('/api/media/')) {
+      const headers = new Headers(options.headers ?? {});
+      if (!headers.has('x-admin-token') && !headers.has('authorization')) headers.set('x-admin-token', 'test-admin-token');
+      options = { ...options, headers: Object.fromEntries(headers.entries()) };
+    }
+    return rawInject(options);
+  };
 
   return {
     app,

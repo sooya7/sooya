@@ -2,8 +2,6 @@
 # SOOYA — Nginx reverse proxy example.
 #
 # Key points for this app:
-#   * /api/stream is Server-Sent Events: buffering MUST be off and the read
-#     timeout long, otherwise replies appear only after a refresh.
 #   * uploads can be up to MAX_UPLOAD_BYTES (25 MB by default).
 #   * /health/* is left reachable from localhost so deploy scripts can probe it.
 # =============================================================================
@@ -52,24 +50,6 @@ server {
     # Must be >= MAX_UPLOAD_BYTES.
     client_max_body_size 26m;
     client_body_timeout  120s;
-
-    # --- SSE stream: no buffering, long timeout -----------------------------
-    location /api/stream {
-        proxy_pass              http://sooya_backend;
-        proxy_http_version      1.1;
-        proxy_set_header        Connection "";
-        proxy_set_header        Host              $host;
-        proxy_set_header        X-Real-IP         $remote_addr;
-        proxy_set_header        X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header        X-Forwarded-Proto $scheme;
-
-        proxy_buffering         off;
-        proxy_cache             off;
-        gzip                    off;
-        chunked_transfer_encoding on;
-        proxy_read_timeout      1h;
-        proxy_send_timeout      1h;
-    }
 
     # --- media: cacheable, immutable ----------------------------------------
     location /api/media/ {

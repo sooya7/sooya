@@ -197,7 +197,7 @@ sudo ./deploy/upgrade.sh --source .
 **升级保证保留：** `.env`、`config/`（含自定义人格与模型配置）、`data/`（数据库、
 媒体、备份、日志）。这些都在 `shared/` 里，`upgrade.sh` 从不写入该目录中的这些路径。
 
-> 部署脚本探测的是 `/health/ready`，该端点**不受 `WEB_CHAT_TOKEN` 保护**，
+> 部署脚本探测的是 `/health/ready`，该端点**无需 Admin Token**，
 > 所以设置了聊天令牌也不会造成部署误判失败。
 
 ---
@@ -335,7 +335,6 @@ fi
 
 公网上线前逐条确认：
 
-- [ ] `WEB_CHAT_TOKEN` 已设置为 32 字节以上随机串
 - [ ] `ADMIN_API_TOKEN` 已设置且与聊天令牌不同
 - [ ] `.env` 权限为 `600` 且属主是服务用户
 - [ ] Nginx 已启用 TLS，HTTP 全量跳转 HTTPS

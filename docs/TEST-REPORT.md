@@ -81,7 +81,7 @@ found 0 vulnerabilities
 | 上传限制 | `rejects a file larger than the configured limit`、`caps the number of files per request` | 集成 | ✅ |
 | 路径穿越 | `rejects traversal in many encodings`（8 种攻击）、`does not serve files outside the media root` | 单元 + 集成 | ✅ |
 | SSRF | `blocks dangerous protocols and private hosts`、`refuses to fetch a generated image from a private address` | 单元 + 集成 | ✅ |
-| Token 鉴权 | `WEB_CHAT_TOKEN` 4 例 + `ADMIN_API_TOKEN` 3 例 | 集成 | ✅ |
+| Token 鉴权 | `ADMIN_API_TOKEN` + QQ Webhook 签名校验 | 集成 | ✅ |
 | 部署健康检查 | `/health/live` `/health/ready` 在设置 token 后仍可探测 | 集成 + 部署 | ✅ |
 | 升级保留运行配置 | 部署脚本实测：.env / persona / media / database / 聊天记录 | 部署 | ✅ |
 | PWA 基础功能 | `PWA: manifest, icons and service worker are served correctly` | E2E | ✅ |
@@ -151,7 +151,7 @@ Service Worker 缓存键不含令牌、响应式布局（无横向溢出、气�
 `rollback.sh` → `backup.sh` → `restore-backup.sh`，37 项断言全部通过：
 
 - 安装：符号链接、前后端构建产物、`.env` 权限 600、自动生成管理令牌、服务健康
-- 鉴权：设置 `WEB_CHAT_TOKEN` 后 `/health/live` 与 `/health/ready` 仍可无令牌探测，
+- 鉴权：`/health/live` 与 `/health/ready` 保持无令牌探测，Admin 接口使用 `ADMIN_API_TOKEN`，
   聊天 API 返回 401
 - 升级：`.env` 校验和不变、自定义人格保留、用户媒体保留、数据库保留、
   自动生成升级前备份、聊天记录条数与内容不变

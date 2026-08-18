@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { getToken } from './api.js';
 import { getAdminToken } from './admin.js';
 import {
   acquireAuthenticatedMedia,
@@ -63,7 +62,7 @@ export function useAuthenticatedMedia(
       setLoading(false);
       return cleanup;
     }
-    const token = scope === 'admin' ? getAdminToken() : getToken();
+    const token = getAdminToken();
     setUrl(null);
     setLoading(true);
     void acquireAuthenticatedMedia(path, { scope, token, expected, signal: controller.signal })

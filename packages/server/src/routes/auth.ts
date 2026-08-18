@@ -23,26 +23,6 @@ function extractToken(req: FastifyRequest, headerName: string): string | null {
 }
 
 /**
- * Chat API guard. When WEB_CHAT_TOKEN is unset the API is open (single-user
- * local deployment); when set, every /api route requires it.
- */
-export function requireChatToken(app: SooyaApp) {
-  return async (req: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void> => {
-    const expected = app.env.WEB_CHAT_TOKEN;
-    if (!expected) return;
-    const provided = extractToken(req, 'x-sooya-token');
-    if (!provided || !timingSafeEqual(provided, expected)) {
-      // Admin token is also accepted so tooling needs only one secret.
-      const admin = app.env.ADMIN_API_TOKEN;
-      const adminProvided = extractToken(req, 'x-admin-token');
-      if (admin && adminProvided && timingSafeEqual(adminProvided, admin)) return;
-      // Returning the reply tells Fastify the request is already handled.
-      return reply.code(401).send({ error: 'unauthorized', message: 'valid WEB_CHAT_TOKEN required' });
-    }
-  };
-}
-
-/**
  * Admin API guard. Unlike the chat token this one is fail-closed: if
  * ADMIN_API_TOKEN is not configured, every admin endpoint is disabled —
  * reads included, not just writes.

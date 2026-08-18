@@ -8,7 +8,6 @@ afterEach(async () => {
   if (h) await h.cleanup();
 });
 
-const CHAT_TOKEN = 'chat-token-abcdefgh';
 const ADMIN_TOKEN = 'admin-token-12345678';
 
 describe('browser cross-origin access', () => {
@@ -28,14 +27,14 @@ describe('browser cross-origin access', () => {
       headers: {
         origin: 'https://echo.sooya.icu',
         'access-control-request-method': 'POST',
-        'access-control-request-headers': 'content-type,x-sooya-token,authorization'
+        'access-control-request-headers': 'content-type,x-admin-token,authorization'
       }
     });
     expect(allowed.statusCode).toBe(204);
     expect(allowed.headers['access-control-allow-origin']).toBe('https://echo.sooya.icu');
     expect(allowed.headers['access-control-allow-credentials']).toBeUndefined();
     expect(allowed.headers['access-control-allow-headers']).toBe(
-      'content-type, x-sooya-token, x-admin-token, authorization'
+      'content-type, x-admin-token, authorization'
     );
 
     const hostile = await h.app.server.inject({
@@ -66,128 +65,21 @@ describe('browser cross-origin access', () => {
   });
 });
 
-describe('WEB_CHAT_TOKEN', () => {
-  it('rejects chat API access without a token', async () => {
-    h = await createHarness({ env: { WEB_CHAT_TOKEN: CHAT_TOKEN } });
-    for (const url of ['/api/messages', '/api/conversation', '/api/stickers', '/api/stream']) {
-      const res = await h.app.server.inject({ method: 'GET', url });
-      expect(res.statusCode, url).toBe(401);
-    }
-    const post = await h.app.server.inject({
-      method: 'POST',
-      url: '/api/messages',
-      payload: { clientMsgId: 'x', content: [{ type: 'text', text: 'hi' }] }
-    });
-    expect(post.statusCode).toBe(401);
-  });
-
-  it('accepts the token via headers but rejects query credentials', async () => {
-    h = await createHarness({ env: { WEB_CHAT_TOKEN: CHAT_TOKEN } });
-    const variants = [
-      { headers: { 'x-sooya-token': CHAT_TOKEN } },
-      { headers: { authorization: `Bearer ${CHAT_TOKEN}` } }
-    ];
-    for (const v of variants) {
-      const res = await h.app.server.inject({ method: 'GET', url: '/api/conversation', headers: v.headers });
-      expect(res.statusCode).toBe(200);
-    }
-    const query = await h.app.server.inject({ method: 'GET', url: `/api/conversation?token=${CHAT_TOKEN}` });
-    expect(query.statusCode).toBe(401);
-  });
-
-  it('protects media with header credentials and never accepts query credentials', async () => {
-    h = await createHarness({ env: { WEB_CHAT_TOKEN: CHAT_TOKEN, ADMIN_API_TOKEN: ADMIN_TOKEN } });
-    const stored = await h.app.services.mediaStore.save({
-      kind: 'image',
-      origin: 'upload',
-      data: TEST_PNG,
-      declaredMime: 'image/png',
-      filename: 'protected.png'
-    });
-    const path = `/api/media/${stored.id}`;
-    expect((await h.app.server.inject({ method: 'GET', url: path })).statusCode).toBe(401);
-    expect((await h.app.server.inject({ method: 'GET', url: `${path}?token=${CHAT_TOKEN}` })).statusCode).toBe(401);
-    expect((await h.app.server.inject({ method: 'GET', url: `${path}?admin_token=${ADMIN_TOKEN}` })).statusCode).toBe(401);
-    const chatResponse = await h.app.server.inject({
-      method: 'GET',
-      url: path,
-      headers: { authorization: `Bearer ${CHAT_TOKEN}` }
-    });
-    expect(chatResponse.statusCode).toBe(200);
-    /*
-     * 这里原来钉死 `private, no-store`。改成可缓存是刻意的：no-store 意味着每次挂载都要
-     * 重传整张原图（画廊一页 60 张），而一个 id 的字节永远不会被改写。安全上真正要守的是
-     * 「凭证只走请求头」和「private，绝不落到共享缓存或 CDN」，这两条仍然由本用例守着；
-     * 代价是私有图片会进用户自己浏览器的本地缓存，最长 7 天。
-     */
-    expect(chatResponse.headers['cache-control']).toBe('private, max-age=604800, immutable');
-    expect(chatResponse.headers['cache-control']).not.toContain('public');
-    expect(chatResponse.headers['content-type']).toBe('image/png');
-    expect((await h.app.server.inject({
-      method: 'GET',
-      url: path,
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}` }
-    })).statusCode).toBe(200);
-  });
-
-  it('rejects a wrong token of the same length', async () => {
-    h = await createHarness({ env: { WEB_CHAT_TOKEN: CHAT_TOKEN } });
-    const res = await h.app.server.inject({
-      method: 'GET',
-      url: '/api/conversation',
-      headers: { 'x-sooya-token': 'chat-token-abcdefgX' }
-    });
-    expect(res.statusCode).toBe(401);
-  });
-
-  it('leaves health endpoints open so deployment probes work', async () => {
-    h = await createHarness({ env: { WEB_CHAT_TOKEN: CHAT_TOKEN } });
-    for (const url of ['/health/live', '/health/ready']) {
-      const res = await h.app.server.inject({ method: 'GET', url });
-      expect(res.statusCode, url).toBe(200);
-      // No secret may leak through the health payload.
-      expect(res.body).not.toContain(CHAT_TOKEN);
-    }
-  });
-
-  it('is open when no token is configured (local single-user mode)', async () => {
-    h = await createHarness();
-    expect((await h.app.server.inject({ method: 'GET', url: '/api/conversation' })).statusCode).toBe(200);
-  });
-});
-
 describe('ADMIN_API_TOKEN', () => {
   it('is fail-closed when the token is not configured', async () => {
-    h = await createHarness();
+    h = await createHarness({ env: { ADMIN_API_TOKEN: '' } });
     const res = await h.app.server.inject({ method: 'GET', url: '/api/admin/persona' });
     expect(res.statusCode).toBe(503);
     expect(res.json().error).toBe('admin_disabled');
   });
 
   it('rejects admin calls without the admin token', async () => {
-    h = await createHarness({ env: { ADMIN_API_TOKEN: ADMIN_TOKEN, WEB_CHAT_TOKEN: CHAT_TOKEN } });
-    const withChatToken = await h.app.server.inject({
-      method: 'GET',
-      url: '/api/admin/persona',
-      headers: { 'x-sooya-token': CHAT_TOKEN }
-    });
-    expect(withChatToken.statusCode).toBe(401);
-    const withChatBearer = await h.app.server.inject({
-      method: 'GET',
-      url: '/api/admin/persona',
-      headers: { authorization: `Bearer ${CHAT_TOKEN}` }
-    });
-    expect(withChatBearer.statusCode).toBe(401);
-    const ok = await h.app.server.inject({
-      method: 'GET',
-      url: '/api/admin/persona',
-      headers: { 'x-admin-token': ADMIN_TOKEN }
-    });
+    h = await createHarness({ env: { ADMIN_API_TOKEN: ADMIN_TOKEN } });
+    const anonymous = await h.app.server.inject({ method: 'GET', url: '/api/admin/persona' });
+    expect(anonymous.statusCode).toBe(401);
+    const ok = await h.app.server.inject({ method: 'GET', url: '/api/admin/persona', headers: { 'x-admin-token': ADMIN_TOKEN } });
     expect(ok.statusCode).toBe(200);
-    const query = await h.app.server.inject({
-      method: 'GET',
-      url: `/api/admin/persona?admin_token=${ADMIN_TOKEN}`
-    });
+    const query = await h.app.server.inject({ method: 'GET', url: `/api/admin/persona?admin_token=${ADMIN_TOKEN}` });
     expect(query.statusCode).toBe(401);
   });
 

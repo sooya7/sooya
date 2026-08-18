@@ -15,21 +15,11 @@ export interface MessagePart { id: string; type: PartType; text?: string | null;
 export interface MediaRef { id: string; kind: 'image' | 'audio' | 'sticker' | 'file'; mime: string; bytes: number; width?: number | null; height?: number | null; duration?: number | null; url: string; name?: string | null; transcript?: string | null; animated?: boolean; textStatus?: 'pending' | 'ready' | 'failed' | 'unsupported'; textError?: string | null; }
 export interface ChatMessage { id: string; conversationId: string; role: Role; createdAt: string; updatedAt: string; seq: number; status: MessageStatus; clientMsgId?: string | null; replyTo?: string | null; error?: string | null; content: MessagePart[]; meta?: Record<string, unknown>; }
 
-export const InputPartSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('text'), text: z.string().min(1).max(20000) }),
-  z.object({ type: z.literal('image'), mediaId: z.string().min(1) }),
-  z.object({ type: z.literal('sticker'), mediaId: z.string().min(1) }),
-  z.object({ type: z.literal('file'), mediaId: z.string().min(1) })
-]);
-export type InputPart = z.infer<typeof InputPartSchema>;
-
-export const SendMessageSchema = z.object({
-  clientMsgId: z.string().min(1).max(128),
-  content: z.array(InputPartSchema).min(1).max(20),
-  replyTo: z.string().min(1).max(80).optional(),
-  directives: z.object({ wantSticker: z.boolean().optional(), wantImage: z.boolean().optional(), wantVoice: z.boolean().optional(), voiceOnly: z.boolean().optional(), noSticker: z.boolean().optional(), anotherSticker: z.boolean().optional() }).optional()
-});
-export type SendMessageInput = z.infer<typeof SendMessageSchema>;
+export type InputPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mediaId: string }
+  | { type: 'sticker'; mediaId: string }
+  | { type: 'file'; mediaId: string };
 
 /** Structured, non-character failure surfaced as a system card (never as her words). */
 export type ReplyFailureCode = 'model_timeout' | 'provider_unavailable' | 'rate_limited' | 'internal_error';

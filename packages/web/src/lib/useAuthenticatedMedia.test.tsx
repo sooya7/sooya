@@ -25,7 +25,7 @@ function deferred<T>() {
 }
 
 function Probe({ path }: { path: string }) {
-  const media = useAuthenticatedMedia(path, 'user', 'image');
+  const media = useAuthenticatedMedia(path, 'admin', 'image');
   return <img data-testid="media" src={media.url ?? undefined} alt="" />;
 }
 
@@ -53,7 +53,7 @@ describe('useAuthenticatedMedia lifecycle', () => {
 
   it('只显示最新一次请求的结果，迟到的旧响应不会顶掉它', async () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    localStorage.setItem('sooya.token', 'chat-secret');
+    localStorage.setItem('sooya.admin-token', 'admin-secret');
     const oldResponse = deferred<Response>();
     const newResponse = deferred<Response>();
     vi.stubGlobal('fetch', vi.fn((url: string) => url.endsWith('/old') ? oldResponse.promise : newResponse.promise));
@@ -87,7 +87,7 @@ describe('useAuthenticatedMedia lifecycle', () => {
 
   it('换路径与卸载都不撤销 URL，回到旧路径直接命中缓存不再请求', async () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    localStorage.setItem('sooya.token', 'chat-secret');
+    localStorage.setItem('sooya.admin-token', 'admin-secret');
     const fetchMock = vi.fn(async (url: string) => new Response(
       bytes(url),
       { status: 200, headers: { 'content-type': 'image/png' } }

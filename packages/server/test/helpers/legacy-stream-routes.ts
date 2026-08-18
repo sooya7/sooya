@@ -1,7 +1,7 @@
 import type { FastifyReply } from 'fastify';
-import type { SooyaApp } from '../app.js';
-import { requireChatToken } from './auth.js';
-import type { StreamEvent } from '../core/types.js';
+import type { SooyaApp } from '../../src/app.js';
+import { requireChatToken } from './legacy-auth.js';
+import type { StreamEvent } from '../../src/core/types.js';
 import { z } from 'zod';
 
 const HEARTBEAT_MS = 15_000;

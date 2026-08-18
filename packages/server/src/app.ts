@@ -82,18 +82,13 @@ import { loadMcpConfig } from './mcp/config.js';
 import { McpManager } from './mcp/manager.js';
 import { OmbreMemoryBridge } from './core/ombre-memory.js';
 import { OmbreAdminService } from './core/ombre-admin.js';
-import { registerChatRoutes } from './routes/chat.js';
 import { registerQqRoutes } from './routes/qq.js';
 import { registerQqAdminRoutes } from './routes/qq-admin.js';
 import { registerMediaRoutes } from './routes/media.js';
-import { registerStreamRoutes } from './routes/stream.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerFeatureRoutes } from './routes/features.js';
-import { registerVoiceRoutes } from './routes/voice.js';
 import { registerLifeAdminRoutes } from './routes/life-admin.js';
-import { registerThoughtRoutes } from './routes/thoughts.js';
-import { registerMomentRoutes } from './routes/moments.js';
 import { ensureDirSync, cleanupTempFiles } from './util/fsx.js';
 
 export interface BuildAppOptions {
@@ -534,7 +529,7 @@ repos.jobs.enqueue(
         );
       }
       // QQ 单通道（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8.2/§16）：回复完成后入队
-      // durable qq.deliver，由 outbox 负责幂等/重试；Browser Push（push.reply）已下线。
+      // durable qq.deliver，由 outbox 负责幂等/重试。
       if (qqConfig.enabled) {
         repos.jobs.enqueue('qq.deliver', { messageId: outcome.messageId });
       }
@@ -796,7 +791,7 @@ repos.jobs.enqueue(
   await server.register(cors, {
     origin: (origin, callback) => callback(null, origin !== undefined && allowedOrigins.has(origin)),
     credentials: false,
-    allowedHeaders: ['content-type', 'x-sooya-token', 'x-admin-token', 'authorization']
+    allowedHeaders: ['content-type', 'x-admin-token', 'authorization']
   });
   // 不设 limits.files：multipart 库会在第 N+1 个文件直接抛 413，打断 media.ts 对超限分片的
   // resume 排空。文件数上限由业务计数接管；请求总大小仍受 bodyLimit 与 fileSize 双重约束。
@@ -855,15 +850,10 @@ repos.jobs.enqueue(
 
   registerHealthRoutes(app);
   registerQqRoutes(app);
-  registerChatRoutes(app);
   registerAdminRoutes(app);
   registerQqAdminRoutes(app);
   registerMediaRoutes(app);
-  registerStreamRoutes(app);
-  registerVoiceRoutes(app);
   registerLifeAdminRoutes(app);
-  registerThoughtRoutes(app);
-  registerMomentRoutes(app);
   registerFeatureRoutes(app);
 
   const configuredWebDir = env.webDir;

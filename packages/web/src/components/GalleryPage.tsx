@@ -241,7 +241,7 @@ export default function GalleryPage() {
   };
 
   if (!getAdminToken()) {
-    return <main className="gallery-page gallery-gate"><section className="gallery-login"><h1>SOOYA 图库</h1><p>输入管理令牌后查看普通图库与回收站。</p><input type="password" value={token} placeholder="ADMIN_API_TOKEN" onChange={(event) => setTokenState(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') login(); }} /><button type="button" onClick={login}>进入图库</button><AppLink href="/">返回聊天</AppLink></section></main>;
+    return <main className="gallery-page gallery-gate"><section className="gallery-login"><h1>SOOYA 图库</h1><p>输入管理令牌后查看普通图库与回收站。</p><input type="password" value={token} placeholder="ADMIN_API_TOKEN" onChange={(event) => setTokenState(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') login(); }} /><button type="button" onClick={login}>进入图库</button><AppLink href="/admin">返回管理中心</AppLink></section></main>;
   }
 
   return (

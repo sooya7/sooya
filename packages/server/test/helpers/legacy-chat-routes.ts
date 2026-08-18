@@ -1,16 +1,42 @@
 import { z } from 'zod';
 import type { FastifyReply } from 'fastify';
-import type { SooyaApp } from '../app.js';
-import { requireChatToken } from './auth.js';
-import { SendMessageSchema } from '../core/types.js';
-import { MessageIngressValidationError, toIngressInput } from '../core/message-ingress.js';
-import { maintenanceCoordinator } from '../core/maintenance.js';
+import type { SooyaApp } from '../../src/app.js';
+import { requireChatToken } from './legacy-auth.js';
+import type { InputPart } from '../../src/core/types.js';
+import { MessageIngressValidationError, type MessageIngressInput } from '../../src/core/message-ingress.js';
+import { maintenanceCoordinator } from '../../src/core/maintenance.js';
+
+const InputPartSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('text'), text: z.string().min(1).max(20000) }),
+  z.object({ type: z.literal('image'), mediaId: z.string().min(1) }),
+  z.object({ type: z.literal('sticker'), mediaId: z.string().min(1) }),
+  z.object({ type: z.literal('file'), mediaId: z.string().min(1) })
+]);
+const SendMessageSchema = z.object({
+  clientMsgId: z.string().min(1).max(128),
+  content: z.array(InputPartSchema).min(1).max(20),
+  replyTo: z.string().min(1).max(80).optional(),
+  directives: z.record(z.string(), z.boolean()).optional()
+});
+type SendMessageInput = { clientMsgId: string; content: InputPart[]; replyTo?: string; directives?: Record<string, boolean> };
 
 const HistoryQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30), before: z.coerce.number().int().min(0).optional(), since: z.coerce.number().int().min(0).optional() });
 const MessageContextQuerySchema = z.object({ before: z.coerce.number().int().min(0).max(100).default(20), after: z.coerce.number().int().min(0).max(100).default(20) });
 const MessageSearchQuerySchema = z.object({ q: z.string().trim().min(1).max(200), limit: z.coerce.number().int().min(1).max(50).default(30), cursor: z.string().regex(/^\d+$/u).optional() });
 const MessageDateQuerySchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), timeZone: z.string().trim().min(1).max(100).default('Asia/Shanghai'), limit: z.coerce.number().int().min(1).max(500).default(200) });
 const MessageIdParamsSchema = z.object({ id: z.string().min(1).max(80) });
+
+function toIngressInput(input: SendMessageInput): MessageIngressInput {
+  return {
+    clientMessageId: input.clientMsgId,
+    source: 'qq',
+    conversationId: 'main',
+    senderId: 'test-web-user',
+    replyTo: input.replyTo ?? null,
+    content: input.content,
+    metadata: { directives: input.directives }
+  };
+}
 
 export function registerChatRoutes(app: SooyaApp): void {
   const { server, repos, services, env } = app;
