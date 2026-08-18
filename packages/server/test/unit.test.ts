@@ -291,7 +291,7 @@ describe('image probing', () => {
   });
 
   it('reads generated sticker sizes', () => {
-    const p = fileURLToPath(new URL('../../../assets/stickers/happy.png', import.meta.url));
+    const p = fileURLToPath(new URL('./fixtures/stickers/happy.png', import.meta.url));
     const size = probeImageSize(fs.readFileSync(p));
     expect(size).toEqual({ width: 128, height: 128 });
   });

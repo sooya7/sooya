@@ -17,6 +17,10 @@ coverage/
 config/models.json
 config/persona.json
 
+# Server-owned private media assets — kept outside Git/CI.
+/assets/stickers/
+/assets/references/
+
 # Test output
 e2e/test-results/
 playwright-report/

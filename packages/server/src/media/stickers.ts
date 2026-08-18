@@ -23,9 +23,9 @@ export interface StickerSelection {
 
 /**
  * Local sticker library. Stickers are real files under data/media/stickers.
- * The built-in pack is imported from `assets/stickers` on first boot; nothing
- * depends on a remote URL, and a sticker whose file is missing is never
- * reported as available.
+ * The source pack is imported from the deployment-owned `SOOYA_ASSETS_DIR`;
+ * production sticker files are intentionally not bundled with Git/releases.
+ * Nothing depends on a remote URL, and a missing file is never reported as available.
  */
 export class StickerLibrary {
   private availableCache: Sticker[] | null = null;

@@ -202,7 +202,7 @@ describe('bootstrap', () => {
     expect(body.messages.hasMore).toBe(false);
     expect(body.messages.lastEventSeq).toBe(body.conversation.lastEventSeq);
     expect(Array.isArray(body.stickers)).toBe(true);
-    expect(body.stickers.length).toBeGreaterThanOrEqual(10);
+    expect(body.stickers.length).toBeGreaterThanOrEqual(3);
     expect(typeof body.life.activity).toBe('string');
   });
 
@@ -221,10 +221,10 @@ describe('bootstrap', () => {
 });
 
 describe('stickers', () => {
-  it('imports the built-in pack as real files', async () => {
+  it('imports the fixture pack as real files', async () => {
     h = await createHarness();
     const stickers = h.app.services.stickerLibrary.available();
-    expect(stickers.length).toBeGreaterThanOrEqual(10);
+    expect(stickers.length).toBeGreaterThanOrEqual(3);
     for (const s of stickers) {
       const media = h.app.repos.media.get(s.mediaId)!;
       expect(h.app.services.mediaStore.exists(media)).toBe(true);

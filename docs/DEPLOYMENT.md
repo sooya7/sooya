@@ -93,12 +93,14 @@ sudo ./deploy/install.sh
 │   └── 20260728071230/        当前版本
 ├── current -> releases/20260728071230
 ├── CURRENT_RELEASE
-└── shared/                    ★ 用户数据，升级永不覆盖
+└── shared/                    ★ 用户数据与私人资源，升级永不覆盖
     ├── .env                   密钥（600）
     ├── config/                persona.json, models.json
+    ├── assets/stickers/       正式表情包源文件（不进 Git / release）
     └── data/
+        ├── references/        SOOYA 正式参考图（不进 Git / release）
         ├── database/          SQLite
-        ├── media/             图片、语音、表情、文件
+        ├── media/             图片、语音、已导入表情、文件
         ├── backups/
         └── logs/
 ```
@@ -130,6 +132,17 @@ systemd 单元已启用加固：`NoNewPrivileges`、`ProtectSystem=strict`、`Pr
 停止时发送 `SIGTERM`，应用会优雅关闭（等待进行中的任务、checkpoint WAL 后再退出）。
 
 ---
+
+### 私人媒体资源
+
+正式表情包与人物参考图只保存在服务器持久化目录，不再随 Git、CI、release 或 Docker 镜像分发：
+
+```text
+/opt/sooya/shared/assets/stickers/
+/opt/sooya/shared/data/references/
+```
+
+CI 使用 `packages/server/test/fixtures/stickers/` 中的极小测试资源。升级脚本不会覆盖 shared 下的正式资源，因此替换表情包或参考图不需要提交代码或重新跑 CI。
 
 ## 方式二：Docker Compose
 

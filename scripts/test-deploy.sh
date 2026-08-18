@@ -147,7 +147,8 @@ start_it() {
   export DATA_DIR="\$PREFIX/shared/data"
   export CONFIG_DIR="\$PREFIX/shared/config"
   export WEB_DIR="\$PREFIX/current/public"
-  export SOOYA_ASSETS_DIR="\$PREFIX/current/assets/stickers"
+  export SOOYA_ASSETS_DIR="\$PREFIX/shared/assets/stickers"
+  export SOOYA_REFERENCES_DIR="\$PREFIX/shared/data/references"
   export HOST=127.0.0.1
   export NODE_ENV=production
   nohup node "\$PREFIX/current/packages/server/dist/main.js" \\

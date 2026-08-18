@@ -13,7 +13,7 @@ afterEach(async () => {
 
 describe('Sticker V2 audit guards', () => {
   it('samples distinct GIF frames without mutating the original bytes', async () => {
-    const path = fileURLToPath(new URL('../../../assets/stickers/12-跌倒了-e7e446c1.gif', import.meta.url));
+    const path = fileURLToPath(new URL('./fixtures/stickers/animated.gif', import.meta.url));
     const original = fs.readFileSync(path);
     const frames = await prepareStickerVisionFrames(original, 'image/gif', 3);
 
@@ -68,6 +68,6 @@ describe('Sticker V2 audit guards', () => {
       cursor = body.nextCursor;
       if (!cursor) break;
     }
-    expect(seen.size).toBeGreaterThanOrEqual(3);
+    expect(seen.size).toBe(h.app.services.stickerLibrary.available().length);
   });
 });

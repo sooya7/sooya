@@ -41,7 +41,6 @@ RUN npm ci --build-from-source=better-sqlite3
 
 COPY tsconfig.base.json* ./
 COPY packages ./packages
-COPY assets ./assets
 COPY scripts ./scripts
 
 RUN npm run build -w @sooya/server \
@@ -63,7 +62,8 @@ ENV NODE_ENV=production \
     DATA_DIR=/app/data \
     CONFIG_DIR=/app/config \
     WEB_DIR=/app/public \
-    SOOYA_ASSETS_DIR=/app/assets/stickers
+    SOOYA_ASSETS_DIR=/app/data/sticker-source \
+    SOOYA_REFERENCES_DIR=/app/data/references
 
 COPY --from=prod-deps /prod/node_modules ./node_modules
 COPY --from=prod-deps /prod/packages/server/node_modules ./packages/server/node_modules
@@ -71,13 +71,12 @@ COPY --from=prod-deps /prod/package.json ./package.json
 COPY --from=builder /build/packages/server/dist ./packages/server/dist
 COPY --from=builder /build/packages/server/package.json ./packages/server/package.json
 COPY --from=builder /build/packages/web/dist ./public
-COPY --from=builder /build/assets ./assets
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
   && node -e "const p=require.resolve('better-sqlite3',{paths:['/app/packages/server']}); require(p); console.log('better-sqlite3 available in final image:',p)"
 
 # Data and config are mounted volumes; create them so a bare `docker run` works.
-RUN mkdir -p /app/data /app/config \
+RUN mkdir -p /app/data/sticker-source /app/data/references /app/config \
   && chown -R sooya:sooya /app
 
 USER sooya

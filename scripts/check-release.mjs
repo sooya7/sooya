@@ -95,7 +95,6 @@ const REQUIRED_PATHS = [
   // QQ 单通道（§13/§14）：Web 只保留 Admin，入口是 AppShell 而非已删除的聊天 App.tsx。
   'packages/web/src/AppShell.tsx',
   'packages/web/index.html',
-  'assets/stickers/manifest.json',
   'scripts/make-release.mjs'
 ];
 
@@ -269,8 +268,8 @@ async function main() {
   const stagedPkg = JSON.parse(await fsp.readFile(path.join(tarRoot, 'package.json'), 'utf8'));
   check(!!stagedPkg.scripts?.build, 'package.json exposes a build script');
   check(!!stagedPkg.workspaces, 'workspaces are declared so `npm ci` works');
-  const stickers = await fsp.readdir(path.join(tarRoot, 'assets/stickers'));
-  check(stickers.filter((f) => /\.(png|gif|jpe?g|webp)$/i.test(f)).length >= 10, 'built-in sticker pack is bundled');
+  check(!fs.existsSync(path.join(tarRoot, 'assets/stickers')), 'production sticker pack is not bundled');
+  check(!fs.existsSync(path.join(tarRoot, 'assets/references')), 'persona reference images are not bundled');
 
   await fsp.rm(work, { recursive: true, force: true });
 

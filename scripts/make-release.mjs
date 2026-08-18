@@ -31,7 +31,6 @@ const INCLUDE = [
   'Dockerfile',
   'docker-compose.yml',
   'playwright.config.ts',
-  'assets',
   'config',
   'deploy',
   'docs',

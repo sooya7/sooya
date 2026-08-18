@@ -113,7 +113,7 @@ export function registerFeatureRoutes(app: SooyaApp): void {
     const dir = resolveReferencesDir(app.env);
     if (!dir) {
       reply.code(507);
-      return { error: 'references_dir_unavailable', message: '参考图目录不可用，请检查 assets/references 或 SOOYA_REFERENCES_DIR。' };
+      return { error: 'references_dir_unavailable', message: '参考图目录不可用，请检查 SOOYA_REFERENCES_DIR。' };
     }
     if (!req.isMultipart()) {
       reply.code(400);
@@ -174,7 +174,7 @@ export function registerFeatureRoutes(app: SooyaApp): void {
     const dir = resolveReferencesDir(app.env);
     if (!dir) {
       reply.code(507);
-      return { error: 'references_dir_unavailable', message: '参考图目录不可用，请检查 assets/references 或 SOOYA_REFERENCES_DIR。' };
+      return { error: 'references_dir_unavailable', message: '参考图目录不可用，请检查 SOOYA_REFERENCES_DIR。' };
     }
     if (!req.isMultipart()) {
       reply.code(400);
