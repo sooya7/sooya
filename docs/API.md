@@ -75,7 +75,7 @@ QQ 运维状态通过 `/api/admin/qq/*` 查看，Secret 只显示“已配置 / 
 
 ### 内容、记忆与媒体
 
-Admin 可管理聊天历史与搜索、Ombre / Memory 状态、表情包、媒体与图库、回收站 / 安全清理、审计日志。
+Admin 可管理聊天历史与搜索、Ombre / Memory 状态、表情包、媒体与图库、回收站 / 安全清理、审计日志。普通媒体导入使用 `POST /api/admin/media`，仅接受 Admin Token。
 
 媒体字节读取：
 

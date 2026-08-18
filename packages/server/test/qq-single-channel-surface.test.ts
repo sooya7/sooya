@@ -34,6 +34,8 @@ describe('QQ single-channel production surface', () => {
     expect(media).toContain('const auth = requireAdminToken(app);');
     expect(media).not.toContain("server.post('/api/media'");
     expect(media).toContain("server.get('/api/media/:id'");
+    const features = read('packages/server/src/routes/features.ts');
+    expect(features).toContain("server.post('/api/admin/media', adminGuard");
   });
 
   it('keeps the browser client free of legacy chat API calls', () => {

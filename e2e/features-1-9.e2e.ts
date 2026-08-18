@@ -1,7 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
 const ADMIN_TOKEN = 'e2e-admin-token';
-const CHAT_TOKEN = 'e2e-chat-token';
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
 async function installAdminToken(page: Page): Promise<void> {
@@ -9,12 +8,12 @@ async function installAdminToken(page: Page): Promise<void> {
 }
 
 /**
- * 往图库里塞一张图片。必须走普通上传（`POST /api/media`）：头像上传的图片
+ * 往图库里导入一张普通图片。QQ 单通道后只允许 Admin 媒体导入；头像上传的图片
  * 按设计不进图库，不能再拿它当图库测试数据。
  */
 async function uploadGalleryImage(request: APIRequestContext, name: string): Promise<string> {
-  const uploaded = await request.post('/api/media', {
-    headers: { 'x-sooya-token': CHAT_TOKEN },
+  const uploaded = await request.post('/api/admin/media', {
+    headers: { 'x-admin-token': ADMIN_TOKEN },
     multipart: { image: { name, mimeType: 'image/png', buffer: PNG } }
   });
   expect(uploaded.ok()).toBeTruthy();
@@ -24,9 +23,6 @@ async function uploadGalleryImage(request: APIRequestContext, name: string): Pro
 }
 
 test.describe('SOOYA 1-9 user flows', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript((token: string) => localStorage.setItem('sooya.token', token), CHAT_TOKEN);
-  });
   test('feature center exposes avatar, voice and storage controls', async ({ page }) => {
     await page.addInitScript(() => {
       const original = URL.revokeObjectURL.bind(URL);
