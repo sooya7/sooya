@@ -56,7 +56,7 @@ ensure_writable "$DATA_DIR" "DATA_DIR"
 ensure_writable "$CONFIG_DIR" "CONFIG_DIR"
 
 # Pre-create the tree the application expects so the first run never races.
-for sub in database media media/images media/audio media/stickers media/files media/tmp backups logs; do
+for sub in database media media/images media/audio media/stickers media/files media/tmp sticker-source references backups logs; do
   mkdir -p "${DATA_DIR}/${sub}" 2>/dev/null || true
 done
 

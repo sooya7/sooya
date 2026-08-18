@@ -12,7 +12,7 @@ import { registerThoughtRoutes as registerLegacyThoughtRoutes } from './legacy-t
 import { registerVoiceRoutes as registerLegacyVoiceRoutes } from './legacy-voice-routes.js';
 import { registerLegacyMediaUploadRoute } from './legacy-media-upload-route.js';
 
-export const ASSETS_DIR = fileURLToPath(new URL('../../../../assets/stickers/', import.meta.url));
+export const ASSETS_DIR = fileURLToPath(new URL('../fixtures/stickers/', import.meta.url));
 
 export interface FakeChatOptions {
   /** Text chunks streamed back for each successive chat call. */

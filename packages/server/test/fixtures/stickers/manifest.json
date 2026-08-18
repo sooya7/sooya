@@ -1,0 +1,30 @@
+[
+  {
+    "name": "开心",
+    "file": "happy.png",
+    "emotion": "happy",
+    "tags": [
+      "开心",
+      "happy",
+      "fixture"
+    ]
+  },
+  {
+    "name": "fixture-sad",
+    "file": "sad.png",
+    "emotion": "sad",
+    "tags": [
+      "sad",
+      "fixture"
+    ]
+  },
+  {
+    "name": "fixture-animated",
+    "file": "animated.gif",
+    "emotion": "neutral",
+    "tags": [
+      "animated",
+      "fixture"
+    ]
+  }
+]

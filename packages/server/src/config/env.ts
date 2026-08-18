@@ -63,8 +63,7 @@ const EnvSchema = z.object({
   DATA_DIR: z.string().default('./data'),
   CONFIG_DIR: z.string().default('./config'),
   WEB_DIR: z.string().optional(),
-  /* 参考图目录；不设置时回退到 assets/references。生产建议指向持久化目录，
-   * 这样管理面板上传的参考图不会被代码升级覆盖。 */
+  /* 参考图目录。生产部署应指向 shared 等持久化位置；不设置时仅为本地开发兼容尝试同级 references。 */
   SOOYA_REFERENCES_DIR: z.string().optional(),
 
   ADMIN_API_TOKEN: z.string().optional(),

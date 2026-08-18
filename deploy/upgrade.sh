@@ -36,6 +36,7 @@ done
 [[ $EUID -eq 0 ]] || die "please run as root (sudo)"
 SHARED_DIR="$BASE_DIR/shared"
 [[ -d "$SHARED_DIR" ]] || die "$SHARED_DIR not found — run install.sh first"
+install -d -o "$SERVICE_USER" -g "$SERVICE_USER" "$SHARED_DIR/assets/stickers" "$SHARED_DIR/data/references"
 
 PREVIOUS_TARGET=""
 if [[ -L "$BASE_DIR/current" ]]; then
@@ -128,6 +129,12 @@ mv -Tf "$BASE_DIR/current.new" "$BASE_DIR/current"
 chown -h "$SERVICE_USER":"$SERVICE_USER" "$BASE_DIR/current"
 echo "$RELEASE_ID" > "$BASE_DIR/CURRENT_RELEASE"
 
+mkdir -p /etc/systemd/system/sooya.service.d
+cat > /etc/systemd/system/sooya.service.d/assets.conf <<EOF
+[Service]
+Environment=SOOYA_ASSETS_DIR=$SHARED_DIR/assets/stickers
+Environment=SOOYA_REFERENCES_DIR=$SHARED_DIR/data/references
+EOF
 systemctl daemon-reload
 systemctl restart sooya
 
@@ -155,10 +162,10 @@ if [[ "$HEALTHY" -ne 1 ]]; then
 fi
 
 # ------------------------- 5. verify preserved state -------------------------
-for path in "$SHARED_DIR/.env" "$SHARED_DIR/config" "$SHARED_DIR/data"; do
+for path in "$SHARED_DIR/.env" "$SHARED_DIR/config" "$SHARED_DIR/data" "$SHARED_DIR/assets/stickers" "$SHARED_DIR/data/references"; do
   [[ -e "$path" ]] || die "PRESERVATION FAILURE: $path is missing after upgrade"
 done
-log "verified: .env, config and data survived the upgrade"
+log "verified: .env, config, data and private media sources survived the upgrade"
 
 # ---------------------------------- 6. prune ---------------------------------
 mapfile -t OLD < <(ls -1dt "$BASE_DIR"/releases/*/ 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) || true)

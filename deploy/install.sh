@@ -48,7 +48,7 @@ RELEASE_DIR="$BASE_DIR/releases/$RELEASE_ID"
 SHARED_DIR="$BASE_DIR/shared"
 
 log "installing into $RELEASE_DIR"
-mkdir -p "$RELEASE_DIR" "$SHARED_DIR"/{config,data} "$BASE_DIR/releases"
+mkdir -p "$RELEASE_DIR" "$SHARED_DIR"/{config,data,assets/stickers} "$SHARED_DIR/data/references" "$BASE_DIR/releases"
 
 # ------------------------------- copy sources --------------------------------
 # Runtime data is never copied from the source tree.
