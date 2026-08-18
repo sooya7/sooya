@@ -23,6 +23,10 @@ export interface ProxyFetchOptions {
   rejectUnauthorized?: boolean;
 }
 
+function signalAbortReason(signal?: AbortSignal): unknown {
+  return signal?.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+}
+
 function parseProxyUrl(raw: string): URL {
   const url = new URL(raw);
   if (url.protocol !== 'socks5h:' && url.protocol !== 'socks5:' && url.protocol !== 'http:') {
@@ -44,22 +48,33 @@ export function socks5Handshake(
   proxyPort: number,
   host: string,
   port: number,
-  credentials?: { username: string; password: string }
+  credentials?: { username: string; password: string },
+  signal?: AbortSignal
 ): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = netConnect({ host: proxyHost, port: proxyPort });
     let buffer = Buffer.alloc(0);
     let settled = false;
 
-    const fail = (err: Error) => {
-      if (settled) return;
-      settled = true;
+    const cleanup = () => {
       socket.removeListener('data', onData);
       socket.removeListener('error', onError);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const fail = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       socket.destroy();
       reject(err);
     };
     const onError = (err: Error) => fail(err);
+    const onAbort = () => fail(signalAbortReason(signal));
+    if (signal?.aborted) {
+      fail(signalAbortReason(signal));
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
 
     const stage = { value: 'greeting' as 'greeting' | 'auth' | 'connect' };
 
@@ -123,8 +138,7 @@ export function socks5Handshake(
       if (buffer.length < total) return;
       buffer = buffer.subarray(total);
       settled = true;
-      socket.removeListener('data', onData);
-      socket.removeListener('error', onError);
+      cleanup();
       socket.resume();
       resolve(socket);
     };
@@ -164,17 +178,21 @@ export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: 
     const headers = new Headers(init?.headers);
     const body = init?.body == null ? undefined : Buffer.from(String(init?.body));
     const targetPort = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
-    const signal = init?.signal;
+    const signal = init?.signal ?? undefined;
 
-    const abortError = () => new DOMException('The operation was aborted.', 'AbortError');
-    if (signal?.aborted) throw abortError();
+    if (signal?.aborted) throw signalAbortReason(signal);
 
     const headerRecord: Record<string, string> = {};
     headers.forEach((value, key) => { headerRecord[key] = value; });
     if (body && !headers.has('content-length')) headerRecord['content-length'] = String(body.length);
 
     const doRequest = (rawSocket: Socket): Promise<Response> => new Promise((resolve, reject) => {
-      const abortHandler = () => { rawSocket.destroy(abortError()); };
+      const abortHandler = () => {
+        // Close quietly. Passing an Error to destroy() emits an `error` event on
+        // the raw SOCKS socket after its handshake listener has been removed.
+        rawSocket.destroy();
+        reject(signalAbortReason(signal));
+      };
       signal?.addEventListener('abort', abortHandler, { once: true });
 
       if (url.protocol === 'https:') {
@@ -301,7 +319,7 @@ export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: 
     });
 
     if (useSocks) {
-      const socket = await socks5Handshake(proxy.hostname, Number(proxy.port || 1080), url.hostname, targetPort, proxy.username ? { username: proxy.username, password: proxy.password ?? '' } : undefined);
+      const socket = await socks5Handshake(proxy.hostname, Number(proxy.port || 1080), url.hostname, targetPort, proxy.username ? { username: proxy.username, password: proxy.password ?? '' } : undefined, signal);
       return doRequest(socket);
     }
 
