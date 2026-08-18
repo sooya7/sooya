@@ -148,7 +148,8 @@ export class QqApiClient {
       `${this.baseUrl}/v2/users/${encodeURIComponent(input.openid)}/files`,
       {
         file_type: input.fileType,
-        srv_send_msg: true,
+        // 上传和发送是两步：这里不能让 QQ 在上传阶段自动发消息，否则后续 msg_type=7 会重复发送。
+        srv_send_msg: false,
         file_data: input.bytes.toString('base64'),
         ...(input.filename ? { filename: input.filename } : {})
       },
