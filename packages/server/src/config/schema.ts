@@ -106,6 +106,7 @@ export const ImageModelSchema = z.object({
   newApiUserId: z.string().max(120).default(''),
   model: z.string().default(''),
   size: z.string().default('1024x1024'),
+  responseFormat: z.enum(['url', 'b64_json']).optional(),
   timeoutMs: z.number().int().min(1000).max(600_000).default(120_000),
   maxRetries: z.number().int().min(0).max(5).default(1),
   uploadTimeoutMs: z.number().int().min(1000).max(120_000).default(20_000),
