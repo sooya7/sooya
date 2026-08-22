@@ -12,7 +12,10 @@ function localTime(iso: string): Date {
   return new Date(`${iso}+08:00`);
 }
 
-function sharePlan(text: string, image: { kind: 'pov' | 'selfie'; scene: string } | null = { kind: 'pov', scene: '社区公园步道旁一只橘猫看向手机镜头' }): string {
+function sharePlan(
+  text: string,
+  image: { kind: 'selfie' | 'lifestyle'; scene: string } | null = { kind: 'lifestyle', scene: 'SOOYA 蹲在社区公园步道旁看一只橘猫' }
+): string {
   return JSON.stringify({ text, image });
 }
 
@@ -113,8 +116,8 @@ describe('ProactiveComposer -> Moments', () => {
     expect(harness.app.repos.moments.get(result.momentId!)?.image_media_id).toBeNull();
   });
 
-  it('plans a grounded POV photo and stores it as a Moment media reference', async () => {
-    harness = await withMoments({ image: 'ok' });
+  it('plans a grounded lifestyle photo with SOOYA in frame and stores it as a Moment media reference', async () => {
+    harness = await withMoments({ image: 'anuma' });
     stageCandidate(harness);
     const park = harness.app.repos.locations.create({ name: '社区公园', kind: 'park', city: '宁波', source: 'admin' });
     harness.app.repos.locations.recordVisit({ locationId: park.id, enteredAt: localTime('2026-07-31T14:00').toISOString(), leftAt: localTime('2026-07-31T17:00').toISOString() });
@@ -125,29 +128,65 @@ describe('ProactiveComposer -> Moments', () => {
     const moment = harness.app.repos.moments.get(result.momentId!)!;
     expect(moment.location_name).toBe('社区公园');
     expect(moment.city).toBe('宁波');
+    expect(moment.image_kind).toBe('lifestyle');
     expect(moment.image_media_id).toBeTruthy();
     expect(harness.app.repos.media.references(moment.image_media_id!)).toMatchObject({ moments: 1, total: 1 });
-    const prompt = JSON.stringify(harness.state.imageRequests[0]!.body);
-    expect(prompt).toContain('社区公园');
-    expect(prompt).toContain('橘猫');
-    expect(prompt).toContain('POV identity constraint');
-    expect(prompt).toContain('Keep the photographer completely out of frame');
-    expect(prompt).toContain("hands, arms, legs, feet");
-    expect(prompt).toContain('not by a male companion');
-    expect(harness.state.imageRequests[0]!.body.input_images).toBeUndefined();
+    const body = JSON.stringify(harness.state.imageRequests[0]!.body);
+    expect(body).toContain('社区公园');
+    expect(body).toContain('橘猫');
+    expect(body).toContain('LIFESTYLE COMPOSITION');
+    expect(body).toContain('SOOYA herself must be visibly present');
+    expect(body).toContain('Do not use first-person POV');
+    expect(body).not.toContain('Keep the photographer completely out of frame');
+    expect(harness.state.imageRequests[0]!.body.input_images).toBeDefined();
+    expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({ photoKind: 'lifestyle', referenceUsed: true, destination: 'moments' });
   });
 
-  it('uses persona references only for a selfie Moment', async () => {
+  it.each(['selfie', 'lifestyle'] as const)('uses persona references for every on-camera proactive Moment (%s)', async (kind) => {
     harness = await withMoments({
       image: 'anuma',
-      chat: { script: [[sharePlan('窗边这杯咖啡意外地好喝，今天的光也很舒服。', { kind: 'selfie', scene: '咖啡店窗边的 SOOYA 举着咖啡杯看向手机' })]] }
+      chat: {
+        script: [[sharePlan(
+          '窗边这杯咖啡意外地好喝，今天的光也很舒服。',
+          { kind, scene: kind === 'selfie' ? '咖啡店窗边的 SOOYA 举着咖啡杯看向手机' : 'SOOYA 坐在咖啡店窗边捧着咖啡杯看窗外' }
+        )]]
+      }
     });
     stageCandidate(harness);
     const result = await harness.app.services.proactive.run({ mode: 'image' });
     expect(result.status).toBe('sent');
     expect(harness.state.imageRequests[0]!.body.input_images).toBeDefined();
     expect(JSON.stringify(harness.state.imageRequests[0]!.body)).not.toContain('POV identity constraint');
-    expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({ photoKind: 'selfie', referenceUsed: true, destination: 'moments' });
+    expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({ photoKind: kind, referenceUsed: true, destination: 'moments' });
+  });
+
+  it('normalizes a legacy pov plan into an on-camera lifestyle photo before it reaches the image provider', async () => {
+    harness = await withMoments({
+      image: 'anuma',
+      chat: { script: [[JSON.stringify({ text: '蹲下来的时候它居然没有跑开。', image: { kind: 'pov', scene: '雨后公园步道旁的橘猫' } })]] }
+    });
+    stageCandidate(harness);
+
+    const result = await harness.app.services.proactive.run({ mode: 'image' });
+    expect(result.status).toBe('sent');
+    expect(result.finalMode).toBe('image');
+    const body = JSON.stringify(harness.state.imageRequests[0]!.body);
+    expect(body).toContain('橘猫');
+    expect(body).toContain('SOOYA 本人必须入镜');
+    expect(body).toContain('LIFESTYLE COMPOSITION');
+    expect(body).toContain('SOOYA herself must be visibly present');
+    expect(body).toContain('Do not use first-person POV');
+    expect(body).not.toContain('Keep the photographer completely out of frame');
+    expect(body).toContain('去公园看猫');
+    expect(harness.state.imageRequests[0]!.body.input_images).toBeDefined();
+    const moment = harness.app.repos.moments.get(result.momentId!)!;
+    expect(moment.image_kind).toBe('lifestyle');
+    expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({
+      photoKind: 'lifestyle',
+      legacyPovNormalized: true,
+      referenceUsed: true,
+      destination: 'moments'
+    });
   });
 
   it('repairs an incomplete Moment caption once and refuses a second invalid caption', async () => {

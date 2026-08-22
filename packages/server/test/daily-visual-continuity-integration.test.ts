@@ -125,7 +125,7 @@ describe('daily visual continuity integration', () => {
     expect(harness.app.services.imageContinuity.current()).toBeNull();
   });
 
-  it('shares the same persisted outfit between chat selfies and proactive selfie Moments', async () => {
+  it('shares the same persisted outfit between chat selfies and proactive lifestyle Moments', async () => {
     harness = await createHarness({
       image: 'anuma',
       startWorkers: false,
@@ -144,9 +144,9 @@ describe('daily visual continuity integration', () => {
           [directorReply('Natural selfie beside a piano-room window.', baselineOutfit)],
           [JSON.stringify({
             text: '公园那只橘猫今天格外黏人，踩着我的鞋不肯走。',
-            image: { kind: 'selfie', scene: '社区公园步道旁和橘猫一起的自然自拍' }
+            image: { kind: 'lifestyle', scene: 'SOOYA 蹲在社区公园步道旁和橘猫玩' }
           })],
-          [directorReply('Park selfie with a cat, wearing a white dress.', '白色连衣裙和棕色短靴')]
+          [directorReply('SOOYA crouching beside a park path playing with an orange cat, wearing a white dress.', '白色连衣裙和棕色短靴')]
         ]
       }
     });
@@ -168,6 +168,8 @@ describe('daily visual continuity integration', () => {
     expect(proactivePrompt).toContain('Real current activity: 去公园看猫');
     expect(proactivePrompt).toContain(baselineOutfit);
     expect(proactivePrompt).toContain('Keep every garment type');
+    expect(proactivePrompt).toContain('LIFESTYLE COMPOSITION');
+    expect(harness.state.imageRequests[1]!.body.input_images).toBeDefined();
 
     const state = harness.app.services.imageContinuity.current();
     expect(state).toMatchObject({
@@ -176,18 +178,19 @@ describe('daily visual continuity integration', () => {
       activity: '去公园看猫'
     });
     expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({
-      photoKind: 'selfie',
+      photoKind: 'lifestyle',
       continuity: {
         outfit: baselineOutfit,
         outfitMode: 'locked',
         outfitRevision: 1
       }
     });
+    expect(harness.app.repos.moments.get(result.momentId!)!.image_kind).toBe('lifestyle');
   });
 
-  it('does not create or overwrite outfit state for proactive POV scenery photos', async () => {
+  it('proactive lifestyle photos participate in outfit continuity and commit only after successful generation', async () => {
     harness = await createHarness({
-      image: 'ok',
+      image: 'fail',
       startWorkers: false,
       clock: () => localTime('2026-08-22T17:30'),
       env: {
@@ -201,12 +204,13 @@ describe('daily visual continuity integration', () => {
       chat: {
         script: [
           [JSON.stringify({
-            text: '公园的小路刚下过雨，橘猫蹲在树下看着来往的人。',
-            image: { kind: 'pov', scene: '雨后公园步道旁的橘猫' }
+            text: '公园的小路刚下过雨，我还是蹲下来看了会儿猫。',
+            image: { kind: 'lifestyle', scene: 'SOOYA 蹲在雨后公园步道旁看橘猫' }
           })],
           [JSON.stringify({
-            prompt: 'First-person smartphone photo of a cat beside a wet park path.',
-            aspectRatio: '3:4'
+            prompt: 'Candid photo of SOOYA crouching beside a wet park path watching a cat.',
+            aspectRatio: '3:4',
+            outfit: baselineOutfit
           })]
         ]
       }
@@ -215,9 +219,12 @@ describe('daily visual continuity integration', () => {
 
     const result = await harness.app.services.proactive.run({ mode: 'image' });
     expect(result.status).toBe('sent');
-    expect(result.finalMode).toBe('image');
-    expect(harness.state.imageRequests[0]!.body.input_images).toBeUndefined();
+    expect(result.finalMode).toBe('text');
+    expect(result.fallbackReason).toBe('image_failed');
+    // The lifestyle plan entered the continuity flow, but a failed generation
+    // must not leave any persisted outfit behind.
     expect(harness.app.services.imageContinuity.current()).toBeNull();
+    expect(harness.app.repos.moments.get(result.momentId!)!.image_media_id).toBeNull();
   });
 
 });
