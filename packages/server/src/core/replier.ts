@@ -33,6 +33,11 @@ import { parseVoiceIntent } from './voice/intent.js';
 import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
 import type { MediaDirector } from './mediaDirector.js';
+import type {
+  ImageContinuityService,
+  PreparedImageContinuity,
+  VisualLifeSnapshot
+} from './image-continuity.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
 import { decideWebSearch } from './web-search/policy.js';
 import { formatWebSearchContext } from './web-search/service.js';
@@ -124,6 +129,8 @@ export class Replier {
       stickerPicker: StickerPicker;
       capabilities: CapabilityRegistry;
       mediaDirector: MediaDirector;
+      imageContinuity?: ImageContinuityService;
+      lifeSnapshot?: () => VisualLifeSnapshot;
       context: ContextBuilder;
       bus: EventBus;
       config: ConfigStore;
@@ -642,113 +649,209 @@ export class Replier {
     const imagePrompt = plan.selfImagePrompt ?? plan.imagePrompt;
     if (imagePrompt && !shell) degraded.push('image:deferred');
     if (shell && imagePrompt) {
+      const imageShell = shell;
       const referenceMediaIds = userMessages.flatMap((message) =>
         message.content.filter((part) => part.type === 'image' && part.mediaId).map((part) => part.mediaId!)
       );
-      // Image Director: the main model's intent becomes a quality prompt
-      // through the fixed template before it reaches Image2 (see
-      // mediaDirector.ts). Editing a user-sent image skips the director — the
-      // user's instruction is already precise and must not be rewritten.
-      let finalImagePrompt = imagePrompt;
-      const editingUserImage = referenceMediaIds.length === 1;
-      if (!editingUserImage && this.deps.capabilities.has('director')) {
-        const expanded = await this.deps.mediaDirector.image({
-          scene: imagePrompt.slice(0, 400),
-          intent: plan.selfImagePrompt ? 'selfie' : 'private snapshot'
-        }, { signal });
-        if (expanded.prompt && expanded.prompt.trim()) finalImagePrompt = expanded.prompt.trim();
-      }
-      this.deps.bus.publish('reply.image.generating', { messageId: shell.id, intentChars: imagePrompt.length });
-      const partId = this.deps.messages.appendPart(shell.id, {
-        type: 'image',
-        status: 'pending',
-        meta: {
-          prompt: imagePrompt.slice(0, 500),
-          selfie: !!plan.selfImagePrompt,
-          ...(referenceMediaIds.length === 1 ? { referenceMediaId: referenceMediaIds[0] } : {})
-        }
-      });
-      const imageStartedAt = Date.now();
-      try {
-        if (referenceMediaIds.length > 1) {
-          throw new ImageReferenceError(
-            'too_many_reference_images',
-            '一次图生图只能使用一张参考图',
-            `received ${referenceMediaIds.length} reference images`
-          );
-        }
-        const provider = this.deps.capabilities.imageProvider();
-        let img: GeneratedImage;
-        if (referenceMediaIds.length === 1) {
-          const reference = await this.deps.media.read(referenceMediaIds[0]!);
-          if (!reference) {
+      const continuityService = plan.selfImagePrompt && referenceMediaIds.length === 0
+        ? this.deps.imageContinuity
+        : undefined;
+      const baseImageMeta: Record<string, unknown> = {
+        prompt: imagePrompt.slice(0, 500),
+        selfie: !!plan.selfImagePrompt,
+        ...(referenceMediaIds.length === 1 ? { referenceMediaId: referenceMediaIds[0] } : {})
+      };
+
+      const generateImage = async (): Promise<void> => {
+        if (signal.aborted) throw signal.reason ?? new Error('image generation aborted');
+        this.deps.bus.publish('reply.image.generating', { messageId: imageShell.id, intentChars: imagePrompt.length });
+        const partId = this.deps.messages.appendPart(imageShell.id, {
+          type: 'image',
+          status: 'pending',
+          meta: baseImageMeta
+        });
+        const imageStartedAt = Date.now();
+        let finalImagePrompt = imagePrompt;
+        let continuity: PreparedImageContinuity | null = null;
+        let resolvedOutfit: string | null = null;
+        let continuityMeta: Record<string, unknown> | null = null;
+        try {
+          if (referenceMediaIds.length > 1) {
             throw new ImageReferenceError(
-              'reference_generation_failed',
-              '参考图不可用，请重新上传后再试',
-              `reference media not found: ${referenceMediaIds[0]}`
+              'too_many_reference_images',
+              '一次图生图只能使用一张参考图',
+              `received ${referenceMediaIds.length} reference images`
             );
           }
-          try {
-            img = await provider.edit(finalImagePrompt, reference.data, { mime: reference.row.mime, signal });
-          } catch (err) {
-            if (!(err instanceof ImageEditUnsupportedError)) throw err;
+
+          const editingUserImage = referenceMediaIds.length === 1;
+          if (continuityService) {
+            const life = this.deps.lifeSnapshot?.();
+            const world = this.deps.worldSnapshot?.();
+            continuity = continuityService.prepare({
+              scene: imagePrompt,
+              userText,
+              activity: life?.activity ?? null,
+              activityKind: life?.kind ?? null,
+              activityStartedAt: life?.startedAt ?? null,
+              location: world?.location?.name ?? world?.city?.name ?? null,
+              now: world?.now,
+              localDate: world?.localDate,
+              timeZone: world?.timeZone
+            });
+          }
+
+          if (!editingUserImage && this.deps.capabilities.has('director')) {
+            const expanded = await this.deps.mediaDirector.image({
+              scene: imagePrompt.slice(0, 400),
+              intent: plan.selfImagePrompt ? 'selfie' : 'private snapshot'
+            }, {
+              signal,
+              ...(continuity
+                ? {
+                    continuity: {
+                      dateKey: continuity.dateKey,
+                      currentActivity: continuity.currentActivity,
+                      currentLocation: continuity.currentLocation,
+                      previousOutfit: continuity.previousOutfit,
+                      outfitMode: continuity.outfitMode,
+                      changeReason: continuity.changeReason,
+                      explicitOutfitRequest: continuity.explicitOutfitRequest
+                    }
+                  }
+                : {})
+            });
+            if (expanded.prompt && expanded.prompt.trim()) finalImagePrompt = expanded.prompt.trim();
+            if (continuity) resolvedOutfit = continuityService!.resolveOutfit(expanded.outfit, continuity);
+          }
+
+          if (continuity) {
+            resolvedOutfit ??= continuityService!.resolveOutfit(null, continuity);
+            finalImagePrompt = continuityService!.applyToPrompt(finalImagePrompt, continuity, resolvedOutfit);
+            continuityMeta = {
+              dateKey: continuity.dateKey,
+              outfit: resolvedOutfit,
+              outfitMode: continuity.outfitMode,
+              outfitRevision: continuity.outfitRevision,
+              changeReason: continuity.changeReason,
+              activity: continuity.currentActivity,
+              activityKind: continuity.currentActivityKind,
+              location: continuity.currentLocation
+            };
+          }
+
+          this.deps.messages.updatePart(partId, {
+            meta: {
+              ...baseImageMeta,
+              directorPrompt: finalImagePrompt.slice(0, 1000),
+              ...(continuityMeta ? { continuity: continuityMeta } : {})
+            }
+          });
+          const provider = this.deps.capabilities.imageProvider();
+          let img: GeneratedImage;
+          if (referenceMediaIds.length === 1) {
+            const reference = await this.deps.media.read(referenceMediaIds[0]!);
+            if (!reference) {
+              throw new ImageReferenceError(
+                'reference_generation_failed',
+                '参考图不可用，请重新上传后再试',
+                `reference media not found: ${referenceMediaIds[0]}`
+              );
+            }
+            try {
+              img = await provider.edit(finalImagePrompt, reference.data, { mime: reference.row.mime, signal });
+            } catch (err) {
+              if (!(err instanceof ImageEditUnsupportedError)) throw err;
+              img = await provider.generate(finalImagePrompt, { signal });
+            }
+          } else if (plan.selfImagePrompt) {
+            const refs = await this.deps.personaReferences.load(finalImagePrompt);
+            img = refs.length > 0
+              ? await provider.generate(finalImagePrompt, { referenceImages: refs, signal })
+              : await provider.generate(finalImagePrompt, { signal });
+          } else {
             img = await provider.generate(finalImagePrompt, { signal });
           }
-        } else if (plan.selfImagePrompt) {
-          const refs = await this.deps.personaReferences.load(finalImagePrompt);
-          img = refs.length > 0
-            ? await provider.generate(finalImagePrompt, { referenceImages: refs, signal })
-            : await provider.generate(finalImagePrompt, { signal });
-        } else {
-          img = await provider.generate(finalImagePrompt, { signal });
-        }
-        const media = await this.deps.media.save({
-          kind: 'image',
-          origin: 'generated',
-          data: img.data,
-          declaredMime: img.mime,
-          filename: 'generated.png',
-          meta: { prompt: imagePrompt.slice(0, 500), selfie: !!plan.selfImagePrompt }
-        });
-        this.deps.messages.updatePart(partId, {
-          mediaId: media.id,
-          status: 'sent',
-          duration: Math.round((Date.now() - imageStartedAt) / 1000)
-        });
-        producedParts.push('image');
-        this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'image', mediaId: media.id });
-      } catch (err) {
-        if (signal.aborted) throw signal.reason;
-        const e = err as Error;
-        const failure = publicFailure('provider_unavailable');
-        const reason = e instanceof ImageReferenceError
-          ? e.publicMessage
-          : e instanceof ProviderNotConfiguredError
-            ? '图片生成服务没有配置。'
-            : e instanceof HttpTimeoutError
-              ? '图片生成超时，本次没有自动重试，以免重复生成。'
-              : failure.message;
-        this.deps.messages.updatePart(partId, {
-          status: 'failed',
-          error: reason,
-          duration: Math.round((Date.now() - imageStartedAt) / 1000),
-          meta: { failure: { ...failure, message: reason } }
-        });
-        this.deps.errorLog.add('reply.image', failure.code, {
-          incidentId: failure.incidentId,
-          diagnostic: redactDiagnostic(e)
-        });
-        degraded.push(e instanceof ImageReferenceError ? `image:${e.code}` : 'image:provider_unavailable');
-        if (!finalText) {
-          this.deps.messages.appendPart(shell.id, {
-            type: 'text',
-            text: `（本来想给你画一张图，但${reason}。）`,
-            status: 'sent'
+          const media = await this.deps.media.save({
+            kind: 'image',
+            origin: 'generated',
+            data: img.data,
+            declaredMime: img.mime,
+            filename: 'generated.png',
+            meta: {
+              prompt: imagePrompt.slice(0, 500),
+              directorPrompt: finalImagePrompt.slice(0, 1000),
+              selfie: !!plan.selfImagePrompt,
+              ...(continuityMeta ? { continuity: continuityMeta } : {})
+            }
           });
-          producedParts.push('text');
+
+          if (continuity && resolvedOutfit && continuityService) {
+            const committed = continuityService.commit(continuity, {
+              outfit: resolvedOutfit,
+              scene: imagePrompt,
+              mediaId: media.id
+            });
+            continuityMeta = {
+              ...continuityMeta,
+              outfit: committed.outfit.fullDescription,
+              outfitRevision: committed.outfitRevision
+            };
+          }
+
+          this.deps.messages.updatePart(partId, {
+            mediaId: media.id,
+            status: 'sent',
+            duration: Math.round((Date.now() - imageStartedAt) / 1000),
+            meta: {
+              ...baseImageMeta,
+              directorPrompt: finalImagePrompt.slice(0, 1000),
+              ...(continuityMeta ? { continuity: continuityMeta } : {})
+            }
+          });
+          producedParts.push('image');
+          this.deps.bus.publish('reply.media.saved', { messageId: imageShell.id, partId, kind: 'image', mediaId: media.id });
+        } catch (err) {
+          if (signal.aborted) throw signal.reason;
+          const e = err as Error;
+          const failure = publicFailure('provider_unavailable');
+          const reason = e instanceof ImageReferenceError
+            ? e.publicMessage
+            : e instanceof ProviderNotConfiguredError
+              ? '图片生成服务没有配置。'
+              : e instanceof HttpTimeoutError
+                ? '图片生成超时，本次没有自动重试，以免重复生成。'
+                : failure.message;
+          this.deps.messages.updatePart(partId, {
+            status: 'failed',
+            error: reason,
+            duration: Math.round((Date.now() - imageStartedAt) / 1000),
+            meta: {
+              ...baseImageMeta,
+              ...(finalImagePrompt !== imagePrompt ? { directorPrompt: finalImagePrompt.slice(0, 1000) } : {}),
+              ...(continuityMeta ? { continuity: continuityMeta } : {}),
+              failure: { ...failure, message: reason }
+            }
+          });
+          this.deps.errorLog.add('reply.image', failure.code, {
+            incidentId: failure.incidentId,
+            diagnostic: redactDiagnostic(e)
+          });
+          degraded.push(e instanceof ImageReferenceError ? `image:${e.code}` : 'image:provider_unavailable');
+          if (!finalText) {
+            this.deps.messages.appendPart(imageShell.id, {
+              type: 'text',
+              text: `（本来想给你画一张图，但${reason}。）`,
+              status: 'sent'
+            });
+            producedParts.push('text');
+          }
+          this.deps.bus.publish('reply.media.saved', { messageId: imageShell.id, partId, kind: 'image', failed: true, reason });
         }
-        this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'image', failed: true, reason });
-      }
+      };
+
+      if (continuityService) await continuityService.runExclusive(generateImage);
+      else await generateImage();
     }
 
     // 3c. Voice — independent expression system (Part 4): intent → mode →
