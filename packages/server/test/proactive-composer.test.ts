@@ -189,6 +189,21 @@ describe('ProactiveComposer -> Moments', () => {
     });
   });
 
+  it('falls back to a text Moment when persona references are unavailable for an on-camera photo', async () => {
+    harness = await withMoments({ image: 'anuma', env: { SOOYA_REFERENCES_DIR: '/nonexistent-sooya-refs' } });
+    stageCandidate(harness);
+
+    const result = await harness.app.services.proactive.run({ mode: 'image' });
+    expect(result.status).toBe('sent');
+    expect(result.finalMode).toBe('text');
+    expect(result.fallbackReason).toBe('reference_missing');
+    // Nothing reached the image provider: no wrong-person photo, no scenery drift.
+    expect(harness.state.imageRequests).toHaveLength(0);
+    const moment = harness.app.repos.moments.get(result.momentId!)!;
+    expect(moment.image_media_id).toBeNull();
+    expect(harness.app.services.imageContinuity.current()).toBeNull();
+  });
+
   it('repairs an incomplete Moment caption once and refuses a second invalid caption', async () => {
     harness = await withMoments({ chat: { script: [[JSON.stringify({ text: '刚刚', image: null })], [JSON.stringify({ text: '路边的猫盯了我好久，尾巴还扫到了鞋边。', image: null })]] } });
     stageCandidate(harness);

@@ -471,6 +471,12 @@ export class ProactiveComposer {
 
       const referenceImages = onCamera ? await this.deps.personaReferences.load(finalImagePrompt) : [];
       const referenceUsed = referenceImages.length > 0;
+      if (onCamera && !referenceUsed) {
+        // An on-camera Moment generated without her identity reference risks
+        // "a person, but not her". Degrade to text rather than generate — and
+        // never drift back toward a scenery photo to dodge the missing face.
+        return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'reference_missing' };
+      }
       const image = await this.deps.capabilities.imageProvider().generate(finalImagePrompt, {
         signal,
         ...(referenceUsed ? { referenceImages } : {})
@@ -491,8 +497,7 @@ export class ProactiveComposer {
           sourceText: sharePlan.text.slice(0, 200),
           eventLocationId: eventContext.location?.id ?? null,
           directorPrompt: finalImagePrompt.slice(0, 1000),
-          ...(continuityMeta ? { continuity: continuityMeta } : {}),
-          ...(onCamera && !referenceUsed ? { referenceMissing: true } : {})
+          ...(continuityMeta ? { continuity: continuityMeta } : {})
         }
       });
 
@@ -517,7 +522,6 @@ export class ProactiveComposer {
         detail: {
           imageDirectorUsed: true,
           referenceUsed,
-          referenceMissing: onCamera && !referenceUsed,
           ...(sharePlan.legacyPovNormalized ? { legacyPovNormalized: true } : {}),
           ...(continuityMeta ? { continuity: continuityMeta } : {})
         }
