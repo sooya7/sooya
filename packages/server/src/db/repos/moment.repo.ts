@@ -1,7 +1,11 @@
 import type { DbLike } from '../handle.js';
 import { nowIso, sortableId } from '../../util/ids.js';
 
-export type MomentImageKind = 'pov' | 'selfie';
+/**
+ * `pov` is legacy-read-only. New proactive generation may only persist
+ * `selfie` or `lifestyle`.
+ */
+export type MomentImageKind = 'pov' | 'selfie' | 'lifestyle';
 
 export interface MomentRow {
   id: string;

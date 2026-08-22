@@ -45,6 +45,38 @@ async function makeV14Fixture(): Promise<string> {
   return dir;
 }
 
+/**
+ * v39 fixture with the exact rows migration 40 must be careful about: legacy
+ * pov/selfie Moments, one referenced media row, and a proactive attempt whose
+ * moment_id points at a Moment across the table rebuild.
+ */
+async function makeV39MomentsFixture(): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sooya-v39-moments-'));
+  const file = path.join(dir, 'sooya.db');
+  const db = new Database(file);
+  db.pragma('foreign_keys = ON');
+  db.exec('CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)');
+  const insert = db.prepare('INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)');
+  for (const migration of MIGRATIONS.slice(0, 39)) {
+    db.transaction(() => {
+      migration.up(db as never);
+      insert.run(migration.version, migration.name, new Date().toISOString());
+    })();
+  }
+  db.exec(`
+    INSERT INTO media(id, kind, rel_path, mime, bytes, sha256, origin, created_at)
+      VALUES ('media_v39_cat', 'image', 'moments/cat.png', 'image/png', 1, 'sha-cat', 'generated', '2026-08-01T10:00:00.000Z');
+    INSERT INTO moments(id, candidate_id, text, image_media_id, image_kind, activity, created_at)
+      VALUES
+        ('moment_v39_pov', 'cand_v39_pov', '路边的猫盯着我看了好久。', 'media_v39_cat', 'pov', '去公园看猫', '2026-08-01T10:00:00.000Z'),
+        ('moment_v39_selfie', 'cand_v39_selfie', '江边的风吹得很舒服。', 'media_v39_cat', 'selfie', '在江边散步', '2026-08-01T12:00:00.000Z');
+    INSERT INTO proactive_attempts(id, candidate_id, candidate_kind, candidate_activity, status, requested_mode, final_mode, send_success, moment_id, detail_json, created_at, updated_at)
+      VALUES ('pa_v39_moment', 'cand_v39_pov', 'out', '去公园看猫', 'sent', 'image', 'image', 1, 'moment_v39_pov', '{}', '2026-08-01T10:00:00.000Z', '2026-08-01T10:00:00.000Z');
+  `);
+  db.close();
+  return dir;
+}
+
 describe('v14 → latest migration upgrade (P1-2)', () => {
   it('migrates a v14 database to the latest version and preserves data', async () => {
     const dir = await makeV14Fixture();
@@ -77,6 +109,48 @@ describe('v14 → latest migration upgrade (P1-2)', () => {
         expect(membership.map((r) => r.position)).toEqual([0]);
 
         // Foreign keys stay intact.
+        expect(opened.db.pragma('foreign_key_check')).toEqual([]);
+      } finally {
+        opened.db.close();
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('migration 40 extends moments.image_kind to lifestyle while preserving legacy rows and FK references', async () => {
+    const dir = await makeV39MomentsFixture();
+    try {
+      const opened = openDatabase({ file: path.join(dir, 'sooya.db'), backupDir: path.join(dir, 'backup'), onLog: () => {} });
+      try {
+        expect((opened.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get() as { v: number }).v).toBe(LATEST_VERSION);
+        expect(LATEST_VERSION).toBeGreaterThanOrEqual(40);
+
+        // Legacy pov rows stay readable (legacy-read-only, never deleted).
+        expect((opened.db.prepare("SELECT image_kind FROM moments WHERE id = 'moment_v39_pov'").get() as { image_kind: string }).image_kind).toBe('pov');
+        expect((opened.db.prepare("SELECT image_kind FROM moments WHERE id = 'moment_v39_selfie'").get() as { image_kind: string }).image_kind).toBe('selfie');
+
+        // The rebuilt table still accepts lifestyle and still rejects unknown kinds.
+        opened.db.prepare(`
+          INSERT INTO moments(id, candidate_id, text, image_kind, activity, created_at)
+            VALUES ('moment_v40_lifestyle', 'cand_v40_lifestyle', '蹲下来摸猫的时候它没有跑开。', 'lifestyle', '去公园看猫', '2026-08-01T14:00:00.000Z')
+        `).run();
+        expect(() => opened.db.prepare(`
+          INSERT INTO moments(id, candidate_id, text, image_kind, activity, created_at)
+            VALUES ('moment_v40_bad', 'cand_v40_bad', '...', 'scenery', '去公园看猫', '2026-08-01T15:00:00.000Z')
+        `).run()).toThrow(/CHECK/i);
+
+        // proactive_attempts.moment_id keeps pointing at the surviving Moment.
+        const attempt = opened.db.prepare(`
+          SELECT a.moment_id, m.id AS moment_id_resolved
+          FROM proactive_attempts a JOIN moments m ON m.id = a.moment_id
+          WHERE a.id = 'pa_v39_moment'
+        `).get() as { moment_id: string; moment_id_resolved: string };
+        expect(attempt.moment_id).toBe('moment_v39_pov');
+        expect(attempt.moment_id_resolved).toBe('moment_v39_pov');
+
+        // The recreated index exists and the rebuild left no FK violations.
+        expect(opened.db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_moments_created'").get()).toBeTruthy();
         expect(opened.db.pragma('foreign_key_check')).toEqual([]);
       } finally {
         opened.db.close();

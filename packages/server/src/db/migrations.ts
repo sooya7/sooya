@@ -1457,6 +1457,59 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE channel_delivery ADD COLUMN progress_json TEXT NOT NULL DEFAULT '{}';`);
     }
   },
+  {
+    version: 40,
+    name: 'moments_lifestyle_image_kind',
+    up: (db) => {
+      // proactive_attempts.moment_id references moments(id) ON DELETE SET NULL.
+      // The rebuild's DROP TABLE runs an implicit DELETE, and deferred FK
+      // enforcement does not stop that action from nulling the child rows, so
+      // the references are snapshotted before the drop and restored after the
+      // rename. defer_foreign_keys keeps the restore valid until commit.
+      db.pragma('defer_foreign_keys = ON');
+      db.exec(`
+        CREATE TABLE moments_new (
+          id                TEXT PRIMARY KEY,
+          candidate_id      TEXT NOT NULL UNIQUE,
+          text              TEXT NOT NULL,
+          image_media_id    TEXT REFERENCES media(id) ON DELETE SET NULL,
+          image_kind        TEXT CHECK (image_kind IN ('pov','selfie','lifestyle')),
+          activity          TEXT NOT NULL,
+          location_id       TEXT,
+          location_name     TEXT,
+          city              TEXT,
+          weather_condition TEXT,
+          temperature_c     REAL,
+          liked             INTEGER NOT NULL DEFAULT 0,
+          created_at        TEXT NOT NULL
+        );
+
+        INSERT INTO moments_new(
+          id,candidate_id,text,image_media_id,image_kind,activity,
+          location_id,location_name,city,weather_condition,temperature_c,liked,created_at
+        )
+        SELECT
+          id,candidate_id,text,image_media_id,image_kind,activity,
+          location_id,location_name,city,weather_condition,temperature_c,liked,created_at
+        FROM moments;
+
+        CREATE TABLE moments_ref_backup AS
+          SELECT id AS attempt_id, moment_id FROM proactive_attempts WHERE moment_id IS NOT NULL;
+
+        DROP TABLE moments;
+        ALTER TABLE moments_new RENAME TO moments;
+
+        UPDATE proactive_attempts
+          SET moment_id = (SELECT moment_id FROM moments_ref_backup
+                           WHERE moments_ref_backup.attempt_id = proactive_attempts.id)
+          WHERE EXISTS (SELECT 1 FROM moments_ref_backup
+                        WHERE moments_ref_backup.attempt_id = proactive_attempts.id);
+        DROP TABLE moments_ref_backup;
+
+        CREATE INDEX idx_moments_created ON moments(created_at DESC);
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
