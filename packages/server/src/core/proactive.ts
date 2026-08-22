@@ -59,10 +59,12 @@ interface PreparedMedia {
   detail?: Record<string, unknown>;
 }
 
-const MomentSharePlanSchema = z.object({
+// Raw model output. 'pov' is accepted only as a legacy value and is normalized
+// to a lifestyle plan before anything reaches the image chain.
+const RawMomentSharePlanSchema = z.object({
   text: z.string().trim().min(1).max(120),
   image: z.object({
-    kind: z.enum(['pov', 'selfie']),
+    kind: z.enum(['pov', 'selfie', 'lifestyle']),
     scene: z.string().trim().min(4).max(300),
     action: z.string().trim().max(160).optional(),
     mood: z.string().trim().max(80).optional(),
@@ -70,7 +72,26 @@ const MomentSharePlanSchema = z.object({
   }).nullable()
 });
 
-type MomentSharePlan = z.infer<typeof MomentSharePlanSchema>;
+type RawMomentSharePlan = z.infer<typeof RawMomentSharePlanSchema>;
+
+/** The only image kinds new proactive generation may plan and persist. */
+type ActiveMomentImageKind = 'selfie' | 'lifestyle';
+
+type ActiveMomentImagePlan = Omit<NonNullable<RawMomentSharePlan['image']>, 'kind'> & {
+  kind: ActiveMomentImageKind;
+};
+
+interface MomentSharePlan {
+  text: string;
+  image: ActiveMomentImagePlan | null;
+  /** True when the model returned legacy kind=pov and it was normalized to lifestyle. */
+  legacyPovNormalized: boolean;
+}
+
+/** Every proactive image kind puts SOOYA herself in frame. */
+function isSooyaOnCamera(kind: ActiveMomentImageKind): boolean {
+  return kind === 'selfie' || kind === 'lifestyle';
+}
 
 interface ProactiveEventContext {
   activity: string;
@@ -243,8 +264,9 @@ export class ProactiveComposer {
               sendSuccess: true,
               detail: {
                 destination: 'moments',
-                sharePlanVersion: 3,
+                sharePlanVersion: 4,
                 photoKind: sharePlan.image?.kind ?? null,
+                ...(sharePlan.legacyPovNormalized ? { legacyPovNormalized: true } : {}),
                 eventLocationId: eventContext.location?.id ?? null,
                 imageDirectorUsed: Boolean(prepared.detail?.imageDirectorUsed),
                 referenceUsed: Boolean(prepared.detail?.referenceUsed),
@@ -379,7 +401,10 @@ export class ProactiveComposer {
     const imagePlan = sharePlan.image;
     if (!imagePlan) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_plan_missing' };
 
-    const continuityService = imagePlan.kind === 'selfie' ? this.deps.imageContinuity : undefined;
+    // Every proactive image kind is on-camera, so both share the persona
+    // reference chain and the same daily visual continuity state.
+    const onCamera = isSooyaOnCamera(imagePlan.kind);
+    const continuityService = onCamera ? this.deps.imageContinuity : undefined;
     const generate = async (): Promise<PreparedMedia> => {
       if (signal.aborted) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'aborted' };
       const groundedScene = buildGroundedScene(imagePlan, eventContext);
@@ -404,7 +429,7 @@ export class ProactiveComposer {
         mood: imagePlan.mood ?? candidate.mood,
         intent: imagePlan.kind === 'selfie'
           ? 'casual Moments-feed selfie from the same real lived event'
-          : 'casual first-person smartphone photo for a Moments feed from the same real lived event'
+          : 'candid daily-life photo of SOOYA visibly present and naturally performing the same real lived event'
       }, {
         signal,
         ...(continuity
@@ -424,7 +449,7 @@ export class ProactiveComposer {
       const directedPrompt = directed.prompt.trim();
       if (!directedPrompt) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_director_failed' };
 
-      let finalImagePrompt = applyMomentPhotoConstraints(directedPrompt, imagePlan);
+      let finalImagePrompt = applyMomentCompositionConstraints(directedPrompt, imagePlan);
       let resolvedOutfit: string | null = null;
       let continuityMeta: Record<string, unknown> | null = null;
       if (continuity && continuityService) {
@@ -444,8 +469,14 @@ export class ProactiveComposer {
         };
       }
 
-      const referenceImages = imagePlan.kind === 'selfie' ? await this.deps.personaReferences.load(finalImagePrompt) : [];
+      const referenceImages = onCamera ? await this.deps.personaReferences.load(finalImagePrompt) : [];
       const referenceUsed = referenceImages.length > 0;
+      if (onCamera && !referenceUsed) {
+        // An on-camera Moment generated without her identity reference risks
+        // "a person, but not her". Degrade to text rather than generate — and
+        // never drift back toward a scenery photo to dodge the missing face.
+        return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'reference_missing' };
+      }
       const image = await this.deps.capabilities.imageProvider().generate(finalImagePrompt, {
         signal,
         ...(referenceUsed ? { referenceImages } : {})
@@ -460,14 +491,13 @@ export class ProactiveComposer {
           moment: true,
           proactive: true,
           candidateId: candidate.id,
-          sharePlanVersion: 3,
+          sharePlanVersion: 4,
           photoKind: imagePlan.kind,
           sourceActivity: candidate.activity,
           sourceText: sharePlan.text.slice(0, 200),
           eventLocationId: eventContext.location?.id ?? null,
           directorPrompt: finalImagePrompt.slice(0, 1000),
-          ...(continuityMeta ? { continuity: continuityMeta } : {}),
-          ...(imagePlan.kind === 'selfie' && !referenceUsed ? { referenceMissing: true } : {})
+          ...(continuityMeta ? { continuity: continuityMeta } : {})
         }
       });
 
@@ -492,7 +522,7 @@ export class ProactiveComposer {
         detail: {
           imageDirectorUsed: true,
           referenceUsed,
-          referenceMissing: imagePlan.kind === 'selfie' && !referenceUsed,
+          ...(sharePlan.legacyPovNormalized ? { legacyPovNormalized: true } : {}),
           ...(continuityMeta ? { continuity: continuityMeta } : {})
         }
       };
@@ -589,9 +619,12 @@ async function composeMomentSharePlan(
         `本次发布方式：${imageMode ? '图片动态' : '文字动态'}。${imageMode ? '请规划一张与正文同一事件的照片。' : 'image 必须为 null。'}`,
         '【规则】text 是一条自然、完整的动态正文，像随手记录生活，不要标题、标签、冒号前缀、系统/Life/模型内容。',
         '不要用“在吗”“睡了吗”“刚想跟你说”“发给你看看”这种私聊式呼叫，也不要为了发动态虚构新事件。',
-        '如果有图片，必须与 text 是同一件具体小事：pov 是 SOOYA 手机第一视角，默认只拍场景和物件，不安排手、手臂、腿、衣物、倒影等摄影者身体入镜；只有事件动作确实必须露手时才允许少量自然女性手部。selfie 才出现 SOOYA。只选普通现实生活场景。',
+        '如果有图片，必须与 text 是同一件具体小事，只能选择 lifestyle 或 selfie。',
+        'lifestyle：SOOYA 本人清晰出现在画面中，自然进行这件真实生活事件对应的动作（吃饭、喝东西、看书、走路、摸猫等）。默认优先 lifestyle。不要把食物、风景、桌面或物件单独拍成主体；如果事件涉及吃东西，就拍 SOOYA 正在吃；如果事件涉及某个地点，就拍 SOOYA 在该地点进行当前活动。',
+        'selfie：只有当这件事自然适合直接面对镜头分享自己时才选择。允许自然半身、侧脸、镜前或带环境的自拍。',
+        '禁止第一视角 POV、纯风景、纯食物、纯桌面、纯物件和摄影者完全不出现的场景图。只选普通现实生活场景。',
         repairReason ? `上一版未通过检查：${repairReason}。请只重新返回完整 JSON。` : '',
-        '只输出 JSON：{"text":"...","image":null 或 {"kind":"pov|selfie","scene":"...","action":"...","mood":"...","framing":"front|side|full-body|environment"}}。'
+        '只输出 JSON：{"text":"...","image":null 或 {"kind":"selfie|lifestyle","scene":"...","action":"...","mood":"...","framing":"front|side|full-body|environment"}}。'
       ].filter(Boolean).join('\n'),
       messages: [{ role: 'user', content: [{ type: 'text', text: '为这件真实经历写一条生活动态。' }] }],
       temperature: 0.8,
@@ -605,9 +638,11 @@ async function composeMomentSharePlan(
       finalRequest = prepared;
     }
     const result = await provider.complete(finalRequest);
-    const parsed = MomentSharePlanSchema.safeParse(extractJsonObject(result.text));
+    const parsed = RawMomentSharePlanSchema.safeParse(extractJsonObject(result.text));
     if (!parsed.success) throw new Error(`invalid_share_plan: ${parsed.error.issues.map((issue) => issue.path.join('.') + ' ' + issue.message).join('; ')}`);
-    return imageMode ? parsed.data : { ...parsed.data, image: null };
+    return imageMode
+      ? normalizeActiveImagePlan(parsed.data, eventContext)
+      : { ...parsed.data, image: null, legacyPovNormalized: false };
   };
 
   const first = await request();
@@ -628,36 +663,67 @@ function validateMomentText(text: string): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
-function buildGroundedScene(image: NonNullable<MomentSharePlan['image']>, context: ProactiveEventContext): string {
+/**
+ * Legacy kind=pov must never reach the image provider. The model sometimes
+ * still returns it out of old prompt habits, so rewrite it into the equivalent
+ * lifestyle plan: SOOYA herself performing the event's real activity in the
+ * same scene.
+ */
+function normalizeActiveImagePlan(raw: RawMomentSharePlan, context: ProactiveEventContext): MomentSharePlan {
+  if (!raw.image) return { text: raw.text, image: null, legacyPovNormalized: false };
+  const { kind, ...image } = raw.image;
+  if (kind !== 'pov') return { text: raw.text, image: { ...image, kind }, legacyPovNormalized: false };
+  return {
+    text: raw.text,
+    legacyPovNormalized: true,
+    image: {
+      ...image,
+      kind: 'lifestyle',
+      action: image.action?.trim() || context.activity,
+      scene: `${image.scene}；SOOYA 本人在同一场景中自然进行“${context.activity}”`
+    }
+  };
+}
+
+function buildGroundedScene(image: ActiveMomentImagePlan, context: ProactiveEventContext): string {
   const location = context.location
     ? `${context.location.city ?? ''}${context.location.region ?? ''}的${context.location.name}（${context.location.kind}）`
     : '事件地点未知的普通现实生活环境';
   const weather = context.recentWeatherHint
     ? `附近最近天气参考：${context.recentWeatherHint.condition}${context.recentWeatherHint.temperatureC == null ? '' : `，${context.recentWeatherHint.temperatureC}°C`}，仅作氛围参考，不是历史事实。`
     : '';
+  const photoType = image.kind === 'selfie'
+    ? 'SOOYA 在同一真实事件中的自然生活自拍，SOOYA 本人入镜'
+    : 'SOOYA 本人在同一真实生活场景中自然进行当前活动的生活照片，SOOYA 本人必须入镜，场景和物件作为生活环境';
   return [
     `真实生活事件：${context.activity}。`,
     `实际地点：${location}。`,
     `这条动态要拍：${image.scene}。`,
     image.action ? `动作：${image.action}。` : '',
-    `照片类型：${image.kind === 'selfie' ? 'SOOYA 在同一真实事件中的自然生活自拍' : 'SOOYA 手机第一视角拍摄眼前所见，SOOYA 本人不入镜'}。`,
+    `照片类型：${photoType}。`,
     weather,
+    '禁止第一视角 POV；禁止只拍风景、食物、桌面或物件而没有 SOOYA。',
     '必须是现实世界普通生活环境、自然手机照片；禁止幻想建筑、漂浮建筑、旅游海报、概念艺术、动漫世界和不可能的地理关系。'
   ].filter(Boolean).join('\n');
 }
 
-function applyMomentPhotoConstraints(prompt: string, image: NonNullable<MomentSharePlan['image']>): string {
-  if (image.kind !== 'pov') return prompt;
-  const explicitHandAction = /(?:必须|特写|伸手|手里|手中|握住|拿着|举着|碰触|触摸|hand|holding|gripping|reaching)/iu.test(
-    `${image.scene} ${image.action ?? ''}`
-  );
-  const framingRule = explicitHandAction
-    ? 'If a hand is essential to the described action, show at most a small, natural feminine hand belonging to SOOYA, a young East Asian woman. Do not invent masculine arms, watches, bulky clothing, legs, torso, or another photographer.'
-    : "Keep the photographer completely out of frame. Do not show the photographer's hands, arms, legs, feet, torso, clothing, watch, jewelry, reflection, mirror image, or body shadow. Frame only the scene, objects, and environment.";
+function applyMomentCompositionConstraints(prompt: string, image: ActiveMomentImagePlan): string {
+  if (image.kind === 'selfie') {
+    return [
+      prompt,
+      'SOOYA must be visibly present as the same person from the provided identity reference.',
+      'Keep the image casual and naturally self-shot, not studio portraiture.'
+    ].join('\n');
+  }
   return [
     prompt,
-    'POV identity constraint: this is a photo taken by SOOYA herself with her phone, not by a male companion or an unknown photographer.',
-    framingRule
+    'LIFESTYLE COMPOSITION — HARD CONSTRAINTS:',
+    'SOOYA herself must be visibly present in the frame.',
+    'Show SOOYA naturally performing the real current activity described above.',
+    'The environment, food, scenery, or objects are supporting context, not a replacement for SOOYA.',
+    'Do not use first-person POV.',
+    'Do not produce a scenery-only, food-only, tabletop-only, or object-only image.',
+    'Use candid daily-life body language; do not turn the moment into a fashion pose, studio portrait, tourism poster, or commercial shoot.'
   ].join('\n');
 }
 

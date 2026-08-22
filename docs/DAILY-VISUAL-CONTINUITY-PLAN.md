@@ -4,7 +4,11 @@
 > 日期：2026-08-22
 > 开发分支：`feat/daily-visual-continuity`
 > 代码基线：GitHub `main`（`9ab01e5`）+ M365 单参考图补丁（`f0e2b53`）
-> 适用范围：聊天内自拍、主动发送的自拍/动态照片；普通 POV 场景照只约束活动与地点，不强行加入人物穿搭
+> 适用范围：聊天内自拍、主动发送的 `selfie` / `lifestyle` 动态照片（两者都是 SOOYA 本人出镜图片，都进入当天 outfit continuity）；`pov` 仅为历史数据兼容值，主动链路已不再生成；聊天内普通纯场景图只约束活动与地点，不强行加入人物穿搭
+
+> 2026-08-22 更新：主动消息配图已从 POV 改造为 lifestyle（见 `docs/SOOYA-PROACTIVE-LIFESTYLE-IMAGE-PLAN.md`）。
+> 主动图片类型现在只有 `selfie` 与 `lifestyle`，两者都必须加载人物参考并共享同一套当天视觉连续性状态；
+> 历史已保存的 `pov` Moment 仍可读取，但不再生成。下文与该决定冲突的 POV 描述按此更新为准。
 
 ## 0. 当前项目基线
 
@@ -13,7 +17,7 @@
 现有链路已经具备：
 
 - `Replier`：处理聊天内 `selfImagePrompt` / `imagePrompt`，自拍会加载人物参考图；
-- `ProactiveComposer.prepareMedia`：处理主动动态中的 `selfie` / `pov`，并使用真实候选活动和事件地点；
+- `ProactiveComposer.prepareMedia`：处理主动动态中的 `selfie` / `lifestyle`（均为人物出镜图片），并使用真实候选活动和事件地点；
 - `MediaDirector.image`：把单次图片意图扩写为 Image2 Prompt；
 - `ImageDirectorSchema`：当前只返回 `prompt` 与 `aspectRatio`；
 - `SettingsRepo`：已有通用 JSON `get/set/delete`，可持久化当天状态；
@@ -47,7 +51,7 @@
 - **合理换装是例外**：只有明确指令或可解释的生活转换才允许换装。
 - **生成成功后提交**：图片生成或保存失败时，不更新连续性状态。
 - **约束最后注入**：最终送给图片模型前再次附加硬约束，防止中间导演改写。
-- **不把人物衣服强塞进 POV 照片**：只有人物本人出镜的照片才维护穿搭。
+- **只有人物本人出镜的照片才维护穿搭**：主动链路只剩 `selfie` / `lifestyle` 两个人物出镜类型；聊天内真正的纯场景图不强行加入人物穿搭。
 
 ## 3. 产品规则
 
@@ -271,7 +275,7 @@ becomes the new same-day continuity state.
 3. 成功则提交，失败则不提交；
 4. 最后释放锁，让下一张重新读取最新状态。
 
-当前 SOOYA 是单服务进程，这一方案足够；若以后改为多实例，再把锁升级为数据库租约或 CAS。POV 和纯场景照不占用穿搭锁。
+当前 SOOYA 是单服务进程，这一方案足够；若以后改为多实例，再把锁升级为数据库租约或 CAS。聊天内纯场景照不占用穿搭锁（主动链路已无纯场景类型）。
 
 ## 6. 图片导演协议调整
 
@@ -306,7 +310,7 @@ interface ImageDirectorContinuity {
 - 人物自拍必须返回具体穿搭；
 - 锁定状态下必须原样复用既有穿搭，不得自由改写颜色和单品；
 - 允许换装时必须给出完整的新穿搭；
-- POV 或纯场景图可以不返回 `outfit`。
+- 纯场景图可以不返回 `outfit`（主动链路已无纯场景类型）。
 
 ### 6.3 降级路径
 
@@ -334,20 +338,20 @@ interface ImageDirectorContinuity {
 8. 保存媒体，并在元数据中写入最终导演提示、穿搭和连续性决策；
 9. 保存成功后 `commit(...)`。
 
-### 7.2 主动动态/主动自拍
+### 7.2 主动动态（selfie / lifestyle）
 
 流程与聊天自拍一致，但活动和地点以主动事件候选携带的真实状态为准：
 
 1. 主动事件先确定实际活动、地点和场景；
-2. 对人物自拍调用连续性服务；
+2. `selfie` 与 `lifestyle` 都是人物出镜图片，都调用连续性服务、都加载人物参考图；`lifestyle` 额外要求 SOOYA 本人在画面中自然进行当前活动（禁止纯风景、纯食物、纯桌面、纯物件与第一视角 POV）；模型若误返回旧 `kind=pov`，会在进入生图链路前自动归一化为 `lifestyle`；
 3. 动态专属构图约束完成后，再追加连续性硬约束；
 4. 图片保存成功后提交状态。
 
-### 7.3 POV 与纯场景照
+### 7.3 历史 POV 与聊天内纯场景照
 
-- 保持活动、地点、时间和天气连续；
-- 不创建或覆盖穿搭状态；
-- 不要求画面强行出现 SOOYA 的衣服或身体；
+- 历史 `pov` Moment 保留可读，但主动链路不再生成；
+- 聊天内普通纯场景照保持活动、地点、时间和天气连续；
+- 纯场景照不创建或覆盖穿搭状态；
 - 若画面偶然出现人物且无法确认是 SOOYA，不提交穿搭。
 
 ## 8. 媒体元数据
@@ -430,12 +434,12 @@ interface ImageDirectorContinuity {
 | `core/director/prompts.ts` | 增加同日穿搭、活动地点和换装理由规则 |
 | `core/mediaDirector.ts` | 接收连续性上下文，返回规范化穿搭，降级时仍应用硬约束 |
 | `core/replier.ts` | 聊天自拍生成前准备连续性，保存成功后提交状态 |
-| `core/proactive.ts` | 主动自拍使用同一服务；POV 仅维护活动/地点连续性 |
+| `core/proactive.ts` | 主动 `selfie` / `lifestyle` 使用同一服务并加载人物参考；不再生成 POV |
 | `app.ts` | 创建服务实例并注入聊天、主动生成两条链路 |
 | `test/image-continuity.test.ts` | 新增核心规则单元测试 |
 | 相关导演/回复/主动生成测试 | 增加集成与回归覆盖 |
 
-`Replier` 仅在 `plan.selfImagePrompt` 且不是用户图片编辑时进入人物连续性流程；普通 `plan.imagePrompt` 和用户上传图片编辑不能覆盖 SOOYA 的当天穿搭。`ProactiveComposer` 仅在 `imagePlan.kind === 'selfie'` 时进入人物连续性流程。
+`Replier` 仅在 `plan.selfImagePrompt` 且不是用户图片编辑时进入人物连续性流程；普通 `plan.imagePrompt` 和用户上传图片编辑不能覆盖 SOOYA 的当天穿搭。`ProactiveComposer` 的 `selfie` 与 `lifestyle` 都进入人物连续性流程（见 §7.2）。
 
 ## 12. 测试方案
 
@@ -453,7 +457,7 @@ interface ImageDirectorContinuity {
 8. 日期跨天后不继承前一天硬锁；
 9. 生成失败不提交新状态；
 10. 媒体保存失败不提交新状态；
-11. POV 照片不覆盖人物穿搭；
+11. 主动图片（selfie/lifestyle）都覆盖人物穿搭连续；历史 pov 行只读不影响状态；
 12. 服务重启后从设置中恢复当天状态；
 13. 导演模型失败时仍把旧穿搭注入最终提示；
 14. 旧状态数据损坏时安全忽略并重建，不影响发图。
@@ -584,7 +588,7 @@ interface ImageDirectorContinuity {
 - 对已经生成的旧照片进行重绘；
 - 跨多日自动规划完整衣橱；
 - 基于洗衣、天气、库存管理真实衣物；
-- 强制所有 POV 场景照出现 SOOYA 本人；
+- 强制聊天内普通纯场景图出现 SOOYA 本人（主动链路已无纯场景类型）；
 - 仅靠视觉识别反向解析旧照片中的所有服装细节。
 
 ## 17. 推荐最终决策

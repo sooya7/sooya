@@ -27,6 +27,6 @@ export const IMAGE_DIRECTOR_PROMPT = `你是 SOOYA 的 Image2 提示词整理器
 - outfitMode=layer_adjustment 时，只能增减最外层，内搭、下装、鞋和其颜色材质不变；
 - outfitMode=new_day 或 full_change 时，为当前场景选一套具体、完整、现实的穿搭；
 - explicitOutfitRequest 存在时必须遵守；
-- SOOYA 出镜时 outfit 必须是完整、规范化、可在后续照片原样复用的描述；POV 或纯场景图可以省略 outfit。
+- SOOYA 明确出镜时 outfit 必须是完整、规范化、可复用的描述；真正的纯场景图片可以省略 outfit。
 
-只输出 JSON：{"prompt":"最终提示词","aspectRatio":"例如 3:4","outfit":"SOOYA 出镜时的完整穿搭；POV 可省略"}。`;
+只输出 JSON：{"prompt":"最终提示词","aspectRatio":"例如 3:4","outfit":"SOOYA 出镜时的完整穿搭；纯场景图可省略"}。`;
