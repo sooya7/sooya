@@ -16,6 +16,8 @@ export type VoiceDirectorOutput = z.infer<typeof VoiceDirectorSchema>;
 
 export const ImageDirectorSchema = z.object({
   prompt: z.string().trim().min(10).max(4000),
-  aspectRatio: z.string().trim().max(20).optional()
+  aspectRatio: z.string().trim().max(20).optional(),
+  /** Canonical complete outfit for on-camera SOOYA images; omitted for POV/scenery. */
+  outfit: z.string().trim().min(4).max(500).optional()
 });
 export type ImageDirectorOutput = z.infer<typeof ImageDirectorSchema>;

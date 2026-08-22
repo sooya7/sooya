@@ -58,8 +58,19 @@ export class OpenAIImageProvider implements ImageProvider {
     return b.endsWith(suffix) ? b : `${b}${suffix}`;
   }
 
-  async generate(prompt: string, opts: { size?: string; signal?: AbortSignal } = {}): Promise<GeneratedImage> {
+  async generate(
+    prompt: string,
+    opts: { size?: string; signal?: AbortSignal; referenceImages?: Array<{ data: Buffer; mime: string }> } = {}
+  ): Promise<GeneratedImage> {
     if (!this.configured) throw new ProviderNotConfiguredError('image');
+    const refs = opts.referenceImages ?? [];
+    if (refs.length > 1) {
+      throw new ImageReferenceError('too_many_reference_images', '一次图生图只能使用一张参考图', `received ${refs.length} reference images`);
+    }
+    if (refs.length === 1) {
+      const ref = refs[0]!;
+      return this.edit(prompt, ref.data, { mime: ref.mime, signal: opts.signal });
+    }
     return withRetry(
       async () => {
         const url = this.endpoint('/images/generations');
@@ -73,7 +84,8 @@ export class OpenAIImageProvider implements ImageProvider {
               model: this.cfg.model,
               prompt,
               size: opts.size ?? this.cfg.size,
-              n: 1
+              n: 1,
+              ...(this.cfg.responseFormat ? { response_format: this.cfg.responseFormat } : {})
             }),
             signal
           });
@@ -101,6 +113,7 @@ export class OpenAIImageProvider implements ImageProvider {
       form.set('model', this.cfg.model);
       form.set('prompt', prompt);
       form.set('n', '1');
+      if (this.cfg.responseFormat) form.set('response_format', this.cfg.responseFormat);
       const mime = opts.mime ?? 'image/png';
       form.set('image', new Blob([new Uint8Array(image)], { type: mime }), `image.${mime.split('/')[1] ?? 'png'}`);
       const res = await this.fetchImpl(url, {

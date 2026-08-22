@@ -42,6 +42,34 @@ describe('Anuma input_images image provider', () => {
     expect(request).not.toHaveProperty('response_format');
   });
 
+  it('routes one configured reference image through edits and requests b64 output', async () => {
+    let url = '';
+    let form: FormData | undefined;
+    const provider = new OpenAIImageProvider(ImageModelSchema.parse({
+      provider: 'openai-compatible',
+      baseUrl: 'https://newapi.example/v1',
+      apiKey: 'test-key',
+      model: 'gpt-image-2',
+      responseFormat: 'b64_json',
+      maxRetries: 0
+    }), deps(async (input, init) => {
+      url = String(input);
+      form = init?.body as FormData;
+      return new Response(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }] }), { status: 200 });
+    }));
+
+    const result = await provider.generate('keep the same face', {
+      referenceImages: [{ data: PNG, mime: 'image/png' }]
+    });
+
+    expect(url).toContain('/images/edits');
+    expect(form?.get('model')).toBe('gpt-image-2');
+    expect(form?.get('prompt')).toBe('keep the same face');
+    expect(form?.get('response_format')).toBe('b64_json');
+    expect(form?.get('image')).toBeInstanceOf(Blob);
+    expect(result.data).toEqual(PNG);
+  });
+
   it('generates without a reference image using only confirmed request fields', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const provider = new AnumaImageProvider(config(), deps(async (input, init) => {

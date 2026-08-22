@@ -14,6 +14,7 @@ import type { EventBus } from '../events/bus.js';
 import type { ChatMessage } from './types.js';
 import type { ReplyCoordinator, ProactiveDeliveryTask } from './reply-coordinator.js';
 import type { MediaDirector } from './mediaDirector.js';
+import type { ImageContinuityService, PreparedImageContinuity } from './image-continuity.js';
 import type { PersonaReferenceLoader } from '../media/persona-references.js';
 import type { LifeLocationRepo, LifeLocationRow } from '../db/repos/location.repo.js';
 import type { WorldSnapshot } from './world-context.js';
@@ -110,6 +111,7 @@ export class ProactiveComposer {
       coordinator: ReplyCoordinator;
       metrics?: import('./metrics.js').MetricsService;
       mediaDirector: MediaDirector;
+      imageContinuity?: ImageContinuityService;
       personaReferences: PersonaReferenceLoader;
       locations: LifeLocationRepo;
       worldSnapshot: () => WorldSnapshot;
@@ -373,11 +375,29 @@ export class ProactiveComposer {
   ): Promise<PreparedMedia> {
     if (mode !== 'image') return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: null };
     if (!this.deps.capabilities.has('image')) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_unavailable' };
-    try {
+    if (signal.aborted) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'aborted' };
+    const imagePlan = sharePlan.image;
+    if (!imagePlan) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_plan_missing' };
+
+    const continuityService = imagePlan.kind === 'selfie' ? this.deps.imageContinuity : undefined;
+    const generate = async (): Promise<PreparedMedia> => {
       if (signal.aborted) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'aborted' };
-      const imagePlan = sharePlan.image;
-      if (!imagePlan) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_plan_missing' };
       const groundedScene = buildGroundedScene(imagePlan, eventContext);
+      let continuity: PreparedImageContinuity | null = null;
+      if (continuityService) {
+        const world = this.deps.worldSnapshot();
+        continuity = continuityService.prepare({
+          scene: groundedScene,
+          activity: eventContext.activity,
+          activityKind: eventContext.kind,
+          activityStartedAt: eventContext.startedAt,
+          location: eventContext.location?.name ?? null,
+          now: world.now,
+          localDate: world.localDate,
+          timeZone: world.timeZone
+        });
+      }
+
       const directed = await this.deps.mediaDirector.image({
         scene: groundedScene,
         action: imagePlan.action,
@@ -385,10 +405,45 @@ export class ProactiveComposer {
         intent: imagePlan.kind === 'selfie'
           ? 'casual Moments-feed selfie from the same real lived event'
           : 'casual first-person smartphone photo for a Moments feed from the same real lived event'
-      }, { signal });
+      }, {
+        signal,
+        ...(continuity
+          ? {
+              continuity: {
+                dateKey: continuity.dateKey,
+                currentActivity: continuity.currentActivity,
+                currentLocation: continuity.currentLocation,
+                previousOutfit: continuity.previousOutfit,
+                outfitMode: continuity.outfitMode,
+                changeReason: continuity.changeReason,
+                explicitOutfitRequest: continuity.explicitOutfitRequest
+              }
+            }
+          : {})
+      });
       const directedPrompt = directed.prompt.trim();
       if (!directedPrompt) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_director_failed' };
-      const finalImagePrompt = applyMomentPhotoConstraints(directedPrompt, imagePlan);
+
+      let finalImagePrompt = applyMomentPhotoConstraints(directedPrompt, imagePlan);
+      let resolvedOutfit: string | null = null;
+      let continuityMeta: Record<string, unknown> | null = null;
+      if (continuity && continuityService) {
+        resolvedOutfit = continuityService.resolveOutfit(directed.outfit, continuity);
+        // Must remain the final prompt layer so no later director/framing pass
+        // can weaken the authoritative activity, location, or outfit.
+        finalImagePrompt = continuityService.applyToPrompt(finalImagePrompt, continuity, resolvedOutfit);
+        continuityMeta = {
+          dateKey: continuity.dateKey,
+          outfit: resolvedOutfit,
+          outfitMode: continuity.outfitMode,
+          outfitRevision: continuity.outfitRevision,
+          changeReason: continuity.changeReason,
+          activity: continuity.currentActivity,
+          activityKind: continuity.currentActivityKind,
+          location: continuity.currentLocation
+        };
+      }
+
       const referenceImages = imagePlan.kind === 'selfie' ? await this.deps.personaReferences.load(finalImagePrompt) : [];
       const referenceUsed = referenceImages.length > 0;
       const image = await this.deps.capabilities.imageProvider().generate(finalImagePrompt, {
@@ -411,16 +466,42 @@ export class ProactiveComposer {
           sourceText: sharePlan.text.slice(0, 200),
           eventLocationId: eventContext.location?.id ?? null,
           directorPrompt: finalImagePrompt.slice(0, 1000),
+          ...(continuityMeta ? { continuity: continuityMeta } : {}),
           ...(imagePlan.kind === 'selfie' && !referenceUsed ? { referenceMissing: true } : {})
         }
       });
+
+      if (continuity && resolvedOutfit && continuityService) {
+        const committed = continuityService.commit(continuity, {
+          outfit: resolvedOutfit,
+          scene: groundedScene,
+          mediaId: media.id
+        });
+        continuityMeta = {
+          ...continuityMeta,
+          outfit: committed.outfit.fullDescription,
+          outfitRevision: committed.outfitRevision
+        };
+      }
+
       return {
         imageMediaId: media.id,
         imageKind: imagePlan.kind,
         finalMode: 'image',
         fallbackReason: null,
-        detail: { imageDirectorUsed: true, referenceUsed, referenceMissing: imagePlan.kind === 'selfie' && !referenceUsed }
+        detail: {
+          imageDirectorUsed: true,
+          referenceUsed,
+          referenceMissing: imagePlan.kind === 'selfie' && !referenceUsed,
+          ...(continuityMeta ? { continuity: continuityMeta } : {})
+        }
       };
+    };
+
+    try {
+      return continuityService
+        ? await continuityService.runExclusive(generate)
+        : await generate();
     } catch {
       return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_failed' };
     }

@@ -32,6 +32,7 @@ import { ImageVariantService } from './media/variants.js';
 import { CapabilityRegistry } from './core/capabilities.js';
 import { DirectorClient } from './core/director/client.js';
 import { MediaDirector } from './core/mediaDirector.js';
+import { ImageContinuityService } from './core/image-continuity.js';
 import { MemoryService } from './core/memory.js';
 import { ContextBuilder } from './core/context.js';
 import { Summarizer } from './core/summarizer.js';
@@ -154,6 +155,7 @@ export interface SooyaApp {
     capabilities: CapabilityRegistry;
     directorClient: DirectorClient;
     mediaDirector: MediaDirector;
+    imageContinuity: ImageContinuityService;
     webSearch: WebSearchRegistry;
     memory: MemoryService;
     ombreMemory: OmbreMemoryBridge;
@@ -444,6 +446,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const life = env.ENABLE_LIFE_V2
     ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
+  const imageContinuity = new ImageContinuityService(repos.settings, {
+    clock: opts.clock,
+    timeZone: env.LIFE_TIME_ZONE,
+    onEvent: (event, data) => logger.info({ ...data }, `image.continuity.${event}`)
+  });
   const voiceService = new VoiceService({
     messages: repos.messages,
     media: mediaStore,
@@ -487,7 +494,28 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
 
-  const replier = new Replier({ messages: repos.messages, media: mediaStore, stickers: stickerLibrary, stickerPicker, capabilities, mediaDirector, context, bus, config, errorLog: repos.errors, settings: repos.settings, personaReferences, voice: voiceService, voiceV2Enabled: env.VOICE_V2_ENABLED, webSearch, worldSnapshot: () => world.snapshot(), toolRuntime, ombreMemory });
+  const replier = new Replier({
+    messages: repos.messages,
+    media: mediaStore,
+    stickers: stickerLibrary,
+    stickerPicker,
+    capabilities,
+    mediaDirector,
+    imageContinuity,
+    lifeSnapshot: () => life.snapshot(),
+    context,
+    bus,
+    config,
+    errorLog: repos.errors,
+    settings: repos.settings,
+    personaReferences,
+    voice: voiceService,
+    voiceV2Enabled: env.VOICE_V2_ENABLED,
+    webSearch,
+    worldSnapshot: () => world.snapshot(),
+    toolRuntime,
+    ombreMemory
+  });
   const thoughtFlags = readThoughtsFlags(process.env);
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
@@ -617,6 +645,7 @@ repos.jobs.enqueue(
     coordinator: replyCoordinator,
     metrics,
     mediaDirector,
+    imageContinuity,
     personaReferences,
     locations: repos.locations,
     worldSnapshot: () => world.snapshot(),
@@ -831,7 +860,7 @@ repos.jobs.enqueue(
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery },
     state,
     fetchImpl,
     recurringTimers: [],
