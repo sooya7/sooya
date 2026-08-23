@@ -50,6 +50,126 @@ export class BackupService {
     return await this.opts.maintenance.run('backup.create', () => this.createUnlocked(reason));
   }
 
+  /**
+   * §36 backup manifest: db checksum, WAL mode, and a per-file media manifest
+   * so a restore can be checked against what it is supposed to contain.
+   */
+  private async buildManifest(
+    name: string,
+    reason: string,
+    dbBytes: number,
+    digest: string
+  ): Promise<{
+    name: string;
+    createdAt: string;
+    reason: string;
+    dbBytes: number;
+    dbSha256: string;
+    walMode: string;
+    mediaBytes: number;
+    mediaFiles: number;
+    mediaManifest: Array<{ path: string; bytes: number }>;
+    mediaManifestTruncated: boolean;
+  }> {
+    let walMode = 'unknown';
+    try {
+      walMode = String((this.opts.db().pragma('journal_mode') as unknown as Array<{ journal_mode?: string }>)[0]?.journal_mode ?? 'unknown');
+    } catch {
+      /* manifest-only */
+    }
+    const files: Array<{ path: string; bytes: number }> = [];
+    let mediaBytes = 0;
+    const walk = async (dir: string, prefix = ''): Promise<void> => {
+      let entries: fs.Dirent[];
+      try {
+        entries = await fsp.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          await walk(path.join(dir, entry.name), rel);
+        } else {
+          let bytes = 0;
+          try {
+            bytes = (await fsp.stat(path.join(dir, entry.name))).size;
+          } catch {
+            /* vanished mid-walk */
+          }
+          mediaBytes += bytes;
+          files.push({ path: rel, bytes });
+        }
+      }
+    };
+    await walk(this.opts.mediaDir);
+    const cap = 2000;
+    return {
+      name,
+      createdAt: new Date().toISOString(),
+      reason,
+      dbBytes,
+      dbSha256: digest,
+      walMode,
+      mediaBytes,
+      mediaFiles: files.length,
+      mediaManifest: files.slice(0, cap),
+      mediaManifestTruncated: files.length > cap
+    };
+  }
+
+  /**
+   * §36 restore-time integrity report — REPORT ONLY: nothing is deleted or
+   * rewritten here. Checks both directions: media referenced by the database
+   * that is missing on disk, and files with no database reference.
+   */
+  async integrityReport(): Promise<{
+    referencedMediaMissing: Array<{ id: string; relPath: string }>;
+    orphanFiles: string[];
+    danglingMessageMedia: Array<{ messageId: string; mediaId: string }>;
+  }> {
+    const db = this.opts.db();
+    const mediaRows = db.prepare('SELECT id, rel_path FROM media').all() as Array<{ id: string; rel_path: string }>;
+    const onDisk = new Set<string>();
+    const walk = async (dir: string, prefix = ''): Promise<void> => {
+      let entries: fs.Dirent[];
+      try {
+        entries = await fsp.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) await walk(path.join(dir, entry.name), rel);
+        else onDisk.add(rel);
+      }
+    };
+    await walk(this.opts.mediaDir);
+
+    const referencedMediaMissing: Array<{ id: string; relPath: string }> = [];
+    const knownIds = new Set<string>();
+    for (const row of mediaRows) {
+      knownIds.add(row.id);
+      if (!fs.existsSync(path.join(this.opts.mediaDir, row.rel_path))) {
+        referencedMediaMissing.push({ id: row.id, relPath: row.rel_path });
+      }
+    }
+    const orphanFiles = [...onDisk].filter(
+      (rel) => !mediaRows.some((row) => row.rel_path === rel)
+    );
+    const danglingMessageMedia = (
+      db.prepare("SELECT message_id, media_id FROM message_parts WHERE media_id IS NOT NULL").all() as Array<{
+        message_id: string;
+        media_id: string;
+      }>
+    )
+      .filter((row) => !knownIds.has(row.media_id))
+      .map((row) => ({ messageId: row.message_id, mediaId: row.media_id }));
+    return { referencedMediaMissing, orphanFiles, danglingMessageMedia };
+  }
+
   private async createUnlocked(reason: string): Promise<BackupResult> {
     const started = Date.now();
     ensureDirSync(this.opts.backupDir);
@@ -82,15 +202,7 @@ export class BackupService {
 
     const data = await fsp.readFile(target);
     const digest = sha256(data);
-    const manifest = {
-      name,
-      createdAt: new Date().toISOString(),
-      reason,
-      dbBytes: data.byteLength,
-      dbSha256: digest,
-      mediaBytes: await dirSize(this.opts.mediaDir),
-      mediaFiles: await countFiles(this.opts.mediaDir)
-    };
+    const manifest = await this.buildManifest(name, reason, data.byteLength, digest);
     await atomicWriteFile(`${target}.json`, JSON.stringify(manifest, null, 2));
     await atomicWriteFile(`${target}.sha256`, `${digest}  ${name}\n`);
 

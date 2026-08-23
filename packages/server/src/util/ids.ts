@@ -21,6 +21,7 @@ export const newJobId = () => sortableId('job');
 export const newEventId = () => sortableId('evt');
 export const newSummaryId = () => sortableId('sum');
 export const newStickerId = () => sortableId('sticker');
+export const newCommitmentId = () => sortableId('cmt');
 
 export function sha256(buf: Buffer | string): string {
   return crypto.createHash('sha256').update(buf).digest('hex');

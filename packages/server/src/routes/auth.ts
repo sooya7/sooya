@@ -37,9 +37,14 @@ export function requireAdminToken(app: SooyaApp) {
       });
     }
     const provided = extractToken(req, 'x-admin-token');
-    if (!provided || !timingSafeEqual(provided, expected)) {
+    if (!provided) {
       return reply.code(401).send({ error: 'unauthorized', message: 'valid ADMIN_API_TOKEN required' });
     }
+    if (timingSafeEqual(provided, expected)) return;
+    // §37 rotation: db-issued tokens work alongside the env secret, so a new
+    // token can overlap the old one before it is revoked.
+    if (app.repos.authTokens.verify(provided)) return;
+    return reply.code(401).send({ error: 'unauthorized', message: 'valid ADMIN_API_TOKEN required' });
   };
   ensureFullBackupRoutes(app, guard);
   return guard;

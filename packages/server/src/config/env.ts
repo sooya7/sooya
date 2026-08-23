@@ -119,6 +119,17 @@ const EnvSchema = z.object({
   QQ_ALLOWED_USERS: z.string().optional(),
   QQ_PROACTIVE_ENABLED: boolish(true),
 
+  /*
+   * Next-stage engines (plan §40): every new subsystem ships dark and is
+   * enabled per phase after its harness asserts pass.
+   */
+  FUTURE_ENGINE_ENABLED: boolish(false),
+  FUTURE_PROACTIVE_ENABLED: boolish(false),
+  RELATIONSHIP_CONTEXT_ENABLED: boolish(false),
+  TIMELINE_ENABLED: boolish(false),
+  INTERACTION_LEARNING_ENABLED: boolish(false),
+  ADAPTIVE_PROVIDER_ROUTING_ENABLED: boolish(false),
+
   BACKUP_INTERVAL_MS: intish(6 * 60 * 60 * 1000),
   BACKUP_KEEP: intish(7),
   BACKUP_ON_START: boolish(false),

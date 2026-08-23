@@ -1097,6 +1097,8 @@ export function registerAdminRoutes(app: SooyaApp): void {
     catch (err) { reply.code(500); return { error: 'backup_failed', message: (err as Error).message }; }
   });
   server.post('/api/admin/backups/:name/verify', guard, async (req) => await services.backups.verify((req.params as { name: string }).name));
+  // §36: report-only media/db consistency; never deletes or rewrites anything.
+  server.get('/api/admin/backups/integrity', guard, async () => await services.backups.integrityReport());
   server.post('/api/admin/backups/:name/restore', guard, async (req, reply) => {
     const name = (req.params as { name: string }).name;
     try {

@@ -28,6 +28,7 @@ import { stickerSemanticText } from './stickers/semantic-text.js';
 import type { StickerUserMeaningLearner } from './stickers/user-meaning.js';
 import type { WorldPresenceCoordinator } from './world-presence.js';
 import type { QqDeliveryService } from '../channels/qq/outbound.js';
+import type { FutureService } from './future/service.js';
 import { JOB_PRIORITY } from './job-priority.js';
 import { nowIso } from '../util/ids.js';
 
@@ -132,6 +133,10 @@ export interface JobDeps {
   storage: StorageService;
   tmpDirs: string[];
   qqDelivery?: QqDeliveryService;
+  future?: FutureService;
+  relationship?: { tick(now?: Date): { cooling: number; archived: number } };
+  timeline?: { sweep(now?: Date): Promise<{ closed: number; opened: number; attached: number; milestones: number }> };
+  feedback?: { sweep(now?: Date): { recorded: number } };
 }
 
 export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
@@ -322,6 +327,31 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     deps.life.applyConversationEffect(payload.warmth === 'warm' ? 'warm' : 'neutral');
   });
 
+  /*
+   * Future engine (§8): runs beside ombre.memory_commit after the final reply
+   * is published. The revision fence plus the extraction-run claim make a
+   * crashed job safe to retry — the analyzer never runs twice per message.
+   */
+  worker.register('future.analyze', async (payload) => {
+    if (!deps.future) return;
+    const batchId = payload.batchId ? String(payload.batchId) : '';
+    const revision = Number(payload.revision ?? 0);
+    if (batchId && Number.isInteger(revision) && revision > 0 && !deps.batches.isCurrentRevision(batchId, revision)) return;
+    const userMessageIds = Array.isArray(payload.userMessageIds) ? payload.userMessageIds.map((id) => String(id)).filter(Boolean) : [];
+    const assistantMessageId = payload.assistantMessageId ? String(payload.assistantMessageId) : null;
+    const lastUserMessageId = userMessageIds.at(-1) ?? '';
+    if (!lastUserMessageId) return;
+    const userText = userMessageIds.map((id) => textForMemoryExtraction(deps.messages.get(id))).filter(Boolean).join('\n');
+    const assistantText = assistantMessageId ? textForMemoryExtraction(deps.messages.get(assistantMessageId)) : '';
+    const createdAt = deps.messages.get(lastUserMessageId)?.createdAt;
+    await deps.future.analyzeAndApply({
+      userText,
+      assistantText,
+      sourceMessageId: lastUserMessageId,
+      at: createdAt ? new Date(createdAt) : undefined
+    });
+  });
+
   worker.register('weather.refresh', async (payload) => {
     await deps.presence.refreshWeather(String(payload.reason ?? 'scheduled'));
   });
@@ -361,6 +391,15 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     const orphans = await deps.media.collectOrphans(undefined, deps.storage.avatarMediaIds());
     if (orphans.length > 0) deps.bus.publish('system.notice', { notice: 'cleaned orphan media', count: orphans.length });
     if (deps.memoryBackend === 'legacy') deps.memory?.purgeExpired?.();
+    // Time-driven commitment lifecycle (§13): due promotion, missed explicit
+    // promises, expired tentatives, grace-window archiving.
+    deps.future?.tick();
+    // Relationship thread decay (docs/RELATIONSHIP-CONTRACT.md §4).
+    deps.relationship?.tick();
+    // Episode building sweep (§22): close elapsed windows, fold new messages.
+    await deps.timeline?.sweep();
+    // Interaction outcome derivation (§22): what the user did with proactive sends.
+    deps.feedback?.sweep();
     const cleanup = await deps.storage.cleanup({
       apply: true,
       internal: true,

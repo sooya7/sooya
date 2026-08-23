@@ -61,6 +61,24 @@ jobs:
       - name: Run server test shard
         run: npm run test -w @sooya/server -- --shard=${{ matrix.shard }}
 
+  # Long-horizon consistency scenarios (plan §25-29): deterministic-clock
+  # 30/90-day behaviour checks. Separate job so a slow multi-day simulation
+  # never delays the ordinary unit shards.
+  long-horizon-tests:
+    name: Long-horizon consistency tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Run long-horizon scenarios
+        run: npx vitest run test/long-horizon
+        working-directory: packages/server
+
   web-tests:
     name: Web unit and component tests
     runs-on: ubuntu-latest
