@@ -13,6 +13,32 @@ describe('web search environment configuration', () => {
     expect(loadEnv({ NODE_ENV: 'production' }).MEMORY_BACKEND).toBe('ombre');
   });
 
+  it('enables all next-stage engines by default while preserving explicit kill switches', () => {
+    const enabled = loadEnv({ NODE_ENV: 'test' });
+    expect(enabled.FUTURE_ENGINE_ENABLED).toBe(true);
+    expect(enabled.FUTURE_PROACTIVE_ENABLED).toBe(true);
+    expect(enabled.RELATIONSHIP_CONTEXT_ENABLED).toBe(true);
+    expect(enabled.TIMELINE_ENABLED).toBe(true);
+    expect(enabled.INTERACTION_LEARNING_ENABLED).toBe(true);
+    expect(enabled.ADAPTIVE_PROVIDER_ROUTING_ENABLED).toBe(true);
+
+    const disabled = loadEnv({
+      NODE_ENV: 'test',
+      FUTURE_ENGINE_ENABLED: 'false',
+      FUTURE_PROACTIVE_ENABLED: 'false',
+      RELATIONSHIP_CONTEXT_ENABLED: 'false',
+      TIMELINE_ENABLED: 'false',
+      INTERACTION_LEARNING_ENABLED: 'false',
+      ADAPTIVE_PROVIDER_ROUTING_ENABLED: 'false'
+    });
+    expect(disabled.FUTURE_ENGINE_ENABLED).toBe(false);
+    expect(disabled.FUTURE_PROACTIVE_ENABLED).toBe(false);
+    expect(disabled.RELATIONSHIP_CONTEXT_ENABLED).toBe(false);
+    expect(disabled.TIMELINE_ENABLED).toBe(false);
+    expect(disabled.INTERACTION_LEARNING_ENABLED).toBe(false);
+    expect(disabled.ADAPTIVE_PROVIDER_ROUTING_ENABLED).toBe(false);
+  });
+
   it('uses safe disabled defaults and the preferred provider order', () => {
     const env = loadEnv({ NODE_ENV: 'test' });
 

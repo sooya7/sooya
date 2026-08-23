@@ -21,7 +21,7 @@ describe('TimelineService episode building (§22)', () => {
     seedMessage(h, '对，主动消息的频率也可以看看', '2026-08-21T05:26:00.000Z');
     seedMessage(h, '我晚上再整理一下反馈给你', '2026-08-21T05:31:00.000Z');
 
-    const first = await await h.app.services.timeline.sweep(new Date('2026-08-21T06:00:00.000Z'));
+    const first = await h.app.services.timeline.sweep(new Date('2026-08-21T06:00:00.000Z'));
     expect(first.opened).toBe(1);
     expect(first.attached).toBe(3);
     expect(repo.openRows()).toHaveLength(1);
@@ -73,7 +73,10 @@ describe('TimelineService episode building (§22)', () => {
   });
 
   it('stays completely dark when the flag is off', async () => {
-    h = await createHarness({ clock: () => new Date('2026-08-21T14:00:00.000Z') });
+    h = await createHarness({
+      env: { TIMELINE_ENABLED: 'false' },
+      clock: () => new Date('2026-08-21T14:00:00.000Z')
+    });
     seedMessage(h, '随便聊聊', '2026-08-21T05:20:00.000Z');
     const outcome = await h.app.services.timeline.sweep(new Date('2026-08-21T06:00:00.000Z'));
     expect(outcome).toEqual({ closed: 0, opened: 0, attached: 0, milestones: 0 });
