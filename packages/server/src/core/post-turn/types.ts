@@ -1,7 +1,7 @@
 import type { CommitmentKind, CommitmentFollowUpPolicy, CommitmentSubject } from '../future/types.js';
 
 /** Bump when the prompt or schema changes enough to re-analyze old messages. */
-export const EXTRACTOR_VERSION = '1';
+export const EXTRACTOR_VERSION = '2';
 
 /** One structured call per turn; schema trimmed by feature flag (§7). */
 export interface ExtractedCommitment {
