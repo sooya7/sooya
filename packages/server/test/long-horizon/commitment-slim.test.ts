@@ -40,10 +40,13 @@ describe('long-horizon: commitment slim harness', () => {
   });
 
   it('keeps everything dark when the engine flag is off', async () => {
-    // The harness boots with the flag on; assert the default-off invariant by
-    // checking a fresh non-flag harness ignores seeded commitments.
+    // Defaults are now enabled. This assertion protects the explicit kill
+    // switch instead of relying on the historical default-off behavior.
     const { createHarness } = await import('../helpers/harness.js');
-    const plain = await createHarness({ embedding: 'off' });
+    const plain = await createHarness({
+      embedding: 'off',
+      env: { FUTURE_ENGINE_ENABLED: 'false' }
+    });
     try {
       plain.app.repos.commitments.ingest({
         kind: 'user_event',
