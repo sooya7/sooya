@@ -15,6 +15,8 @@ import { prepareVisionInput } from '../media/vision-input.js';
 import { prepareStickerContextFrames } from '../media/sticker-vision.js';
 import { STICKER_CONTEXT_VISION_MAX_IMAGES } from './stickers/constants.js';
 import type { WorldSnapshot } from './world-context.js';
+import type { FutureContextService } from './future/context.js';
+import type { RelationshipContextService } from './relationship/service.js';
 
 export interface BuiltContext {
   system: string;
@@ -32,6 +34,12 @@ export interface BuiltContext {
   droppedMemories: number;
   droppedRecentMessages: number;
   memoryTrace: MemoryRecallTrace;
+  /** Future-context lines that made it into the prompt (§11). */
+  futureLines: number;
+  /** Relationship-context lines that made it into the prompt (§11). */
+  relationshipLines: number;
+  /** Memory lines suppressed because an active commitment already covers the fact (§10.2). */
+  futureDedupedMemories: number;
 }
 
 export interface MemoryTraceEntry {
@@ -43,7 +51,7 @@ export interface MemoryTraceEntry {
   score: number | null;
   reason: string;
   included: boolean;
-  droppedReason?: 'deduplicated_persona' | 'deduplicated_summary' | 'deduplicated_recent' | 'budget';
+  droppedReason?: 'deduplicated_persona' | 'deduplicated_summary' | 'deduplicated_recent' | 'deduplicated_future' | 'budget';
 }
 
 export interface MemoryRecallTrace {
@@ -84,7 +92,9 @@ export class ContextBuilder {
     private readonly stickerLibrary: StickerLibrary,
     private readonly life?: LifeRuntime,
     private readonly timeZone = 'Asia/Shanghai',
-    private readonly worldSnapshot?: () => WorldSnapshot
+    private readonly worldSnapshot?: () => WorldSnapshot,
+    private readonly future?: FutureContextService,
+    private readonly relationship?: RelationshipContextService
   ) {}
 
   memoryRecallTrace(): MemoryRecallTrace {
@@ -154,9 +164,59 @@ export class ContextBuilder {
       .map((summary) => `· ${summary.content}`);
     const summaryBudget = budgetLines(systemParts, turns, '以前聊过的重点（阶段摘要）：', summaryLines, inputBudget);
     const usedSummaries = summaryBudget.accepted.length;
-    const memoryLines = deduped.matches.filter((match) => !match.droppedReason).map((match) => `· [${match.memory.kind}] ${match.memory.content}`);
+
+    /*
+     * Future lines are computed before the memory block is committed (§10.2):
+     * an active commitment is the current authority for its fact, so a memory
+     * (or Ombre recall) line that merely restates it is suppressed instead of
+     * being injected twice. Cheap lexical tiers only — no embeddings here.
+     */
+    const futureLines = this.future?.contextLines() ?? [];
+    const relationshipLines = this.relationship?.contextLines() ?? [];
+    const auxLines = [...relationshipLines, ...futureLines];
+    const memoryLines = deduped.matches
+      .filter((match) => {
+        if (match.droppedReason) return false;
+        if (auxLines.some((line) => restatesCommitment(match.memory.content, line))) {
+          match.droppedReason = 'deduplicated_future';
+          return false;
+        }
+        return true;
+      })
+      .map((match) => `· [${match.memory.kind}] ${match.memory.content}`);
+    const futureDedupedMemories = deduped.matches.filter((match) => match.droppedReason === 'deduplicated_future').length;
     const memoryBudget = budgetLines(systemParts, turns, '关于用户你已经知道的事：', memoryLines, inputBudget);
     const usedMemories = memoryBudget.accepted.length;
+
+    // §11: Relationship and Future sit between memory and life state, inside
+    // one shared min(12% inputBudget, 700 tokens) cap for both blocks.
+    const auxBudget = Math.min(Math.floor(inputBudget * 0.12), 700);
+    let usedFutureLines = 0;
+    let usedRelationshipLines = 0;
+    if (relationshipLines.length > 0 || futureLines.length > 0) {
+      const baseTokens = estimateContextTokens(systemParts, turns);
+      const fits = (heading: string, accepted: string[], line: string): boolean =>
+        estimateContextTokens([...systemParts, `${heading}\n${[...accepted, line].join('\n')}`], turns) <=
+        Math.min(inputBudget, baseTokens + auxBudget);
+      const relationshipAccepted: string[] = [];
+      for (const line of relationshipLines) {
+        if (!fits('你们之间正在延续的事情：', relationshipAccepted, line)) break;
+        relationshipAccepted.push(line);
+      }
+      if (relationshipAccepted.length > 0) {
+        systemParts.push(`你们之间正在延续的事情：\n${relationshipAccepted.join('\n')}`);
+        usedRelationshipLines = relationshipAccepted.length;
+      }
+      const futureAccepted: string[] = [];
+      for (const line of futureLines) {
+        if (!fits('接下来值得记得的事情：', futureAccepted, line)) break;
+        futureAccepted.push(line);
+      }
+      if (futureAccepted.length > 0) {
+        systemParts.push(`接下来值得记得的事情：\n${futureAccepted.join('\n')}`);
+        usedFutureLines = futureAccepted.length;
+      }
+    }
 
     const traceEntries: MemoryTraceEntry[] = deduped.matches.map((match) => {
       const included = !match.droppedReason && memoryBudget.accepted.some((line) => line.includes(match.memory.content));
@@ -225,7 +285,10 @@ export class ContextBuilder {
       droppedSummaries: activeSummaries.length - usedSummaries,
       droppedMemories: recall.memories.length - usedMemories,
       droppedRecentMessages: convertedTurns.length - turns.length,
-      memoryTrace: this.lastTrace
+      memoryTrace: this.lastTrace,
+      futureLines: usedFutureLines,
+      relationshipLines: usedRelationshipLines,
+      futureDedupedMemories
     };
   }
 
@@ -404,6 +467,38 @@ function normalizeFactText(text: string): string {
 function similarFact(left: string, right: string): boolean {
   if (!left || !right) return false;
   return left === right || (Math.min(left.length, right.length) >= 6 && (left.includes(right) || right.includes(left)));
+}
+
+/**
+ * §10.3 tiers 1-3, memory side: does a memory/Ombre recall line merely restate
+ * what an active commitment already says? Containment first, then bigram
+ * overlap — "用户最近很重视周五的考试" vs "用户周五有考试，还有 2 天" share
+ * 用户/周五/考试 but no containment window. Lexical only: this runs on the
+ * reply hot path, so embeddings never happen here (§10.3 热路径约束).
+ */
+function restatesCommitment(memoryContent: string, futureLine: string): boolean {
+  const left = normalizeFactText(memoryContent);
+  const right = normalizeFactText(futureLine.replace(/^-\s*/, ''));
+  if (!left || !right) return false;
+  if (left === right || left.includes(right) || right.includes(left)) return true;
+  const ga = bigramsOf(left);
+  const gb = bigramsOf(right);
+  if (ga.size < 2 || gb.size < 2) return false;
+  let shared = 0;
+  for (const g of ga) if (gb.has(g)) shared++;
+  if (shared < 2) return false;
+  const ratio = shared / Math.min(ga.size, gb.size);
+  // Two shared bigrams (e.g. the weekday + the event noun) is the §10.3
+  // "temporalKey + entity overlap" tier: one shared bigram alone ("周二吃火锅"
+  // vs "周二考试") stays; containment is handled above.
+  return ratio >= 0.22;
+}
+
+function bigramsOf(text: string): Set<string> {
+  const chars = [...text];
+  const out = new Set<string>();
+  for (let i = 0; i + 2 <= chars.length; i++) out.add(chars.slice(i, i + 2).join(''));
+  return out;
 }
 
 function trimToTokenEstimate(text: string, maxTokens: number): string {

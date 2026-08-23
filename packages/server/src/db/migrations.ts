@@ -1510,6 +1510,206 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 41,
+    name: 'commitments',
+    up: (db) => {
+      // CHECK constraints close the status enum at the storage layer:
+      // rescheduling is supersede + a new row, so no `rescheduled` value
+      // exists to accidentally write.
+      db.exec(`
+        CREATE TABLE commitments (
+          id                    TEXT PRIMARY KEY,
+          kind                  TEXT NOT NULL CHECK (kind IN ('user_event','shared_plan','assistant_commitment','reminder_request','follow_up')),
+          subject               TEXT NOT NULL CHECK (subject IN ('user','assistant','shared')),
+          title                 TEXT NOT NULL,
+          normalized_title      TEXT NOT NULL,
+          semantic_key          TEXT NOT NULL,
+          starts_at             TEXT,
+          due_at                TEXT,
+          time_precision        TEXT NOT NULL CHECK (time_precision IN ('exact','day','range','relative','unknown')),
+          status                TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('tentative','pending','due','completed','cancelled','missed','expired','superseded')),
+          confidence            REAL NOT NULL DEFAULT 0.6 CHECK (confidence >= 0 AND confidence <= 1),
+          importance            REAL NOT NULL DEFAULT 0.5 CHECK (importance >= 0 AND importance <= 1),
+          source_message_id     TEXT NOT NULL,
+          source_text           TEXT,
+          follow_up_policy      TEXT NOT NULL DEFAULT 'natural' CHECK (follow_up_policy IN ('none','natural','explicit_reminder')),
+          earliest_reach_out_at TEXT,
+          latest_reach_out_at   TEXT,
+          supersedes_id         TEXT REFERENCES commitments(id) ON DELETE SET NULL,
+          superseded_by_id      TEXT REFERENCES commitments(id) ON DELETE SET NULL,
+          completed_at          TEXT,
+          archived_at           TEXT,
+          outcome               TEXT,
+          embedding             BLOB,
+          embedding_dim         INTEGER,
+          embedding_model       TEXT,
+          extractor_version     TEXT NOT NULL DEFAULT '1',
+          created_at            TEXT NOT NULL,
+          updated_at            TEXT NOT NULL,
+          last_confirmed_at     TEXT NOT NULL
+        );
+        CREATE INDEX idx_commitments_semantic_key ON commitments(semantic_key)
+          WHERE status IN ('tentative','pending','due') AND archived_at IS NULL;
+        CREATE INDEX idx_commitments_live_due ON commitments(status, due_at)
+          WHERE archived_at IS NULL;
+        CREATE INDEX idx_commitments_chain ON commitments(supersedes_id, superseded_by_id);
+        CREATE INDEX idx_commitments_source ON commitments(source_message_id);
+
+        CREATE TABLE commitment_extraction_runs (
+          source_message_id   TEXT NOT NULL,
+          extractor_version   TEXT NOT NULL,
+          claimed_at          TEXT NOT NULL,
+          PRIMARY KEY (source_message_id, extractor_version)
+        );
+      `);
+    }
+  },
+  {
+    version: 42,
+    name: 'relationship_threads',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE relationship_threads (
+          id                   TEXT PRIMARY KEY,
+          kind                 TEXT NOT NULL CHECK (kind IN ('open_topic','shared_experience','emotional_context','unresolved_issue','shared_interest','ongoing_joke','care_context')),
+          title                TEXT NOT NULL,
+          normalized_title     TEXT NOT NULL,
+          summary              TEXT NOT NULL DEFAULT '',
+          status               TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','cooling','resolved','archived')),
+          salience             REAL NOT NULL DEFAULT 0.7 CHECK (salience >= 0 AND salience <= 1),
+          confidence           REAL NOT NULL DEFAULT 0.6 CHECK (confidence >= 0 AND confidence <= 1),
+          first_message_id     TEXT,
+          last_message_id      TEXT,
+          linked_commitment_id TEXT REFERENCES commitments(id) ON DELETE SET NULL,
+          reopen_count         INTEGER NOT NULL DEFAULT 0,
+          embedding            BLOB,
+          embedding_dim        INTEGER,
+          embedding_model      TEXT,
+          opened_at            TEXT NOT NULL,
+          last_touched_at      TEXT NOT NULL,
+          resolved_at          TEXT,
+          created_at           TEXT NOT NULL,
+          updated_at           TEXT NOT NULL
+        );
+        CREATE INDEX idx_relationship_threads_live ON relationship_threads(status, salience);
+        CREATE INDEX idx_relationship_threads_linked ON relationship_threads(linked_commitment_id);
+      `);
+    }
+  },
+  {
+    version: 43,
+    name: 'episodes',
+    up: (db) => {
+      // Episodes are an INDEX (§21.2/禁区5): summary + reference ids only,
+      // never a copy of message/moment/commitment bodies. The truth stays in
+      // its source tables.
+      db.exec(`
+        CREATE TABLE episodes (
+          id             TEXT PRIMARY KEY,
+          kind           TEXT NOT NULL CHECK (kind IN ('conversation','shared_event','project','relationship','life_share','milestone')),
+          title          TEXT NOT NULL DEFAULT '',
+          summary        TEXT NOT NULL DEFAULT '',
+          started_at     TEXT NOT NULL,
+          ended_at       TEXT NOT NULL,
+          salience       REAL NOT NULL DEFAULT 0.5 CHECK (salience >= 0 AND salience <= 1),
+          emotional_tone TEXT,
+          local_date     TEXT NOT NULL,
+          closed         INTEGER NOT NULL DEFAULT 0,
+          created_at     TEXT NOT NULL,
+          updated_at     TEXT NOT NULL
+        );
+        CREATE INDEX idx_episodes_local_date ON episodes(local_date, started_at);
+        CREATE INDEX idx_episodes_open ON episodes(closed, ended_at);
+
+        CREATE TABLE episode_messages (
+          episode_id  TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+          message_id  TEXT NOT NULL,
+          PRIMARY KEY (episode_id, message_id)
+        );
+        CREATE TABLE episode_moments (
+          episode_id  TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+          moment_id   TEXT NOT NULL,
+          PRIMARY KEY (episode_id, moment_id)
+        );
+        CREATE TABLE episode_commitments (
+          episode_id      TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+          commitment_id   TEXT NOT NULL,
+          PRIMARY KEY (episode_id, commitment_id)
+        );
+        CREATE TABLE episode_relationship_threads (
+          episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+          thread_id  TEXT NOT NULL,
+          PRIMARY KEY (episode_id, thread_id)
+        );
+        CREATE INDEX idx_episode_messages_message ON episode_messages(message_id);
+      `);
+    }
+  },
+  {
+    version: 44,
+    name: 'interaction_outcomes',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE interaction_outcomes (
+          id               TEXT PRIMARY KEY,
+          source_type      TEXT NOT NULL DEFAULT 'proactive',
+          source_id        TEXT NOT NULL,
+          proactive_kind   TEXT NOT NULL,
+          media_kind       TEXT NOT NULL DEFAULT 'none' CHECK (media_kind IN ('none','image','sticker','voice')),
+          sent_at          TEXT NOT NULL,
+          user_replied     INTEGER NOT NULL DEFAULT 0,
+          reply_latency_ms INTEGER,
+          reply_length     INTEGER,
+          continued_turns  INTEGER NOT NULL DEFAULT 0,
+          score            REAL NOT NULL DEFAULT 0,
+          created_at       TEXT NOT NULL,
+          UNIQUE(source_type, source_id)
+        );
+        CREATE INDEX idx_outcomes_sent ON interaction_outcomes(sent_at);
+      `);
+    }
+  },
+  {
+    version: 45,
+    name: 'provider_health',
+    up: (db) => {
+      // Runtime routing state (§33): consecutive failures and cooldowns
+      // survive restarts so a crash-looping provider does not get a clean
+      // slate on every deploy.
+      db.exec(`
+        CREATE TABLE provider_health (
+          capability         TEXT NOT NULL,
+          model              TEXT NOT NULL,
+          consecutive_failures INTEGER NOT NULL DEFAULT 0,
+          cooldown_until     TEXT,
+          last_failure_type  TEXT,
+          success_count      INTEGER NOT NULL DEFAULT 0,
+          failure_count      INTEGER NOT NULL DEFAULT 0,
+          updated_at         TEXT NOT NULL,
+          PRIMARY KEY (capability, model)
+        );
+      `);
+    }
+  },
+  {
+    version: 46,
+    name: 'auth_tokens',
+    up: (db) => {
+      // §37: rotatable admin tokens with overlap windows. Only the sha256 of
+      // each token is stored; ADMIN_API_TOKEN stays as the bootstrap secret.
+      db.exec(`
+        CREATE TABLE auth_tokens (
+          id            TEXT PRIMARY KEY,
+          token_hash    TEXT NOT NULL UNIQUE,
+          label         TEXT NOT NULL DEFAULT '',
+          created_at    TEXT NOT NULL,
+          last_used_at  TEXT,
+          revoked_at    TEXT
+        );
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

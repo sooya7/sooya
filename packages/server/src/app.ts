@@ -15,6 +15,20 @@ import { ConfigStore } from './config/store.js';
 import { MediaRepo } from './db/repos/media.repo.js';
 import { MessageRepo } from './db/repos/message.repo.js';
 import { MemoryRepo } from './db/repos/memory.repo.js';
+import { CommitmentRepo } from './db/repos/commitment.repo.js';
+import { RelationshipThreadRepo } from './db/repos/relationship-thread.repo.js';
+import { EpisodeRepo } from './db/repos/episode.repo.js';
+import { TimelineService } from './core/timeline/service.js';
+import { InteractionOutcomeRepo } from './db/repos/interaction-outcome.repo.js';
+import { AuthTokenRepo } from './db/repos/auth-token.repo.js';
+import { registerTokenAdminRoutes } from './routes/token-admin.js';
+import { lightRateLimit } from './util/rate-limit.js';
+import { FeedbackService } from './core/feedback/service.js';
+import { registerLearningAdminRoutes } from './routes/learning-admin.js';
+import { registerProviderHealthAdminRoutes } from './routes/provider-health-admin.js';
+import { registerTimelineAdminRoutes } from './routes/timeline-admin.js';
+import { RelationshipService, RelationshipContextService } from './core/relationship/service.js';
+import { registerRelationshipAdminRoutes } from './routes/relationship-admin.js';
 import { OmbreCommitRepo } from './db/repos/ombre.repo.js';
 import { StickerRepo } from './db/repos/sticker.repo.js';
 import { ErrorLogRepo, EventRepo, JobRepo, SettingsRepo, SummaryRepo } from './db/repos/misc.repo.js';
@@ -76,6 +90,9 @@ import { maintenanceCoordinator } from './core/maintenance.js';
 import { WebSearchRegistry } from './core/web-search/registry.js';
 import { EventBus } from './events/bus.js';
 import { JobWorker, registerDefaultJobs } from './core/jobs.js';
+import { PostTurnSemanticAnalyzer } from './core/post-turn/analyzer.js';
+import { FutureService } from './core/future/service.js';
+import { FutureContextService } from './core/future/context.js';
 import { BackupService } from './backup/service.js';
 import { AgentRegistry, CapabilityRegistryStub, ToolRegistry } from './agent/registry.js';
 import { ToolCallRuntime } from './agent/tool-runtime.js';
@@ -89,6 +106,7 @@ import { registerQqAdminRoutes } from './routes/qq-admin.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerFutureAdminRoutes } from './routes/future-admin.js';
 import { registerFeatureRoutes } from './routes/features.js';
 import { registerLifeAdminRoutes } from './routes/life-admin.js';
 import { ensureDirSync, cleanupTempFiles } from './util/fsx.js';
@@ -121,6 +139,11 @@ export interface SooyaApp {
     media: MediaRepo;
     mediaText: MediaTextRepo;
     memories: MemoryRepo;
+    commitments: CommitmentRepo;
+    relationshipThreads: RelationshipThreadRepo;
+    episodes: EpisodeRepo;
+    interactionOutcomes: InteractionOutcomeRepo;
+    authTokens: AuthTokenRepo;
     ombreCommits: OmbreCommitRepo;
     stickers: StickerRepo;
     summaries: SummaryRepo;
@@ -174,6 +197,12 @@ export interface SooyaApp {
     voice: VoiceService;
     storage: StorageService;
     context: ContextBuilder;
+    future: FutureService;
+    futureContext: FutureContextService;
+    relationship: RelationshipService;
+    relationshipContext: RelationshipContextService;
+    timeline: TimelineService;
+    feedback: FeedbackService;
     summarizer: Summarizer;
     replier: Replier;
     replyCoordinator: ReplyCoordinator;
@@ -249,6 +278,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     media: new MediaRepo(dbHandle),
     mediaText,
     memories: new MemoryRepo(dbHandle),
+    commitments: new CommitmentRepo(dbHandle),
+    relationshipThreads: new RelationshipThreadRepo(dbHandle),
+    episodes: new EpisodeRepo(dbHandle),
+    interactionOutcomes: new InteractionOutcomeRepo(dbHandle),
+    authTokens: new AuthTokenRepo(dbHandle),
     ombreCommits: new OmbreCommitRepo(dbHandle),
     stickers: new StickerRepo(dbHandle),
     summaries: new SummaryRepo(dbHandle),
@@ -277,7 +311,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const mediaVariants = new ImageVariantService(env.mediaDirs.variants, (message, id) => repos.errors.add('media.variant', message, { id }));
   const stickerLibrary = new StickerLibrary(repos.stickers, repos.media, mediaStore);
   mediaStore.setOnDelete(() => stickerLibrary.invalidate());
-  const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl });
+  const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl }, dbHandle);
   const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
   metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
   const directorClient = new DirectorClient(
@@ -355,6 +389,73 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     totalResultMaxBytes: env.TOOL_TOTAL_RESULT_MAX_BYTES
   });
   const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE, config });
+  /*
+   * Future engine (plan §3.2/§8): the runtime authority for the time axis.
+   * Built unconditionally, but the post-turn job is only enqueued under
+   * FUTURE_ENGINE_ENABLED so the whole subsystem stays dark until its phase
+   * is verified.
+   */
+  const future = new FutureService({
+    repo: repos.commitments,
+    analyzer: new PostTurnSemanticAnalyzer({
+      provider: capabilities.summaryProvider(),
+      relationshipEnabled: env.RELATIONSHIP_CONTEXT_ENABLED,
+      errors: repos.errors
+    }),
+    timeZone: env.LIFE_TIME_ZONE,
+    errors: repos.errors,
+    embed: async (texts) => {
+      const provider = capabilities.embeddingProvider();
+      if (!provider.configured) return null;
+      const result = await provider.embed(texts);
+      return { vectors: result.vectors, model: result.model };
+    },
+    clock: opts.clock
+  });
+  const futureContext = new FutureContextService({ repo: repos.commitments, timeZone: env.LIFE_TIME_ZONE, clock: opts.clock });
+  const embedTitles = async (texts: string[]) => {
+    const provider = capabilities.embeddingProvider();
+    if (!provider.configured) return null;
+    const result = await provider.embed(texts);
+    return { vectors: result.vectors, model: result.model };
+  };
+  const relationshipRepoView = {
+    contextThreads: (limit: number) => repos.relationshipThreads.contextThreads(limit).map((t) => ({ id: t.id, kind: t.kind, title: t.title, status: t.status }))
+  };
+  const relationship = new RelationshipService({
+    repo: repos.relationshipThreads,
+    embed: embedTitles,
+    clock: opts.clock,
+    onError: (message) => repos.errors.add('relationship', message)
+  });
+  const relationshipContext = new RelationshipContextService({ repo: repos.relationshipThreads, clock: opts.clock });
+  const feedback = new FeedbackService({
+    outcomes: repos.interactionOutcomes,
+    attempts: repos.proactive,
+    messages: repos.messages,
+    learningEnabled: env.INTERACTION_LEARNING_ENABLED,
+    clock: opts.clock
+  });
+  const timeline = new TimelineService({
+    repo: repos.episodes,
+    messages: repos.messages,
+    commitments: repos.commitments,
+    threads: repos.relationshipThreads,
+    moments: repos.moments,
+    settings: repos.settings,
+    summaryProvider: capabilities.summaryProvider(),
+    timeZone: env.LIFE_TIME_ZONE,
+    enabled: env.TIMELINE_ENABLED,
+    clock: opts.clock
+  });
+  future.attachRelationship(
+    env.RELATIONSHIP_CONTEXT_ENABLED
+      ? {
+          consume: (output, ctx) => relationship.consume(output, ctx),
+          contextThreads: relationshipRepoView.contextThreads
+        }
+      : undefined
+  );
   const ombreMemory = new OmbreMemoryBridge({
     manager: mcpManager,
     registry: tools,
@@ -485,7 +586,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     stickerLibrary,
     env.ENABLE_LIFE_ENGINE ? life : undefined,
     env.LIFE_TIME_ZONE,
-    () => world.snapshot()
+    () => world.snapshot(),
+    env.FUTURE_ENGINE_ENABLED ? futureContext : undefined,
+    env.RELATIONSHIP_CONTEXT_ENABLED ? relationshipContext : undefined
   );
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
@@ -570,6 +673,14 @@ repos.jobs.enqueue(
       if (qqConfig.enabled) {
         repos.jobs.enqueue('qq.deliver', { messageId: outcome.messageId });
       }
+      if (env.FUTURE_ENGINE_ENABLED) {
+        repos.jobs.enqueue('future.analyze', {
+          batchId,
+          revision,
+          userMessageIds: userMessages.map((message) => message.id),
+          assistantMessageId: outcome.messageId
+        });
+      }
       if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
       // Life conversation bridge (§49-50): extracted as a durable job; the
       // handler re-checks the revision so only the final one applies.
@@ -652,7 +763,10 @@ repos.jobs.enqueue(
     toolRuntime,
     jobs: repos.jobs,
     deliveries: repos.channelDeliveries,
-    qqDeliveryEnabled: qqConfig.enabled
+    qqDeliveryEnabled: qqConfig.enabled,
+    commitments: repos.commitments,
+    futureProactiveEnabled: env.FUTURE_ENGINE_ENABLED && env.FUTURE_PROACTIVE_ENABLED,
+    feedbackWeight: (kind: string) => feedback.weightFor(kind)
   });
   const backups = new BackupService({
     db: () => dbHandle,
@@ -699,6 +813,10 @@ repos.jobs.enqueue(
     reachOutEnabled: env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT,
     storage,
     mediaText: repos.mediaText,
+    future,
+    relationship: env.RELATIONSHIP_CONTEXT_ENABLED ? relationship : undefined,
+    timeline: env.TIMELINE_ENABLED ? timeline : undefined,
+    feedback,
     tmpDirs: [env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files, env.dbDir],
     qqDelivery
   });
@@ -860,7 +978,7 @@ repos.jobs.enqueue(
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, future, futureContext, relationship, relationshipContext, timeline, feedback, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -893,7 +1011,17 @@ repos.jobs.enqueue(
 
   registerHealthRoutes(app);
   registerQqRoutes(app);
+  lightRateLimit(app.server, {
+    '/api/qq': { limit: 300, windowMs: 60_000 },
+    '/api/admin': { limit: 240, windowMs: 60_000 }
+  });
   registerAdminRoutes(app);
+  registerFutureAdminRoutes(app);
+  registerRelationshipAdminRoutes(app);
+  registerTimelineAdminRoutes(app);
+  registerLearningAdminRoutes(app);
+  registerProviderHealthAdminRoutes(app);
+  registerTokenAdminRoutes(app);
   registerQqAdminRoutes(app);
   registerMediaRoutes(app);
   registerLifeAdminRoutes(app);

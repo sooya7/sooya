@@ -20,6 +20,8 @@ import type { LifeLocationRepo, LifeLocationRow } from '../db/repos/location.rep
 import type { WorldSnapshot } from './world-context.js';
 import type { ToolCallRuntime } from '../agent/tool-runtime.js';
 import type { ChatRequest } from '../providers/types.js';
+import type { CommitmentRepo } from '../db/repos/commitment.repo.js';
+import { arbitrate, commitmentCandidates, type ProactiveCandidate } from './proactive-candidates.js';
 import { z } from 'zod';
 import { extractJsonObject } from '../util/json-extract.js';
 
@@ -34,6 +36,8 @@ export interface ProactiveEvaluation {
   reach: boolean;
   reason: string;
   candidate: LifeLogRow | null;
+  /** The arbiter's pick across all sources (§17); null when blocked. */
+  selected: ProactiveCandidate | null;
   lastUserAt: string | null;
   lastAssistantAt: string | null;
 }
@@ -141,62 +145,123 @@ export class ProactiveComposer {
       jobs?: JobRepo;
       deliveries?: ChannelDeliveryRepo;
       qqDeliveryEnabled?: boolean;
+      /** Future candidate source (§17); dark until both flags are on. */
+      commitments?: CommitmentRepo;
+      futureProactiveEnabled?: boolean;
+      /** §22-26: learned preference multiplier, applied after hard gates only. */
+      feedbackWeight?: (kind: string) => number;
     }
   ) {}
 
+  /**
+   * Hard gates first, then one arbiter across every candidate source (§17/§19).
+   * Life's sleep / silent-hour / daily-cap rules are global gates: no source,
+   * learned weight or urgency may buy its way past them.
+   */
   evaluate(): ProactiveEvaluation {
     const recent = this.deps.messages.recent(40);
     const lastUser = [...recent].reverse().find((message) => message.role === 'user');
     const lastAssistant = [...recent].reverse().find((message) => message.role === 'assistant');
 
-    // A Moment is not a chat interruption. Reuse Life's candidate, sleep,
-    // silent-hour and daily-cap rules, but deliberately remove chat-gap gates.
     const decision = this.deps.life.shouldReachOut(null, null);
     const base = {
-      candidate: decision.candidate,
       lastUserAt: lastUser?.createdAt ?? null,
       lastAssistantAt: lastAssistant?.createdAt ?? null
     };
-    if (!decision.reach || !decision.candidate) return { reach: false, reason: decision.reason, ...base };
+    const blockedEval = (reason: string): ProactiveEvaluation => ({
+      reach: false, reason, candidate: decision.candidate, selected: null, ...base
+    });
+    // Gate-only verdicts from Life apply to every source. A non-gate verdict
+    // (nothing worth sharing) just means Life contributes no candidate — the
+    // Future source may still have one. shouldReachOut(null, null) never
+    // returns the chat-gap reasons, which Moments deliberately ignore.
+    const LIFE_GATES = new Set(['disabled', 'daily_cap', 'silent_hours', 'asleep']);
+    if (!decision.reach && LIFE_GATES.has(decision.reason)) {
+      return blockedEval(decision.reason);
+    }
 
+    // Same hard gates for every candidate source.
     const latest = this.deps.moments.latest();
     if (latest) {
       const elapsed = this.deps.life.now().getTime() - Date.parse(latest.created_at);
       const gap = this.deps.life.settings.quietGapMinutes * 60_000;
       if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed < gap) {
-        return { reach: false, reason: 'moment_gap', ...base };
+        return blockedEval('moment_gap');
       }
     }
-
-    // User replies still get model/provider priority. The candidate remains
-    // unshared and will be retried on a later Life tick.
-    if (this.deps.replyBatches.openBatch()) return { reach: false, reason: 'reply_in_progress', ...base };
+    if (this.deps.replyBatches.openBatch()) return blockedEval('reply_in_progress');
     // §12.3：QQ 通道还有待投递（用户回复/上一条主动消息尚未发出）时，不插队。
     if (this.deps.qqDeliveryEnabled && this.deps.deliveries && this.deps.deliveries.hasInFlight(QQ_CHANNEL_NAME)) {
-      return { reach: false, reason: 'qq_delivery_in_flight', ...base };
+      return blockedEval('qq_delivery_in_flight');
     }
-    if (this.recentlyDiscussed(decision.candidate, recent) || this.recentlyShared(decision.candidate)) {
-      return { reach: false, reason: 'recent_topic', ...base };
+    if (!this.deps.capabilities.has('chat')) return blockedEval('chat_unavailable');
+
+    // ---- Candidate collection ----
+    const candidates: ProactiveCandidate[] = [];
+    if (decision.reach && decision.candidate) {
+      const lifeCandidate = decision.candidate;
+      if (!this.recentlyDiscussed(lifeCandidate, recent) && !this.recentlyShared(lifeCandidate)) {
+        candidates.push({
+          source: 'life',
+          key: `life:${lifeCandidate.id}`,
+          reason: 'life_share_candidate',
+          urgency: 0.5,
+          salience: 0.6,
+          lifeCandidate
+        });
+      } else {
+        return blockedEval('recent_topic');
+      }
     }
-    if (!this.deps.capabilities.has('chat')) return { reach: false, reason: 'chat_unavailable', ...base };
-    return { reach: true, reason: 'ok', ...base };
+    if (this.deps.commitments && this.deps.futureProactiveEnabled) {
+      candidates.push(...commitmentCandidates(this.deps.commitments.upcoming(12), this.deps.life.now()));
+    }
+    // Preserve Life's own verdict (e.g. nothing_worth_saying) when no source
+    // contributed a candidate — the admin panel surfaces this reason as-is.
+    if (candidates.length === 0) return blockedEval(decision.candidate ? 'recent_topic' : decision.reason);
+
+    const recentlySentKeys = new Set(
+      this.deps.attempts
+        .list(50)
+        .filter((attempt) => attempt.status === 'sent')
+        .map((attempt) => attempt.candidateId)
+        .filter((id): id is string => Boolean(id))
+    );
+    // Learned weights multiply salience AFTER every hard gate (§18/§20);
+    // neutral 1.0 until enough samples exist.
+    const weighted = this.deps.feedbackWeight
+      ? candidates.map((c) => ({
+          ...c,
+          salience: c.salience * this.deps.feedbackWeight!(c.source === 'commitment' ? 'commitment' : 'life')
+        }))
+      : candidates;
+    const selected = arbitrate(weighted, recentlySentKeys);
+    if (!selected) return blockedEval('already_sent');
+    return { reach: true, reason: 'ok', candidate: selected.lifeCandidate ?? null, selected, ...base };
   }
 
   async run(options: ProactiveRunOptions = {}): Promise<ProactiveRunResult> {
     const evaluation = this.evaluate();
-    const candidate = evaluation.candidate;
-    const requestedMode = candidate ? this.resolveMode(options.mode) : null;
+    const selected = evaluation.selected;
+    const requestedMode = selected ? this.resolveMode(options.mode) : null;
     const attempt = this.deps.attempts.create({
-      candidateId: candidate?.id ?? null,
-      candidateKind: candidate?.kind ?? null,
-      candidateActivity: candidate?.activity ?? null,
+      candidateId: selected?.key ?? null,
+      candidateKind: selected?.source === 'commitment' ? selected.commitment!.kind : selected?.lifeCandidate?.kind ?? null,
+      candidateActivity: selected?.source === 'commitment' ? selected.commitment!.title : selected?.lifeCandidate?.activity ?? null,
       requestedMode,
       status: 'blocked',
       blockedReason: evaluation.reach ? null : evaluation.reason,
-      detail: { evaluatedAt: this.deps.life.now().toISOString(), destination: 'moments' }
+      detail: { evaluatedAt: this.deps.life.now().toISOString(), destination: selected?.source === 'commitment' ? 'qq' : 'moments' }
     });
 
-    if (!evaluation.reach || !candidate) return this.blocked(evaluation.reason, candidate?.id ?? null, requestedMode);
+    if (!evaluation.reach || !selected) return this.blocked(evaluation.reason, evaluation.candidate?.id ?? null, requestedMode);
+
+    // Commitment care is a chat message, not a Moment (§1.7): semantic
+    // candidate in, model-worded message out, one durable QQ delivery.
+    if (selected.source === 'commitment') return this.runCommitmentCandidate(selected, attempt.id);
+
+    const candidate = selected.lifeCandidate;
+    if (!candidate) return this.blocked('no_candidate', null, requestedMode);
 
     let finalMode: ProactiveMode | null = null;
     let fallbackReason: string | null = null;
@@ -369,6 +434,79 @@ export class ProactiveComposer {
       fallbackReason: null,
       sendSuccess: false
     };
+  }
+
+  /**
+   * §1.7: the commitment hands the model a semantic candidate (event,
+   * distance), never a canned "提醒：你今天面试" line. The wording stays hers.
+   */
+  private async runCommitmentCandidate(candidate: ProactiveCandidate, attemptId: string): Promise<ProactiveRunResult> {
+    const info = candidate.commitment!;
+    try {
+      const provider = this.deps.capabilities.chatProvider();
+      const persona = this.deps.config.getPersona();
+      const result = await provider.complete({
+        system: [
+          persona.systemPrompt.trim(),
+          '你想在合适的时机自然地提起用户接下来的一件事，就像恋人随口关心一句。',
+          JSON.stringify({ event: info.title, kind: info.kind, distance_minutes: info.distanceMinutes }),
+          '写一条 40 字以内的消息：自然、带一点你自己的语气，可以顺带加油或好奇。',
+          '禁止使用“提醒：”“备忘：”这类系统式开头；禁止暴露 JSON 或字段名；只输出这句话本身。'
+        ].join('\n'),
+        messages: [{ role: 'user', content: [{ type: 'text', text: '（无人说话，你主动开口）' }] }],
+        temperature: 0.85,
+        maxTokens: 120
+      });
+      const text = result.text.trim().replace(/^["“']|["”']$/g, '').slice(0, 120);
+      if (text.length < 4) throw new Error('invalid_commitment_text');
+
+      if (!this.deps.qqDeliveryEnabled) {
+        // No QQ channel (unit-test posture): record the attempt as composed.
+        this.deps.attempts.update(attemptId, { status: 'sent', blockedReason: null, sendSuccess: true, detail: { destination: 'qq', text } });
+        return { status: 'sent', blockedReason: null, candidateId: candidate.key, messageId: null, momentId: null, requestedMode: 'text', finalMode: 'text', fallbackReason: null, sendSuccess: true };
+      }
+
+      const published = this.deps.coordinator.publishProactiveMessage({
+        parts: [{ type: 'text', text, status: 'sent' }],
+        meta: { proactive: true, candidateId: candidate.key, commitmentId: info.id, reason: candidate.reason },
+        onPersisted: () => undefined
+      });
+      if (!published) throw new Error('commitment_publish_failed');
+      this.deps.jobs?.enqueue('qq.deliver', { messageId: published.message.id });
+      this.deps.attempts.update(attemptId, {
+        status: 'sent',
+        blockedReason: null,
+        messageId: published.message.id,
+        sendSuccess: true,
+        detail: { destination: 'qq', commitmentId: info.id, text }
+      });
+      this.deps.metrics?.record('future', 'proactive.sent');
+      return {
+        status: 'sent',
+        blockedReason: null,
+        candidateId: candidate.key,
+        messageId: published.message.id,
+        momentId: null,
+        requestedMode: 'text',
+        finalMode: 'text',
+        fallbackReason: null,
+        sendSuccess: true
+      };
+    } catch (error) {
+      const reason = safeError(error);
+      this.deps.attempts.update(attemptId, { status: 'failed', blockedReason: reason, detail: { error: reason } });
+      return {
+        status: 'failed',
+        blockedReason: reason,
+        candidateId: candidate.key,
+        messageId: null,
+        momentId: null,
+        requestedMode: 'text',
+        finalMode: null,
+        fallbackReason: null,
+        sendSuccess: false
+      };
+    }
   }
 
   /** 主动消息内容段：文本（+ 可选图片）。走 coordinator.publishProactiveMessage 落库。 */

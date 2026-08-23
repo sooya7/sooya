@@ -29,7 +29,12 @@ const dbFile = path.join(dataDir, 'database', 'sooya.db');
 // v40 widens the moments.image_kind CHECK to allow 'lifestyle'. It adds no new
 // in-flight state either (existing rows keep their values; a downgrade to
 // pre-v40 code can still read every Moment row), so it is safe to inspect.
-const MAX_SCHEMA_VERSION = 40;
+// v41 adds the commitments and commitment_extraction_runs tables; v42 adds
+// relationship_threads; v43 the episode index tables; v44 interaction
+// outcomes; v45 provider_health; v46 auth_tokens. Purely additive — no
+// existing table changes, no in-flight reply state — so older code simply
+// never reads them.
+const MAX_SCHEMA_VERSION = 46;
 if (!fs.existsSync(dbFile)) {
   console.error(`[preflight] database not found: ${dbFile}`);
   console.error(`[preflight] pass --data-dir <dir> or set DATA_DIR`);

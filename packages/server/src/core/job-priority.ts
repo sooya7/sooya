@@ -29,6 +29,13 @@ const JOB_PRIORITIES: Record<string, number> = {
   'sticker.auto-collect': JOB_PRIORITY.stickerCollect,
   'sticker.embed': JOB_PRIORITY.stickerEmbed,
   'sticker.user-meaning.learn': JOB_PRIORITY.life,
+  /*
+   * Post-turn analyzer runs strictly after memory extraction: both make model
+   * calls on the same turn, and a stable order keeps the analyzer's view of
+   * the turn deterministic (same-millisecond jobs otherwise tie-break on
+   * random id suffixes).
+   */
+  'future.analyze': 45,
   'sticker.embed.backfill': JOB_PRIORITY.maintenance,
   'memory.embed.backfill': JOB_PRIORITY.maintenance,
   maintenance: JOB_PRIORITY.maintenance,
