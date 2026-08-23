@@ -120,15 +120,15 @@ const EnvSchema = z.object({
   QQ_PROACTIVE_ENABLED: boolish(true),
 
   /*
-   * Next-stage engines (plan §40): every new subsystem ships dark and is
-   * enabled per phase after its harness asserts pass.
+   * Next-stage engines have passed their harness and ship enabled by default.
+   * Operators can still disable any subsystem explicitly through .env.
    */
-  FUTURE_ENGINE_ENABLED: boolish(false),
-  FUTURE_PROACTIVE_ENABLED: boolish(false),
-  RELATIONSHIP_CONTEXT_ENABLED: boolish(false),
-  TIMELINE_ENABLED: boolish(false),
-  INTERACTION_LEARNING_ENABLED: boolish(false),
-  ADAPTIVE_PROVIDER_ROUTING_ENABLED: boolish(false),
+  FUTURE_ENGINE_ENABLED: boolish(true),
+  FUTURE_PROACTIVE_ENABLED: boolish(true),
+  RELATIONSHIP_CONTEXT_ENABLED: boolish(true),
+  TIMELINE_ENABLED: boolish(true),
+  INTERACTION_LEARNING_ENABLED: boolish(true),
+  ADAPTIVE_PROVIDER_ROUTING_ENABLED: boolish(true),
 
   BACKUP_INTERVAL_MS: intish(6 * 60 * 60 * 1000),
   BACKUP_KEEP: intish(7),
