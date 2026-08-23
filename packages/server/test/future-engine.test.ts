@@ -4,6 +4,7 @@ import { migrate } from '../src/db/index.js';
 import { CommitmentRepo } from '../src/db/repos/commitment.repo.js';
 import { PostTurnSemanticAnalyzer } from '../src/core/post-turn/analyzer.js';
 import { FutureService } from '../src/core/future/service.js';
+import { EXTRACTOR_VERSION } from '../src/core/post-turn/types.js';
 import { parseDayOffset, parseMinuteOfDay, resolveCommitmentTime, zonedParts, zonedToUtc } from '../src/core/future/time-parser.js';
 import { parseAnalyzerOutput } from '../src/core/post-turn/schema.js';
 import type { ChatProvider } from '../src/providers/types.js';
@@ -154,7 +155,7 @@ afterEach(() => {
 function futureWith(
   responses: Array<string | ((system: string) => string)>,
   clock: () => Date = () => NOW
-): { service: FutureService; repo: CommitmentRepo } {
+): { service: FutureService; repo: CommitmentRepo; db: Database.Database } {
   const db = new Database(':memory:');
   open.push(db);
   migrate(db);
@@ -166,8 +167,24 @@ function futureWith(
     timeZone: TZ,
     clock
   });
-  return { service, repo };
+  return { service, repo, db };
 }
+
+describe('CommitmentRepo extraction receipt', () => {
+  it('reclaims a stale in-flight lease but never reclaims a completed receipt', () => {
+    const { repo, db } = futureWith([]);
+    expect(repo.claimExtraction('msg_crash', EXTRACTOR_VERSION)).toBe(true);
+    expect(repo.claimExtraction('msg_crash', EXTRACTOR_VERSION)).toBe(false);
+
+    db.prepare(
+      'UPDATE commitment_extraction_runs SET claimed_at = ? WHERE source_message_id = ? AND extractor_version = ?'
+    ).run('2000-01-01T00:00:00.000Z', 'msg_crash', EXTRACTOR_VERSION);
+    expect(repo.claimExtraction('msg_crash', EXTRACTOR_VERSION)).toBe(true);
+
+    repo.completeExtraction('msg_crash', EXTRACTOR_VERSION);
+    expect(repo.claimExtraction('msg_crash', EXTRACTOR_VERSION)).toBe(false);
+  });
+});
 
 describe('FutureService.analyzeAndApply', () => {
   it('extracts a dated commitment from a scripted analyzer response', async () => {
@@ -184,7 +201,7 @@ describe('FutureService.analyzeAndApply', () => {
     expect(c.sourceMessageId).toBe('msg_1');
   });
 
-  it('never analyzes the same message twice (job idempotency fence, §5.2)', async () => {
+  it('never analyzes the same message twice after a completed receipt', async () => {
     const { service, repo } = futureWith([
       JSON.stringify({ commitments: [{ kind: 'user_event', title: '考试', date_text: '周五', confidence: 0.9 }] })
     ]);
@@ -236,7 +253,7 @@ describe('FutureService.analyzeAndApply', () => {
     expect(repo.get(chain[1]!.id)!.status).toBe('completed');
   });
 
-  it('marks low-confidence fuzzy items tentative and keeps reminders explicit', async () => {
+  it('marks low-confidence fuzzy items tentative and keeps scheduled reminders explicit', async () => {
     const { service, repo } = futureWith([
       JSON.stringify({
         commitments: [
@@ -254,6 +271,45 @@ describe('FutureService.analyzeAndApply', () => {
     expect(reminder.latestReachOutAt).toBeTruthy();
   });
 
+  it('gives scheduled assistant commitments a deadline and marks them missed instead of archiving', async () => {
+    const { service, repo } = futureWith([
+      JSON.stringify({
+        commitments: [
+          { kind: 'assistant_commitment', subject: 'assistant', title: '再问考试', date_text: '明天', time_precision: 'day', confidence: 0.95, follow_up: 'natural' }
+        ]
+      })
+    ]);
+    await service.analyzeAndApply({ userText: '我明天考完', assistantText: '我明天再问你', sourceMessageId: 'msg_assistant_1' });
+    const commitment = repo.list()[0]!;
+    expect(commitment.kind).toBe('assistant_commitment');
+    expect(commitment.latestReachOutAt).toBeTruthy();
+
+    service.tick(new Date('2026-08-24T00:00:00.000Z'));
+    const after = repo.get(commitment.id)!;
+    expect(after.status).toBe('missed');
+    expect(after.archivedAt).toBeNull();
+  });
+
+  it('degrades unscheduled assistant promises and reminders to ordinary follow-ups', async () => {
+    const { service, repo } = futureWith([
+      JSON.stringify({
+        commitments: [
+          { kind: 'assistant_commitment', subject: 'assistant', title: '再帮你看', date_text: '之后', time_precision: 'relative', confidence: 0.9, follow_up: 'natural' },
+          { kind: 'reminder_request', subject: 'user', title: '交作业提醒', date_text: null, time_precision: 'unknown', confidence: 0.9, follow_up: 'explicit_reminder' }
+        ]
+      })
+    ]);
+    await service.analyzeAndApply({ userText: '之后再帮我看，顺便提醒我交作业', assistantText: '好', sourceMessageId: 'msg_unscheduled' });
+    const rows = repo.list();
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.kind).toBe('follow_up');
+      expect(row.dueAt).toBeNull();
+      expect(row.latestReachOutAt).toBeNull();
+      expect(row.followUpPolicy).toBe('natural');
+    }
+  });
+
   it('ignores resolutions that reference unknown commitments', async () => {
     const { service, repo } = futureWith([
       JSON.stringify({ commitments: [{ kind: 'user_event', title: '考试', date_text: '周五', confidence: 0.9 }] }),
@@ -268,10 +324,18 @@ describe('FutureService.analyzeAndApply', () => {
     expect(repo.list()[0]!.status).toBe('pending');
   });
 
-  it('degrades to empty output when the model misbehaves', async () => {
-    const { service, repo } = futureWith(['完全不是 JSON']);
-    const outcome = await service.analyzeAndApply({ userText: '周五考试', assistantText: '', sourceMessageId: 'msg_1' });
-    expect(outcome.extracted).toBe(0);
+  it('throws malformed model output, releases the lease, and retries the same message', async () => {
+    const { service, repo } = futureWith([
+      '完全不是 JSON',
+      JSON.stringify({ commitments: [{ kind: 'user_event', title: '考试', date_text: '周五', confidence: 0.9 }] })
+    ]);
+    await expect(
+      service.analyzeAndApply({ userText: '周五考试', assistantText: '', sourceMessageId: 'msg_retry' })
+    ).rejects.toThrow('post_turn_analyzer_unparseable_output');
     expect(repo.list()).toHaveLength(0);
+
+    const retried = await service.analyzeAndApply({ userText: '周五考试', assistantText: '', sourceMessageId: 'msg_retry' });
+    expect(retried.extracted).toBe(1);
+    expect(repo.list()).toHaveLength(1);
   });
 });
