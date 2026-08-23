@@ -44,7 +44,7 @@ export class FutureService {
     }
   ) {}
 
-  /** Post-turn pipeline step (§8): claim → analyze → ingest/resolve. */
+  /** Post-turn pipeline step (§8): claim → analyze → ingest/resolve → complete receipt. */
   async analyzeAndApply(input: {
     userText: string;
     assistantText: string;
@@ -79,19 +79,28 @@ export class FutureService {
           now,
           timeZone: this.deps.timeZone
         });
-        // An unscheduled assistant promise cannot safely participate in the
-        // time-driven missed state machine. Keep the semantic follow-up, but
-        // degrade it to a conditional follow_up instead of creating an
-        // immortal assistant_commitment with no deadline.
-        const kind = item.kind === 'assistant_commitment' && !resolved ? 'follow_up' : item.kind;
-        if (kind !== item.kind) {
-          this.deps.errors?.add('future.commitment', 'assistant_commitment_without_resolvable_time_degraded', {
+        // Scheduled promises/reminders cannot safely participate in the
+        // time-driven state machine without a resolvable deadline. Preserve
+        // the semantic follow-up but degrade it to a conditional follow_up
+        // rather than creating an immortal scheduled row.
+        const requiresSchedule = item.kind === 'assistant_commitment' || item.kind === 'reminder_request';
+        const kind = requiresSchedule && !resolved ? 'follow_up' : item.kind;
+        const degradedSchedule = kind !== item.kind;
+        if (degradedSchedule) {
+          this.deps.errors?.add('future.commitment', 'scheduled_commitment_without_resolvable_time_degraded', {
             sourceMessageId: input.sourceMessageId,
+            originalKind: item.kind,
             title: item.title
           });
         }
         const tentative = item.confidence < 0.55 && item.time_precision !== 'exact';
-        const explicitReminder = kind === 'reminder_request' || item.follow_up === 'explicit_reminder';
+        const followUpPolicy =
+          degradedSchedule
+            ? 'natural'
+            : kind === 'reminder_request'
+              ? 'explicit_reminder'
+              : item.follow_up;
+        const explicitReminder = kind === 'reminder_request' || followUpPolicy === 'explicit_reminder';
         const payload: CreateCommitmentInput = {
           kind,
           subject: item.subject,
@@ -104,7 +113,7 @@ export class FutureService {
           importance: item.importance,
           sourceMessageId: input.sourceMessageId,
           sourceText: input.userText.slice(0, 200),
-          followUpPolicy: kind === 'reminder_request' ? 'explicit_reminder' : item.follow_up,
+          followUpPolicy,
           // Assistant commitments must never silently age out. If they remain
           // assistant_commitment, they necessarily have a resolved time and a
           // concrete latest-reach-out boundary that can transition to missed.
@@ -159,6 +168,11 @@ export class FutureService {
         // 'updated' reinforces recency without changing status.
       }
 
+      // The commitment mutations are now durable. Convert the in-flight lease
+      // into a permanent completed receipt before any non-critical callbacks,
+      // so a later callback failure cannot cause the analyzer to run twice.
+      this.deps.repo.completeExtraction(input.sourceMessageId, EXTRACTOR_VERSION);
+
       const outcome: AnalyzeOutcome = { skipped: false, extracted, merged, resolved: resolvedCount, rescheduled };
       this.deps.onApplied?.(outcome);
       // §7 distribution: Relationship consumes the same call's output. A
@@ -179,7 +193,7 @@ export class FutureService {
       return outcome;
     } catch (err) {
       // A provider/parse/apply failure is not a successful empty extraction.
-      // Release the claim so JobWorker retry can run the same message again.
+      // Release the in-flight lease so JobWorker retry can run immediately.
       // Process death before this catch is covered by the repo's stale lease.
       this.deps.repo.releaseExtraction(input.sourceMessageId, EXTRACTOR_VERSION);
       throw err;
