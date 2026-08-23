@@ -44,7 +44,7 @@ export class FutureService {
     }
   ) {}
 
-  /** Post-turn pipeline step (§8): fence → analyze → ingest/resolve. */
+  /** Post-turn pipeline step (§8): claim → analyze → ingest/resolve → complete receipt. */
   async analyzeAndApply(input: {
     userText: string;
     assistantText: string;
@@ -54,110 +54,150 @@ export class FutureService {
     if (!input.sourceMessageId) return EMPTY_OUTCOME;
     if (!this.deps.repo.claimExtraction(input.sourceMessageId, EXTRACTOR_VERSION)) return EMPTY_OUTCOME;
 
-    const now = input.at ?? this.deps.clock?.() ?? new Date();
-    const active = this.deps.repo.upcoming(12);
-    const activeThreads = this.deps.relationship?.contextThreads?.(8) ?? [];
-    const analyzerOutput = await this.deps.analyzer.analyze({
-      userText: input.userText,
-      assistantText: input.assistantText,
-      activeCommitments: active.map((c) => toView(c, this.deps.timeZone)),
-      activeThreads,
-      now,
-      timeZone: this.deps.timeZone
-    });
-
-    let extracted = 0;
-    let merged = 0;
-    const embedded = await this.embedTitles(analyzerOutput.commitments.map((c) => c.title));
-
-    for (let i = 0; i < analyzerOutput.commitments.length; i++) {
-      const item = analyzerOutput.commitments[i]!;
-      const resolved = resolveCommitmentTime({
-        dateText: item.date_text,
-        timeText: item.time_text,
+    try {
+      const now = input.at ?? this.deps.clock?.() ?? new Date();
+      const active = this.deps.repo.upcoming(12);
+      const activeThreads = this.deps.relationship?.contextThreads?.(8) ?? [];
+      const analyzerOutput = await this.deps.analyzer.analyze({
+        userText: input.userText,
+        assistantText: input.assistantText,
+        activeCommitments: active.map((c) => toView(c, this.deps.timeZone)),
+        activeThreads,
         now,
         timeZone: this.deps.timeZone
       });
-      const tentative = item.confidence < 0.55 && item.time_precision !== 'exact';
-      const payload: CreateCommitmentInput = {
-        kind: item.kind,
-        subject: item.subject,
-        title: item.title,
-        startsAt: resolved?.startsAt ?? null,
-        dueAt: resolved?.dueAt ?? null,
-        timePrecision: resolved ? item.time_precision : 'unknown',
-        status: tentative ? 'tentative' : 'pending',
-        confidence: item.confidence,
-        importance: item.importance,
-        sourceMessageId: input.sourceMessageId,
-        sourceText: input.userText.slice(0, 200),
-        followUpPolicy: item.kind === 'reminder_request' ? 'explicit_reminder' : item.follow_up,
-        latestReachOutAt: item.kind === 'reminder_request' || item.follow_up === 'explicit_reminder' ? resolved?.latestReachOutAt ?? null : null,
-        extractorVersion: EXTRACTOR_VERSION,
-        timeZone: this.deps.timeZone,
-        embedding: embedded?.vectors[i],
-        embeddingModel: embedded?.model
-      };
-      const result = this.deps.repo.ingest(payload);
-      if (result.matched) merged++;
-      else extracted++;
-    }
 
-    let resolved = 0;
-    let rescheduled = 0;
-    const liveById = new Map(active.map((c) => [c.id, c]));
-    for (const r of analyzerOutput.commitment_resolutions) {
-      const target = liveById.get(r.commitment_id);
-      if (!target || !isLive(target)) continue;
-      if (r.action === 'completed') {
-        this.deps.repo.resolve(target.id, 'completed', { outcome: r.outcome ?? undefined });
-        resolved++;
-      } else if (r.action === 'cancelled') {
-        this.deps.repo.resolve(target.id, 'cancelled', { outcome: r.outcome ?? undefined });
-        resolved++;
-      } else if (r.action === 'rescheduled') {
-        const next = resolveCommitmentTime({ dateText: r.date_text, now, timeZone: this.deps.timeZone });
-        if (next) {
-          this.deps.repo.supersede(target.id, {
-            kind: target.kind,
-            subject: target.subject,
-            title: target.title,
-            startsAt: next.startsAt,
-            dueAt: next.dueAt,
-            timePrecision: target.timePrecision === 'unknown' ? 'day' : target.timePrecision,
-            confidence: Math.max(target.confidence, r.confidence),
-            importance: target.importance,
+      let extracted = 0;
+      let merged = 0;
+      const embedded = await this.embedTitles(analyzerOutput.commitments.map((c) => c.title));
+
+      for (let i = 0; i < analyzerOutput.commitments.length; i++) {
+        const item = analyzerOutput.commitments[i]!;
+        const resolved = resolveCommitmentTime({
+          dateText: item.date_text,
+          timeText: item.time_text,
+          now,
+          timeZone: this.deps.timeZone
+        });
+        // Scheduled promises/reminders cannot safely participate in the
+        // time-driven state machine without a resolvable deadline. Preserve
+        // the semantic follow-up but degrade it to a conditional follow_up
+        // rather than creating an immortal scheduled row.
+        const requiresSchedule = item.kind === 'assistant_commitment' || item.kind === 'reminder_request';
+        const kind = requiresSchedule && !resolved ? 'follow_up' : item.kind;
+        const degradedSchedule = kind !== item.kind;
+        if (degradedSchedule) {
+          this.deps.errors?.add('future.commitment', 'scheduled_commitment_without_resolvable_time_degraded', {
             sourceMessageId: input.sourceMessageId,
-            sourceText: r.outcome ?? null,
-            followUpPolicy: target.followUpPolicy,
-            latestReachOutAt: next.latestReachOutAt,
-            extractorVersion: EXTRACTOR_VERSION,
-            timeZone: this.deps.timeZone
+            originalKind: item.kind,
+            title: item.title
           });
-          rescheduled++;
+        }
+        const tentative = item.confidence < 0.55 && item.time_precision !== 'exact';
+        const followUpPolicy =
+          degradedSchedule
+            ? 'natural'
+            : kind === 'reminder_request'
+              ? 'explicit_reminder'
+              : item.follow_up;
+        const explicitReminder = kind === 'reminder_request' || followUpPolicy === 'explicit_reminder';
+        const payload: CreateCommitmentInput = {
+          kind,
+          subject: item.subject,
+          title: item.title,
+          startsAt: resolved?.startsAt ?? null,
+          dueAt: resolved?.dueAt ?? null,
+          timePrecision: resolved ? item.time_precision : 'unknown',
+          status: tentative ? 'tentative' : 'pending',
+          confidence: item.confidence,
+          importance: item.importance,
+          sourceMessageId: input.sourceMessageId,
+          sourceText: input.userText.slice(0, 200),
+          followUpPolicy,
+          // Assistant commitments must never silently age out. If they remain
+          // assistant_commitment, they necessarily have a resolved time and a
+          // concrete latest-reach-out boundary that can transition to missed.
+          latestReachOutAt:
+            kind === 'assistant_commitment' || explicitReminder
+              ? resolved?.latestReachOutAt ?? null
+              : null,
+          extractorVersion: EXTRACTOR_VERSION,
+          timeZone: this.deps.timeZone,
+          embedding: embedded?.vectors[i],
+          embeddingModel: embedded?.model
+        };
+        const result = this.deps.repo.ingest(payload);
+        if (result.matched) merged++;
+        else extracted++;
+      }
+
+      let resolvedCount = 0;
+      let rescheduled = 0;
+      const liveById = new Map(active.map((c) => [c.id, c]));
+      for (const r of analyzerOutput.commitment_resolutions) {
+        const target = liveById.get(r.commitment_id);
+        if (!target || !isLive(target)) continue;
+        if (r.action === 'completed') {
+          this.deps.repo.resolve(target.id, 'completed', { outcome: r.outcome ?? undefined });
+          resolvedCount++;
+        } else if (r.action === 'cancelled') {
+          this.deps.repo.resolve(target.id, 'cancelled', { outcome: r.outcome ?? undefined });
+          resolvedCount++;
+        } else if (r.action === 'rescheduled') {
+          const next = resolveCommitmentTime({ dateText: r.date_text, now, timeZone: this.deps.timeZone });
+          if (next) {
+            this.deps.repo.supersede(target.id, {
+              kind: target.kind,
+              subject: target.subject,
+              title: target.title,
+              startsAt: next.startsAt,
+              dueAt: next.dueAt,
+              timePrecision: target.timePrecision === 'unknown' ? 'day' : target.timePrecision,
+              confidence: Math.max(target.confidence, r.confidence),
+              importance: target.importance,
+              sourceMessageId: input.sourceMessageId,
+              sourceText: r.outcome ?? null,
+              followUpPolicy: target.followUpPolicy,
+              latestReachOutAt: next.latestReachOutAt,
+              extractorVersion: EXTRACTOR_VERSION,
+              timeZone: this.deps.timeZone
+            });
+            rescheduled++;
+          }
+        }
+        // 'updated' reinforces recency without changing status.
+      }
+
+      // The commitment mutations are now durable. Convert the in-flight lease
+      // into a permanent completed receipt before any non-critical callbacks,
+      // so a later callback failure cannot cause the analyzer to run twice.
+      this.deps.repo.completeExtraction(input.sourceMessageId, EXTRACTOR_VERSION);
+
+      const outcome: AnalyzeOutcome = { skipped: false, extracted, merged, resolved: resolvedCount, rescheduled };
+      this.deps.onApplied?.(outcome);
+      // §7 distribution: Relationship consumes the same call's output. A
+      // relationship failure must never unwind commitment writes.
+      if (this.deps.relationship) {
+        try {
+          await this.deps.relationship.consume(
+            {
+              relationship_signals: analyzerOutput.relationship_signals,
+              relationship_resolutions: analyzerOutput.relationship_resolutions
+            },
+            { messageId: input.sourceMessageId }
+          );
+        } catch (err) {
+          this.deps.errors?.add('relationship.consume', (err as Error).message);
         }
       }
-      // 'updated' reinforces recency without changing status.
+      return outcome;
+    } catch (err) {
+      // A provider/parse/apply failure is not a successful empty extraction.
+      // Release the in-flight lease so JobWorker retry can run immediately.
+      // Process death before this catch is covered by the repo's stale lease.
+      this.deps.repo.releaseExtraction(input.sourceMessageId, EXTRACTOR_VERSION);
+      throw err;
     }
-
-    const outcome: AnalyzeOutcome = { skipped: false, extracted, merged, resolved, rescheduled };
-    this.deps.onApplied?.(outcome);
-    // §7 distribution: Relationship consumes the same call's output. A
-    // relationship failure must never unwind commitment writes.
-    if (this.deps.relationship) {
-      try {
-        await this.deps.relationship.consume(
-          {
-            relationship_signals: analyzerOutput.relationship_signals,
-            relationship_resolutions: analyzerOutput.relationship_resolutions
-          },
-          { messageId: input.sourceMessageId }
-        );
-      } catch (err) {
-        this.deps.errors?.add('relationship.consume', (err as Error).message);
-      }
-    }
-    return outcome;
   }
 
   /** §7 distribution seam; app.ts attaches Relationship when its flag is on. */

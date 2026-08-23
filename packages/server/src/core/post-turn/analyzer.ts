@@ -34,7 +34,8 @@ function buildSystemPrompt(input: AnalyzerInput, relationshipEnabled: boolean): 
     '',
     '## 抽取新事项 commitments',
     '- 只抽取明确指向未来的事项：用户的事件/安排、双方约定、用户要求的提醒、待跟进事项。',
-    '- 用户自己说的事 subject=user；你自己答应的事（“我晚点提醒你”“我之后再问你”）subject=assistant 且 kind=assistant_commitment。',
+    '- 用户自己说的事 subject=user；你自己答应的事（“我晚点提醒你”“我之后再问你”）subject=assistant。',
+    '- 只有带明确可解析日期/时段的自身时间承诺才用 kind=assistant_commitment；没有具体时间、依赖用户后续动作的承诺（如“你发结果我再看”）用 kind=follow_up 且 subject=assistant。',
     '- title 用 2~8 个字的名词短语，不要包含日期本身（“考试”“挑电影”“续费服务器”）。',
     '- date_text 原样引用用户的时间说法（“周五”“下个月15号”“今晚”），绝不换算成具体日期。',
     '- time_text 只在有明确钟点时给出，保留时段词（“晚上八点半”）。',
@@ -84,9 +85,12 @@ function zonedNow(input: AnalyzerInput): string {
 }
 
 /**
- * One structured LLM call after the final reply is published (§7). Failures
- * degrade to an empty result — the analyzer must never break the chat path,
- * and a retry after crash is fenced by the extraction-run claim instead.
+ * One structured LLM call after the final reply is published (§7).
+ *
+ * A valid empty JSON payload is a successful "nothing to extract" result.
+ * Provider failures and malformed JSON are different: they throw so the
+ * durable future.analyze job can retry instead of permanently consuming the
+ * extraction fence with a false empty result.
  */
 export class PostTurnSemanticAnalyzer {
   constructor(
@@ -99,7 +103,12 @@ export class PostTurnSemanticAnalyzer {
 
   async analyze(input: AnalyzerInput): Promise<AnalyzerOutput> {
     if (!input.userText.trim() && !input.assistantText.trim()) return EMPTY;
-    if (!this.deps.provider.configured) return EMPTY;
+    if (!this.deps.provider.configured) {
+      const error = new Error('post_turn_analyzer_unconfigured');
+      this.deps.errors?.add('post_turn.analyzer', error.message);
+      throw error;
+    }
+
     try {
       const result = await this.deps.provider.complete({
         system: buildSystemPrompt(input, this.deps.relationshipEnabled),
@@ -115,10 +124,11 @@ export class PostTurnSemanticAnalyzer {
       });
       const parsed = parseAnalyzerOutput(result.text);
       if (!parsed) {
+        const error = new Error('post_turn_analyzer_unparseable_output');
         this.deps.errors?.add('post_turn.analyzer', 'unparseable_output', { model: result.model, sample: result.text.slice(0, 200) });
-        return EMPTY;
+        throw error;
       }
-      const output: AnalyzerOutput = {
+      return {
         commitments: parsed.commitments,
         commitment_resolutions: parsed.commitment_resolutions,
         // Relationship fields are only requested (and only consumed) when the
@@ -126,10 +136,12 @@ export class PostTurnSemanticAnalyzer {
         relationship_signals: this.deps.relationshipEnabled ? parsed.relationship_signals : [],
         relationship_resolutions: this.deps.relationshipEnabled ? parsed.relationship_resolutions : []
       };
-      return output;
     } catch (err) {
-      this.deps.errors?.add('post_turn.analyzer', (err as Error).message);
-      return EMPTY;
+      const error = err as Error;
+      if (error.message !== 'post_turn_analyzer_unparseable_output') {
+        this.deps.errors?.add('post_turn.analyzer', error.message);
+      }
+      throw error;
     }
   }
 }
