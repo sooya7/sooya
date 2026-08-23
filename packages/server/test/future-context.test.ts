@@ -116,7 +116,7 @@ describe('ContextBuilder integration (§10/§11)', () => {
   });
 
   it('stays completely dark when the flag is off', async () => {
-    h = await createHarness({ embedding: 'off' });
+    h = await createHarness({ embedding: 'off', env: { FUTURE_ENGINE_ENABLED: 'false' } });
     h.app.repos.commitments.ingest({
       kind: 'user_event',
       subject: 'user',
