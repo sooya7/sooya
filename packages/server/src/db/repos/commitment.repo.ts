@@ -86,6 +86,7 @@ export interface TimeDrivenOutcome {
 }
 
 const DAY_MS = 86_400_000;
+const EXTRACTION_CLAIM_STALE_MS = 15 * 60_000;
 /** Two mentions of the same real event resolve to dates at most this far apart. */
 const TIME_WINDOW_DAYS = 2;
 /** Lexical tier of the secondary match; below it nothing merges without vectors. */
@@ -146,15 +147,36 @@ export class CommitmentRepo {
   constructor(private readonly db: DbLike) {}
 
   /**
-   * Layer-2 job idempotency fence (§5.2). Returns true the first time a
-   * (message, extractor version) pair is seen, so a crashed post-turn job can
-   * retry without re-extracting.
+   * Layer-2 job idempotency fence (§5.2). The v41 table stores successful
+   * claims forever, while an in-flight claim acts as a lease: a process death
+   * cannot brick the message permanently because an old claim is reclaimed
+   * after 15 minutes. Normal provider/parse/apply failures explicitly release
+   * the claim via releaseExtraction().
    */
   claimExtraction(sourceMessageId: string, extractorVersion: string): boolean {
+    const ts = nowIso();
+    const staleBefore = new Date(Date.parse(ts) - EXTRACTION_CLAIM_STALE_MS).toISOString();
+    const run = this.db.transaction(() => {
+      this.db
+        .prepare(
+          'DELETE FROM commitment_extraction_runs WHERE source_message_id = ? AND extractor_version = ? AND claimed_at < ?'
+        )
+        .run(sourceMessageId, extractorVersion, staleBefore);
+      return (
+        this.db
+          .prepare('INSERT OR IGNORE INTO commitment_extraction_runs(source_message_id, extractor_version, claimed_at) VALUES (?, ?, ?)')
+          .run(sourceMessageId, extractorVersion, ts).changes > 0
+      );
+    });
+    return run();
+  }
+
+  /** Release a failed attempt so the durable job can retry immediately. */
+  releaseExtraction(sourceMessageId: string, extractorVersion: string): boolean {
     return (
       this.db
-        .prepare('INSERT OR IGNORE INTO commitment_extraction_runs(source_message_id, extractor_version, claimed_at) VALUES (?, ?, ?)')
-        .run(sourceMessageId, extractorVersion, nowIso()).changes > 0
+        .prepare('DELETE FROM commitment_extraction_runs WHERE source_message_id = ? AND extractor_version = ?')
+        .run(sourceMessageId, extractorVersion).changes > 0
     );
   }
 
@@ -355,7 +377,8 @@ export class CommitmentRepo {
         .prepare(
           `UPDATE commitments SET status = 'missed', updated_at = ?
              WHERE status IN ('pending','due') AND archived_at IS NULL
-               AND latest_reach_out_at IS NOT NULL AND latest_reach_out_at < ?
+               AND COALESCE(latest_reach_out_at, CASE WHEN kind = 'assistant_commitment' THEN due_at END) IS NOT NULL
+               AND COALESCE(latest_reach_out_at, CASE WHEN kind = 'assistant_commitment' THEN due_at END) < ?
                AND (follow_up_policy = 'explicit_reminder' OR kind IN ('reminder_request','assistant_commitment'))`
         )
         .run(now, now).changes;
