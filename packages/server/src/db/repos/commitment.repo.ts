@@ -87,12 +87,17 @@ export interface TimeDrivenOutcome {
 
 const DAY_MS = 86_400_000;
 const EXTRACTION_CLAIM_STALE_MS = 15 * 60_000;
+const EXTRACTION_COMPLETED_SUFFIX = ':completed';
 /** Two mentions of the same real event resolve to dates at most this far apart. */
 const TIME_WINDOW_DAYS = 2;
 /** Lexical tier of the secondary match; below it nothing merges without vectors. */
 const LEXICAL_THRESHOLD = 0.5;
 const COSINE_THRESHOLD = 0.92;
 const LIVE_SQL = LIVE_COMMITMENT_STATUSES.map(() => '?').join(',');
+
+function completedExtractorVersion(extractorVersion: string): string {
+  return `${extractorVersion}${EXTRACTION_COMPLETED_SUFFIX}`;
+}
 
 export function normalizeCommitmentTitle(title: string): string {
   return normalizeMemoryText(title);
@@ -147,16 +152,32 @@ export class CommitmentRepo {
   constructor(private readonly db: DbLike) {}
 
   /**
-   * Layer-2 job idempotency fence (§5.2). The v41 table stores successful
-   * claims forever, while an in-flight claim acts as a lease: a process death
-   * cannot brick the message permanently because an old claim is reclaimed
-   * after 15 minutes. Normal provider/parse/apply failures explicitly release
-   * the claim via releaseExtraction().
+   * Layer-2 job idempotency fence (§5.2).
+   *
+   * v41 has only (source_message_id, extractor_version, claimed_at), so the
+   * same table carries two records per successful version without a migration:
+   *   - version "2" is the in-flight lease;
+   *   - version "2:completed" is the permanent success receipt.
+   *
+   * A normal failure deletes only the in-flight lease. A process death leaves
+   * that lease behind, but it becomes reclaimable after 15 minutes. Completed
+   * receipts never become stale and therefore keep retries idempotent forever.
    */
   claimExtraction(sourceMessageId: string, extractorVersion: string): boolean {
+    const completedVersion = completedExtractorVersion(extractorVersion);
+    const completed = this.db
+      .prepare('SELECT 1 FROM commitment_extraction_runs WHERE source_message_id = ? AND extractor_version = ? LIMIT 1')
+      .get(sourceMessageId, completedVersion);
+    if (completed) return false;
+
     const ts = nowIso();
     const staleBefore = new Date(Date.parse(ts) - EXTRACTION_CLAIM_STALE_MS).toISOString();
     const run = this.db.transaction(() => {
+      // Re-check inside the transaction so a completed receipt always wins.
+      const done = this.db
+        .prepare('SELECT 1 FROM commitment_extraction_runs WHERE source_message_id = ? AND extractor_version = ? LIMIT 1')
+        .get(sourceMessageId, completedVersion);
+      if (done) return false;
       this.db
         .prepare(
           'DELETE FROM commitment_extraction_runs WHERE source_message_id = ? AND extractor_version = ? AND claimed_at < ?'
@@ -169,6 +190,19 @@ export class CommitmentRepo {
       );
     });
     return run();
+  }
+
+  /** Mark the current lease permanently completed and remove the in-flight row. */
+  completeExtraction(sourceMessageId: string, extractorVersion: string): void {
+    const run = this.db.transaction(() => {
+      this.db
+        .prepare('INSERT OR IGNORE INTO commitment_extraction_runs(source_message_id, extractor_version, claimed_at) VALUES (?, ?, ?)')
+        .run(sourceMessageId, completedExtractorVersion(extractorVersion), nowIso());
+      this.db
+        .prepare('DELETE FROM commitment_extraction_runs WHERE source_message_id = ? AND extractor_version = ?')
+        .run(sourceMessageId, extractorVersion);
+    });
+    run();
   }
 
   /** Release a failed attempt so the durable job can retry immediately. */
