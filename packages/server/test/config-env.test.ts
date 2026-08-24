@@ -13,7 +13,7 @@ describe('web search environment configuration', () => {
     expect(loadEnv({ NODE_ENV: 'production' }).MEMORY_BACKEND).toBe('ombre');
   });
 
-  it('enables all next-stage engines by default while preserving explicit kill switches', () => {
+  it('enables the next-stage engines and proactive reach-out by default while preserving explicit kill switches', () => {
     const enabled = loadEnv({ NODE_ENV: 'test' });
     expect(enabled.FUTURE_ENGINE_ENABLED).toBe(true);
     expect(enabled.FUTURE_PROACTIVE_ENABLED).toBe(true);
@@ -21,6 +21,7 @@ describe('web search environment configuration', () => {
     expect(enabled.TIMELINE_ENABLED).toBe(true);
     expect(enabled.INTERACTION_LEARNING_ENABLED).toBe(true);
     expect(enabled.ADAPTIVE_PROVIDER_ROUTING_ENABLED).toBe(true);
+    expect(enabled.ENABLE_LIFE_REACH_OUT).toBe(true);
 
     const disabled = loadEnv({
       NODE_ENV: 'test',
@@ -29,7 +30,8 @@ describe('web search environment configuration', () => {
       RELATIONSHIP_CONTEXT_ENABLED: 'false',
       TIMELINE_ENABLED: 'false',
       INTERACTION_LEARNING_ENABLED: 'false',
-      ADAPTIVE_PROVIDER_ROUTING_ENABLED: 'false'
+      ADAPTIVE_PROVIDER_ROUTING_ENABLED: 'false',
+      ENABLE_LIFE_REACH_OUT: 'false'
     });
     expect(disabled.FUTURE_ENGINE_ENABLED).toBe(false);
     expect(disabled.FUTURE_PROACTIVE_ENABLED).toBe(false);
@@ -37,6 +39,7 @@ describe('web search environment configuration', () => {
     expect(disabled.TIMELINE_ENABLED).toBe(false);
     expect(disabled.INTERACTION_LEARNING_ENABLED).toBe(false);
     expect(disabled.ADAPTIVE_PROVIDER_ROUTING_ENABLED).toBe(false);
+    expect(disabled.ENABLE_LIFE_REACH_OUT).toBe(false);
   });
 
   it('uses safe disabled defaults and the preferred provider order', () => {
