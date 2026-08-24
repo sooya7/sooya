@@ -15,6 +15,15 @@ function sharePlan(text: string): string {
   return JSON.stringify({ text, image: null });
 }
 
+async function waitUntil(check: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('timed out waiting for detached proactive work');
+}
+
 async function withReachOut(chatText: string, qqEnabled: boolean) {
   harness = await createHarness({
     env: {
@@ -52,6 +61,8 @@ describe('QQ proactive delivery (PR 5)', () => {
 
     harness.app.repos.jobs.enqueue('life.tick', {});
     await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.moments.list().length === 1
+      && harness!.app.repos.messages.page(50).messages.some((m) => m.role === 'assistant' && m.meta?.proactive === true));
 
     // Moment 仍持久化（Admin 可观察）。
     const moments = harness.app.repos.moments.list();
@@ -82,6 +93,7 @@ describe('QQ proactive delivery (PR 5)', () => {
 
     harness.app.repos.jobs.enqueue('life.tick', {});
     await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.moments.list().length === 1);
 
     expect(harness.app.repos.moments.list()).toHaveLength(1);
     expect(harness.app.repos.messages.count()).toBe(beforeMessages);
@@ -98,6 +110,7 @@ describe('QQ proactive delivery (PR 5)', () => {
     // 第一个 life.tick：candidate 已就绪，但 evaluate 撞上在途投递 → 不发表内容。
     harness.app.repos.jobs.enqueue('life.tick', {});
     await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.proactive.list(20).length > 0);
     expect(harness.app.repos.moments.list()).toHaveLength(0);
     const attempt = harness.app.repos.proactive.list(20)[0]!;
     expect(attempt).toMatchObject({ status: 'blocked', blockedReason: 'qq_delivery_in_flight' });
@@ -109,6 +122,8 @@ describe('QQ proactive delivery (PR 5)', () => {
     );
     harness.app.repos.jobs.enqueue('life.tick', {});
     await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.moments.list().length === 1
+      && harness!.app.repos.messages.page(50).messages.some((m) => m.role === 'assistant'));
     expect(harness.app.repos.moments.list()).toHaveLength(1);
     expect(harness.app.repos.messages.page(50).messages.filter((m) => m.role === 'assistant')).toHaveLength(1);
   });
