@@ -50,7 +50,7 @@ export class QqDeliveryService {
    * - 条件领取（pending/retry→sending）→ 并发执行者只有一个
    * - 已 sent → 直接跳过；重复 job / 重启恢复都不会重复发送
    */
-  async deliver(input: { messageId: string; conversationId?: string }): Promise<QqDeliveryStatus> {
+  async deliver(input: { messageId: string; conversationId?: string; traceId?: string }): Promise<QqDeliveryStatus> {
     const owner = this.deps.identities.findOwner(QQ_CHANNEL_NAME);
     if (!owner || !owner.enabled) return 'skipped'; // 尚未绑定授权用户，等授权后再投。
 
@@ -113,7 +113,7 @@ export class QqDeliveryService {
       this.deps.metrics?.record('qq', 'outbound.latency', Date.now() - startedAt);
       return 'sent';
     } catch (error) {
-      return this.classifyFailure(error, claimedRow, input.messageId);
+      return this.classifyFailure(error, claimedRow, input.messageId, input.traceId);
     }
   }
 
@@ -161,7 +161,7 @@ export class QqDeliveryService {
     return sent.messageId;
   }
 
-  private classifyFailure(error: unknown, row: ChannelDeliveryRow, messageId: string): QqDeliveryStatus {
+  private classifyFailure(error: unknown, row: ChannelDeliveryRow, messageId: string, traceId?: string): QqDeliveryStatus {
     const apiError = error instanceof QqApiError ? error : null;
     const code =
       apiError?.errCode !== null && apiError?.errCode !== undefined
@@ -187,7 +187,11 @@ export class QqDeliveryService {
     this.deps.deliveries.markRetry(row.id, code, summary, attempts + 1);
     const nextRetryAt = this.deps.deliveries.getById(row.id)!.next_retry_at!;
     // 重新入队 durable job：runAfter 让 Worker 到期再拉；DB 侧 next_retry_at 兜底。
-    this.deps.jobs.enqueue('qq.deliver', { messageId, conversationId: row.external_conversation_id }, { runAfter: nextRetryAt, maxAttempts: 1 });
+    this.deps.jobs.enqueue(
+      'qq.deliver',
+      { messageId, conversationId: row.external_conversation_id, flowTraceId: traceId },
+      { runAfter: nextRetryAt, maxAttempts: 1 }
+    );
     this.deps.metrics?.record('qq', 'outbound.retry');
     return 'retry';
   }

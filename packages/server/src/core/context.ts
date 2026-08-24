@@ -17,6 +17,7 @@ import { STICKER_CONTEXT_VISION_MAX_IMAGES } from './stickers/constants.js';
 import type { WorldSnapshot } from './world-context.js';
 import type { FutureContextService } from './future/context.js';
 import type { RelationshipContextService } from './relationship/service.js';
+import type { ContextSourcePipeline } from './context-pipeline.js';
 
 export interface BuiltContext {
   system: string;
@@ -94,7 +95,8 @@ export class ContextBuilder {
     private readonly timeZone = 'Asia/Shanghai',
     private readonly worldSnapshot?: () => WorldSnapshot,
     private readonly future?: FutureContextService,
-    private readonly relationship?: RelationshipContextService
+    private readonly relationship?: RelationshipContextService,
+    private readonly pipeline?: ContextSourcePipeline
   ) {}
 
   memoryRecallTrace(): MemoryRecallTrace {
@@ -104,6 +106,9 @@ export class ContextBuilder {
   async build(persona: Persona, latestUserText: string, opts: ContextOptions): Promise<BuiltContext> {
     const recent = mergeContextMessages(this.messages.recent(opts.recentMessages), opts.batchMessageIds?.map((id) => this.messages.get(id)).filter((message): message is ChatMessage => Boolean(message)) ?? []);
     const activeSummaries = this.summaries.active(4);
+    const lastUserAt = lastUserMessageAt(recent, opts.batchMessageIds);
+    const pipelineFragments = this.pipeline ? await this.pipeline.collect({ persona, latestUserText, recent, now: new Date(), lastUserAt }) : [];
+    const linesFrom = (sourceId: string): string[] | undefined => pipelineFragments.find((fragment) => fragment.sourceId === sourceId)?.lines;
 
     const recallQuery = latestUserText || recent.map(plainText).join('\n').slice(-500);
     const recall: RecallResult = this.memory
@@ -171,8 +176,8 @@ export class ContextBuilder {
      * (or Ombre recall) line that merely restates it is suppressed instead of
      * being injected twice. Cheap lexical tiers only — no embeddings here.
      */
-    const futureLines = this.future?.contextLines() ?? [];
-    const relationshipLines = this.relationship?.contextLines() ?? [];
+    const futureLines = linesFrom('future') ?? this.future?.contextLines() ?? [];
+    const relationshipLines = linesFrom('relationship') ?? this.relationship?.contextLines() ?? [];
     const auxLines = [...relationshipLines, ...futureLines];
     const memoryLines = deduped.matches
       .filter((match) => {
@@ -252,7 +257,7 @@ export class ContextBuilder {
      * the software can do. Keeping them separate is what stopped the world
      * engine's frozen "语音不可用" rows from being treated as personality.
      */
-    const lifeLinesList = this.life?.contextLines(lastUserMessageAt(recent, opts.batchMessageIds)) ?? [];
+    const lifeLinesList = linesFrom('life') ?? this.life?.contextLines(lastUserAt) ?? [];
     let lifeLines = 0;
     if (lifeLinesList.length > 0) {
       const before = systemParts.length;

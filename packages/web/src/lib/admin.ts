@@ -117,6 +117,13 @@ export interface AdminSystemStatus {
 export interface AdminCapabilities {
   capabilities: Record<string, unknown>;
   embeddingDimensions: number | null;
+  policy?: {
+    messaging?: { qqBot?: boolean; qqConfigured?: boolean };
+    proactive?: { enabled?: boolean; qqDelivery?: boolean; lifeCandidates?: boolean; futureCandidates?: boolean };
+    continuity?: { future?: boolean; relationship?: boolean; timeline?: boolean; feedback?: boolean };
+    memory?: { backend?: string; read?: boolean; write?: boolean };
+    world?: { enabled?: boolean; location?: boolean; weather?: boolean };
+  };
 }
 
 export interface AdminBackup {

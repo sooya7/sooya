@@ -10,7 +10,6 @@ import type { LifeRuntime } from './life.js';
 import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
 import type { OmbreCommitRepo } from '../db/repos/ombre.repo.js';
 import type { SettingsRepo } from '../db/repos/misc.repo.js';
-import { LifeSimEngine } from './life2/engine.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ChatProvider } from '../providers/types.js';
 import type { ConfigStore } from '../config/store.js';
@@ -29,18 +28,32 @@ import type { StickerUserMeaningLearner } from './stickers/user-meaning.js';
 import type { WorldPresenceCoordinator } from './world-presence.js';
 import type { QqDeliveryService } from '../channels/qq/outbound.js';
 import type { FutureService } from './future/service.js';
+import type { FlowTraceService } from './flow-trace.js';
 import { JOB_PRIORITY } from './job-priority.js';
 import { nowIso } from '../util/ids.js';
+import { LANE_CONFIG } from './jobs/lanes.js';
+import { executeWithContract } from './jobs/executor.js';
+import { JobRegistry } from './jobs/registry.js';
+import type { JobContract, JobContext, JobDefinition, JobHandler, JobLane } from './jobs/types.js';
 
-export type JobHandler = (payload: Record<string, unknown>) => Promise<void>;
+export type { JobContract, JobContext, JobDefinition, JobHandler, JobLane } from './jobs/types.js';
 export const STICKER_MAINTENANCE_BATCH = 8;
 
-/** Small persisted in-process job worker. */
+/**
+ * Persisted in-process workers with independent execution lanes.
+ *
+ * The jobs table remains shared, but a slow autonomous or maintenance job can
+ * no longer occupy the critical delivery lane. `drain()` intentionally keeps
+ * the old deterministic, one-job-at-a-time test seam.
+ */
 export class JobWorker {
   private timer: NodeJS.Timeout | null = null;
-  private running = false;
   private stopped = false;
-  private readonly handlers = new Map<string, JobHandler>();
+  private pumping = false;
+  private draining = false;
+  private readonly registry = new JobRegistry();
+  private readonly active = new Map<JobLane, Map<string, Promise<void>>>();
+  private readonly controllers = new Map<string, AbortController>();
 
   constructor(
     private readonly repo: JobRepo,
@@ -48,15 +61,28 @@ export class JobWorker {
     private readonly opts: { intervalMs?: number } = {}
   ) {}
 
-  register(type: string, handler: JobHandler): void {
-    this.handlers.set(type, handler);
+  register(type: string, handler: JobHandler, contract: Partial<JobContract> = {}): void {
+    this.registry.register(type, handler, contract);
+  }
+
+  registerDefinition(definition: JobDefinition): void {
+    this.registry.registerDefinition(definition);
+  }
+
+  definition(type: string): JobDefinition | undefined {
+    return this.registry.get(type);
+  }
+
+  definitions(): JobDefinition[] {
+    return this.registry.all();
   }
 
   start(): void {
     if (this.timer) return;
     this.stopped = false;
     const interval = this.opts.intervalMs ?? 1000;
-    this.timer = setInterval(() => { void this.tick(); }, interval);
+    void this.pump();
+    this.timer = setInterval(() => { void this.pump(); }, interval);
     this.timer.unref?.();
   }
 
@@ -66,43 +92,94 @@ export class JobWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
+    for (const controller of this.controllers.values()) controller.abort();
     const deadline = Date.now() + 10_000;
-    while (this.running && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    while (this.controllers.size > 0 && Date.now() < deadline) {
+      await Promise.race([
+        Promise.allSettled([...this.active.values()].flatMap((jobs) => [...jobs.values()])),
+        new Promise((resolve) => setTimeout(resolve, 50))
+      ]);
+    }
   }
 
   async drain(maxJobs = 100): Promise<number> {
+    if (this.draining || this.stopped) return 0;
+    this.draining = true;
     let done = 0;
-    for (let i = 0; i < maxJobs; i++) {
-      const processed = await this.tick();
-      if (!processed) break;
-      done++;
+    try {
+      for (let i = 0; i < maxJobs; i++) {
+        const job = this.repo.claimNext();
+        if (!job) break;
+        await this.executeJob(job);
+        done++;
+      }
+    } finally {
+      this.draining = false;
     }
     return done;
   }
 
-  private async tick(): Promise<boolean> {
-    if (this.running || this.stopped) return false;
-    const job = this.repo.claimNext();
-    if (!job) return false;
-    this.running = true;
+  private async pump(): Promise<void> {
+    if (this.pumping || this.stopped) return;
+    this.pumping = true;
     try {
-      const handler = this.handlers.get(job.type);
-      if (!handler) {
-        this.repo.fail(job.id, `no handler registered for ${job.type}`);
-        return true;
+      for (const lane of Object.keys(LANE_CONFIG) as JobLane[]) {
+        const active = this.activeFor(lane);
+        const types = this.registry.typesForLane(lane);
+        while (active.size < LANE_CONFIG[lane].concurrency) {
+          // Unregistered rows are treated as background poison pills. They are
+          // still surfaced and failed instead of starving known lanes forever.
+          const job = this.repo.claimNext(types.length > 0 ? types : undefined, types.length > 0 ? undefined : this.registry.allTypes());
+          if (!job) break;
+          const task = this.executeJob(job).finally(() => {
+            active.delete(job.id);
+            this.controllers.delete(job.id);
+          });
+          active.set(job.id, task);
+        }
       }
-      let payload: Record<string, unknown> = {};
-      try { payload = JSON.parse(job.payload_json) as Record<string, unknown>; } catch { /* ignore */ }
-      await handler(payload);
+    } finally {
+      this.pumping = false;
+    }
+  }
+
+  private activeFor(lane: JobLane): Map<string, Promise<void>> {
+    let active = this.active.get(lane);
+    if (!active) {
+      active = new Map();
+      this.active.set(lane, active);
+    }
+    return active;
+  }
+
+  private async executeJob(job: { id: string; type: string; payload_json: string; attempts: number }): Promise<void> {
+    const definition = this.registry.get(job.type);
+    if (!definition) {
+      this.repo.fail(job.id, `no handler registered for ${job.type}`, { retryable: false });
+      return;
+    }
+    const controller = new AbortController();
+    this.controllers.set(job.id, controller);
+    let payload: Record<string, unknown> = {};
+    try { payload = JSON.parse(job.payload_json) as Record<string, unknown>; } catch { /* fail at handler boundary */ }
+    const context: JobContext = {
+      jobId: job.id,
+      type: job.type,
+      lane: definition.lane,
+      attempt: job.attempts,
+      signal: controller.signal,
+      cancel: () => controller.abort()
+    };
+    try {
+      await executeWithContract(definition, payload, context);
       this.repo.complete(job.id);
     } catch (err) {
-      const error = err as Error;
-      this.repo.fail(job.id, error.message);
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.repo.fail(job.id, error.message, { retryable: definition.retryable });
       this.errorLog.add(`job.${job.type}`, error.message);
     } finally {
-      this.running = false;
+      this.controllers.delete(job.id);
     }
-    return true;
   }
 }
 
@@ -137,6 +214,7 @@ export interface JobDeps {
   relationship?: { tick(now?: Date): { cooling: number; archived: number } };
   timeline?: { sweep(now?: Date): Promise<{ closed: number; opened: number; attached: number; milestones: number }> };
   feedback?: { sweep(now?: Date): { recorded: number } };
+  flowTrace?: FlowTraceService;
 }
 
 export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
@@ -303,11 +381,22 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
    */
   worker.register('qq.deliver', async (payload) => {
     if (!deps.qqDelivery) return;
-    await deps.qqDelivery.deliver({
+    const traceId = typeof payload.flowTraceId === 'string' ? payload.flowTraceId : undefined;
+    deps.flowTrace?.stage(traceId, 'qq.delivery.started', 'running', { messageId: String(payload.messageId ?? '') });
+    const status = await deps.qqDelivery.deliver({
       messageId: String(payload.messageId ?? ''),
-      conversationId: payload.conversationId ? String(payload.conversationId) : undefined
+      conversationId: payload.conversationId ? String(payload.conversationId) : undefined,
+      traceId
     });
-  });
+    if (status === 'sent' || status === 'skipped') {
+      deps.flowTrace?.stage(traceId, 'qq.delivery.completed', status === 'sent' ? 'ok' : 'blocked', { status });
+      deps.flowTrace?.finish(traceId, status === 'sent' ? 'ok' : 'blocked', { status });
+    } else if (status === 'failed') {
+      deps.flowTrace?.fail(traceId, 'qq.delivery.failed', status);
+    } else {
+      deps.flowTrace?.stage(traceId, 'qq.delivery.retrying', 'running', { status });
+    }
+  }, { lane: 'critical', timeoutMs: 15_000, maxAttempts: 1, retryable: true, cancellable: true });
 
   /*
    * Life conversation bridge (§49-50): a completed exchange may carry a user
@@ -316,15 +405,17 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
    * fence guarantees only the final revision writes into life state.
    */
   worker.register('life.conversation', async (payload) => {
-    if (!(deps.life instanceof LifeSimEngine)) return;
     const batchId = payload.batchId ? String(payload.batchId) : '';
     const revision = Number(payload.revision ?? 0);
     if (batchId && revision > 0 && !deps.batches.isCurrentRevision(batchId, revision)) return;
     const ids = Array.isArray(payload.userMessageIds) ? payload.userMessageIds.map((id) => String(id)).filter(Boolean) : [];
     const lastUserMessageId = payload.lastUserMessageId ? String(payload.lastUserMessageId) : null;
     const userText = ids.map((id) => textOf(deps.messages.get(id))).filter(Boolean).join('\n');
-    if (lastUserMessageId) deps.life.extractConversationIntent(userText, lastUserMessageId);
-    deps.life.applyConversationEffect(payload.warmth === 'warm' ? 'warm' : 'neutral');
+    deps.life.applyConversationSignal({
+      mood: payload.warmth === 'warm' ? 'warm' : payload.warmth === 'rough' ? 'rough' : 'neutral',
+      text: userText || undefined,
+      messageId: lastUserMessageId ?? undefined
+    });
   });
 
   /*
@@ -376,7 +467,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
         error: (error instanceof Error ? error.message : String(error)).slice(0, 300)
       });
     });
-  });
+  }, { lane: 'autonomous', timeoutMs: 30_000, maxAttempts: 2, retryable: true, cancellable: true });
 
   worker.register('ombre.dream', async (payload) => {
     if (!deps.ombreMemory) return;

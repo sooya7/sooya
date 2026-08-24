@@ -749,6 +749,27 @@ export class LifeSimEngine {
     this.vitals.applyConversation(mood);
   }
 
+  applyConversationSignal(signal: import('../life/public-contract.js').LifeConversationSignal): void {
+    this.applyConversationEffect(signal.mood);
+    if (signal.text && signal.messageId) this.extractConversationIntent(signal.text, signal.messageId);
+  }
+
+  getProactiveCandidates(): import('../life/public-contract.js').LifeProactiveCandidate[] {
+    return this.v2.pendingCandidates().map((candidate) => {
+      const meta = safeMeta(candidate.meta_json);
+      return {
+        id: candidate.id,
+        activity: String(meta.activity ?? ''),
+        kind: String(meta.kind ?? 'play'),
+        mood: '开心',
+        started_at: candidate.created_at,
+        ended_at: candidate.expires_at,
+        shared: 0,
+        created_at: candidate.created_at
+      };
+    });
+  }
+
   /**
    * Keyword matcher from a free-form phrase onto the activity library (E2).
    * Deterministic and cheap; a miss keeps the plan as freeformIntent.
@@ -975,6 +996,10 @@ export class LifeSimEngine {
       threads: this.v2.threads('open').slice(0, 3).map((t) => ({ title: t.title, progress: Math.round(t.progress * 100) })),
       ...(location ? { location: { id: location.id, name: location.name, kind: location.kind } } : {})
     };
+  }
+
+  currentState(): ReturnType<LifeSimEngine['snapshot']> {
+    return this.snapshot();
   }
 }
 

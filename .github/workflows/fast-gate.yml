@@ -1,0 +1,46 @@
+name: Fast Gate
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sooya-fast-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22.14.0'
+
+jobs:
+  fast-gate:
+    name: Typecheck, boundaries and contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run check:architecture
+      - run: npm run check:hotspots
+      - name: Server critical contracts
+        run: npx vitest run test/job-lanes.test.ts test/critical-path.contract.test.ts test/flow-trace.test.ts
+        working-directory: packages/server
+      - name: Changed web tests
+        shell: bash
+        run: |
+          if git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- packages/web; then
+            echo 'No web source changes; skipping web unit tests.'
+          else
+            npm run test -w @sooya/web
+          fi

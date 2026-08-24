@@ -18,6 +18,7 @@ import { signValidationResponse, verifyEventSignature } from './verify.js';
 import { resolveQqIdentity } from './mapping.js';
 import { c2cMessageToIngress, resolveQuoteReplyTo } from './inbound.js';
 import { downloadQqImageAttachment } from './inbound-media.js';
+import type { FlowTraceService } from '../../core/flow-trace.js';
 
 /*
  * QQ 通道编排层：把 verify / mapping / inbound / MessageIngress 串起来，
@@ -39,6 +40,7 @@ export interface QqChannelDeps {
   maxAttachmentBytes: number;
   errors: ErrorLogRepo;
   metrics?: import('../../core/metrics.js').MetricsService;
+  flowTrace?: FlowTraceService;
 }
 
 export interface QqDispatchOutcome {
@@ -76,11 +78,12 @@ export class QqChannel {
    * Dispatch 事件处理：幂等 → 身份映射 → inbound → MessageIngress。
    * 事件被重用平台重推时直接 ACK，不重复处理。
    */
-  async handleDispatch(payload: QqPayload): Promise<QqDispatchOutcome> {
+  async handleDispatch(payload: QqPayload, flowTraceId?: string): Promise<QqDispatchOutcome> {
     const d = payload.d as QqC2cMessageData | undefined;
     const eventId = payload.id ?? '';
     if (!eventId) {
       this.deps.errors.add('qq.inbound', 'dispatch event without id', { code: 'bad_request' });
+      this.deps.flowTrace?.fail(flowTraceId, 'qq.event.invalid', 'dispatch event without id');
       return { ack: { op: QQ_OP_ACK }, eventStatus: 'failed' };
     }
     const openid = d?.author?.user_openid?.trim() || d?.author?.openid?.trim() || null;
@@ -91,9 +94,11 @@ export class QqChannel {
       eventType: payload.t ?? 'dispatch',
       conversationKey: openid
     });
+    this.deps.flowTrace?.stage(flowTraceId, 'qq.channel_event.received', 'ok', { eventId });
     if (!claimed.inserted) {
       // 重推 / 重放：幂等消费，不重复写消息、不重复触发模型。
       this.deps.metrics?.record('qq', 'inbound.duplicate');
+      this.deps.flowTrace?.block(flowTraceId, 'qq.duplicate', 'duplicate_webhook');
       return { ack: { op: QQ_OP_ACK }, eventStatus: claimed.row.status };
     }
     try {
@@ -105,6 +110,7 @@ export class QqChannel {
         if (identity.role === 'denied') {
           this.deps.metrics?.record('qq', 'inbound.rejected_user');
           this.deps.events.markRejected(QQ_CHANNEL_NAME, eventId, identity.reason);
+          this.deps.flowTrace?.block(flowTraceId, 'qq.identity.rejected', identity.reason);
           return { ack: { op: QQ_OP_ACK }, eventStatus: 'rejected' };
         }
         const mediaParts: InputPart[] = [];
@@ -126,11 +132,16 @@ export class QqChannel {
         if (!inbound) {
           // 空内容 / 缺消息 id：不产生消息，视为已消费。
           this.deps.events.markProcessed(QQ_CHANNEL_NAME, eventId, null);
+          this.deps.flowTrace?.block(flowTraceId, 'qq.message.empty', 'empty_or_missing_message');
           return { ack: { op: QQ_OP_ACK }, eventStatus: 'processed' };
         }
         const quoted = typeof inbound.ingress.metadata?.quotedQqMsgId === 'string' ? inbound.ingress.metadata.quotedQqMsgId : null;
         const replyTo = resolveQuoteReplyTo(quoted, this.deps.events);
-        const result = await this.deps.ingress.accept({ ...inbound.ingress, replyTo });
+        const result = await this.deps.ingress.accept({
+          ...inbound.ingress,
+          replyTo,
+          metadata: { ...inbound.ingress.metadata, ...(flowTraceId ? { flowTraceId } : {}) }
+        });
         for (const part of mediaParts) {
           if (part.type !== 'image') continue;
           this.deps.jobs.enqueue('sticker.auto-collect', { mediaId: part.mediaId, messageId: result.messageId }, {
@@ -140,15 +151,18 @@ export class QqChannel {
         }
         this.deps.events.markProcessed(QQ_CHANNEL_NAME, eventId, result.messageId);
         this.deps.metrics?.record('qq', 'inbound.accepted');
+        this.deps.flowTrace?.stage(flowTraceId, 'qq.ingress.accepted', 'ok', { messageId: result.messageId });
         return { ack: { op: QQ_OP_ACK }, eventStatus: 'processed' };
       }
       // 其它事件类型暂不订阅；记录后视为已消费，避免平台反复重推。
       this.deps.events.markProcessed(QQ_CHANNEL_NAME, eventId, null);
+      this.deps.flowTrace?.block(flowTraceId, 'qq.event.ignored', payload.t ?? 'unsupported_event');
       return { ack: { op: QQ_OP_ACK }, eventStatus: 'processed' };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.deps.events.markFailed(QQ_CHANNEL_NAME, eventId, 'ingress_failed');
       this.deps.errors.add('qq.inbound', message, { eventId, code: 'ingress_failed' });
+      this.deps.flowTrace?.fail(flowTraceId, 'qq.ingress.failed', message);
       return { ack: { op: QQ_OP_ACK }, eventStatus: 'failed' };
     }
   }

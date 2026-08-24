@@ -11,6 +11,7 @@ import type { ReplyCoordinator } from './reply-coordinator.js';
 import type { ReplyOutcome, ReplyOptions } from './replier.js';
 import type { ChatMessage, InputPart } from './types.js';
 import { parseUserDirectives } from './directives.js';
+import type { FlowTraceService } from './flow-trace.js';
 
 /*
  * 唯一的用户消息入口。
@@ -70,6 +71,7 @@ export interface MessageIngressDeps {
   config: ConfigStore;
   mediaStore: MediaStore;
   replyCoordinator: ReplyCoordinator;
+  flowTrace?: FlowTraceService;
   replyOptions: ReplyOptions;
 }
 
@@ -83,7 +85,14 @@ export class MessageIngressService {
   /** 落库并异步唤醒回复协调器；不等待回复。 */
   async accept(input: MessageIngressInput): Promise<MessageIngressResult> {
     const { message, created, admission } = this.core(input);
-    if (!created) return this.duplicateResult(message);
+    const flowTraceId = typeof message.meta?.flowTraceId === 'string' ? message.meta.flowTraceId : undefined;
+    if (!created) {
+      this.deps.flowTrace?.stage(flowTraceId, 'message.duplicate', 'blocked', { messageId: message.id });
+      this.deps.flowTrace?.finish(flowTraceId, 'blocked', { reason: 'duplicate' });
+      return this.duplicateResult(message);
+    }
+    this.deps.flowTrace?.stage(flowTraceId, 'message.persisted', 'ok', { messageId: message.id });
+    if (admission) this.deps.flowTrace?.stage(flowTraceId, 'reply.batch.accepted', 'ok', { batchId: admission.batch.id });
     if (admission) {
       // Never block the HTTP response on coordination; errors are logged.
       void this.deps.replyCoordinator
@@ -98,9 +107,14 @@ export class MessageIngressService {
   /** 落库并等待回复完成；重复消息直接返回已有关联回复，不重复触发模型调用。 */
   async acceptAndReply(input: MessageIngressInput): Promise<MessageIngressSyncResult> {
     const { message, created, admission } = this.core(input);
+    const flowTraceId = typeof message.meta?.flowTraceId === 'string' ? message.meta.flowTraceId : undefined;
     if (!created) {
+      this.deps.flowTrace?.stage(flowTraceId, 'message.duplicate', 'blocked', { messageId: message.id });
+      this.deps.flowTrace?.finish(flowTraceId, 'blocked', { reason: 'duplicate' });
       return { ...this.duplicateResult(message), reply: this.findReply(message.id), outcome: null };
     }
+    this.deps.flowTrace?.stage(flowTraceId, 'message.persisted', 'ok', { messageId: message.id });
+    if (admission) this.deps.flowTrace?.stage(flowTraceId, 'reply.batch.accepted', 'ok', { batchId: admission.batch.id });
     const outcome = admission
       ? await this.deps.replyCoordinator.enqueue(admission.batch.id, this.deps.replyOptions)
       : null;
@@ -131,6 +145,7 @@ export class MessageIngressService {
       .join('\n');
     const explicit = (input.metadata?.directives ?? {}) as Record<string, unknown>;
     const directives = { ...parseUserDirectives(text), ...explicit };
+    const flowTraceId = typeof input.metadata?.flowTraceId === 'string' ? input.metadata.flowTraceId : undefined;
     const tx = this.deps.db.transaction(() => {
       const parts = this.storedInputParts(input.content);
       const created = this.deps.messages.createInTransaction({
@@ -139,7 +154,7 @@ export class MessageIngressService {
         clientMsgId: input.clientMessageId,
         replyTo: input.replyTo ?? null,
         parts,
-        meta: { directives }
+        meta: { directives, ...(flowTraceId ? { flowTraceId } : {}) }
       });
       if (created.created) this.enqueueStickerMeaningJobs(parts);
       const event = created.created ? this.deps.bus.persist('message.received', { message: created.message }) : null;
