@@ -15,6 +15,15 @@ function sharePlan(text: string): string {
   return JSON.stringify({ text, image: null });
 }
 
+async function waitUntil(check: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('timed out waiting for detached proactive work');
+}
+
 /**
  * Life still decides when an event is worth sharing, but the delivery target is
  * now the private Moments feed. Drive the real `life.tick` job through the real
@@ -62,6 +71,7 @@ describe('Life shares become Moments', () => {
 
     harness.app.repos.jobs.enqueue('life.tick', {});
     await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.moments.list().length === beforeMoments + 1);
 
     expect(harness.app.repos.messages.count()).toBe(beforeMessages);
     const moments = harness.app.repos.moments.list();
@@ -85,11 +95,14 @@ describe('Life shares become Moments', () => {
 
     harness.app.repos.jobs.enqueue('life.tick', {});
     await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.moments.list().length === 1);
     expect(harness.app.repos.moments.list()).toHaveLength(1);
     const messageCount = harness.app.repos.messages.count();
+    const attemptCount = harness.app.repos.proactive.list(50).length;
 
     harness.app.repos.jobs.enqueue('life.tick', {});
     await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.proactive.list(50).length > attemptCount);
 
     expect(harness.app.repos.moments.list()).toHaveLength(1);
     expect(harness.app.repos.messages.count()).toBe(messageCount);
@@ -131,6 +144,7 @@ describe('Life shares become Moments', () => {
 
     harness.app.repos.jobs.enqueue('life.tick', {});
     await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.moments.list().length === 1);
 
     expect(harness.app.repos.messages.count()).toBe(before);
     expect(harness.app.repos.moments.list()).toHaveLength(1);
