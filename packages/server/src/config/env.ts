@@ -176,8 +176,8 @@ const EnvSchema = z.object({
   /* Silence required before she will speak first. */
   LIFE_QUIET_GAP_MINUTES: intish(180),
   LIFE_MAX_REACH_OUTS_PER_DAY: intish(3),
-  /* Unprompted messages are off until the user turns them on. */
-  ENABLE_LIFE_REACH_OUT: boolish(false),
+  /* Proactive reach-out is part of the default single-user experience; explicit false remains a kill switch. */
+  ENABLE_LIFE_REACH_OUT: boolish(true),
   // World context is useful out of the box; each feature remains individually
   // disableable for deployments that need the stable no-world behavior.
   WORLD_CONTEXT_ENABLED: boolish(true),
