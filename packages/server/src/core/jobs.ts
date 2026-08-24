@@ -367,7 +367,15 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     if (result.changed) deps.bus.publish('life.updated', { activity: result.activity, kind: result.kind, mood: result.mood });
     deps.presence.sync('life.tick');
     if (!deps.reachOutEnabled) return;
-    await deps.proactive.run();
+    // Do not let slow proactive composition/media generation occupy the single
+    // durable JobWorker. ReplyCoordinator owns cancellation and user-message
+    // priority, so launch the proactive task outside the durable queue.
+    void deps.proactive.run().catch((error) => {
+      deps.bus.publish('system.notice', {
+        notice: 'proactive reach-out failed',
+        error: (error instanceof Error ? error.message : String(error)).slice(0, 300)
+      });
+    });
   });
 
   worker.register('ombre.dream', async (payload) => {
