@@ -13,6 +13,7 @@ export class JobRegistry {
       maxAttempts: contract.maxAttempts ?? DEFAULT_JOB_CONTRACT.maxAttempts,
       retryable: contract.retryable ?? DEFAULT_JOB_CONTRACT.retryable,
       cancellable: contract.cancellable ?? DEFAULT_JOB_CONTRACT.cancellable,
+      timeoutMode: contract.timeoutMode ?? DEFAULT_JOB_CONTRACT.timeoutMode,
       execute
     };
     this.definitions.set(type, definition);

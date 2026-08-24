@@ -1,4 +1,5 @@
 export type JobLane = 'critical' | 'background' | 'autonomous' | 'maintenance';
+export type JobTimeoutMode = 'abort' | 'observe';
 
 export interface JobContext {
   jobId: string;
@@ -22,6 +23,7 @@ export interface JobDefinition {
   maxAttempts: number;
   retryable: boolean;
   cancellable: boolean;
+  timeoutMode: JobTimeoutMode;
   execute: JobHandler;
 }
 

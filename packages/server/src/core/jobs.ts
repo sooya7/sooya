@@ -34,9 +34,9 @@ import { nowIso } from '../util/ids.js';
 import { LANE_CONFIG } from './jobs/lanes.js';
 import { executeWithContract } from './jobs/executor.js';
 import { JobRegistry } from './jobs/registry.js';
-import type { JobContract, JobContext, JobDefinition, JobHandler, JobLane } from './jobs/types.js';
+import type { JobContract, JobContext, JobDefinition, JobHandler, JobLane, JobTimeoutMode } from './jobs/types.js';
 
-export type { JobContract, JobContext, JobDefinition, JobHandler, JobLane } from './jobs/types.js';
+export type { JobContract, JobContext, JobDefinition, JobHandler, JobLane, JobTimeoutMode } from './jobs/types.js';
 export const STICKER_MAINTENANCE_BATCH = 8;
 
 /**
@@ -63,10 +63,18 @@ export class JobWorker {
 
   register(type: string, handler: JobHandler, contract: Partial<JobContract> = {}): void {
     this.registry.register(type, handler, contract);
+    this.syncEnqueuePolicy();
   }
 
   registerDefinition(definition: JobDefinition): void {
     this.registry.registerDefinition(definition);
+    this.syncEnqueuePolicy();
+  }
+
+  private syncEnqueuePolicy(): void {
+    for (const definition of this.registry.all()) {
+      this.repo.registerJobDefinition(definition.type, definition.maxAttempts);
+    }
   }
 
   definition(type: string): JobDefinition | undefined {
@@ -175,7 +183,10 @@ export class JobWorker {
       this.repo.complete(job.id);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      this.repo.fail(job.id, error.message, { retryable: definition.retryable });
+      const retryable = error.name === 'JobTimeoutError'
+        ? definition.timeoutMode === 'abort' && definition.retryable
+        : definition.retryable;
+      this.repo.fail(job.id, error.message, { retryable });
       this.errorLog.add(`job.${job.type}`, error.message);
     } finally {
       this.controllers.delete(job.id);
@@ -379,14 +390,15 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
    * QqDeliveryService 内完成。重试由其内部按退避重新入队 runAfter 任务，
    * 不依赖本 job 的 maxAttempts 阶梯。
    */
-  worker.register('qq.deliver', async (payload) => {
+  worker.register('qq.deliver', async (payload, context) => {
     if (!deps.qqDelivery) return;
     const traceId = typeof payload.flowTraceId === 'string' ? payload.flowTraceId : undefined;
     deps.flowTrace?.stage(traceId, 'qq.delivery.started', 'running', { messageId: String(payload.messageId ?? '') });
     const status = await deps.qqDelivery.deliver({
       messageId: String(payload.messageId ?? ''),
       conversationId: payload.conversationId ? String(payload.conversationId) : undefined,
-      traceId
+      traceId,
+      signal: context.signal
     });
     if (status === 'sent' || status === 'skipped') {
       deps.flowTrace?.stage(traceId, 'qq.delivery.completed', status === 'sent' ? 'ok' : 'blocked', { status });
@@ -396,7 +408,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
     } else {
       deps.flowTrace?.stage(traceId, 'qq.delivery.retrying', 'running', { status });
     }
-  }, { lane: 'critical', timeoutMs: 15_000, maxAttempts: 1, retryable: true, cancellable: true });
+  }, { lane: 'critical', timeoutMs: 15_000, maxAttempts: 1, retryable: true, cancellable: true, timeoutMode: 'abort' });
 
   /*
    * Life conversation bridge (§49-50): a completed exchange may carry a user
@@ -467,7 +479,7 @@ export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
         error: (error instanceof Error ? error.message : String(error)).slice(0, 300)
       });
     });
-  }, { lane: 'autonomous', timeoutMs: 30_000, maxAttempts: 2, retryable: true, cancellable: true });
+  }, { lane: 'autonomous', timeoutMs: 30_000, maxAttempts: 2, retryable: true, cancellable: true, timeoutMode: 'observe' });
 
   worker.register('ombre.dream', async (payload) => {
     if (!deps.ombreMemory) return;

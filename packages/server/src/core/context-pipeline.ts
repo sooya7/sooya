@@ -26,6 +26,21 @@ export interface ContextSource {
   collect(request: ContextRequest): Promise<ContextFragment | null> | ContextFragment | null;
 }
 
+/**
+ * A configured pipeline is authoritative. An optional source that failed is
+ * represented by an absent fragment and must not be called again through the
+ * legacy service fallback.
+ */
+export function sourceLines(
+  pipeline: ContextSourcePipeline | undefined,
+  fragments: ContextFragment[],
+  sourceId: string,
+  legacy: () => string[]
+): string[] {
+  if (pipeline) return fragments.find((fragment) => fragment.sourceId === sourceId)?.lines ?? [];
+  return legacy();
+}
+
 export class ContextSourcePipeline {
   private readonly sources: ContextSource[] = [];
 
@@ -76,7 +91,12 @@ export function createContextSourcePipeline(deps: {
     collect: () => {
       const city = deps.worldSnapshot?.().city;
       if (!city?.name) return null;
-      return { sourceId: 'world', priority: 50, lines: [`当前城市：${[city.country ?? '中国', city.region, city.name].filter(Boolean).join('')}`] };
+      return {
+        sourceId: 'world',
+        priority: 50,
+        lines: [`当前城市：${[city.country ?? '中国', city.region, city.name].filter(Boolean).join('')}`],
+        metadata: { city }
+      };
     }
   });
   return pipeline;

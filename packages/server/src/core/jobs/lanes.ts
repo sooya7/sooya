@@ -12,7 +12,8 @@ export const DEFAULT_JOB_CONTRACT = {
   timeoutMs: 60_000,
   maxAttempts: 3,
   retryable: true,
-  cancellable: false
+  cancellable: false,
+  timeoutMode: 'observe' as const
 };
 
 const LANE_OVERRIDES: Record<string, JobLane> = {

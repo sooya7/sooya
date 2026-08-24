@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [main]
-    types: [ready_for_review]
+    types: [opened, ready_for_review, reopened, synchronize]
   push:
     branches: [main]
   workflow_dispatch:
@@ -21,6 +21,7 @@ env:
 jobs:
   static-validation:
     name: Typecheck and production build
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -46,6 +47,7 @@ jobs:
 
   server-tests:
     name: Server tests (${{ matrix.shard }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -67,6 +69,7 @@ jobs:
   # never delays the ordinary unit shards.
   long-horizon-tests:
     name: Long-horizon consistency tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -82,6 +85,7 @@ jobs:
 
   web-tests:
     name: Web unit and component tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -95,6 +99,7 @@ jobs:
 
   e2e:
     name: Browser end-to-end tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     needs: static-validation
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -125,6 +130,7 @@ jobs:
 
   release-and-container:
     name: Release and container smoke
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     needs: static-validation
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -185,6 +191,7 @@ jobs:
 
   dependency-audit:
     name: Dependency vulnerability audit
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -1020,7 +1020,7 @@ function scheduleRecurring(app: SooyaApp): void {
         repos.jobs.enqueue(
           'qq.deliver',
           { messageId: row.message_id, ...(flowTraceId ? { flowTraceId } : {}) },
-          { runAfter: row.next_retry_at ?? undefined, maxAttempts: 1 }
+          { runAfter: row.next_retry_at ?? undefined }
         );
       }
     } catch { /* best effort */ }

@@ -132,18 +132,28 @@ export interface JobRow {
 }
 
 export class JobRepo {
+  private readonly jobDefinitions = new Map<string, number>();
+
   constructor(private readonly db: DbLike) {}
 
+  registerJobDefinition(type: string, maxAttempts: number): void {
+    this.jobDefinitions.set(type, maxAttempts);
+  }
+
   enqueue(type: string, payload: Record<string, unknown>, opts: { maxAttempts?: number; runAfter?: string; priority?: number } = {}): JobRow {
+    if (this.jobDefinitions.size > 0 && !this.jobDefinitions.has(type)) {
+      throw new Error(`unknown job type: ${type}`);
+    }
     const id = newJobId();
     const ts = nowIso();
     const priority = Math.max(0, Math.min(100, Math.trunc(opts.priority ?? priorityForJob(type))));
+    const maxAttempts = opts.maxAttempts ?? this.jobDefinitions.get(type) ?? 3;
     this.db
       .prepare(
         `INSERT INTO jobs(id, type, payload_json, status, attempts, max_attempts, created_at, updated_at, run_after, priority)
          VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)`
       )
-      .run(id, type, JSON.stringify(payload), opts.maxAttempts ?? 3, ts, ts, opts.runAfter ?? null, priority);
+      .run(id, type, JSON.stringify(payload), maxAttempts, ts, ts, opts.runAfter ?? null, priority);
     return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as JobRow;
   }
 

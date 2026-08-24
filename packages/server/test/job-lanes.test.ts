@@ -41,6 +41,10 @@ describe('execution lanes', () => {
     expect(definition?.timeoutMs).toBe(15_000);
     expect(definition?.maxAttempts).toBe(1);
     expect(definition?.cancellable).toBe(true);
+    expect(definition?.timeoutMode).toBe('abort');
+    const row = harness.app.repos.jobs.enqueue('qq.deliver', {});
+    expect(row.max_attempts).toBe(1);
+    expect(() => harness.app.repos.jobs.enqueue('not-registered', {})).toThrow(/unknown job type/);
   });
 
   it('a contract timeout fails the job without waiting forever', async () => {

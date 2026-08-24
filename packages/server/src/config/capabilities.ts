@@ -10,6 +10,8 @@ export interface CapabilityPolicy {
     qqDelivery: boolean;
     lifeCandidates: boolean;
     futureCandidates: boolean;
+    effective: boolean;
+    reasons: string[];
   };
   continuity: {
     future: boolean;
@@ -39,13 +41,22 @@ export function createCapabilityPolicy(env: AppEnv): CapabilityPolicy {
   const qqConfigured = Boolean(env.QQ_APP_ID && env.QQ_APP_SECRET && env.QQ_CALLBACK_SECRET);
   const lifeCandidates = env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT;
   const futureCandidates = env.FUTURE_ENGINE_ENABLED && env.FUTURE_PROACTIVE_ENABLED;
+  const qqDelivery = qqBot && qqConfigured && env.QQ_PROACTIVE_ENABLED;
+  const candidateEngine = lifeCandidates || futureCandidates;
+  const proactiveReasons: string[] = [];
+  if (!candidateEngine) proactiveReasons.push('no proactive candidate engine is enabled');
+  if (!qqBot) proactiveReasons.push('qq bot is disabled');
+  else if (!qqConfigured) proactiveReasons.push('qq bot is not configured');
+  if (!env.QQ_PROACTIVE_ENABLED) proactiveReasons.push('qq proactive delivery is disabled');
   return {
     messaging: { qqBot, qqConfigured },
     proactive: {
       enabled: lifeCandidates || futureCandidates,
-      qqDelivery: qqBot && env.QQ_PROACTIVE_ENABLED,
+      qqDelivery,
       lifeCandidates,
-      futureCandidates
+      futureCandidates,
+      effective: candidateEngine && qqDelivery,
+      reasons: proactiveReasons
     },
     continuity: {
       future: env.FUTURE_ENGINE_ENABLED,
@@ -55,8 +66,8 @@ export function createCapabilityPolicy(env: AppEnv): CapabilityPolicy {
     },
     memory: {
       backend: env.MEMORY_BACKEND,
-      read: !env.DISABLE_MEMORY_PIPELINE,
-      write: !env.DISABLE_MEMORY_PIPELINE
+      read: !env.DISABLE_MEMORY_PIPELINE && (env.MEMORY_BACKEND !== 'ombre' || env.OMBRE_READ_ENABLED),
+      write: !env.DISABLE_MEMORY_PIPELINE && (env.MEMORY_BACKEND !== 'ombre' || env.OMBRE_WRITE_ENABLED)
     },
     world: {
       enabled: env.WORLD_CONTEXT_ENABLED,

@@ -58,7 +58,7 @@ The shared SQLite job table is consumed through four independent in-process lane
 | `autonomous` | Life/proactive/world behavior | concurrency 1, cancellable |
 | `maintenance` | backfills, cleanup, backup | concurrency 1, lowest priority |
 
-Each registered job has a `JobDefinition` with lane, timeout, retry, attempt and cancellation metadata. A timeout aborts cancellable work through the job signal and records a failed/retryable durable row.
+Each registered job has a `JobDefinition` with lane, timeout, retry, attempt, timeout mode and cancellation metadata. `abort` is reserved for cooperative handlers that pass the signal to their IO; `observe` records a timeout without releasing a retry that could overlap an unknown late side effect. `JobDefinition.maxAttempts` supplies the default durable row value.
 
 ## Capability policy
 
@@ -66,7 +66,7 @@ Raw environment flags are resolved once into `CapabilityPolicy` in `config/capab
 
 ## Context pipeline
 
-`ContextSourcePipeline` isolates optional Life, Future, Relationship and World sources. A source failure is recorded as a degraded enhancement and cannot block the current reply. ContextBuilder remains responsible for canonical ordering, deduplication and token budgeting.
+`ContextSourcePipeline` isolates optional Life, Future, Relationship and World sources. When configured, the pipeline is authoritative: a failed source produces no fragment and is not called again through a legacy fallback. ContextBuilder remains responsible for canonical ordering, deduplication and token budgeting.
 
 ## Life public contract
 
@@ -83,6 +83,7 @@ Production wiring exposes the `core/life/public-contract.ts` interface. Legacy L
 - Shared experiences: `episodes`
 - Media: `media` plus the managed media directory
 - Diagnostics: `flow_traces` and `error_log`
+- Capability truth: `CapabilityPolicy`, including effective QQ proactive delivery and Ombre read/write state
 
 ## Change checklist
 

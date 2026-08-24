@@ -18,6 +18,13 @@ const legacyHotspots = [
   'packages/server/src/core/context.ts',
   'packages/web/src/components/AdminPanel.tsx'
 ];
+const legacyBaselines = [
+  ['packages/server/src/app.ts', 50708],
+  ['packages/server/src/routes/admin.ts', 54168],
+  ['packages/server/src/db/migrations.ts', 72588],
+  ['packages/server/src/core/context.ts', 30299],
+  ['packages/web/src/components/AdminPanel.tsx', 66916]
+];
 
 const failures = [];
 for (const [relative, limit] of budgets) {
@@ -32,6 +39,13 @@ for (const [relative, limit] of budgets) {
 for (const relative of legacyHotspots) {
   const file = path.join(root, relative);
   if (fs.existsSync(file)) console.log(`legacy hotspot retained for compatibility: ${relative} (${fs.statSync(file).size} bytes)`);
+}
+for (const [relative, baseline] of legacyBaselines) {
+  const file = path.join(root, relative);
+  if (!fs.existsSync(file)) continue;
+  const bytes = fs.statSync(file).size;
+  const limit = Math.ceil(baseline * 1.02);
+  if (bytes > limit) failures.push(`${relative}: ${bytes} bytes > baseline guard ${limit} (${baseline} + 2%)`);
 }
 if (failures.length) {
   console.error('Hotspot budget violations:');
