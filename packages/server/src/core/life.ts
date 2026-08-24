@@ -1,5 +1,6 @@
 import type { LifeRepo, LifeLogRow } from '../db/repos/life.repo.js';
 import { timeZoneOffsetMinutes, zonedParts } from '../util/time-zone.js';
+export type { LifeRuntime, LifeConversationMood, LifeConversationSignal, LifeProactiveCandidate } from './life/public-contract.js';
 
 /**
  * Between messages the assistant did not exist. Nothing advanced, so 你在干嘛
@@ -164,16 +165,6 @@ export interface LifeTickResult {
  * require changing every call site. V2-only methods are reached by narrowing
  * on the concrete class where they are actually needed.
  */
-export interface LifeRuntime {
-  tick(): LifeTickResult | { changed: boolean; activity: string; kind: string; mood: string; endedPrevious: LifeLogRow | null };
-  contextLines(lastUserMessageAt?: Date | null): string[];
-  shouldReachOut(lastUserMessageAt: Date | null, lastAssistantMessageAt: Date | null): { reach: boolean; reason: string; candidate: LifeLogRow | null };
-  markShared(id: string): void;
-  snapshot(): { activity: string; kind: string; mood: string; startedAt: string; endsAt: string; recent: Array<{ activity: string; startedAt: string; endedAt: string }> };
-  settings: LifeConfig;
-  now(): Date;
-}
-
 export class LifeEngine {
   /*
    * The config is resolved on every read rather than captured once, so a change
@@ -313,5 +304,27 @@ export class LifeEngine {
       endsAt: resolved.endsAt.toISOString(),
       recent: this.repo.recent(8).map((row) => ({ activity: row.activity, startedAt: row.started_at, endedAt: row.ended_at }))
     };
+  }
+
+  currentState(): ReturnType<LifeEngine['snapshot']> {
+    return this.snapshot();
+  }
+
+  applyConversationSignal(_signal: import('./life/public-contract.js').LifeConversationSignal): void {
+    // Legacy Life has no vitals model. The public contract still accepts the
+    // signal so application code does not branch on the selected engine.
+  }
+
+  getProactiveCandidates(): import('./life/public-contract.js').LifeProactiveCandidate[] {
+    return this.repo.unshared(['out', 'play', 'meal', 'chore'], 8).map((row) => ({
+      id: row.id,
+      activity: row.activity,
+      kind: row.kind,
+      mood: row.mood,
+      started_at: row.started_at,
+      ended_at: row.ended_at,
+      shared: row.shared,
+      created_at: row.created_at
+    }));
   }
 }

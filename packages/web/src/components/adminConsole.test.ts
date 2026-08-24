@@ -7,6 +7,9 @@ const PANEL = read('./AdminPanel.tsx');
 const EDITORS = read('./FeatureAdminPage.tsx');
 const SHELL = read('../AppShell.tsx');
 const NAVIGATION = read('../lib/navigation.ts');
+const ADMIN_TYPES = read('./admin/admin-types.ts');
+const ADMIN_NAVIGATION = read('./admin/AdminNavigation.tsx');
+const ADMIN_SHELL = read('./admin/AdminShell.tsx');
 
 /**
  * The two admin pages are now one console. `e2e/features-1-9.e2e.ts` drives
@@ -16,7 +19,7 @@ const NAVIGATION = read('../lib/navigation.ts');
  */
 describe('merged admin console', () => {
   it('routes the console through canonical admin paths and keeps the legacy address recognizable', () => {
-    expect(PANEL).toContain("if (normalized === '/admin/features') return 'avatar'");
+    expect(ADMIN_TYPES).toContain("if (normalized === '/admin/features') return 'avatar'");
     expect(NAVIGATION).toContain("normalized === '/admin'");
     expect(NAVIGATION).toContain("normalized.startsWith('/admin/')");
     // QQ 单通道后（§13/§14）：Web 只剩管理控制台与 /gallery；聊天/Moments 路由不再渲染。
@@ -38,9 +41,9 @@ describe('merged admin console', () => {
     // Voice-system convergence: the standalone「情绪语音」tab is gone; TTS
     // parameters live under 模型配置, behavior knobs under 助手配置.
     for (const label of ['概览', '助手配置', '双方头像', '她的生活', '模型配置', '内容管理', '存储治理', '运维与备份']) {
-      expect(PANEL).toContain(`label: '${label}'`);
+      expect(ADMIN_TYPES).toContain(`label: '${label}'`);
     }
-    expect(PANEL).not.toContain("label: '情绪语音'");
+    expect(ADMIN_TYPES).not.toContain("label: '情绪语音'");
   });
 
   it('renders each feature section from the shared editors', () => {
@@ -83,7 +86,7 @@ describe('merged admin console', () => {
    * because whichever heading mounted second decided the outcome.
    */
   it('never repeats a tab title as a heading inside an editor', () => {
-    const titles = [...PANEL.matchAll(/title: '([^']+)'/g)].map((m) => m[1]);
+    const titles = [...ADMIN_TYPES.matchAll(/title: '([^']+)'/g)].map((m) => m[1]);
     expect(titles.length).toBeGreaterThanOrEqual(8);
     const headings = [...EDITORS.matchAll(/<h[12]>([^<{]+)<\/h[12]>/g)].map((m) => m[1]);
     expect(headings.filter((h) => titles.includes(h))).toEqual([]);
@@ -101,7 +104,8 @@ describe('merged admin console', () => {
   });
 
   it('routes top-level links without losing the unsaved-change guard', () => {
-    expect(PANEL).toContain("import { AppLink } from './AppLink.js'");
+    expect(ADMIN_SHELL).toContain("import { AppLink } from '../AppLink.js'");
+    expect(ADMIN_NAVIGATION).toContain('TabButtons');
     expect(PANEL).toContain('confirmRouteLeave');
     expect(PANEL).toContain("navigate(adminPathForTab(tab))");
     expect(PANEL).not.toContain("<a className=\"admin-side-action\" href=\"/\"");

@@ -1959,3 +1959,17 @@
   .admin-v2 .admin-error-summary { padding: 9px 10px; }
   .admin-v2 .admin-log-footer { margin-left: -14px; margin-right: -14px; }
 }
+.admin-capability-policy .admin-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.admin-capability-policy .admin-policy-grid span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--admin-surface-muted, rgba(0, 0, 0, 0.04));
+}

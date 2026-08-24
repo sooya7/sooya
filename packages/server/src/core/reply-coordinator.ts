@@ -12,6 +12,7 @@ import { redactDiagnostic, type PublicFailure } from './public-error.js';
 import { sortableId } from '../util/ids.js';
 import { abortableDelay, isBenignAbort, StaleGenerationError, UserInterruptedError } from '../util/abort.js';
 import { HttpTimeoutError } from '../util/http.js';
+import type { FlowTraceService } from './flow-trace.js';
 
 const LEASE_MS = 120_000;
 const LEASE_HEARTBEAT_MS = 30_000;
@@ -69,6 +70,7 @@ export interface ReplyCoordinatorOptions {
    * exactly as before — zero behaviour change.
    */
   thoughts?: ThoughtsBridge;
+  flowTrace?: FlowTraceService;
   onCompleted?: (
     batchId: string,
     userMessages: ChatMessage[],
@@ -456,6 +458,8 @@ export class ReplyCoordinator {
     const userMessages = this.deps.batches.messageIds(batchId)
       .map((id) => this.deps.messages.get(id))
       .filter((message): message is ChatMessage => Boolean(message));
+    const flowTraceId = this.traceIdFor(userMessages);
+    this.deps.flowTrace?.stage(flowTraceId, 'model.started', 'running', { batchId, revision });
 
     const heartbeat = setInterval(() => {
       try {
@@ -482,6 +486,7 @@ export class ReplyCoordinator {
           return won;
         }
       });
+      this.deps.flowTrace?.stage(flowTraceId, 'model.completed', 'ok', { batchId, revision });
 
       const outcome = await this.deps.replier.publishGeneratedReply(batch, userMessages, generated, {
         signal: controller.signal,
@@ -492,6 +497,7 @@ export class ReplyCoordinator {
           return won;
         }
       });
+      if (outcome.messageId) this.deps.flowTrace?.stage(flowTraceId, 'assistant.persisted', 'ok', { messageId: outcome.messageId });
 
       clearInterval(heartbeat);
       this.activeGenerations.delete(batchId);
@@ -558,6 +564,7 @@ export class ReplyCoordinator {
         return;
       }
       this.deps.bus.fanout(completedEvent);
+      this.deps.flowTrace?.stage(flowTraceId, 'reply.completed', 'ok', { messageId: outcome.messageId });
       try {
         await this.deps.onCompleted?.(batchId, userMessages, outcome, this.owner, revision);
       } catch (error) {
@@ -589,6 +596,7 @@ export class ReplyCoordinator {
     error: unknown,
     userMessages: ChatMessage[]
   ): Promise<void> {
+    const flowTraceId = this.traceIdFor(userMessages);
     const batch = this.deps.batches.get(batchId);
     if (!batch) {
       // The batch (and every row referencing it) was cascade-deleted while
@@ -603,6 +611,7 @@ export class ReplyCoordinator {
       return;
     }
     if (isBenignAbort(error)) {
+      this.deps.flowTrace?.stage(flowTraceId, 'reply.cancelled', 'cancelled', { reason: (error as Error).name });
       this.deps.batches.recordGeneration({
         batchId, revision, attempt: active.attempt, status: 'superseded',
         startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
@@ -671,6 +680,7 @@ export class ReplyCoordinator {
     }
 
     const failure: ReplyFailure = toReplyFailure(error, isTimeout, active.published);
+    this.deps.flowTrace?.fail(flowTraceId, 'reply.failed', failure.code);
     this.deps.batches.recordGeneration({
       batchId, revision, attempt: active.attempt, status: 'failed',
       startedAt: new Date(startedAt).toISOString(), finishedAt: new Date().toISOString(),
@@ -725,6 +735,14 @@ export class ReplyCoordinator {
     };
     for (const waiter of runtime?.waiters ?? []) waiter.resolve(outcome);
     this.runtime.delete(batchId);
+  }
+
+  private traceIdFor(messages: ChatMessage[]): string | undefined {
+    for (const message of messages) {
+      const traceId = message.meta?.flowTraceId;
+      if (typeof traceId === 'string' && traceId.length > 0) return traceId;
+    }
+    return undefined;
   }
 
   private publishFailure(batchId: string, revision: number, failure: ReplyFailure): void {

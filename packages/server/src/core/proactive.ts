@@ -24,6 +24,7 @@ import type { CommitmentRepo } from '../db/repos/commitment.repo.js';
 import { arbitrate, commitmentCandidates, type ProactiveCandidate } from './proactive-candidates.js';
 import { z } from 'zod';
 import { extractJsonObject } from '../util/json-extract.js';
+import type { FlowTraceService } from './flow-trace.js';
 
 export type { ProactiveMode } from '../db/repos/proactive.repo.js';
 
@@ -150,6 +151,7 @@ export class ProactiveComposer {
       futureProactiveEnabled?: boolean;
       /** §22-26: learned preference multiplier, applied after hard gates only. */
       feedbackWeight?: (kind: string) => number;
+      flowTrace?: FlowTraceService;
     }
   ) {}
 
@@ -253,22 +255,30 @@ export class ProactiveComposer {
       blockedReason: evaluation.reach ? null : evaluation.reason,
       detail: { evaluatedAt: this.deps.life.now().toISOString(), destination: selected?.source === 'commitment' ? 'qq' : 'moments' }
     });
+    const flowTrace = this.deps.flowTrace?.start('proactive', attempt.id, 'proactive.evaluated', {
+      reason: evaluation.reason,
+      selected: selected?.source ?? null
+    });
+    const flowTraceId = flowTrace?.traceId;
+    this.deps.attempts.update(attempt.id, { detail: flowTraceId ? { flowTraceId } : undefined });
 
-    if (!evaluation.reach || !selected) return this.blocked(evaluation.reason, evaluation.candidate?.id ?? null, requestedMode);
+    if (!evaluation.reach || !selected) return this.blocked(evaluation.reason, evaluation.candidate?.id ?? null, requestedMode, flowTraceId);
 
     // Commitment care is a chat message, not a Moment (§1.7): semantic
     // candidate in, model-worded message out, one durable QQ delivery.
-    if (selected.source === 'commitment') return this.runCommitmentCandidate(selected, attempt.id);
+    if (selected.source === 'commitment') return this.runCommitmentCandidate(selected, attempt.id, flowTraceId);
 
     const candidate = selected.lifeCandidate;
-    if (!candidate) return this.blocked('no_candidate', null, requestedMode);
+    if (!candidate) return this.blocked('no_candidate', null, requestedMode, flowTraceId);
 
     let finalMode: ProactiveMode | null = null;
     let fallbackReason: string | null = null;
+    let deliveryQueued = false;
     const task: ProactiveDeliveryTask = {
       candidateId: candidate.id,
       requestedMode: requestedMode ?? 'text',
       run: async (signal) => {
+        this.deps.flowTrace?.stage(flowTraceId, 'proactive.composition.started', 'running');
         const provider = this.deps.capabilities.chatProvider();
         const persona = this.deps.config.getPersona();
         const lifeLines = this.deps.life.contextLines(evaluation.lastUserAt ? new Date(evaluation.lastUserAt) : null);
@@ -285,19 +295,24 @@ export class ProactiveComposer {
             signal,
             this.deps.toolRuntime
           );
+          this.deps.flowTrace?.stage(flowTraceId, 'proactive.composition.completed', 'ok');
         } catch (error) {
           if (signal.aborted) return { kind: 'discarded' };
           const reason = error instanceof Error && error.message === 'invalid_share_text' ? 'invalid_share_text' : 'compose_failed';
           this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: reason, detail: { error: safeError(error) } });
+          this.deps.flowTrace?.fail(flowTraceId, 'proactive.composition.failed', reason);
           throw new Error(reason);
         }
 
         let prepared: PreparedMedia;
         try {
+          this.deps.flowTrace?.stage(flowTraceId, 'proactive.media.started', 'running');
           prepared = await this.prepareMedia(requestedMode ?? 'text', sharePlan, eventContext, candidate, signal);
+          this.deps.flowTrace?.stage(flowTraceId, 'proactive.media.completed', 'ok', { mode: prepared.finalMode, fallback: prepared.fallbackReason });
         } catch (error) {
           if (signal.aborted) return { kind: 'discarded' };
           this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: 'media_failed', detail: { error: safeError(error) } });
+          this.deps.flowTrace?.fail(flowTraceId, 'proactive.media.failed', 'media_failed');
           throw new Error('media_failed');
         }
         finalMode = prepared.finalMode;
@@ -344,6 +359,7 @@ export class ProactiveComposer {
             return { moment, event };
           });
           this.deps.bus.fanout(persisted.event);
+          this.deps.flowTrace?.stage(flowTraceId, 'proactive.persisted', 'ok', { momentId: persisted.moment.id });
           let proactiveMessageId: string | null = null;
           if (this.deps.qqDeliveryEnabled && this.deps.jobs) {
             // §12.2：Moments 仍是内部时间线；QQ 启用时再把同一内容发布成可投递的
@@ -353,6 +369,7 @@ export class ProactiveComposer {
               parts: this.proactiveParts(sharePlan.text, prepared.imageMediaId),
               meta: {
                 proactive: true,
+                ...(flowTraceId ? { flowTraceId } : {}),
                 candidateId: candidate.id,
                 momentId: persisted.moment.id,
                 activity: candidate.activity
@@ -361,7 +378,9 @@ export class ProactiveComposer {
             });
             if (published) {
               proactiveMessageId = published.message.id;
-              this.deps.jobs.enqueue('qq.deliver', { messageId: published.message.id });
+              deliveryQueued = true;
+              this.deps.jobs.enqueue('qq.deliver', { messageId: published.message.id, ...(flowTraceId ? { flowTraceId } : {}) });
+              this.deps.flowTrace?.stage(flowTraceId, 'qq.delivery.queued', 'running', { messageId: published.message.id });
               this.deps.metrics?.record('qq', 'proactive.sent');
             }
           }
@@ -373,6 +392,7 @@ export class ProactiveComposer {
         } catch (error) {
           if (isUniqueConstraint(error)) {
             this.deps.attempts.update(attempt.id, { status: 'blocked', blockedReason: 'candidate_already_sent' });
+            this.deps.flowTrace?.block(flowTraceId, 'proactive.duplicate', 'candidate_already_sent');
             return { kind: 'blocked', blockedReason: 'candidate_already_sent' };
           }
           const reason = 'moment_persist_failed';
@@ -383,6 +403,7 @@ export class ProactiveComposer {
             fallbackReason: prepared.fallbackReason,
             detail: { error: safeError(error) }
           });
+          this.deps.flowTrace?.fail(flowTraceId, 'proactive.persist_failed', reason);
           throw new Error(reason);
         }
       }
@@ -390,6 +411,7 @@ export class ProactiveComposer {
 
     const result = await this.deps.coordinator.enqueueProactive(task);
     if (result.status === 'sent') {
+      if (!deliveryQueued) this.deps.flowTrace?.finish(flowTraceId, 'ok', { destination: 'moments' });
       this.deps.metrics?.record('proactive', 'sent');
       return {
         status: 'sent',
@@ -404,6 +426,9 @@ export class ProactiveComposer {
       };
     }
     const blockedReason = result.blockedReason ?? result.status;
+    if (result.status === 'cancelled') this.deps.flowTrace?.cancel(flowTraceId, 'proactive.cancelled', blockedReason);
+    else if (result.status === 'failed') this.deps.flowTrace?.fail(flowTraceId, 'proactive.failed', blockedReason);
+    else this.deps.flowTrace?.block(flowTraceId, 'proactive.blocked', blockedReason);
     this.deps.metrics?.record('proactive', blockedReason === 'user_appeared' ? 'user_appeared_cancel'
       : blockedReason === 'reply_in_progress' ? 'reply_conflict'
       : blockedReason === 'candidate_already_sent' || blockedReason === 'candidate_already_queued' ? 'duplicate'
@@ -422,7 +447,8 @@ export class ProactiveComposer {
     };
   }
 
-  private blocked(reason: string, candidateId: string | null, requestedMode: ProactiveMode | null): ProactiveRunResult {
+  private blocked(reason: string, candidateId: string | null, requestedMode: ProactiveMode | null, flowTraceId?: string): ProactiveRunResult {
+    this.deps.flowTrace?.block(flowTraceId, 'proactive.blocked', reason);
     return {
       status: 'blocked',
       blockedReason: reason,
@@ -440,10 +466,11 @@ export class ProactiveComposer {
    * §1.7: the commitment hands the model a semantic candidate (event,
    * distance), never a canned "提醒：你今天面试" line. The wording stays hers.
    */
-  private async runCommitmentCandidate(candidate: ProactiveCandidate, attemptId: string): Promise<ProactiveRunResult> {
+  private async runCommitmentCandidate(candidate: ProactiveCandidate, attemptId: string, flowTraceId?: string): Promise<ProactiveRunResult> {
     const info = candidate.commitment!;
     try {
       const provider = this.deps.capabilities.chatProvider();
+      this.deps.flowTrace?.stage(flowTraceId, 'proactive.composition.started', 'running');
       const persona = this.deps.config.getPersona();
       const result = await provider.complete({
         system: [
@@ -459,20 +486,23 @@ export class ProactiveComposer {
       });
       const text = result.text.trim().replace(/^["“']|["”']$/g, '').slice(0, 120);
       if (text.length < 4) throw new Error('invalid_commitment_text');
+      this.deps.flowTrace?.stage(flowTraceId, 'proactive.composition.completed', 'ok');
 
       if (!this.deps.qqDeliveryEnabled) {
         // No QQ channel (unit-test posture): record the attempt as composed.
         this.deps.attempts.update(attemptId, { status: 'sent', blockedReason: null, sendSuccess: true, detail: { destination: 'qq', text } });
+        this.deps.flowTrace?.finish(flowTraceId, 'ok', { destination: 'qq_disabled' });
         return { status: 'sent', blockedReason: null, candidateId: candidate.key, messageId: null, momentId: null, requestedMode: 'text', finalMode: 'text', fallbackReason: null, sendSuccess: true };
       }
 
       const published = this.deps.coordinator.publishProactiveMessage({
         parts: [{ type: 'text', text, status: 'sent' }],
-        meta: { proactive: true, candidateId: candidate.key, commitmentId: info.id, reason: candidate.reason },
+        meta: { proactive: true, ...(flowTraceId ? { flowTraceId } : {}), candidateId: candidate.key, commitmentId: info.id, reason: candidate.reason },
         onPersisted: () => undefined
       });
       if (!published) throw new Error('commitment_publish_failed');
-      this.deps.jobs?.enqueue('qq.deliver', { messageId: published.message.id });
+      this.deps.jobs?.enqueue('qq.deliver', { messageId: published.message.id, ...(flowTraceId ? { flowTraceId } : {}) });
+      this.deps.flowTrace?.stage(flowTraceId, 'qq.delivery.queued', 'running', { messageId: published.message.id });
       this.deps.attempts.update(attemptId, {
         status: 'sent',
         blockedReason: null,
@@ -495,6 +525,7 @@ export class ProactiveComposer {
     } catch (error) {
       const reason = safeError(error);
       this.deps.attempts.update(attemptId, { status: 'failed', blockedReason: reason, detail: { error: reason } });
+      this.deps.flowTrace?.fail(flowTraceId, 'proactive.failed', reason);
       return {
         status: 'failed',
         blockedReason: reason,

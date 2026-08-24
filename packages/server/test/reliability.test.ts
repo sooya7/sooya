@@ -406,9 +406,7 @@ describe('job worker', () => {
 
   it('a job without a handler does not crash the worker', async () => {
     h = await createHarness();
-    h.app.repos.jobs.enqueue('nonexistent.type', {}, { maxAttempts: 1 });
-    await h.app.services.worker.drain();
-    expect(h.app.repos.jobs.list(5)[0]!.status).toBe('failed');
+    expect(() => h.app.repos.jobs.enqueue('nonexistent.type', {}, { maxAttempts: 1 })).toThrow(/unknown job type/);
   });
 });
 

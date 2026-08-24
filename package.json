@@ -20,6 +20,9 @@
     "typecheck": "npm run typecheck -w @sooya/server && npm run typecheck -w @sooya/web",
     "rollback:preflight": "node scripts/rollback-preflight.mjs",
     "rollback:normalize": "node scripts/rollback-normalize.mjs",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "check:hotspots": "node scripts/check-hotspots.mjs",
+    "select:tests": "node scripts/select-tests.mjs",
     "package": "node scripts/make-release.mjs",
     "verify:release": "node scripts/check-release.mjs",
     "migrate:ombre": "tsx scripts/migrate-sooya-memory-to-ombre.ts"

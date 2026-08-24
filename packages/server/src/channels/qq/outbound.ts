@@ -50,7 +50,7 @@ export class QqDeliveryService {
    * - 条件领取（pending/retry→sending）→ 并发执行者只有一个
    * - 已 sent → 直接跳过；重复 job / 重启恢复都不会重复发送
    */
-  async deliver(input: { messageId: string; conversationId?: string }): Promise<QqDeliveryStatus> {
+  async deliver(input: { messageId: string; conversationId?: string; traceId?: string; signal?: AbortSignal }): Promise<QqDeliveryStatus> {
     const owner = this.deps.identities.findOwner(QQ_CHANNEL_NAME);
     if (!owner || !owner.enabled) return 'skipped'; // 尚未绑定授权用户，等授权后再投。
 
@@ -91,7 +91,7 @@ export class QqDeliveryService {
     try {
       if (text) {
         if (!completed.has('text')) {
-          const sent = await this.deps.client.sendC2cTextMessage({ openid, content: text, msgId, msgSeq: msgId ? msgSeq : undefined });
+          const sent = await this.deps.client.sendC2cTextMessage({ openid, content: text, msgId, msgSeq: msgId ? msgSeq : undefined, signal: input.signal });
           lastRemoteMessageId = sent.messageId || lastRemoteMessageId;
           this.deps.deliveries.markStepCompleted(row.id, 'text', sent.messageId || null);
           completed.add('text');
@@ -101,7 +101,7 @@ export class QqDeliveryService {
       for (const part of mediaParts) {
         const stepKey = `part:${part.id}`;
         if (!completed.has(stepKey)) {
-          const remoteId = await this.deliverMediaPart(part, openid, msgId ? msgId : null, msgSeq);
+          const remoteId = await this.deliverMediaPart(part, openid, msgId ? msgId : null, msgSeq, input.signal);
           if (remoteId) lastRemoteMessageId = remoteId;
           this.deps.deliveries.markStepCompleted(row.id, stepKey, remoteId);
           completed.add(stepKey);
@@ -113,7 +113,7 @@ export class QqDeliveryService {
       this.deps.metrics?.record('qq', 'outbound.latency', Date.now() - startedAt);
       return 'sent';
     } catch (error) {
-      return this.classifyFailure(error, claimedRow, input.messageId);
+      return this.classifyFailure(error, claimedRow, input.messageId, input.traceId);
     }
   }
 
@@ -122,16 +122,17 @@ export class QqDeliveryService {
     part: MessagePart,
     openid: string,
     msgId: string | null,
-    msgSeq: number
+    msgSeq: number,
+    signal?: AbortSignal
   ): Promise<string | null> {
     if (!part.mediaId) return null;
     const media = this.deps.media.get(part.mediaId);
     if (!media) return null;
     const plan = await prepareQqMedia(this.deps.mediaStore, media);
-    if (!plan) return this.mediaFallback(part, media, openid, msgId, msgSeq);
+    if (!plan) return this.mediaFallback(part, media, openid, msgId, msgSeq, signal);
     try {
-      const uploaded = await this.deps.client.uploadMedia({ openid, fileType: plan.fileType, bytes: plan.bytes, filename: plan.filename });
-      const sent = await this.deps.client.sendC2cMediaMessage({ openid, fileUuid: uploaded.fileUuid, fileInfo: uploaded.fileInfo, msgId, msgSeq });
+      const uploaded = await this.deps.client.uploadMedia({ openid, fileType: plan.fileType, bytes: plan.bytes, filename: plan.filename, signal });
+      const sent = await this.deps.client.sendC2cMediaMessage({ openid, fileUuid: uploaded.fileUuid, fileInfo: uploaded.fileInfo, msgId, msgSeq, signal });
       this.deps.metrics?.record('qq', 'media.upload_success');
       return sent.messageId;
     } catch (error) {
@@ -142,7 +143,7 @@ export class QqDeliveryService {
         mime: media.mime,
         code: error instanceof QqApiError ? `err_${error.errCode ?? `http_${error.httpStatus}`}` : 'network'
       });
-      return this.mediaFallback(part, media, openid, msgId, msgSeq);
+      return this.mediaFallback(part, media, openid, msgId, msgSeq, signal);
     }
   }
 
@@ -152,16 +153,17 @@ export class QqDeliveryService {
     media: { transcript: string | null },
     openid: string,
     msgId: string | null,
-    msgSeq: number
+    msgSeq: number,
+    signal?: AbortSignal
   ): Promise<string | null> {
     const fallbackText =
       part.type === 'sticker' ? String(part.meta?.stickerMeaning ?? '') : media.transcript?.trim() ?? '';
     if (!fallbackText) return null;
-    const sent = await this.deps.client.sendC2cTextMessage({ openid, content: fallbackText, msgId, msgSeq: msgId ? msgSeq : undefined });
+    const sent = await this.deps.client.sendC2cTextMessage({ openid, content: fallbackText, msgId, msgSeq: msgId ? msgSeq : undefined, signal });
     return sent.messageId;
   }
 
-  private classifyFailure(error: unknown, row: ChannelDeliveryRow, messageId: string): QqDeliveryStatus {
+  private classifyFailure(error: unknown, row: ChannelDeliveryRow, messageId: string, traceId?: string): QqDeliveryStatus {
     const apiError = error instanceof QqApiError ? error : null;
     const code =
       apiError?.errCode !== null && apiError?.errCode !== undefined
@@ -187,7 +189,11 @@ export class QqDeliveryService {
     this.deps.deliveries.markRetry(row.id, code, summary, attempts + 1);
     const nextRetryAt = this.deps.deliveries.getById(row.id)!.next_retry_at!;
     // 重新入队 durable job：runAfter 让 Worker 到期再拉；DB 侧 next_retry_at 兜底。
-    this.deps.jobs.enqueue('qq.deliver', { messageId, conversationId: row.external_conversation_id }, { runAfter: nextRetryAt, maxAttempts: 1 });
+    this.deps.jobs.enqueue(
+      'qq.deliver',
+      { messageId, conversationId: row.external_conversation_id, flowTraceId: traceId },
+      { runAfter: nextRetryAt }
+    );
     this.deps.metrics?.record('qq', 'outbound.retry');
     return 'retry';
   }

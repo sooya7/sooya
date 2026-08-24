@@ -17,6 +17,7 @@ import { STICKER_CONTEXT_VISION_MAX_IMAGES } from './stickers/constants.js';
 import type { WorldSnapshot } from './world-context.js';
 import type { FutureContextService } from './future/context.js';
 import type { RelationshipContextService } from './relationship/service.js';
+import { sourceLines, type ContextSourcePipeline } from './context-pipeline.js';
 
 export interface BuiltContext {
   system: string;
@@ -94,7 +95,8 @@ export class ContextBuilder {
     private readonly timeZone = 'Asia/Shanghai',
     private readonly worldSnapshot?: () => WorldSnapshot,
     private readonly future?: FutureContextService,
-    private readonly relationship?: RelationshipContextService
+    private readonly relationship?: RelationshipContextService,
+    private readonly pipeline?: ContextSourcePipeline
   ) {}
 
   memoryRecallTrace(): MemoryRecallTrace {
@@ -104,6 +106,9 @@ export class ContextBuilder {
   async build(persona: Persona, latestUserText: string, opts: ContextOptions): Promise<BuiltContext> {
     const recent = mergeContextMessages(this.messages.recent(opts.recentMessages), opts.batchMessageIds?.map((id) => this.messages.get(id)).filter((message): message is ChatMessage => Boolean(message)) ?? []);
     const activeSummaries = this.summaries.active(4);
+    const lastUserAt = lastUserMessageAt(recent, opts.batchMessageIds);
+    const pipelineFragments = this.pipeline ? await this.pipeline.collect({ persona, latestUserText, recent, now: new Date(), lastUserAt }) : [];
+    const linesFrom = (sourceId: string, legacy: () => string[]): string[] => sourceLines(this.pipeline, pipelineFragments, sourceId, legacy);
 
     const recallQuery = latestUserText || recent.map(plainText).join('\n').slice(-500);
     const recall: RecallResult = this.memory
@@ -116,7 +121,10 @@ export class ContextBuilder {
     // 这是一对一私聊。上下文里的摘要是 `用户: …` 这种转录格式，模型看了会跟着
     // 在回复开头加名牌，所以明确禁掉一次；万一还是加了，replier 会再剥一层。
     systemParts.push('你们是一对一私聊，不是群聊。直接说话，回复开头不要加「名字：」这类前缀，也不要复述对方的名字当标签。');
-    const city = this.worldSnapshot?.().city;
+    const worldCity = this.pipeline
+      ? pipelineFragments.find((fragment) => fragment.sourceId === 'world')?.metadata?.city as WorldSnapshot['city'] | undefined
+      : this.worldSnapshot?.().city;
+    const city = worldCity;
     if (city?.name) {
       const place = [city.country ?? '中国', city.region, city.name].filter(Boolean).join('');
       systemParts.push(`你当前所在城市是${place}。涉及“附近”“当地”“今天去哪”等本地问题时，以该城市为范围；不要编造具体地址。`);
@@ -171,8 +179,8 @@ export class ContextBuilder {
      * (or Ombre recall) line that merely restates it is suppressed instead of
      * being injected twice. Cheap lexical tiers only — no embeddings here.
      */
-    const futureLines = this.future?.contextLines() ?? [];
-    const relationshipLines = this.relationship?.contextLines() ?? [];
+    const futureLines = linesFrom('future', () => this.future?.contextLines() ?? []);
+    const relationshipLines = linesFrom('relationship', () => this.relationship?.contextLines() ?? []);
     const auxLines = [...relationshipLines, ...futureLines];
     const memoryLines = deduped.matches
       .filter((match) => {
@@ -252,7 +260,7 @@ export class ContextBuilder {
      * the software can do. Keeping them separate is what stopped the world
      * engine's frozen "语音不可用" rows from being treated as personality.
      */
-    const lifeLinesList = this.life?.contextLines(lastUserMessageAt(recent, opts.batchMessageIds)) ?? [];
+    const lifeLinesList = linesFrom('life', () => this.life?.contextLines(lastUserAt) ?? []);
     let lifeLines = 0;
     if (lifeLinesList.length > 0) {
       const before = systemParts.length;

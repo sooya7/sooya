@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import type BetterSqlite3 from 'better-sqlite3';
-import { MIGRATIONS, LATEST_VERSION } from './migrations.js';
+import { MIGRATIONS, LATEST_VERSION } from './migrations/index.js';
 import { ensureDirSync } from '../util/fsx.js';
 
 export type Db = BetterSqlite3.Database;
@@ -371,4 +371,3 @@ export function nextSeq(db: Pick<Db, 'prepare'>, name: 'message_seq' | 'event_se
   if (!row) throw new Error(`counter ${name} missing`);
   return row.value;
 }
-

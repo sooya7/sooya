@@ -1,9 +1,8 @@
-import { FormEvent, Fragment, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MetricsSummary } from './MetricsSummary.js';
 import { ApiError } from '../lib/api.js';
 import { useAutoNotice } from '../lib/autoNotice.js';
 import { navigate, APP_NAVIGATION_EVENT } from '../lib/navigation.js';
-import { AppLink } from './AppLink.js';
 import { formatAdminDateTime } from '../lib/adminDisplay.js';
 import { featureApi } from '../lib/features.js';
 import { AvatarEditor, emotionLabel, ReferencesEditor, StorageEditor } from './FeatureAdminPage.js';
@@ -12,6 +11,9 @@ import { WebSearchModelEditor } from './WebSearchModelEditor.js';
 import { McpAdminPage } from './admin/McpAdminPage.js';
 import { ContentManagementPage } from './admin/ContentManagementPage.js';
 import { QqAdminPage } from './admin/QqAdminPage.js';
+import { Icon } from './admin/AdminNavigation.js';
+import { AdminShell } from './admin/AdminShell.js';
+import { PAGE_COPY, adminPathForTab, isContentSubroute, tabFromAdminPath, type Tab } from './admin/admin-types.js';
 import {
   interfaceOptions,
   MODEL_SLOTS,
@@ -46,19 +48,9 @@ import {
   type AdminWebSearchConfig
 } from '../lib/admin.js';
 
-export type Tab =
-  | 'overview'
-  | 'persona'
-  | 'avatar'
-  | 'life'
-  | 'models'
-  | 'mcp'
-  | 'content'
-  | 'storage'
-  | 'operations'
-  | 'qq';
+export type { Tab } from './admin/admin-types.js';
+
 type Dashboard = { system: AdminSystemStatus; capabilities: AdminCapabilities; backups: AdminBackup[] };
-type IconName = 'overview' | 'persona' | 'models' | 'mcp' | 'content' | 'operations' | 'message' | 'cpu' | 'storage' | 'backup' | 'lock';
 
 const CAPABILITIES = [
   ['chat', '聊天模型'],
@@ -75,68 +67,6 @@ const CAPABILITY_DESCRIPTIONS: Partial<Record<ModelPanelSelection, string>> = {
   director: '媒体导演统一负责表情选择、语音口语化和图片提示词扩写；未单独配置时回退聊天模型。它处理短结构化文本，不负责读图。'
 };
 type ModelPanelSelection = ModelSlot | 'webSearch';
-
-/** Nav groups, so nine sections read as a structure instead of a list. */
-const NAV_GROUPS = ['运行状态', '助手与表达', '内容与系统'] as const;
-type NavGroup = (typeof NAV_GROUPS)[number];
-
-const TABS: ReadonlyArray<{ id: Tab; label: string; description: string; icon: IconName; group: NavGroup }> = [
-  { group: '运行状态', id: 'overview', label: '概览', description: '运行状态与资源', icon: 'overview' },
-  { group: '助手与表达', id: 'persona', label: '助手配置', description: '人设与表达方式', icon: 'persona' },
-  { group: '内容与系统', id: 'models', label: '模型配置', description: '接口与能力模型', icon: 'models' },
-  { group: '助手与表达', id: 'avatar', label: '双方头像', description: '助手与用户头像', icon: 'persona' },
-  { group: '助手与表达', id: 'life', label: '她的生活', description: '此刻在做什么与主动开口', icon: 'message' },
-  { group: '内容与系统', id: 'content', label: '内容管理', description: '记忆、媒体和表情', icon: 'content' },
-  { group: '内容与系统', id: 'mcp', label: 'MCP 服务', description: '连接、工具与策略观测', icon: 'mcp' },
-  { group: '内容与系统', id: 'storage', label: '存储治理', description: '清理与空间回收', icon: 'storage' },
-  { group: '内容与系统', id: 'operations', label: '运维与备份', description: '任务、错误和备份', icon: 'operations' },
-  { group: '运行状态', id: 'qq', label: 'QQ 通道', description: '官方 Bot 通道与投递状态', icon: 'message' }
-];
-
-export function adminPathForTab(tab: Tab): string {
-  return tab === 'content' ? '/admin/content/memory' : `/admin/${tab}`;
-}
-
-export function tabFromAdminPath(pathname: string, fallback: Tab = 'overview'): Tab {
-  const normalized = pathname.replace(/\/+$/, '') || '/admin';
-  if (normalized === '/admin/features') return 'avatar';
-  const segment = normalized.split('/')[2] as Tab | undefined;
-  return segment && TABS.some((item) => item.id === segment) ? segment : fallback;
-}
-
-function isContentSubroute(pathname: string): boolean {
-  return /^\/admin\/content\/(memory|stickers|media|chat)\/?$/u.test(pathname.replace(/\/+$/, ''));
-}
-
-const PAGE_COPY: Record<Tab, { title: string; description: string }> = {
-  mcp: { title: 'MCP 服务', description: '观察外部 MCP 连接和安全工具元数据。' },
-  overview: { title: '系统概览', description: '查看 SOOYA 当前运行状态和资源使用情况。' },
-  persona: { title: '助手配置', description: '调整助手身份、语气和说话方式。' },
-  models: { title: '模型配置', description: '管理每项能力对应的接口与模型。' },
-  avatar: { title: '双方头像', description: '上传助手与用户头像，聊天页面即时生效。' },
-  life: { title: '她的生活', description: '她此刻在做什么、今天做过什么，以及她为什么还没主动开口。' },
-  content: { title: '内容管理', description: '管理长期记忆、表情包、媒体和聊天记录。' },
-  storage: { title: '存储治理', description: '预览并执行媒体清理，回收磁盘空间。' },
-  operations: { title: '运维与备份', description: '检查错误与后台任务，并管理数据备份。' },
-  qq: { title: 'QQ 通道', description: 'QQ 官方 Bot 是唯一消息通道与出口；只显示状态摘要，Secret 永不显示。' }
-};
-
-function Icon({ name }: { name: IconName }) {
-  const paths: Record<IconName, JSX.Element> = {
-    mcp: <><circle cx="7" cy="12" r="3" /><circle cx="17" cy="7" r="3" /><circle cx="17" cy="17" r="3" /><path d="m9.5 10.5 5-2M9.5 13.5l5 2" /></>,
-    overview: <><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></>,
-    persona: <><circle cx="12" cy="8" r="4" /><path d="M4.8 21a7.2 7.2 0 0 1 14.4 0" /></>,
-    models: <><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" /></>,
-    content: <><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" /><path d="m7 15 3-3 2.5 2.5L15 12l3 3M8 9h.01" /></>,
-    operations: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4" /></>,
-    message: <><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-1-1.73V7a2 2 0 0 1 2-2Z" /><path d="M8 9h8M8 13h5" /></>,
-    cpu: <><rect x="6" y="6" width="12" height="12" rx="3" /><path d="M9 9h6v6H9zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" /></>,
-    storage: <><ellipse cx="12" cy="5.5" rx="8" ry="3.5" /><path d="M4 5.5v6c0 1.9 3.6 3.5 8 3.5s8-1.6 8-3.5v-6M4 11.5v6c0 1.9 3.6 3.5 8 3.5s8-1.6 8-3.5v-6" /></>,
-    backup: <><path d="M7 7h10a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4v-6a4 4 0 0 1 4-4Z" /><path d="M8 7V4h8v3M9 14h6M12 11v6" /></>,
-    lock: <><rect x="5" y="10" width="14" height="11" rx="3" /><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" /></>
-  };
-  return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
-}
 
 function formatBytes(value: unknown): string {
   const n = typeof value === 'number' ? value : 0;
@@ -222,10 +152,6 @@ function useIsMobile() {
     return () => query.removeEventListener('change', update);
   }, []);
   return isMobile;
-}
-
-function SectionNotice({ notice }: { notice: string | null }) {
-  return notice ? <div className="admin-inline-error" role="status">{notice}</div> : null;
 }
 
 function PanelHeading({ title, description }: { title: string; description: string }) {
@@ -1161,30 +1087,6 @@ function AvatarPanel({ onNotice }: { onNotice: (v: string) => void }) {
   return <AvatarEditor persona={persona} onPersona={setPersona} onNotice={onNotice} />;
 }
 
-function TabButtons({ tab, setTab, mobile }: { tab: Tab; setTab: (tab: Tab) => void; mobile: boolean }) {
-  return (
-    <nav className={mobile ? 'admin-mobile-tabs' : 'admin-side-nav'} aria-label="管理面板导航">
-      {mobile
-        ? TABS.map((item) => (
-          <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
-            {item.label}
-          </button>
-        ))
-        : NAV_GROUPS.map((group) => (
-          <Fragment key={group}>
-            <p className="admin-nav-group">{group}</p>
-            {TABS.filter((item) => item.group === group).map((item) => (
-              <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
-                <span className="admin-nav-icon"><Icon name={item.icon} /></span>
-                <span className="admin-nav-copy"><strong>{item.label}</strong><small>{item.description}</small></span>
-              </button>
-            ))}
-          </Fragment>
-        ))}
-    </nav>
-  );
-}
-
 function Overview({ data, counts, onRefresh }: { data: Dashboard; counts: { available: number; total: number }; onRefresh: () => void }) {
   const db = data.system.database;
   const storage = data.system.storage;
@@ -1195,6 +1097,7 @@ function Overview({ data, counts, onRefresh }: { data: Dashboard; counts: { avai
     { label: '备份', value: `${data.backups.length} 份`, detail: `待处理任务 ${Number(db.pendingJobs ?? 0)}`, icon: 'backup' as const }
   ];
 
+  const policy = data.capabilities.policy;
   return <>
     <section className="admin-status-card" data-testid="admin-system-status">
       <div><span className="admin-health-dot" /><strong>运行正常</strong></div>
@@ -1204,6 +1107,17 @@ function Overview({ data, counts, onRefresh }: { data: Dashboard; counts: { avai
     </section>
     <section className="admin-summary">
       {tiles.map((tile) => <div className="admin-summary-tile" key={tile.label}><div className="admin-summary-top"><span>{tile.label}</span><span className="admin-summary-icon"><Icon name={tile.icon} /></span></div><strong>{tile.value}</strong><small>{tile.detail}</small></div>)}
+    </section>
+    <section className="admin-card admin-capability-policy" data-testid="admin-capability-policy">
+      <div className="admin-card-subtitle"><h2>能力策略</h2><span className="admin-count-badge">由组合策略计算</span></div>
+      <div className="admin-policy-grid">
+        <span>主动消息 <strong>{policy?.proactive?.enabled ? '已启用' : '已关闭'}</strong></span>
+        <span>QQ 出口 <strong>{policy?.messaging?.qqBot ? '已启用' : '已关闭'}</strong></span>
+        <span>未来事项 <strong>{policy?.continuity?.future ? '已启用' : '已关闭'}</strong></span>
+        <span>关系连续性 <strong>{policy?.continuity?.relationship ? '已启用' : '已关闭'}</strong></span>
+        <span>记忆写入 <strong>{policy?.memory?.write ? '已启用' : '已关闭'}</strong></span>
+        <span>世界上下文 <strong>{policy?.world?.enabled ? '已启用' : '已关闭'}</strong></span>
+      </div>
     </section>
     <MetricsSummary />
   </>;
@@ -1370,37 +1284,24 @@ export default function AdminPanel({ initialTab = 'overview' }: { initialTab?: T
                     ? <StorageEditor onNotice={setNotice} />
                     : <OperationsPanel onNotice={setNotice} />;
 
-  return (
-    <main className="admin-page admin-v2" data-testid="admin-dashboard" data-dirty={dirty || undefined} onInputCapture={(event) => {
+  const handleInputCapture = (event: FormEvent<HTMLElement>) => {
       const target = event.target as HTMLInputElement;
       if (target instanceof HTMLInputElement && target.type === 'file') return;
       if (target.closest('.admin-content-management, .admin-mcp-page, .admin-qq-page')) return;
       setDirtyState(true);
-    }} onSubmitCapture={() => setDirtyState(false)}>
-      <div className="admin-shell">
-        {!isMobile && <aside className="admin-sidebar">
-          <div className="admin-brand"><span className="admin-brand-mark">S</span><span className="admin-brand-copy"><strong>SOOYA</strong><small>管理中心</small></span></div>
-          <TabButtons tab={tab} setTab={navigateTab} mobile={false} />
-          <div className="admin-sidebar-footer">
-            <AppLink className="admin-side-action" href="/" data-testid="admin-return-chat" onClick={confirmRouteLeave}>返回对话</AppLink>
-            <button type="button" className="admin-side-action subtle" onClick={logout}>退出管理</button>
-          </div>
-        </aside>}
+  };
 
-        {isMobile && <header className="admin-mobile-header"><div className="admin-mobile-brand"><span className="admin-mobile-icon"><Icon name={TABS.find((item) => item.id === tab)?.icon ?? 'overview'} /></span><div><strong>SOOYA 管理中心</strong><small>{page.title}</small></div></div><AppLink className="admin-return" href="/" data-testid="admin-return-chat" onClick={confirmRouteLeave}>返回对话</AppLink></header>}
-
-        <section className="admin-main">
-          <div className="admin-main-inner">
-            {isMobile && <TabButtons tab={tab} setTab={navigateTab} mobile />}
-            {!isMobile && <header className="admin-content-header"><div className="admin-title-wrap"><span className="admin-eyebrow">SOOYA ADMIN</span><h1>{page.title}</h1><p>{page.description}</p></div></header>}
-            <div className="admin-mobile-content">
-              {isMobile && <div className="admin-mobile-title"><h1>{page.title}</h1><p>{page.description}</p></div>}
-              <SectionNotice notice={notice} />
-              {content}
-            </div>
-          </div>
-        </section>
-      </div>
-    </main>
-  );
+  return <AdminShell
+    tab={tab}
+    page={page}
+    isMobile={isMobile}
+    dirty={dirty}
+    notice={notice}
+    content={content}
+    onTabChange={navigateTab}
+    onReturn={confirmRouteLeave}
+    onLogout={logout}
+    onInputCapture={handleInputCapture}
+    onSubmitCapture={() => setDirtyState(false)}
+  />;
 }

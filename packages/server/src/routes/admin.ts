@@ -552,7 +552,8 @@ export function registerAdminRoutes(app: SooyaApp): void {
 
   server.get('/api/admin/capabilities', guard, async () => ({
     capabilities: await services.capabilities.statuses(),
-    embeddingDimensions: services.capabilities.embeddingDimensions()
+    embeddingDimensions: services.capabilities.embeddingDimensions(),
+    policy: services.capabilityPolicy
   }));
 
   server.put('/api/admin/tts', guard, async (req, reply) => {

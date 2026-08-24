@@ -49,7 +49,10 @@ export function registerQqRoutes(app: SooyaApp): void {
     }
 
     app.services.metrics?.record?.('qq', 'inbound.received');
-    await qq.handleDispatch(payload);
+    const trace = app.services.flowTrace.start('user_reply', eventId, 'qq.webhook.received', {
+      eventType: payload.t ?? 'dispatch'
+    });
+    await qq.handleDispatch(payload, trace.traceId);
     // 无论事件是否真正被消费，都回 op 12 确认收到；未消费的重复事件走 channel_event 幂等。
     return { op: QQ_OP_ACK };
   });

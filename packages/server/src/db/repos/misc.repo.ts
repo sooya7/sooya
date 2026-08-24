@@ -132,29 +132,50 @@ export interface JobRow {
 }
 
 export class JobRepo {
+  private readonly jobDefinitions = new Map<string, number>();
+
   constructor(private readonly db: DbLike) {}
 
+  registerJobDefinition(type: string, maxAttempts: number): void {
+    this.jobDefinitions.set(type, maxAttempts);
+  }
+
   enqueue(type: string, payload: Record<string, unknown>, opts: { maxAttempts?: number; runAfter?: string; priority?: number } = {}): JobRow {
+    if (this.jobDefinitions.size > 0 && !this.jobDefinitions.has(type)) {
+      throw new Error(`unknown job type: ${type}`);
+    }
     const id = newJobId();
     const ts = nowIso();
     const priority = Math.max(0, Math.min(100, Math.trunc(opts.priority ?? priorityForJob(type))));
+    const maxAttempts = opts.maxAttempts ?? this.jobDefinitions.get(type) ?? 3;
     this.db
       .prepare(
         `INSERT INTO jobs(id, type, payload_json, status, attempts, max_attempts, created_at, updated_at, run_after, priority)
          VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)`
       )
-      .run(id, type, JSON.stringify(payload), opts.maxAttempts ?? 3, ts, ts, opts.runAfter ?? null, priority);
+      .run(id, type, JSON.stringify(payload), maxAttempts, ts, ts, opts.runAfter ?? null, priority);
     return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as JobRow;
   }
 
-  claimNext(): JobRow | undefined {
+  claimNext(types?: readonly string[], excludeTypes?: readonly string[]): JobRow | undefined {
+    if (types && types.length === 0) return undefined;
     const tx = this.db.transaction(() => {
+      const clauses = ["status = 'pending'", '(run_after IS NULL OR run_after <= ?)'];
+      const params: unknown[] = [nowIso()];
+      if (types) {
+        clauses.push(`type IN (${types.map(() => '?').join(', ')})`);
+        params.push(...types);
+      }
+      if (excludeTypes && excludeTypes.length > 0) {
+        clauses.push(`type NOT IN (${excludeTypes.map(() => '?').join(', ')})`);
+        params.push(...excludeTypes);
+      }
       const row = this.db
         .prepare(
-          `SELECT * FROM jobs WHERE status = 'pending' AND (run_after IS NULL OR run_after <= ?)
+          `SELECT * FROM jobs WHERE ${clauses.join(' AND ')}
            ORDER BY priority DESC, created_at ASC, id ASC LIMIT 1`
         )
-        .get(nowIso()) as JobRow | undefined;
+        .get(...params) as JobRow | undefined;
       if (!row) return undefined;
       this.db
         .prepare("UPDATE jobs SET status = 'running', attempts = attempts + 1, updated_at = ? WHERE id = ?")
@@ -168,10 +189,10 @@ export class JobRepo {
     this.db.prepare("UPDATE jobs SET status = 'done', updated_at = ?, last_error = NULL WHERE id = ?").run(nowIso(), id);
   }
 
-  fail(id: string, error: string): void {
+  fail(id: string, error: string, opts: { retryable?: boolean } = {}): void {
     const row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as JobRow | undefined;
     if (!row) return;
-    const status = row.attempts >= row.max_attempts ? 'failed' : 'pending';
+    const status = opts.retryable === false || row.attempts >= row.max_attempts ? 'failed' : 'pending';
     const runAfter = status === 'pending' ? new Date(Date.now() + 2000 * row.attempts).toISOString() : null;
     this.db
       .prepare('UPDATE jobs SET status = ?, last_error = ?, updated_at = ?, run_after = ? WHERE id = ?')

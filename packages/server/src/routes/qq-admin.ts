@@ -80,7 +80,7 @@ export function registerQqAdminRoutes(app: SooyaApp): void {
       reply.code(409);
       return { error: 'not_retryable', message: '只有失败或退避中的投递可以手动重试' };
     }
-    repos.jobs.enqueue('qq.deliver', { messageId: row.message_id, conversationId: row.external_conversation_id }, { maxAttempts: 1 });
+    repos.jobs.enqueue('qq.deliver', { messageId: row.message_id, conversationId: row.external_conversation_id });
     return { deliveryId: row.id, status: 'pending' };
   });
 

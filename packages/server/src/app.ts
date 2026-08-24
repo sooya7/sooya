@@ -7,6 +7,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import type { Logger } from 'pino';
 import { loadEnv, type AppEnv } from './config/env.js';
+import { createCapabilityPolicy, type CapabilityPolicy } from './config/capabilities.js';
 import { createLogger } from './util/logger.js';
 import { createProxyFetch } from './util/proxyFetch.js';
 import { closeDatabase, openDatabase, reconcileCounters } from './db/index.js';
@@ -21,14 +22,9 @@ import { EpisodeRepo } from './db/repos/episode.repo.js';
 import { TimelineService } from './core/timeline/service.js';
 import { InteractionOutcomeRepo } from './db/repos/interaction-outcome.repo.js';
 import { AuthTokenRepo } from './db/repos/auth-token.repo.js';
-import { registerTokenAdminRoutes } from './routes/token-admin.js';
 import { lightRateLimit } from './util/rate-limit.js';
 import { FeedbackService } from './core/feedback/service.js';
-import { registerLearningAdminRoutes } from './routes/learning-admin.js';
-import { registerProviderHealthAdminRoutes } from './routes/provider-health-admin.js';
-import { registerTimelineAdminRoutes } from './routes/timeline-admin.js';
 import { RelationshipService, RelationshipContextService } from './core/relationship/service.js';
-import { registerRelationshipAdminRoutes } from './routes/relationship-admin.js';
 import { OmbreCommitRepo } from './db/repos/ombre.repo.js';
 import { StickerRepo } from './db/repos/sticker.repo.js';
 import { ErrorLogRepo, EventRepo, JobRepo, SettingsRepo, SummaryRepo } from './db/repos/misc.repo.js';
@@ -49,6 +45,7 @@ import { MediaDirector } from './core/mediaDirector.js';
 import { ImageContinuityService } from './core/image-continuity.js';
 import { MemoryService } from './core/memory.js';
 import { ContextBuilder } from './core/context.js';
+import { createContextSourcePipeline } from './core/context-pipeline.js';
 import { Summarizer } from './core/summarizer.js';
 import { Replier } from './core/replier.js';
 import { isSafeApplicationError, publicFailure, redactDiagnostic } from './core/public-error.js';
@@ -80,12 +77,14 @@ import { MessageIngressService } from './core/message-ingress.js';
 import { ChannelEventRepo } from './db/repos/channel-event.repo.js';
 import { ChannelIdentityRepo } from './db/repos/channel-identity.repo.js';
 import { ChannelDeliveryRepo } from './db/repos/channel-delivery.repo.js';
+import { FlowTraceRepo } from './db/repos/flow-trace.repo.js';
 import { QqChannel } from './channels/qq/channel.js';
 import { qqBotConfigFromEnv } from './channels/qq/config.js';
 import { QqApiClient } from './channels/qq/client.js';
 import { QqDeliveryService } from './channels/qq/outbound.js';
 import { ProactiveComposer } from './core/proactive.js';
 import { StorageService } from './core/storage.js';
+import { FlowTraceService } from './core/flow-trace.js';
 import { maintenanceCoordinator } from './core/maintenance.js';
 import { WebSearchRegistry } from './core/web-search/registry.js';
 import { EventBus } from './events/bus.js';
@@ -101,15 +100,11 @@ import { loadMcpConfig } from './mcp/config.js';
 import { McpManager } from './mcp/manager.js';
 import { OmbreMemoryBridge } from './core/ombre-memory.js';
 import { OmbreAdminService } from './core/ombre-admin.js';
-import { registerQqRoutes } from './routes/qq.js';
-import { registerQqAdminRoutes } from './routes/qq-admin.js';
-import { registerMediaRoutes } from './routes/media.js';
-import { registerHealthRoutes } from './routes/health.js';
-import { registerAdminRoutes } from './routes/admin.js';
-import { registerFutureAdminRoutes } from './routes/future-admin.js';
-import { registerFeatureRoutes } from './routes/features.js';
-import { registerLifeAdminRoutes } from './routes/life-admin.js';
+import { registerAdminModule } from './routes/admin/index.js';
+import { registerFeatureRoutes } from './routes/features/index.js';
 import { ensureDirSync, cleanupTempFiles } from './util/fsx.js';
+import { createRuntime } from './bootstrap/create-runtime.js';
+import { createRepositories, type AppRepositories } from './bootstrap/create-repositories.js';
 
 export interface BuildAppOptions {
   env?: Partial<NodeJS.ProcessEnv>;
@@ -134,39 +129,7 @@ export interface SooyaApp {
   env: AppEnv;
   db: DbHandle;
   config: ConfigStore;
-  repos: {
-    messages: MessageRepo;
-    media: MediaRepo;
-    mediaText: MediaTextRepo;
-    memories: MemoryRepo;
-    commitments: CommitmentRepo;
-    relationshipThreads: RelationshipThreadRepo;
-    episodes: EpisodeRepo;
-    interactionOutcomes: InteractionOutcomeRepo;
-    authTokens: AuthTokenRepo;
-    ombreCommits: OmbreCommitRepo;
-    stickers: StickerRepo;
-    summaries: SummaryRepo;
-    jobs: JobRepo;
-    settings: SettingsRepo;
-    events: EventRepo;
-    errors: ErrorLogRepo;
-    life: LifeRepo;
-    proactive: ProactiveAttemptRepo;
-    moments: MomentRepo;
-    voice: VoiceGenerationRepo;
-    lifeV2: LifeV2Repo;
-    locations: LifeLocationRepo;
-    weather: WeatherRepo;
-    metrics: MetricsRepo;
-    thoughts: ThoughtRepo;
-    audit: AuditRepo;
-    storageSamples: StorageSampleRepo;
-    replyBatches: ReplyBatchRepo;
-    channelEvents: ChannelEventRepo;
-    channelIdentities: ChannelIdentityRepo;
-    channelDeliveries: ChannelDeliveryRepo;
-  };
+  repos: AppRepositories;
   services: {
     mediaStore: MediaStore;
     mediaVariants: ImageVariantService;
@@ -215,6 +178,8 @@ export interface SooyaApp {
     ingress: MessageIngressService;
     qq: QqChannel;
     qqDelivery: QqDeliveryService;
+    flowTrace: FlowTraceService;
+    capabilityPolicy: CapabilityPolicy;
   };
   state: {
     startedAt: string;
@@ -255,57 +220,11 @@ export function staticCacheControl(filePath: string): string {
 }
 
 export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
-  const env = loadEnv({ ...process.env, ...opts.env } as NodeJS.ProcessEnv);
-  const logger = opts.logger ?? createLogger({ level: env.LOG_LEVEL, logDir: env.NODE_ENV === 'test' ? null : env.logDir, pretty: env.NODE_ENV === 'development' });
-
-  // Outbound proxy for provider calls when the host cannot reach the vendor
-  // directly (SOOYA_HTTP_PROXY=socks5h://127.0.0.1:8082 for Fish from a CN
-  // host). Node's native fetch ignores HTTPS_PROXY, so the providers receive
-  // this implementation through the injectable fetchImpl seam instead.
-  const directFetchImpl = opts.fetchImpl ?? fetch;
-  const fetchImpl = env.SOOYA_HTTP_PROXY ? createProxyFetch(env.SOOYA_HTTP_PROXY) : directFetchImpl;
-
-  for (const dir of [env.dataDir, env.dbDir, env.mediaDir, env.backupDir, env.logDir, ...Object.values(env.mediaDirs)]) ensureDirSync(dir);
-
-  const dbFile = path.join(env.dbDir, 'sooya.db');
-  const opened = openDatabase({ file: dbFile, backupDir: env.backupDir, onLog: (level, msg, extra) => logger[level]({ ...extra }, msg) });
-  const dbHandle = new DbHandle(opened.db);
-  const config = new ConfigStore({ configDir: env.configDir, env: { ...process.env, ...opts.env } as NodeJS.ProcessEnv, onLog: (level, msg, extra) => logger[level]({ ...extra }, msg) });
-
-  const mediaText = new MediaTextRepo(dbHandle);
-  const repos = {
-    messages: new MessageRepo(dbHandle, mediaText),
-    media: new MediaRepo(dbHandle),
-    mediaText,
-    memories: new MemoryRepo(dbHandle),
-    commitments: new CommitmentRepo(dbHandle),
-    relationshipThreads: new RelationshipThreadRepo(dbHandle),
-    episodes: new EpisodeRepo(dbHandle),
-    interactionOutcomes: new InteractionOutcomeRepo(dbHandle),
-    authTokens: new AuthTokenRepo(dbHandle),
-    ombreCommits: new OmbreCommitRepo(dbHandle),
-    stickers: new StickerRepo(dbHandle),
-    summaries: new SummaryRepo(dbHandle),
-    jobs: new JobRepo(dbHandle),
-    settings: new SettingsRepo(dbHandle),
-    events: new EventRepo(dbHandle),
-    errors: new ErrorLogRepo(dbHandle),
-    life: new LifeRepo(dbHandle),
-    proactive: new ProactiveAttemptRepo(dbHandle),
-    moments: new MomentRepo(dbHandle),
-    voice: new VoiceGenerationRepo(dbHandle),
-    lifeV2: new LifeV2Repo(dbHandle),
-    locations: new LifeLocationRepo(dbHandle),
-    weather: new WeatherRepo(dbHandle),
-    metrics: new MetricsRepo(dbHandle),
-    thoughts: new ThoughtRepo(dbHandle),
-    audit: new AuditRepo(dbHandle),
-    storageSamples: new StorageSampleRepo(dbHandle),
-    replyBatches: new ReplyBatchRepo(dbHandle),
-    channelEvents: new ChannelEventRepo(dbHandle),
-    channelIdentities: new ChannelIdentityRepo(dbHandle),
-    channelDeliveries: new ChannelDeliveryRepo(dbHandle)
-  };
+  const runtime = createRuntime({ env: opts.env, logger: opts.logger, fetchImpl: opts.fetchImpl });
+  const { env, logger, directFetchImpl, fetchImpl, dbFile, dbHandle, opened, config } = runtime;
+  const capabilityPolicy = createCapabilityPolicy(env);
+  const repos = createRepositories(dbHandle);
+  const flowTrace = new FlowTraceService(repos.flowTraces);
 
   const mediaStore = new MediaStore(env.mediaDirs, repos.media, { maxUploadBytes: env.MAX_UPLOAD_BYTES });
   const mediaVariants = new ImageVariantService(env.mediaDirs.variants, (message, id) => repos.errors.add('media.variant', message, { id }));
@@ -399,7 +318,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     repo: repos.commitments,
     analyzer: new PostTurnSemanticAnalyzer({
       provider: capabilities.summaryProvider(),
-      relationshipEnabled: env.RELATIONSHIP_CONTEXT_ENABLED,
+      relationshipEnabled: capabilityPolicy.continuity.relationship,
       errors: repos.errors
     }),
     timeZone: env.LIFE_TIME_ZONE,
@@ -449,7 +368,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     clock: opts.clock
   });
   future.attachRelationship(
-    env.RELATIONSHIP_CONTEXT_ENABLED
+    capabilityPolicy.continuity.relationship
       ? {
           consume: (output, ctx) => relationship.consume(output, ctx),
           contextThreads: relationshipRepoView.contextThreads
@@ -575,6 +494,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   voiceService.dailyAutoCap = env.VOICE_DAILY_AUTO_CAP;
 
+  const contextPipeline = createContextSourcePipeline({
+    life: capabilityPolicy.proactive.lifeCandidates ? life : undefined,
+    future: capabilityPolicy.continuity.future ? futureContext : undefined,
+    relationship: capabilityPolicy.continuity.relationship ? relationshipContext : undefined,
+    worldSnapshot: () => world.snapshot()
+  });
   const context = new ContextBuilder(
     repos.messages,
     repos.summaries,
@@ -587,8 +512,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     env.ENABLE_LIFE_ENGINE ? life : undefined,
     env.LIFE_TIME_ZONE,
     () => world.snapshot(),
-    env.FUTURE_ENGINE_ENABLED ? futureContext : undefined,
-    env.RELATIONSHIP_CONTEXT_ENABLED ? relationshipContext : undefined
+    capabilityPolicy.continuity.future ? futureContext : undefined,
+    capabilityPolicy.continuity.relationship ? relationshipContext : undefined,
+    contextPipeline
   );
   const summarizer = new Summarizer(repos.messages, repos.summaries, capabilities, repos.errors, {
     triggerMessages: env.SUMMARY_TRIGGER_MESSAGES,
@@ -658,22 +584,29 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     errorLog: repos.errors,
     metrics,
     thoughts,
+    flowTrace,
     onCompleted: (batchId, userMessages, outcome, owner, revision) => {
+      const flowTraceId = userMessages
+        .map((message) => message.meta?.flowTraceId)
+        .find((value): value is string => typeof value === 'string' && value.length > 0);
       // The batch is already marked completed by the coordinator (revision-
       // fenced); this hook only enqueues the downstream jobs atomically.
       const tx = dbHandle.transaction(() => {
-        if (!env.DISABLE_MEMORY_PIPELINE) {
-repos.jobs.enqueue(
-          env.MEMORY_BACKEND === 'ombre' ? 'ombre.memory_commit' : 'memory.extract',
-          { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId }
-        );
-      }
+        if (capabilityPolicy.memory.write) {
+          repos.jobs.enqueue(
+            env.MEMORY_BACKEND === 'ombre' ? 'ombre.memory_commit' : 'memory.extract',
+            { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId }
+          );
+        }
       // QQ 单通道（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8.2/§16）：回复完成后入队
       // durable qq.deliver，由 outbox 负责幂等/重试。
       if (qqConfig.enabled) {
-        repos.jobs.enqueue('qq.deliver', { messageId: outcome.messageId });
+        repos.jobs.enqueue('qq.deliver', { messageId: outcome.messageId, ...(flowTraceId ? { flowTraceId } : {}) });
+        flowTrace?.stage(flowTraceId, 'qq.delivery.queued', 'running', { messageId: outcome.messageId });
+      } else {
+        flowTrace?.finish(flowTraceId, 'ok', { destination: 'web' });
       }
-      if (env.FUTURE_ENGINE_ENABLED) {
+      if (capabilityPolicy.continuity.future) {
         repos.jobs.enqueue('future.analyze', {
           batchId,
           revision,
@@ -684,7 +617,7 @@ repos.jobs.enqueue(
       if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
       // Life conversation bridge (§49-50): extracted as a durable job; the
       // handler re-checks the revision so only the final one applies.
-      if (env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_V2) {
+      if (capabilityPolicy.proactive.lifeCandidates && env.ENABLE_LIFE_V2) {
           repos.jobs.enqueue('life.conversation', {
             batchId,
             revision,
@@ -710,6 +643,7 @@ repos.jobs.enqueue(
     config,
     mediaStore,
     replyCoordinator,
+    flowTrace,
     replyOptions: { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }
   });
 
@@ -726,6 +660,7 @@ repos.jobs.enqueue(
     maxAttachmentBytes: env.MAX_UPLOAD_BYTES,
     errors: repos.errors,
     metrics
+    ,flowTrace
   });
 
   const qqApi = new QqApiClient(qqConfig, { fetchImpl });
@@ -763,10 +698,11 @@ repos.jobs.enqueue(
     toolRuntime,
     jobs: repos.jobs,
     deliveries: repos.channelDeliveries,
-    qqDeliveryEnabled: qqConfig.enabled,
+    qqDeliveryEnabled: capabilityPolicy.proactive.qqDelivery,
     commitments: repos.commitments,
-    futureProactiveEnabled: env.FUTURE_ENGINE_ENABLED && env.FUTURE_PROACTIVE_ENABLED,
+    futureProactiveEnabled: capabilityPolicy.proactive.futureCandidates,
     feedbackWeight: (kind: string) => feedback.weightFor(kind)
+    ,flowTrace
   });
   const backups = new BackupService({
     db: () => dbHandle,
@@ -810,15 +746,16 @@ repos.jobs.enqueue(
     stickerRepo: repos.stickers,
     stickerUserMeaning,
     config,
-    reachOutEnabled: env.ENABLE_LIFE_ENGINE && env.ENABLE_LIFE_REACH_OUT,
+    reachOutEnabled: capabilityPolicy.proactive.lifeCandidates,
     storage,
     mediaText: repos.mediaText,
     future,
-    relationship: env.RELATIONSHIP_CONTEXT_ENABLED ? relationship : undefined,
+    relationship: capabilityPolicy.continuity.relationship ? relationship : undefined,
     timeline: env.TIMELINE_ENABLED ? timeline : undefined,
     feedback,
     tmpDirs: [env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files, env.dbDir],
-    qqDelivery
+    qqDelivery,
+    flowTrace
   });
 
   const agents = new AgentRegistry();
@@ -978,7 +915,7 @@ repos.jobs.enqueue(
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, future, futureContext, relationship, relationshipContext, timeline, feedback, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, future, futureContext, relationship, relationshipContext, timeline, feedback, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery, flowTrace, capabilityPolicy },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -1009,22 +946,11 @@ repos.jobs.enqueue(
   repos.channelDeliveries.recoverInFlight();
   replyCoordinator.recover({ recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });
 
-  registerHealthRoutes(app);
-  registerQqRoutes(app);
   lightRateLimit(app.server, {
     '/api/qq': { limit: 300, windowMs: 60_000 },
     '/api/admin': { limit: 240, windowMs: 60_000 }
   });
-  registerAdminRoutes(app);
-  registerFutureAdminRoutes(app);
-  registerRelationshipAdminRoutes(app);
-  registerTimelineAdminRoutes(app);
-  registerLearningAdminRoutes(app);
-  registerProviderHealthAdminRoutes(app);
-  registerTokenAdminRoutes(app);
-  registerQqAdminRoutes(app);
-  registerMediaRoutes(app);
-  registerLifeAdminRoutes(app);
+  registerAdminModule(app);
   registerFeatureRoutes(app);
 
   const configuredWebDir = env.webDir;
@@ -1089,7 +1015,13 @@ function scheduleRecurring(app: SooyaApp): void {
     if (!env.QQ_BOT_ENABLED) return;
     try {
       for (const row of repos.channelDeliveries.dueNow('qq', 20)) {
-        repos.jobs.enqueue('qq.deliver', { messageId: row.message_id }, { runAfter: row.next_retry_at ?? undefined, maxAttempts: 1 });
+        const message = repos.messages.get(row.message_id);
+        const flowTraceId = typeof message?.meta?.flowTraceId === 'string' ? message.meta.flowTraceId : undefined;
+        repos.jobs.enqueue(
+          'qq.deliver',
+          { messageId: row.message_id, ...(flowTraceId ? { flowTraceId } : {}) },
+          { runAfter: row.next_retry_at ?? undefined }
+        );
       }
     } catch { /* best effort */ }
   };

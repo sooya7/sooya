@@ -1710,6 +1710,27 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 47,
+    name: 'flow_traces',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE flow_traces (
+          trace_id      TEXT PRIMARY KEY,
+          kind          TEXT NOT NULL CHECK (kind IN ('user_reply','proactive')),
+          source_id     TEXT,
+          status        TEXT NOT NULL CHECK (status IN ('running','ok','failed','blocked','cancelled')),
+          current_stage TEXT,
+          stages_json   TEXT NOT NULL DEFAULT '[]',
+          started_at    TEXT NOT NULL,
+          updated_at    TEXT NOT NULL,
+          completed_at  TEXT
+        );
+        CREATE INDEX idx_flow_traces_updated ON flow_traces(updated_at DESC);
+        CREATE INDEX idx_flow_traces_source ON flow_traces(kind, source_id, started_at DESC);
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

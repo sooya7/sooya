@@ -74,16 +74,16 @@ export class QqApiClient {
   }
 
   /** 获取（缓存）access_token；过期前 300s 提前刷新。 */
-  async getAccessToken(): Promise<string> {
+  async getAccessToken(signal?: AbortSignal): Promise<string> {
     const now = this.clock().getTime();
     if (this.token && this.token.expiresAt > now) return this.token.value;
-    const token = await this.fetchToken();
+    const token = await this.fetchToken(signal);
     this.token = token;
     return token.value;
   }
 
-  private async fetchToken(): Promise<CachedToken> {
-    const response = await this.post(this.baseUrl + QQ_TOKEN_URL, { appId: this.config.appId, clientSecret: this.config.appSecret }, {});
+  private async fetchToken(signal?: AbortSignal): Promise<CachedToken> {
+    const response = await this.post(this.baseUrl + QQ_TOKEN_URL, { appId: this.config.appId, clientSecret: this.config.appSecret }, {}, signal);
     const accessToken = response.json.access_token;
     const expiresIn = Number(response.json.expires_in ?? 0);
     if (typeof accessToken !== 'string' || accessToken.length === 0 || !Number.isFinite(expiresIn) || expiresIn <= 0) {
@@ -103,6 +103,7 @@ export class QqApiClient {
     content: string;
     msgId?: string | null;
     msgSeq?: number;
+    signal?: AbortSignal;
   }): Promise<{ messageId: string }> {
     const response = await this.post(
       `${this.baseUrl}/v2/users/${encodeURIComponent(input.openid)}/messages`,
@@ -111,7 +112,8 @@ export class QqApiClient {
         content: input.content,
         ...(input.msgId ? { msg_id: input.msgId, msg_seq: input.msgSeq ?? 1 } : {})
       },
-      { authorization: `QQBot ${await this.getAccessToken()}` }
+      { authorization: `QQBot ${await this.getAccessToken(input.signal)}` },
+      input.signal
     );
     if (response.httpStatus === 200 && (response.json.err_code === undefined || response.json.err_code === 0)) {
       const messageId = typeof response.json.id === 'string' ? response.json.id : '';
@@ -143,6 +145,7 @@ export class QqApiClient {
     fileType: 1 | 2 | 3 | 4;
     bytes: Buffer;
     filename?: string;
+    signal?: AbortSignal;
   }): Promise<{ fileUuid: string; fileInfo: string; ttl: number }> {
     const response = await this.post(
       `${this.baseUrl}/v2/users/${encodeURIComponent(input.openid)}/files`,
@@ -153,7 +156,8 @@ export class QqApiClient {
         file_data: input.bytes.toString('base64'),
         ...(input.filename ? { filename: input.filename } : {})
       },
-      { authorization: `QQBot ${await this.getAccessToken()}` }
+      { authorization: `QQBot ${await this.getAccessToken(input.signal)}` },
+      input.signal
     );
     const fileUuid = typeof response.json.file_uuid === 'string' ? response.json.file_uuid : '';
     const fileInfo = typeof response.json.file_info === 'string' ? response.json.file_info : '';
@@ -177,6 +181,7 @@ export class QqApiClient {
     fileInfo: string;
     msgId?: string | null;
     msgSeq?: number;
+    signal?: AbortSignal;
   }): Promise<{ messageId: string }> {
     const response = await this.post(
       `${this.baseUrl}/v2/users/${encodeURIComponent(input.openid)}/messages`,
@@ -185,7 +190,8 @@ export class QqApiClient {
         media: { file_uuid: input.fileUuid, file_info: input.fileInfo },
         ...(input.msgId ? { msg_id: input.msgId, msg_seq: input.msgSeq ?? 1 } : {})
       },
-      { authorization: `QQBot ${await this.getAccessToken()}` }
+      { authorization: `QQBot ${await this.getAccessToken(input.signal)}` },
+      input.signal
     );
     if (response.httpStatus === 200 && (response.json.err_code === undefined || response.json.err_code === 0)) {
       return { messageId: typeof response.json.id === 'string' ? response.json.id : '' };
@@ -205,10 +211,14 @@ export class QqApiClient {
     url: string,
     body: Record<string, unknown>,
     headers: Record<string, string>,
+    externalSignal?: AbortSignal,
     attempt = 0
   ): Promise<{ kind: QqApiErrorKind; httpStatus: number | null; json: Record<string, unknown> }> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const onExternalAbort = () => controller.abort(externalSignal?.reason);
+    if (externalSignal?.aborted) onExternalAbort();
+    else externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(new Error('qq api timeout')), this.timeoutMs);
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
@@ -218,10 +228,11 @@ export class QqApiClient {
         signal: controller.signal
       });
     } catch (error) {
-      const aborted = error instanceof Error && error.name === 'AbortError';
+      const aborted = controller.signal.aborted;
       throw new QqApiError(aborted ? 'timeout' : 'network', null, null, true, aborted ? 'qq api timeout' : 'qq api network error');
     } finally {
       clearTimeout(timer);
+      externalSignal?.removeEventListener('abort', onExternalAbort);
     }
     const text = await response.text();
     let json: Record<string, unknown> = {};
@@ -233,8 +244,8 @@ export class QqApiClient {
     // token 失效（401）时刷新一次并重试；仍失败则以最终状态为准。
     if (response.status === 401 && attempt === 0) {
       this.clearTokenCache();
-      const freshToken = await this.getAccessToken();
-      return this.post(url, body, { ...headers, authorization: `QQBot ${freshToken}` }, attempt + 1);
+      const freshToken = await this.getAccessToken(externalSignal);
+      return this.post(url, body, { ...headers, authorization: `QQBot ${freshToken}` }, externalSignal, attempt + 1);
     }
     return { kind: 'http', httpStatus: response.status, json };
   }
