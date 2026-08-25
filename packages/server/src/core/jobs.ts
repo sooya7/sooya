@@ -32,12 +32,17 @@ import type { FlowTraceService } from './flow-trace.js';
 import { JOB_PRIORITY } from './job-priority.js';
 import { nowIso } from '../util/ids.js';
 import { LANE_CONFIG } from './jobs/lanes.js';
-import { executeWithContract } from './jobs/executor.js';
+import { executeWithContract, isAbortError, JobTimeoutError } from './jobs/executor.js';
 import { JobRegistry } from './jobs/registry.js';
-import type { JobContract, JobContext, JobDefinition, JobHandler, JobLane, JobTimeoutMode } from './jobs/types.js';
+import type { JobContract, JobContext, JobDefinition, JobHandler, JobLane, JobSlowInfo, JobTimeoutMode } from './jobs/types.js';
 
-export type { JobContract, JobContext, JobDefinition, JobHandler, JobLane, JobTimeoutMode } from './jobs/types.js';
+export type { JobContract, JobContext, JobDefinition, JobHandler, JobLane, JobSlowInfo, JobTimeoutMode } from './jobs/types.js';
 export const STICKER_MAINTENANCE_BATCH = 8;
+
+export interface JobWorkerOptions {
+  intervalMs?: number;
+  onSlowJob?: (info: JobSlowInfo) => void;
+}
 
 /**
  * Persisted in-process workers with independent execution lanes.
@@ -54,21 +59,36 @@ export class JobWorker {
   private readonly registry = new JobRegistry();
   private readonly active = new Map<JobLane, Map<string, Promise<void>>>();
   private readonly controllers = new Map<string, AbortController>();
+  private slowJobObserver?: (info: JobSlowInfo) => void;
 
   constructor(
     private readonly repo: JobRepo,
     private readonly errorLog: ErrorLogRepo,
-    private readonly opts: { intervalMs?: number } = {}
-  ) {}
+    private readonly opts: JobWorkerOptions = {}
+  ) {
+    this.slowJobObserver = opts.onSlowJob;
+  }
 
   register(type: string, handler: JobHandler, contract: Partial<JobContract> = {}): void {
+    this.assertAbortContract(type, contract.timeoutMode, contract.cancellable);
     this.registry.register(type, handler, contract);
     this.syncEnqueuePolicy();
   }
 
   registerDefinition(definition: JobDefinition): void {
+    this.assertAbortContract(definition.type, definition.timeoutMode, definition.cancellable);
     this.registry.registerDefinition(definition);
     this.syncEnqueuePolicy();
+  }
+
+  setSlowJobObserver(observer: ((info: JobSlowInfo) => void) | undefined): void {
+    this.slowJobObserver = observer;
+  }
+
+  private assertAbortContract(type: string, timeoutMode: JobTimeoutMode | undefined, cancellable: boolean | undefined): void {
+    if (timeoutMode === 'abort' && cancellable !== true) {
+      throw new Error(`job ${type} uses timeoutMode=abort without cancellable=true`);
+    }
   }
 
   private syncEnqueuePolicy(): void {
@@ -102,10 +122,13 @@ export class JobWorker {
     }
     for (const controller of this.controllers.values()) controller.abort();
     const deadline = Date.now() + 10_000;
-    while (this.controllers.size > 0 && Date.now() < deadline) {
+    while (Date.now() < deadline) {
+      const tasks = [...this.active.values()].flatMap((jobs) => [...jobs.values()]);
+      if (tasks.length === 0) break;
+      const remainingMs = Math.max(1, Math.min(50, deadline - Date.now()));
       await Promise.race([
-        Promise.allSettled([...this.active.values()].flatMap((jobs) => [...jobs.values()])),
-        new Promise((resolve) => setTimeout(resolve, 50))
+        Promise.allSettled(tasks),
+        new Promise((resolve) => setTimeout(resolve, remainingMs))
       ]);
     }
   }
@@ -134,7 +157,7 @@ export class JobWorker {
       for (const lane of Object.keys(LANE_CONFIG) as JobLane[]) {
         const active = this.activeFor(lane);
         const types = this.registry.typesForLane(lane);
-        while (active.size < LANE_CONFIG[lane].concurrency) {
+        while (!this.stopped && active.size < LANE_CONFIG[lane].concurrency) {
           // Unregistered rows are treated as background poison pills. They are
           // still surfaced and failed instead of starving known lanes forever.
           const job = this.repo.claimNext(types.length > 0 ? types : undefined, types.length > 0 ? undefined : this.registry.allTypes());
@@ -176,7 +199,14 @@ export class JobWorker {
       lane: definition.lane,
       attempt: job.attempts,
       signal: controller.signal,
-      cancel: () => controller.abort()
+      cancel: () => controller.abort(),
+      onTimeout: ({ timeoutMs, elapsedMs }) => this.reportSlowJob({
+        jobId: job.id,
+        type: job.type,
+        lane: definition.lane,
+        timeoutMs,
+        elapsedMs
+      })
     };
     try {
       await executeWithContract(definition, payload, context);
@@ -187,9 +217,19 @@ export class JobWorker {
         ? definition.timeoutMode === 'abort' && definition.retryable
         : definition.retryable;
       this.repo.fail(job.id, error.message, { retryable });
-      this.errorLog.add(`job.${job.type}`, error.message);
+      if (!(isAbortError(error, context.signal) && !(error instanceof JobTimeoutError))) {
+        this.errorLog.add(`job.${job.type}`, error.message);
+      }
     } finally {
       this.controllers.delete(job.id);
+    }
+  }
+
+  private reportSlowJob(info: JobSlowInfo): void {
+    try {
+      this.slowJobObserver?.(info);
+    } catch {
+      // Observability must never alter job completion or lane ownership.
     }
   }
 }
@@ -229,6 +269,8 @@ export interface JobDeps {
 }
 
 export function registerDefaultJobs(worker: JobWorker, deps: JobDeps): void {
+  worker.setSlowJobObserver((info) => deps.bus.publish('job.slow', { ...info }));
+
   worker.register('media.extract_text', async (payload) => {
     const mediaId = String(payload.mediaId ?? '');
     if (!mediaId) return;
