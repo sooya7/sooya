@@ -42,6 +42,12 @@ async function sendSticker(mediaId: string, stickerId: string) {
   });
 }
 
+function latestUserContent(): string {
+  const body = harness!.state.chatCalls.at(-1)!.body as { messages?: Array<{ role?: string; content?: unknown }> };
+  const user = [...(body.messages ?? [])].reverse().find((message) => message.role === 'user');
+  return JSON.stringify(user?.content ?? null);
+}
+
 describe('current sticker vision privacy', () => {
   it('sends the current sticker image without private semantic metadata when vision is available', async () => {
     harness = await createHarness({ skipStickerImport: true, vision: true });
@@ -51,14 +57,14 @@ describe('current sticker vision privacy', () => {
     expect(response.statusCode).toBe(200);
     expect(harness.state.chatCalls.length).toBeGreaterThan(0);
 
-    const request = JSON.stringify(harness.state.chatCalls.at(-1)!.body);
-    expect(request).toContain('image_url');
-    expect(request).toContain('[用户发送了表情包]');
-    expect(request).not.toContain('内部视觉描述绝对不能出现在当前表情包提示里');
-    expect(request).not.toContain('内部图片文字');
-    expect(request).not.toContain('内部用户用法');
-    expect(request).not.toContain('含义：');
-    expect(request).not.toContain('图片文字：');
+    const content = latestUserContent();
+    expect(content).toContain('image_url');
+    expect(content).toContain('[用户发送了表情包]');
+    expect(content).not.toContain('内部视觉描述绝对不能出现在当前表情包提示里');
+    expect(content).not.toContain('内部图片文字');
+    expect(content).not.toContain('内部用户用法');
+    expect(content).not.toContain('含义：');
+    expect(content).not.toContain('图片文字：');
   });
 
   it('keeps semantic text as the fallback when the chat model cannot see images', async () => {
@@ -68,9 +74,9 @@ describe('current sticker vision privacy', () => {
     const response = await sendSticker(media.id, sticker.id);
     expect(response.statusCode).toBe(200);
 
-    const request = JSON.stringify(harness.state.chatCalls.at(-1)!.body);
-    expect(request).not.toContain('image_url');
-    expect(request).toContain('内部视觉描述绝对不能出现在当前表情包提示里');
-    expect(request).toContain('内部图片文字');
+    const content = latestUserContent();
+    expect(content).not.toContain('image_url');
+    expect(content).toContain('内部视觉描述绝对不能出现在当前表情包提示里');
+    expect(content).toContain('内部图片文字');
   });
 });
