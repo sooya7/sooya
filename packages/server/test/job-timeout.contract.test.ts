@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { QqApiClient } from '../src/channels/qq/client.js';
-import { executeWithContract, JobTimeoutError } from '../src/core/jobs/executor.js';
+import { executeWithContract, isAbortError, JobTimeoutError } from '../src/core/jobs/executor.js';
 import type { JobContext, JobDefinition } from '../src/core/jobs/types.js';
 
 const context = (signal: AbortSignal, cancel?: () => void): JobContext => ({
@@ -46,11 +46,20 @@ describe('job timeout and cancellation contracts', () => {
       retryable: true,
       cancellable: false,
       timeoutMode: 'observe',
-      execute: async () => new Promise<void>(() => undefined)
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
     };
 
-    await expect(executeWithContract(definition, {}, context(controller.signal, () => controller.abort()))).rejects.toMatchObject({ mode: 'observe' });
+    const result = await executeWithContract(definition, {}, context(controller.signal, () => controller.abort()));
+    expect(result).toMatchObject({ timedOut: true, timeoutMode: 'observe' });
     expect(controller.signal.aborted).toBe(false);
+  });
+
+  it('normalizes abort-shaped provider errors in one helper', () => {
+    expect(isAbortError(new DOMException('aborted', 'AbortError'))).toBe(true);
+    expect(isAbortError({ kind: 'timeout' })).toBe(true);
+    expect(isAbortError(new Error('ordinary provider failure'))).toBe(false);
   });
 
   it('passes the job abort signal into the real QQ fetch request', async () => {
