@@ -45,12 +45,17 @@ describe('execution lanes', () => {
     const row = harness.app.repos.jobs.enqueue('qq.deliver', {});
     expect(row.max_attempts).toBe(1);
     expect(() => harness.app.repos.jobs.enqueue('not-registered', {})).toThrow(/unknown job type/);
+    expect(() => harness.app.services.worker.register('invalid.abort.contract', async () => undefined, {
+      timeoutMode: 'abort'
+    })).toThrow(/cancellable=true/);
   });
 
   it('a contract timeout fails the job without waiting forever', async () => {
     harness = await createHarness({ startWorkers: false });
-    harness.app.services.worker.register('test.timeout', async () => new Promise<void>(() => undefined), {
-      lane: 'background', timeoutMs: 20, maxAttempts: 1
+    harness.app.services.worker.register('test.timeout', async (_payload, context) => new Promise<void>((_resolve, reject) => {
+      context.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+    }), {
+      lane: 'background', timeoutMs: 20, maxAttempts: 1, cancellable: true, timeoutMode: 'abort'
     });
     harness.app.repos.jobs.enqueue('test.timeout', {}, { maxAttempts: 1 });
     await harness.app.services.worker.drain(1);

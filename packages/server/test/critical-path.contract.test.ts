@@ -37,8 +37,10 @@ describe('critical user-path contracts', () => {
   it('C9: a provider timeout is persisted as a visible failed job', async () => {
     harness = await createHarness({ startWorkers: false });
     const worker = new JobWorker(harness.app.repos.jobs, harness.app.repos.errors, { intervalMs: 5 });
-    worker.register('contract.provider.timeout', async () => new Promise<void>(() => undefined), {
-      lane: 'background', timeoutMs: 15, maxAttempts: 1, retryable: false, cancellable: true
+    worker.register('contract.provider.timeout', async (_payload, context) => new Promise<void>((_resolve, reject) => {
+      context.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+    }), {
+      lane: 'background', timeoutMs: 15, maxAttempts: 1, retryable: false, cancellable: true, timeoutMode: 'abort'
     });
     const row = harness.app.repos.jobs.enqueue('contract.provider.timeout', {}, { maxAttempts: 1 });
     await worker.drain(1);
