@@ -63,6 +63,6 @@ log "downloading $REMOTE_ROOT/$NAME"
 ( cd "$STAGE" && sha256sum -c "$NAME.sha256" ) >/dev/null || die "downloaded backup failed checksum verification"
 
 RESTORE_SCRIPT="$BASE_DIR/current/deploy/restore-backup.sh"
-[[ -x "$RESTORE_SCRIPT" ]] || die "restore script not executable: $RESTORE_SCRIPT"
+[[ -f "$RESTORE_SCRIPT" ]] || die "restore script not found: $RESTORE_SCRIPT"
 log "checksum verified; starting SOOYA restore"
-exec "$RESTORE_SCRIPT" --file "$ARCHIVE" --dir "$BASE_DIR"
+exec bash "$RESTORE_SCRIPT" --file "$ARCHIVE" --dir "$BASE_DIR"

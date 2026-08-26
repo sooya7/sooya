@@ -60,11 +60,11 @@ RCLONE=(rclone --config "$RCLONE_CONFIG")
 "${RCLONE[@]}" listremotes | grep -Fxq "$REMOTE_NAME:" || die "rclone remote '$REMOTE_NAME' is not configured"
 
 BACKUP_SCRIPT="$BASE_DIR/current/deploy/backup.sh"
-[[ -x "$BACKUP_SCRIPT" ]] || die "backup script not executable: $BACKUP_SCRIPT"
+[[ -f "$BACKUP_SCRIPT" ]] || die "backup script not found: $BACKUP_SCRIPT"
 mkdir -p "$LOCAL_DIR"
 
 log "creating verified local backup"
-"$BACKUP_SCRIPT" --dir "$BASE_DIR" --out "$LOCAL_DIR" --keep "$LOCAL_KEEP"
+bash "$BACKUP_SCRIPT" --dir "$BASE_DIR" --out "$LOCAL_DIR" --keep "$LOCAL_KEEP"
 
 ARCHIVE="$(ls -1t "$LOCAL_DIR"/sooya-backup-*.tar.gz 2>/dev/null | head -1 || true)"
 [[ -n "$ARCHIVE" && -f "$ARCHIVE" ]] || die "backup script did not produce an archive"
