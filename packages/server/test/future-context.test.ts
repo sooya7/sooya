@@ -89,11 +89,14 @@ describe('ContextBuilder integration (§10/§11)', () => {
       embedding: 'off',
       env: { FUTURE_ENGINE_ENABLED: 'true', MEMORY_BACKEND: 'legacy' }
     });
-    // An exam two days out; the future line names its weekday, which the
-    // restating memory echoes — that shared entity is what makes the pair a
-    // duplicate regardless of the real clock the test runs under.
+    // An exam two days out; the future line and the restating memory must use
+    // the same configured timezone when naming the weekday. Using Date#getDay
+    // here made the fixture disagree with Asia/Shanghai around UTC day edges.
     const target = new Date(Date.now() + 2 * 86_400_000);
-    const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][target.getDay()];
+    const weekday = new Intl.DateTimeFormat('zh-CN', {
+      weekday: 'short',
+      timeZone: h.app.env.LIFE_TIME_ZONE
+    }).format(target);
     h.app.repos.commitments.ingest({
       kind: 'user_event',
       subject: 'user',
