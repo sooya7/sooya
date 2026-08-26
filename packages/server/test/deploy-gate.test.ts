@@ -17,7 +17,16 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = join(__dirname, '..', '..', '..');
-const scripts = ['auto-update.sh', 'upgrade.sh', 'rollback.sh', 'backup.sh', 'install.sh'];
+const scripts = [
+  'auto-update.sh',
+  'upgrade.sh',
+  'rollback.sh',
+  'backup.sh',
+  'install.sh',
+  'gdrive-backup.sh',
+  'gdrive-restore.sh',
+  'setup-gdrive-backup.sh'
+];
 
 describe('deploy scripts', () => {
   for (const name of scripts) {
