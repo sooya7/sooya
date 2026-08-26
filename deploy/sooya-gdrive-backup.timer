@@ -1,0 +1,12 @@
+[Unit]
+Description=Run SOOYA Google Drive backup every 6 hours
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=6h
+Persistent=true
+RandomizedDelaySec=10min
+Unit=sooya-gdrive-backup.service
+
+[Install]
+WantedBy=timers.target

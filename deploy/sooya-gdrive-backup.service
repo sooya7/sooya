@@ -1,0 +1,13 @@
+[Unit]
+Description=SOOYA verified backup to Google Drive
+After=network-online.target sooya.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/opt/sooya/shared/gdrive-backup.env
+ExecStart=/opt/sooya/current/deploy/gdrive-backup.sh --dir /opt/sooya
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
