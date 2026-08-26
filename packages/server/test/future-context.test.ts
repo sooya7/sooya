@@ -85,7 +85,10 @@ describe('ContextBuilder integration (§10/§11)', () => {
   };
 
   it('injects the future section and suppresses memory lines that restate it (§10.4)', async () => {
-    h = await createHarness({ embedding: 'off', env: { FUTURE_ENGINE_ENABLED: 'true' } });
+    h = await createHarness({
+      embedding: 'off',
+      env: { FUTURE_ENGINE_ENABLED: 'true', MEMORY_BACKEND: 'legacy' }
+    });
     // An exam two days out; the future line names its weekday, which the
     // restating memory echoes — that shared entity is what makes the pair a
     // duplicate regardless of the real clock the test runs under.
@@ -104,9 +107,9 @@ describe('ContextBuilder integration (§10/§11)', () => {
     const memoryText = `用户最近很重视${weekday}的考试`;
     const restating = h.app.repos.memories.upsert({ kind: 'project', content: memoryText, sourceMessageId: 'seed' }).record;
 
-    // With embeddings disabled this path intentionally exercises FTS recall.
-    // Query with the fixture fact itself so the test checks Future-vs-memory
-    // deduplication, not tokenizer-dependent recall of an unrelated phrase.
+    // This assertion is about the legacy-memory/Future dedupe contract, so the
+    // harness explicitly selects that backend instead of the production Ombre
+    // default. Query with the fixture fact itself to make FTS recall stable.
     const built = await h.app.services.context.build(h.app.config.getPersona(), memoryText, options);
     expect(built.system).toContain('接下来值得记得的事情');
     expect(built.futureLines).toBe(1);
