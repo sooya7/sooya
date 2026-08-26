@@ -101,9 +101,13 @@ describe('ContextBuilder integration (§10/§11)', () => {
       sourceMessageId: 'seed',
       timeZone: h.app.env.LIFE_TIME_ZONE
     });
-    const restating = h.app.repos.memories.upsert({ kind: 'project', content: `用户最近很重视${weekday}的考试`, sourceMessageId: 'seed' }).record;
+    const memoryText = `用户最近很重视${weekday}的考试`;
+    const restating = h.app.repos.memories.upsert({ kind: 'project', content: memoryText, sourceMessageId: 'seed' }).record;
 
-    const built = await h.app.services.context.build(h.app.config.getPersona(), '考试加油', options);
+    // With embeddings disabled this path intentionally exercises FTS recall.
+    // Query with the fixture fact itself so the test checks Future-vs-memory
+    // deduplication, not tokenizer-dependent recall of an unrelated phrase.
+    const built = await h.app.services.context.build(h.app.config.getPersona(), memoryText, options);
     expect(built.system).toContain('接下来值得记得的事情');
     expect(built.futureLines).toBe(1);
     // §10.4: exactly one current statement of the exam fact — the Future
