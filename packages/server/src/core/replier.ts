@@ -480,8 +480,7 @@ export class Replier {
 
       const stripped = stripModelDirectives(rawText);
       const modelDirectives = stripped.directives;
-      const hasImageDirective = Object.prototype.hasOwnProperty.call(modelDirectives, 'imagePrompt')
-        || Object.prototype.hasOwnProperty.call(modelDirectives, 'selfImagePrompt');
+      const hasImageDirective = Boolean(modelDirectives.selfImagePrompt ?? modelDirectives.imagePrompt);
       const finalText = ensureVisualTimeReplyText(
         stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]),
         visualTime,

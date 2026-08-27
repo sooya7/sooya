@@ -116,4 +116,20 @@ describe('Replier visual-time planning', () => {
     expect(retrospectiveWithoutImage.visualTime.mode).toBe('retrospective');
     expect(retrospectiveWithoutImage.text).toBe('现在挺安静的。');
   });
+
+  it('does not claim a past image when a retrospective image directive has no prompt', async () => {
+    harness = await createHarness({
+      clock: () => new Date(NOW),
+      chat: { script: [['现在就是晚上。[[image:]]']] }
+    });
+
+    const generated = await harness.app.services.replier.generateText(
+      [userMessage('发一张晚上睡觉的照片')],
+      generationOptions()
+    );
+
+    expect(generated.visualTime.mode).toBe('retrospective');
+    expect(generated.directives.imagePrompt).toBeNull();
+    expect(generated.text).toBe('现在就是晚上。');
+  });
 });
