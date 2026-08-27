@@ -58,7 +58,8 @@ export function visualDayPeriodOfHour(hour: number): VisualDayPeriod {
 export function requestedVisualDayPeriod(text?: string): VisualDayPeriod | null {
   if (!text) return null;
   const value = text.toLowerCase();
-  if (/(凌晨|深夜|late[- ]?night|at night|night)/i.test(value)) return 'evening';
+  if (/(凌晨|深夜|late[- ]?night|late night)/i.test(value)) return 'late-night';
+  if (/(at night|night)/i.test(value)) return 'evening';
   if (/(早上|早晨|上午|清晨|morning)/i.test(value)) return 'morning';
   if (/(中午|午间|midday|noon)/i.test(value)) return 'midday';
   if (/(下午|afternoon)/i.test(value)) return 'afternoon';
@@ -67,7 +68,7 @@ export function requestedVisualDayPeriod(text?: string): VisualDayPeriod | null 
 }
 
 function hasPastWord(text: string): boolean {
-  return /(昨天|昨晚|前一天|yesterday|last night|the previous day)/i.test(text);
+  return /(昨天|昨晚|昨日|前一天|yesterday|last night|the previous day)/i.test(text);
 }
 
 function isSleepRetrospective(text: string): boolean {
@@ -96,7 +97,7 @@ export function resolveVisualTime(input: ResolveVisualTimeInput): VisualTimeCont
     mode = 'retrospective';
     depictedLocalDate = localDate(eventParts);
     depictedDayPeriod = visualDayPeriodOfHour(eventParts.hour);
-  } else if (validZone && (hasPastWord(text) || isSleepRetrospective(text))) {
+  } else if (validZone && (hasPastWord(text) || (isSleepRetrospective(text) && requestedDayPeriod !== currentDayPeriod))) {
     mode = 'retrospective';
     depictedLocalDate = addDaysLocalDate(currentLocalDate, -1);
     depictedDayPeriod = requestedDayPeriod ?? currentDayPeriod;
@@ -118,6 +119,6 @@ export function visualTimeMetadata(time: VisualTimeContext) {
 
 const CHINESE_PERIOD: Record<VisualDayPeriod, string> = { 'late-night': '凌晨', morning: '早上', midday: '中午', afternoon: '下午', evening: '晚上' };
 export function ensureVisualTimeReplyText(text: string, time: VisualTimeContext, hasImage: boolean): string {
-  if (!hasImage || time.mode !== 'retrospective' || /(昨天|昨晚|前一天|过去|曾经|yesterday|last night|previously|before)/i.test(text)) return text;
+  if (!hasImage || time.mode !== 'retrospective' || /(昨天|昨晚|昨日|前一天|过去|曾经|yesterday|last night|previously|before|earlier|以前)/i.test(text)) return text;
   return `现在还是${CHINESE_PERIOD[time.currentDayPeriod]}，不过昨天倒是有一张这种。`;
 }

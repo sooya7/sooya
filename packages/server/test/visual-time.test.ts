@@ -34,6 +34,16 @@ describe('visual time resolver', () => {
     });
   });
 
+  it('keeps sleep imagery current when the real clock is already evening', () => {
+    expect(resolveVisualTime({ now: '2026-08-26T12:30:00.000Z', timeZone: 'Asia/Shanghai', latestUserText: '晚上睡觉的照片' })).toMatchObject({
+      mode: 'current', depictedLocalDate: '2026-08-26', depictedDayPeriod: 'evening'
+    });
+  });
+
+  it.each(['凌晨', '深夜', 'late-night', 'late night'])('recognizes late-night request period: %s', (text) => {
+    expect(requestedVisualDayPeriod(text)).toBe('late-night');
+  });
+
   it('keeps an explicit night scenery request current', () => {
     expect(resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: '来一张夜景' })).toMatchObject({
       mode: 'current', depictedLocalDate: '2026-08-26', depictedDayPeriod: 'midday', requestedDayPeriod: 'evening'
@@ -68,6 +78,8 @@ describe('visual time resolver', () => {
     expect(visualTimeReplyInstruction(time)).toContain('真实时间不可被改写');
     expect(ensureVisualTimeReplyText('我给你一张照片。', time, true)).toBe('现在还是中午，不过昨天倒是有一张这种。');
     expect(ensureVisualTimeReplyText('昨天我给你一张照片。', time, true)).toBe('昨天我给你一张照片。');
+    expect(ensureVisualTimeReplyText('昨日倒是拍了一张。', time, true)).toBe('昨日倒是拍了一张。');
+    expect(ensureVisualTimeReplyText('I took this earlier.', time, true)).toBe('I took this earlier.');
     expect(ensureVisualTimeReplyText('我给你一张照片。', time, false)).toBe('我给你一张照片。');
     expect(visualDayPeriodLighting('evening')).toMatch(/English|warm|twilight|evening/i);
     expect(requestedVisualDayPeriod('再来一张')).toBeNull();
