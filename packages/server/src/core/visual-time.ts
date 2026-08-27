@@ -102,7 +102,7 @@ export function resolveVisualTime(input: ResolveVisualTimeInput): VisualTimeCont
     mode = 'retrospective';
     depictedLocalDate = addDaysLocalDate(currentLocalDate, -1);
     depictedDayPeriod = requestedDayPeriod ?? currentDayPeriod;
-  } else if (validZone && requestedDayPeriod && requestedDayPeriod !== currentDayPeriod && !/(夜景|夜间景|\bscene\b|\bscenery\b)/i.test(text)) {
+  } else if (validZone && requestedDayPeriod && requestedDayPeriod !== currentDayPeriod) {
     mode = 'retrospective';
     depictedLocalDate = addDaysLocalDate(currentLocalDate, -1);
     depictedDayPeriod = requestedDayPeriod;
@@ -126,8 +126,5 @@ export function visualTimeMetadata(time: VisualTimeContext) {
 const CHINESE_PERIOD: Record<VisualDayPeriod, string> = { 'late-night': '凌晨', morning: '早上', midday: '中午', afternoon: '下午', evening: '晚上' };
 export function ensureVisualTimeReplyText(text: string, time: VisualTimeContext, hasImage: boolean): string {
   if (!hasImage || time.mode !== 'retrospective' || RETROSPECTIVE_WORDING_RE.test(text)) return text;
-  const relation = time.depictedLocalDate === time.currentLocalDate
-    ? '今天早些时候'
-    : time.depictedLocalDate === addDaysLocalDate(time.currentLocalDate, -1) ? '昨天' : '之前';
-  return `现在还是${CHINESE_PERIOD[time.currentDayPeriod]}，不过${relation}倒是有一张这种。`;
+  return `现在还是${CHINESE_PERIOD[time.currentDayPeriod]}，不过昨天倒是有一张这种。`;
 }

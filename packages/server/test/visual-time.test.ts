@@ -68,9 +68,9 @@ describe('visual time resolver', () => {
     expect(requestedVisualDayPeriod(text)).toBe('late-night');
   });
 
-  it('keeps an explicit night scenery request current', () => {
+  it('retrospects an explicit night scenery request when it conflicts with current time', () => {
     expect(resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: '来一张夜景' })).toMatchObject({
-      mode: 'current', depictedLocalDate: '2026-08-26', depictedDayPeriod: 'midday', requestedDayPeriod: 'evening'
+      mode: 'retrospective', depictedLocalDate: '2026-08-25', depictedDayPeriod: 'evening', requestedDayPeriod: 'evening'
     });
   });
 
@@ -116,8 +116,6 @@ describe('visual time resolver', () => {
     expect(visualTimeReplyInstruction(time)).toContain('Asia/Shanghai');
     expect(visualTimeReplyInstruction(time)).toContain('2026-08-25');
     expect(ensureVisualTimeReplyText('我给你一张照片。', time, true)).toBe('现在还是中午，不过昨天倒是有一张这种。');
-    expect(ensureVisualTimeReplyText('我给你一张照片。', { ...time, depictedLocalDate: '2026-08-26', depictedDayPeriod: 'morning' }, true)).toBe('现在还是中午，不过今天早些时候倒是有一张这种。');
-    expect(ensureVisualTimeReplyText('我给你一张照片。', { ...time, depictedLocalDate: '2026-08-24' }, true)).toBe('现在还是中午，不过之前倒是有一张这种。');
     expect(ensureVisualTimeReplyText('昨天我给你一张照片。', time, true)).toBe('昨天我给你一张照片。');
     expect(ensureVisualTimeReplyText('昨日倒是拍了一张。', time, true)).toBe('昨日倒是拍了一张。');
     expect(ensureVisualTimeReplyText('I took this earlier.', time, true)).toBe('I took this earlier.');
