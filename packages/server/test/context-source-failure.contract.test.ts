@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
+import { resolveVisualTime } from '../src/core/visual-time.js';
 
 let harness: Harness | null = null;
 
@@ -16,7 +17,8 @@ const options = {
   voiceMoods: '',
   capabilityNotes: [],
   contextWindow: 8_000,
-  maxOutputTokens: 1_000
+  maxOutputTokens: 1_000,
+  visualTime: resolveVisualTime({ now: '2026-08-26T05:17:23.000Z' })
 };
 
 describe('ContextSourcePipeline failure isolation', () => {

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
 import { prepareStickerVisionFrames } from '../src/media/sticker-vision.js';
+import { resolveVisualTime } from '../src/core/visual-time.js';
 
 let h: Harness | null = null;
 
@@ -41,7 +42,8 @@ describe('Sticker V2 audit guards', () => {
       voiceMoods: '',
       capabilityNotes: [],
       contextWindow: 8192,
-      maxOutputTokens: 1000
+      maxOutputTokens: 1000,
+      visualTime: resolveVisualTime({ now: '2026-08-26T05:17:23.000Z' })
     });
     const imageCount = built.turns.flatMap((turn) => turn.content).filter((part) => part.type === 'image').length;
     expect(imageCount).toBe(2);

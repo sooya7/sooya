@@ -4,6 +4,7 @@ import { migrate } from '../src/db/index.js';
 import { CommitmentRepo } from '../src/db/repos/commitment.repo.js';
 import { FutureContextService } from '../src/core/future/context.js';
 import { createHarness, type Harness } from './helpers/harness.js';
+import { resolveVisualTime } from '../src/core/visual-time.js';
 
 const TZ = 'Asia/Shanghai';
 /** Saturday, 2026-08-22 15:30 local. */
@@ -81,7 +82,8 @@ describe('ContextBuilder integration (§10/§11)', () => {
     voiceMoods: '',
     capabilityNotes: [],
     contextWindow: 8_000,
-    maxOutputTokens: 1_000
+    maxOutputTokens: 1_000,
+    visualTime: resolveVisualTime({ now: NOW, timeZone: TZ })
   };
 
   it('injects the future section and suppresses memory lines that restate it (§10.4)', async () => {

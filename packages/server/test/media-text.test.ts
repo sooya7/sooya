@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
 import { extractText } from '../src/media/text-extractor.js';
+import { resolveVisualTime } from '../src/core/visual-time.js';
 
 let h: Harness | null = null;
 afterEach(async () => { if (h) await h.cleanup(); h = null; });
@@ -62,7 +63,7 @@ describe('file text extraction', () => {
     const row = await h.app.services.mediaStore.save({ kind: 'file', origin: 'upload', data: Buffer.from('正文'), declaredMime: 'text/plain', filename: 'note.txt' });
     h.app.repos.mediaText.upsert({ mediaId: row.id, status: 'pending' });
     h.app.repos.messages.create({ role: 'user', parts: [{ type: 'file', mediaId: row.id }] });
-    const options = { recentMessages: 10, memoryLimit: 0, allowVision: false, stickerCatalogue: '', voiceMoods: '', capabilityNotes: [], contextWindow: 8_000, maxOutputTokens: 1_000 };
+    const options = { recentMessages: 10, memoryLimit: 0, allowVision: false, stickerCatalogue: '', voiceMoods: '', capabilityNotes: [], contextWindow: 8_000, maxOutputTokens: 1_000, visualTime: resolveVisualTime({ now: '2026-08-26T05:17:23.000Z' }) };
 
     const pending = await h.app.services.context.build(h.app.config.getPersona(), '', options);
     expect(JSON.stringify(pending.turns)).toContain('正文正在解析');

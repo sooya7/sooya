@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseCandidates } from '../src/core/memory.js';
 import { createHarness, sendText, type Harness } from './helpers/harness.js';
+import { resolveVisualTime } from '../src/core/visual-time.js';
 
 const ADMIN = { 'x-admin-token': 'admin-memory-token' };
 const EXTRACT = (items: unknown) => JSON.stringify({ worth: true, items });
@@ -105,7 +106,8 @@ describe('memory context dedupe and observability', () => {
     voiceMoods: '',
     capabilityNotes: [],
     contextWindow: 8_000,
-    maxOutputTokens: 1_000
+    maxOutputTokens: 1_000,
+    visualTime: resolveVisualTime({ now: '2026-08-26T05:17:23.000Z' })
   };
 
   it('deduplicates persona, summary, memory and recent-message facts before injection', async () => {

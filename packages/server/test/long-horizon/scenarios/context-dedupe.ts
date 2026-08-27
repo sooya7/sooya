@@ -1,4 +1,5 @@
 import type { FutureHarness } from '../harness.js';
+import { resolveVisualTime } from '../../../src/core/visual-time.js';
 
 /**
  * §10.4 end-to-end: the memory pipeline stores the long-term meaning while
@@ -21,7 +22,8 @@ export async function contextDedupe(h: FutureHarness): Promise<void> {
     voiceMoods: '',
     capabilityNotes: [],
     contextWindow: 8_000,
-    maxOutputTokens: 1_000
+    maxOutputTokens: 1_000,
+    visualTime: resolveVisualTime({ now: '2026-08-26T05:17:23.000Z' })
   });
 
   if (!built.system.includes('接下来值得记得的事情')) throw new Error('future section missing');

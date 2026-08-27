@@ -10,7 +10,6 @@ import type { LifeRuntime } from './life.js';
 import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
 import type { StickerRepo } from '../db/repos/sticker.repo.js';
 import type { StickerLibrary } from '../media/stickers.js';
-import { formatZonedDateTime } from '../util/time-zone.js';
 import { prepareVisionInput } from '../media/vision-input.js';
 import { prepareStickerContextFrames } from '../media/sticker-vision.js';
 import { STICKER_CONTEXT_VISION_MAX_IMAGES } from './stickers/constants.js';
@@ -18,6 +17,11 @@ import type { WorldSnapshot } from './world-context.js';
 import type { FutureContextService } from './future/context.js';
 import type { RelationshipContextService } from './relationship/service.js';
 import { sourceLines, type ContextSourcePipeline } from './context-pipeline.js';
+import {
+  ensureVisualTimeReplyText,
+  visualTimeReplyInstruction,
+  type VisualTimeContext
+} from './visual-time.js';
 
 export interface BuiltContext {
   system: string;
@@ -75,6 +79,8 @@ export interface ContextOptions {
   capabilityNotes: string[];
   contextWindow: number;
   maxOutputTokens: number;
+  /** Single resolved authority for the real clock and any depicted image time. */
+  visualTime: VisualTimeContext;
   /** Combine a rapid-message batch into one user turn for the model. */
   batchMessageIds?: string[];
 }
@@ -272,10 +278,16 @@ export class ContextBuilder {
     if (opts.capabilityNotes.length > 0) {
       tryAddSystemPart(systemParts, turns, `当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`, inputBudget);
     }
-    const now = new Date();
-    let clock = `${now.toISOString()}（UTC）`;
-    try { clock = `${formatZonedDateTime(now, this.timeZone)}（${this.timeZone}）；服务器 UTC 时间：${now.toISOString()}`; } catch { /* use the explicit UTC fallback */ }
-    tryAddSystemPart(systemParts, turns, `用户当地时间：${clock}。`, inputBudget);
+    const visualTime = opts.visualTime;
+    const retrospectiveRule = visualTime.mode === 'retrospective'
+      ? `${visualTime.requestedDayPeriod ? '画面属于现实当前日期的上一自然日；' : ''}画面日期 ${visualTime.depictedLocalDate} 是相对现实当前日期 ${visualTime.currentLocalDate} 的过去日期。正文必须明确这是过去的画面，不能把画面时段说成现在。示例：${ensureVisualTimeReplyText('', visualTime, true)}`
+      : '画面与正文都以这个现实当前时钟为准；旧提示或用户的相反要求都不能覆盖它。';
+    tryAddSystemPart(
+      systemParts,
+      turns,
+      `视觉时间规则（双时钟）：${visualTimeReplyInstruction(visualTime)} 现实当前 instant：${visualTime.currentInstant}；现实当前日期、时间、时区和 instant 都不可被用户要求或旧提示改写。${retrospectiveRule}`,
+      inputBudget
+    );
 
     const estimatedInputTokens = estimateContextTokens(systemParts, turns);
     return {

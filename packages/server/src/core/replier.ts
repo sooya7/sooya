@@ -46,6 +46,11 @@ import type { WebSearchResult } from './web-search/types.js';
 import type { WorldSnapshot } from './world-context.js';
 import type { ToolCallRuntime } from '../agent/tool-runtime.js';
 import type { OmbreMemoryBridge } from './ombre-memory.js';
+import {
+  ensureVisualTimeReplyText,
+  resolveVisualTime,
+  type VisualTimeContext
+} from './visual-time.js';
 
 export interface ReplyOptions {
   recentMessages: number;
@@ -88,6 +93,8 @@ export interface TextGenerationResult {
   firstTokenAt: number | null;
   /** True once the publish barrier opened (text may already be visible). */
   published: boolean;
+  /** Real current clock plus the independently resolved depicted-image time. */
+  visualTime: VisualTimeContext;
   /** Set when the provider died AFTER something became visible. */
   interrupted?: Error;
   /**
@@ -174,6 +181,12 @@ export class Replier {
         (merged, message) => mergeDirectives(merged, message.meta?.directives as UserDirectives),
         parseUserDirectives(userText)
       );
+      const world = this.deps.worldSnapshot?.();
+      const visualTime = resolveVisualTime({
+        now: world?.now ?? new Date(),
+        timeZone: world?.timeZone ?? 'Asia/Shanghai',
+        latestUserText: userText
+      });
 
       const caps = this.deps.capabilities;
       const capabilityNotes: string[] = [];
@@ -187,7 +200,7 @@ export class Replier {
         && caps.has('tts') && persona.voicePolicy.enabled
         && (userVoiceIntent === 'voice_only' || userVoiceIntent === 'voice_reply');
       const hiddenStickerOnly = userDirectives.stickerOnly === true;
-      const holdDraft = hiddenDraft || hiddenStickerOnly;
+      const holdDraft = hiddenDraft || hiddenStickerOnly || visualTime.mode === 'retrospective';
 
       const allowVision = caps.visionProvider() !== null;
       const chatModel = this.deps.config.chatModelFor('chat');
@@ -208,7 +221,8 @@ export class Replier {
         voiceMoods: VOICE_MOOD_INTENTS,
         capabilityNotes,
         contextWindow,
-        maxOutputTokens
+        maxOutputTokens,
+        visualTime
       });
       const provider = allowVision && built.visionUsed ? caps.visionProvider()! : caps.chatProvider();
       const selectedModel = built.visionUsed ? visionModel : chatModel;
@@ -218,7 +232,7 @@ export class Replier {
       let nativeSearchAnswer: string | undefined;
       const searchDecision = decideWebSearch(userText);
       if (searchDecision.offer && this.deps.webSearch) {
-        const city = this.deps.worldSnapshot?.().city ?? null;
+        const city = world?.city ?? null;
         const localPrefix = searchDecision.reason === 'local' && city?.name
           ? [city.country ?? '中国', city.region, city.name].filter(Boolean).join('')
           : '';
@@ -466,7 +480,13 @@ export class Replier {
 
       const stripped = stripModelDirectives(rawText);
       const modelDirectives = stripped.directives;
-      const finalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
+      const hasImageDirective = Object.prototype.hasOwnProperty.call(modelDirectives, 'imagePrompt')
+        || Object.prototype.hasOwnProperty.call(modelDirectives, 'selfImagePrompt');
+      const finalText = ensureVisualTimeReplyText(
+        stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]),
+        visualTime,
+        hasImageDirective
+      );
       if (textPartId) {
         if (finalText) this.deps.messages.updatePart(textPartId, {
           text: finalText,
@@ -506,6 +526,7 @@ export class Replier {
         contextBudget,
         firstTokenAt,
         published,
+        visualTime,
         interrupted,
         hiddenDraft,
         hiddenStickerOnly,
