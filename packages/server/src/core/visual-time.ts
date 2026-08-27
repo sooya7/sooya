@@ -17,9 +17,9 @@ export interface VisualTimeContext {
 
 export interface ResolveVisualTimeInput {
   now: Date | string;
-  timeZone?: string;
-  latestUserText?: string;
-  eventAt?: Date | string | null;
+  timeZone?: string | null;
+  latestUserText?: string | null;
+  eventAt?: string | Date | null;
 }
 
 const RETROSPECTIVE_WORDING_RE = /(昨天|昨日|昨晚|昨夜|之前|当时|那天|前一晚|前一天|过去|曾经|以前|yesterday|last night|earlier|the previous day|previous day|previously)/i;
