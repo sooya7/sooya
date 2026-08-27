@@ -58,7 +58,7 @@ export function visualDayPeriodOfHour(hour: number): VisualDayPeriod {
 export function requestedVisualDayPeriod(text?: string): VisualDayPeriod | null {
   if (!text) return null;
   const value = text.toLowerCase();
-  if (/(凌晨|半夜|深夜|\bafter midnight\b|\blate[- ]night\b)/i.test(value)) return 'late-night';
+  if (/(凌晨|半夜|深夜|\bafter midnight\b|\blate[- ]night\b|\blate at night\b)/i.test(value)) return 'late-night';
   if (/(清晨|早晨|早上|上午|\bmorning\b)/i.test(value)) return 'morning';
   if (/(中午|午间|正午|\bnoon\b|\bmidday\b)/i.test(value)) return 'midday';
   if (/(下午|午后|\bafternoon\b)/i.test(value)) return 'afternoon';
@@ -71,7 +71,7 @@ function hasPastWord(text: string): boolean {
 }
 
 function isSleepRetrospective(text: string): boolean {
-  return /(睡觉|睡眠|sleep(?:ing)?)/i.test(text) && /(晚上|今晚|昨晚|夜间|night|evening)/i.test(text);
+  return /(睡觉|睡眠|sleep(?:ing)?)/i.test(text) && /(晚上|今晚|昨晚|夜间|凌晨|半夜|深夜|nighttime|bedtime|at night|evening|late at night|after midnight)/i.test(text);
 }
 
 export function resolveVisualTime(input: ResolveVisualTimeInput): VisualTimeContext {
@@ -125,6 +125,7 @@ export function visualTimeMetadata(time: VisualTimeContext) {
 
 const CHINESE_PERIOD: Record<VisualDayPeriod, string> = { 'late-night': '凌晨', morning: '早上', midday: '中午', afternoon: '下午', evening: '晚上' };
 export function ensureVisualTimeReplyText(text: string, time: VisualTimeContext, hasImage: boolean): string {
-  if (!hasImage || time.mode !== 'retrospective' || RETROSPECTIVE_WORDING_RE.test(text)) return text;
+  const imperativeEarlier = /^\s*earlier\s*,?\s*(generate|make|create|use)\b/i.test(text);
+  if (!hasImage || time.mode !== 'retrospective' || (RETROSPECTIVE_WORDING_RE.test(text) && !imperativeEarlier)) return text;
   return `现在还是${CHINESE_PERIOD[time.currentDayPeriod]}，不过昨天倒是有一张这种。`;
 }

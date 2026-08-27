@@ -83,6 +83,21 @@ describe('visual time resolver', () => {
     expect(requestedVisualDayPeriod('nightmare')).toBeNull();
     expect(requestedVisualDayPeriod('Before generating, use an evening scene')).toBe('evening');
     expect(resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: 'Before generating, use a photo' }).mode).toBe('current');
+    expect(ensureVisualTimeReplyText('Earlier, generate a photo.', resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: '晚上睡觉' }), true)).toBe('现在还是中午，不过昨天倒是有一张这种。');
+  });
+
+  it('does not treat nightmare as a sleep time request', () => {
+    expect(resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: 'sleeping nightmare' })).toMatchObject({ requestedDayPeriod: null, mode: 'current' });
+  });
+
+  it('recognizes bounded sleep night expressions', () => {
+    expect(resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: 'sleep photo at night' })).toMatchObject({ requestedDayPeriod: 'evening', mode: 'retrospective' });
+    expect(resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: 'sleep photo late at night' })).toMatchObject({ requestedDayPeriod: 'late-night', mode: 'retrospective' });
+    expect(resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: '深夜睡觉照片' })).toMatchObject({ requestedDayPeriod: 'late-night', mode: 'retrospective' });
+  });
+
+  it('accepts null optional inputs conservatively', () => {
+    expect(resolveVisualTime({ now: NOW, timeZone: null, latestUserText: null })).toMatchObject({ timeZone: 'Asia/Shanghai', currentLocalTime: '13:17:00', requestedDayPeriod: null, mode: 'current' });
   });
 
   it.each(['昨天的照片', '昨晚睡觉那种', 'a photo from yesterday', 'a photo from last night'])('moves explicit past wording to the previous local date: %s', (text) => {
