@@ -23,6 +23,7 @@ export interface ResolveVisualTimeInput {
 }
 
 const PERIODS: VisualDayPeriod[] = ['late-night', 'morning', 'midday', 'afternoon', 'evening'];
+const RETROSPECTIVE_WORDING_RE = /(昨天|昨日|昨晚|昨夜|之前|当时|那天|前一晚|前一天|过去|曾经|以前|yesterday|last night|earlier|the previous day|previous day|previously|before)/i;
 const LIGHTING: Record<VisualDayPeriod, string> = {
   'late-night': 'quiet low-key moonlight and cool blue ambient light',
   morning: 'soft warm morning sunlight with fresh, gentle shadows',
@@ -68,7 +69,7 @@ export function requestedVisualDayPeriod(text?: string): VisualDayPeriod | null 
 }
 
 function hasPastWord(text: string): boolean {
-  return /(昨天|昨晚|昨夜|昨日|那天|前一天|yesterday|last night|the previous day|previous day)/i.test(text);
+  return RETROSPECTIVE_WORDING_RE.test(text);
 }
 
 function isSleepRetrospective(text: string): boolean {
@@ -119,6 +120,6 @@ export function visualTimeMetadata(time: VisualTimeContext) {
 
 const CHINESE_PERIOD: Record<VisualDayPeriod, string> = { 'late-night': '凌晨', morning: '早上', midday: '中午', afternoon: '下午', evening: '晚上' };
 export function ensureVisualTimeReplyText(text: string, time: VisualTimeContext, hasImage: boolean): string {
-  if (!hasImage || time.mode !== 'retrospective' || /(昨天|昨晚|昨夜|昨日|那天|前一天|过去|曾经|yesterday|last night|the previous day|previous day|previously|before|earlier|以前)/i.test(text)) return text;
+  if (!hasImage || time.mode !== 'retrospective' || RETROSPECTIVE_WORDING_RE.test(text)) return text;
   return `现在还是${CHINESE_PERIOD[time.currentDayPeriod]}，不过昨天倒是有一张这种。`;
 }

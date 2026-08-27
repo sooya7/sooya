@@ -83,6 +83,11 @@ describe('visual time resolver', () => {
     expect(ensureVisualTimeReplyText('昨夜倒是拍了一张。', time, true)).toBe('昨夜倒是拍了一张。');
     expect(ensureVisualTimeReplyText('那天倒是拍了一张。', time, true)).toBe('那天倒是拍了一张。');
     expect(ensureVisualTimeReplyText('I took this the previous day.', time, true)).toBe('I took this the previous day.');
+    for (const wording of ['昨天', '昨日', '昨晚', '昨夜', '之前', '当时', '那天', '前一晚', 'yesterday', 'last night', 'earlier']) {
+      const reply = `${wording}倒是拍了一张。`;
+      expect(ensureVisualTimeReplyText(reply, time, true), wording).toBe(reply);
+    }
+    expect(ensureVisualTimeReplyText('我给你一张照片。', time, true)).toBe('现在还是中午，不过昨天倒是有一张这种。');
     expect(ensureVisualTimeReplyText('我给你一张照片。', time, false)).toBe('我给你一张照片。');
     expect(visualDayPeriodLighting('evening')).toMatch(/English|warm|twilight|evening/i);
     expect(requestedVisualDayPeriod('再来一张')).toBeNull();
