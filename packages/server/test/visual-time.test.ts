@@ -80,6 +80,9 @@ describe('visual time resolver', () => {
     expect(ensureVisualTimeReplyText('昨天我给你一张照片。', time, true)).toBe('昨天我给你一张照片。');
     expect(ensureVisualTimeReplyText('昨日倒是拍了一张。', time, true)).toBe('昨日倒是拍了一张。');
     expect(ensureVisualTimeReplyText('I took this earlier.', time, true)).toBe('I took this earlier.');
+    expect(ensureVisualTimeReplyText('昨夜倒是拍了一张。', time, true)).toBe('昨夜倒是拍了一张。');
+    expect(ensureVisualTimeReplyText('那天倒是拍了一张。', time, true)).toBe('那天倒是拍了一张。');
+    expect(ensureVisualTimeReplyText('I took this the previous day.', time, true)).toBe('I took this the previous day.');
     expect(ensureVisualTimeReplyText('我给你一张照片。', time, false)).toBe('我给你一张照片。');
     expect(visualDayPeriodLighting('evening')).toMatch(/English|warm|twilight|evening/i);
     expect(requestedVisualDayPeriod('再来一张')).toBeNull();

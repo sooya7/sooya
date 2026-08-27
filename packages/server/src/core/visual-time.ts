@@ -68,7 +68,7 @@ export function requestedVisualDayPeriod(text?: string): VisualDayPeriod | null 
 }
 
 function hasPastWord(text: string): boolean {
-  return /(昨天|昨晚|昨日|前一天|yesterday|last night|the previous day)/i.test(text);
+  return /(昨天|昨晚|昨夜|昨日|那天|前一天|yesterday|last night|the previous day|previous day)/i.test(text);
 }
 
 function isSleepRetrospective(text: string): boolean {
@@ -119,6 +119,6 @@ export function visualTimeMetadata(time: VisualTimeContext) {
 
 const CHINESE_PERIOD: Record<VisualDayPeriod, string> = { 'late-night': '凌晨', morning: '早上', midday: '中午', afternoon: '下午', evening: '晚上' };
 export function ensureVisualTimeReplyText(text: string, time: VisualTimeContext, hasImage: boolean): string {
-  if (!hasImage || time.mode !== 'retrospective' || /(昨天|昨晚|昨日|前一天|过去|曾经|yesterday|last night|previously|before|earlier|以前)/i.test(text)) return text;
+  if (!hasImage || time.mode !== 'retrospective' || /(昨天|昨晚|昨夜|昨日|那天|前一天|过去|曾经|yesterday|last night|the previous day|previous day|previously|before|earlier|以前)/i.test(text)) return text;
   return `现在还是${CHINESE_PERIOD[time.currentDayPeriod]}，不过昨天倒是有一张这种。`;
 }
