@@ -30,6 +30,18 @@ function textResult(overrides: Partial<TextGenerationResult> = {}): TextGenerati
     firstTokenAt: null,
     published: false,
     visualTime: resolveVisualTime({ now: '2026-08-26T05:17:23.000Z' }),
+    mediaPlan: {
+      sticker: false,
+      stickers: [],
+      stickerRequired: false,
+      stickerOnly: false,
+      forceDifferent: false,
+      imagePrompt: null,
+      selfImagePrompt: null,
+      voice: false,
+      voiceOnly: false
+    },
+    worldSnapshot: null,
     ...overrides
   };
 }

@@ -82,6 +82,18 @@ export interface GenerationOptions extends ReplyOptions {
   beginPublish: () => Promise<boolean>;
 }
 
+export interface ReplyMediaPlan {
+  readonly sticker: boolean;
+  readonly stickers: readonly string[];
+  readonly stickerRequired: boolean;
+  readonly stickerOnly: boolean;
+  readonly forceDifferent: boolean;
+  readonly imagePrompt: string | null;
+  readonly selfImagePrompt: string | null;
+  readonly voice: boolean;
+  readonly voiceOnly: boolean;
+}
+
 export interface TextGenerationResult {
   /** Fully stripped, speaker-prefix-free visible text. */
   text: string;
@@ -95,6 +107,10 @@ export interface TextGenerationResult {
   published: boolean;
   /** Real current clock plus the independently resolved depicted-image time. */
   visualTime: VisualTimeContext;
+  /** Immutable phase-1 plan used by both wording validation and phase-2 media publication. */
+  mediaPlan: ReplyMediaPlan;
+  /** Immutable read-only world state reused by context and phase-2 media preparation. */
+  worldSnapshot: Readonly<WorldSnapshot> | null;
   /** Set when the provider died AFTER something became visible. */
   interrupted?: Error;
   /**
@@ -167,7 +183,7 @@ export class Replier {
     try {
       const persona = this.deps.config.getPersona();
       const degraded: string[] = [];
-      const userText = userMessages
+      const userTexts = userMessages
         .map((message) =>
           message.content
             .filter((part) => part.type === 'text')
@@ -175,17 +191,18 @@ export class Replier {
             .filter(Boolean)
             .join(' ')
         )
-        .filter(Boolean)
-        .join('\n');
+        .filter(Boolean);
+      const userText = userTexts.join('\n');
+      const latestVisualUserText = userTexts.at(-1) ?? '';
       const userDirectives = userMessages.reduce(
         (merged, message) => mergeDirectives(merged, message.meta?.directives as UserDirectives),
         parseUserDirectives(userText)
       );
-      const world = this.deps.worldSnapshot?.();
+      const world = this.deps.worldSnapshot?.() ?? null;
       const visualTime = resolveVisualTime({
         now: world?.now ?? new Date(),
         timeZone: world?.timeZone ?? 'Asia/Shanghai',
-        latestUserText: userText
+        latestUserText: latestVisualUserText
       });
 
       const caps = this.deps.capabilities;
@@ -222,7 +239,8 @@ export class Replier {
         capabilityNotes,
         contextWindow,
         maxOutputTokens,
-        visualTime
+        visualTime,
+        worldSnapshot: world
       });
       const provider = allowVision && built.visionUsed ? caps.visionProvider()! : caps.chatProvider();
       const selectedModel = built.visionUsed ? visionModel : chatModel;
@@ -480,9 +498,11 @@ export class Replier {
 
       const stripped = stripModelDirectives(rawText);
       const modelDirectives = stripped.directives;
-      const hasImageDirective = Boolean(modelDirectives.selfImagePrompt ?? modelDirectives.imagePrompt);
+      const rawFinalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
+      const mediaPlan = this.planMedia(persona, userDirectives, modelDirectives, rawFinalText);
+      const hasImageDirective = Boolean(mediaPlan.selfImagePrompt ?? mediaPlan.imagePrompt);
       const finalText = ensureVisualTimeReplyText(
-        stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]),
+        rawFinalText,
         visualTime,
         hasImageDirective
       );
@@ -526,6 +546,8 @@ export class Replier {
         firstTokenAt,
         published,
         visualTime,
+        mediaPlan,
+        worldSnapshot: world,
         interrupted,
         hiddenDraft,
         hiddenStickerOnly,
@@ -600,7 +622,7 @@ export class Replier {
     }
 
     const finalText = generated.text;
-    const plan = this.planMedia(persona, userDirectives, generated.directives, finalText);
+    const plan = generated.mediaPlan;
 
     // 3a. Sticker (deferred for hidden-draft replace: the shell does not
     // exist until the voice is ready).
@@ -707,7 +729,7 @@ export class Replier {
           const editingUserImage = referenceMediaIds.length === 1;
           if (continuityService) {
             const life = this.deps.lifeSnapshot?.();
-            const world = this.deps.worldSnapshot?.();
+            const world = generated.worldSnapshot;
             continuity = continuityService.prepare({
               scene: imagePrompt,
               userText,
@@ -1142,17 +1164,7 @@ export class Replier {
     user: UserDirectives,
     model: ModelDirectives,
     text: string
-  ): {
-    sticker: boolean;
-    stickers: string[];
-    stickerRequired: boolean;
-    stickerOnly: boolean;
-    forceDifferent: boolean;
-    imagePrompt: string | null;
-    selfImagePrompt: string | null;
-    voice: boolean;
-    voiceOnly: boolean;
-  } {
+  ): ReplyMediaPlan {
     const caps = this.deps.capabilities;
     const stickersAvailable = this.deps.stickers.count() > 0;
 
