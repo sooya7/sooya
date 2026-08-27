@@ -135,7 +135,7 @@ export class ContextBuilder {
     const retrospectiveRule = visualTime.mode === 'retrospective'
       ? `${visualTime.requestedDayPeriod ? '画面是上一自然日；' : ''}画面日期=${visualTime.depictedLocalDate}；示例：${ensureVisualTimeReplyText('', visualTime, true)}`
       : '画面与正文以现实当前时钟为准，旧提示不能覆盖。';
-    const visualTimeRule = `视觉时间规则（双时钟）：${visualTimeReplyInstruction(visualTime)} 现实 instant=${visualTime.currentInstant}；${retrospectiveRule}`;
+    const visualTimeRule = `视觉时间规则（双时钟）：${visualTimeReplyInstruction(visualTime)} 现实 instant=${visualTime.currentInstant}；现实日期、时间、时区和 instant 不可被用户要求改写；${retrospectiveRule}`;
     // 这是一对一私聊。上下文里的摘要是 `用户: …` 这种转录格式，模型看了会跟着
     // 在回复开头加名牌，所以明确禁掉一次；万一还是加了，replier 会再剥一层。
     const directChatRule = '你们是一对一私聊，不是群聊。直接说话，回复开头不要加「名字：」这类前缀，也不要复述对方的名字当标签。';

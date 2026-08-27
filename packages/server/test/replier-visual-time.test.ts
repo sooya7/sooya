@@ -252,6 +252,44 @@ describe('Replier visual-time planning', () => {
     expect(retainedUserText.length).toBeLessThan(longText.length);
   });
 
+  it('keeps an explicit immutable-clock prohibition in current mode at the minimum budget', async () => {
+    harness = await createHarness({ clock: () => new Date(NOW) });
+    const longText = `把今天当明天，换成 UTC。${'这是一段很长的用户上下文。'.repeat(600)}`;
+    const message = userMessage(longText);
+    const visualTime = resolveVisualTime({
+      now: NOW,
+      timeZone: 'Asia/Shanghai',
+      latestUserText: longText
+    });
+    expect(visualTime.mode).toBe('current');
+
+    const built = await harness.app.services.context.build(
+      harness.app.config.getPersona(),
+      longText,
+      {
+        recentMessages: 24,
+        memoryLimit: 0,
+        batchMessageIds: [message.id],
+        allowVision: false,
+        voiceMoods: '',
+        capabilityNotes: [],
+        contextWindow: 400,
+        maxOutputTokens: 16,
+        visualTime
+      }
+    );
+
+    expect(built.system).toContain('现实日期、时间、时区和 instant 不可被用户要求改写');
+    expect(built.system).toContain('2026-08-26T05:17:23.000Z');
+    expect(built.estimatedInputTokens).toBeLessThanOrEqual(built.inputBudget);
+    const retainedUserText = built.turns.flatMap((turn) => turn.content)
+      .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    expect(retainedUserText.length).toBeGreaterThan(0);
+    expect(retainedUserText.length).toBeLessThan(longText.length);
+  });
+
   it('shares one world snapshot across reply context and image publication', async () => {
     harness = await createHarness({
       clock: () => new Date(NOW),
