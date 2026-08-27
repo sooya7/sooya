@@ -5,6 +5,7 @@ import {
   ImageContinuityService,
   type PreparedImageContinuity
 } from '../src/core/image-continuity.js';
+import { resolveVisualTime, visualDayPeriodLighting } from '../src/core/visual-time.js';
 
 class MemorySettings {
   readonly values = new Map<string, unknown>();
@@ -241,7 +242,127 @@ describe('ImageContinuityService', () => {
     expect(prompt).toContain('Real current activity: 在图书馆看小说');
     expect(prompt).toContain('Real current location: 市图书馆');
     expect(prompt).toContain(`SOOYA's complete outfit: ${outfit}`);
-    expect(prompt.endsWith('A new angle, composition, or ordinary location change must not create a different activity or outfit.')).toBe(true);
+    expect(prompt.endsWith('Ignore and override any earlier time-of-day or lighting description that conflicts with this final block.')).toBe(true);
+  });
+
+  it('overrides a stale night prompt with real midday lighting for an unspecified continuation', () => {
+    const settings = new MemorySettings();
+    const service = serviceAt(settings, '2026-08-26T05:17:00.000Z');
+    const decision = service.prepare({
+      scene: '晚上在家，借着落地灯暖光看书',
+      userText: '再来一张',
+      activity: '午睡一会儿',
+      activityKind: 'rest',
+      location: '家',
+      now: '2026-08-26T05:17:00.000Z',
+      timeZone: 'Asia/Shanghai'
+    });
+    const prompt = service.applyToPrompt(
+      '晚上在家，借着落地灯暖光看书',
+      decision,
+      service.resolveOutfit(null, decision)
+    );
+
+    expect(decision.visualTime).toMatchObject({
+      mode: 'current',
+      currentDayPeriod: 'midday',
+      depictedLocalDate: '2026-08-26',
+      depictedDayPeriod: 'midday'
+    });
+    expect(prompt).toContain('Real current local time: 2026-08-26 13:17:00');
+    expect(prompt).toContain('Depicted day period: midday');
+    expect(prompt).toContain(visualDayPeriodLighting('midday'));
+    expect(prompt).toContain('Ignore and override any earlier time-of-day or lighting description');
+  });
+
+  it('generates a requested night scene as yesterday without mutating current continuity', () => {
+    const events: Array<{ event: string; data: Record<string, unknown> }> = [];
+    const settings = new MemorySettings();
+    const service = new ImageContinuityService(settings as unknown as SettingsRepo, {
+      clock: () => new Date('2026-08-26T05:17:00.000Z'),
+      timeZone: 'Asia/Shanghai',
+      onEvent: (event, data) => events.push({ event, data })
+    });
+    const currentDecision = service.prepare({
+      scene: '图书馆窗边的自然自拍',
+      userText: '再来一张',
+      activity: '在图书馆看小说',
+      activityKind: 'study',
+      location: '市图书馆',
+      now: '2026-08-26T05:17:00.000Z',
+      timeZone: 'Asia/Shanghai'
+    });
+    const currentState = service.commit(currentDecision, {
+      outfit: '黑色外套、白色上衣、深色长裤和白色鞋',
+      scene: currentDecision.currentScene,
+      mediaId: 'current_media'
+    });
+
+    const decision = service.prepare({
+      scene: '晚上在家准备睡觉',
+      userText: '发张晚上睡觉的照片',
+      activity: '在图书馆看小说',
+      activityKind: 'study',
+      location: '市图书馆',
+      now: '2026-08-26T05:17:00.000Z',
+      timeZone: 'Asia/Shanghai'
+    });
+    const outfit = service.resolveOutfit(null, decision);
+    const prompt = service.applyToPrompt('晚上在家准备睡觉', decision, outfit);
+
+    expect(decision).toMatchObject({
+      dateKey: '2026-08-26',
+      previousOutfit: null,
+      previousActivity: null,
+      previousScene: null,
+      outfitMode: 'full_change',
+      changeReason: 'retrospective_scene'
+    });
+    expect(decision.visualTime).toMatchObject({
+      mode: 'retrospective',
+      currentDayPeriod: 'midday',
+      depictedLocalDate: '2026-08-25',
+      depictedDayPeriod: 'evening'
+    });
+    expect(outfit).toContain('家居');
+    expect(prompt).toContain('newly generated retrospective depiction');
+    expect(prompt).not.toContain('Use the current activity and location above as authoritative');
+    expect(prompt).not.toContain('Real current activity: 在图书馆看小说');
+
+    expect(service.commit(decision, { outfit, scene: decision.currentScene, mediaId: 'retro_media' })).toEqual(currentState);
+    expect(service.current()).toEqual(currentState);
+    expect(events.at(-1)).toMatchObject({
+      event: 'commit_skipped',
+      data: {
+        reason: 'retrospective_scene',
+        sourceMediaId: 'retro_media',
+        depictedLocalDate: '2026-08-25',
+        depictedDayPeriod: 'evening'
+      }
+    });
+  });
+
+  it('uses a provided visual time object unchanged and derives dateKey only from its real current date', () => {
+    const settings = new MemorySettings();
+    const service = serviceAt(settings);
+    const visualTime = resolveVisualTime({
+      now: '2026-08-26T05:17:00.000Z',
+      timeZone: 'Asia/Shanghai',
+      latestUserText: '再来一张'
+    });
+
+    const decision = service.prepare({
+      scene: '上一版遗留的夜景提示',
+      userText: '发张晚上睡觉的照片',
+      now: 'invalid',
+      localDate: '1999-01-01',
+      timeZone: 'Not/AZone',
+      visualTime
+    });
+
+    expect(decision.visualTime).toBe(visualTime);
+    expect(decision.dateKey).toBe('2026-08-26');
+    expect(decision.visualTime.mode).toBe('current');
   });
 
   it('serializes concurrent selfie work so the second task observes the first commit', async () => {

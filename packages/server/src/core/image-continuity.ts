@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import type { SettingsRepo } from '../db/repos/misc.repo.js';
-import { localDateOfIso } from '../util/time-zone.js';
+import {
+  resolveVisualTime,
+  visualDayPeriodLighting,
+  type VisualTimeContext
+} from './visual-time.js';
 
 export const DAILY_IMAGE_CONTINUITY_KEY = 'image.dailyVisualContinuity.v1';
 
@@ -40,10 +44,12 @@ export interface PrepareImageContinuityInput {
   now?: string | Date;
   localDate?: string | null;
   timeZone?: string | null;
+  visualTime?: VisualTimeContext;
 }
 
 export interface PreparedImageContinuity {
   dateKey: string;
+  visualTime: VisualTimeContext;
   currentActivity: string | null;
   currentActivityKind: string | null;
   currentActivityStartedAt: string | null;
@@ -118,9 +124,11 @@ function cleanOutfit(value: string | null | undefined): string | null {
 }
 
 function defaultOutfit(decision: PreparedImageContinuity): string {
-  const authoritativeContext = decision.currentActivity || decision.currentActivityKind
-    ? normalizeForRules(decision.currentActivity, decision.currentActivityKind)
-    : normalizeForRules(decision.currentScene);
+  const authoritativeContext = decision.visualTime.mode === 'retrospective'
+    ? normalizeForRules(decision.currentScene, decision.explicitOutfitRequest)
+    : decision.currentActivity || decision.currentActivityKind
+      ? normalizeForRules(decision.currentActivity, decision.currentActivityKind)
+      : normalizeForRules(decision.currentScene);
   const context = normalizeForRules(
     authoritativeContext,
     decision.changeReason,
@@ -177,12 +185,15 @@ export class ImageContinuityService {
       : input.now
         ? new Date(input.now)
         : (this.options.clock?.() ?? new Date());
-    const nowIso = Number.isFinite(now.getTime()) ? now.toISOString() : (this.options.clock?.() ?? new Date()).toISOString();
-    const dateKey = input.localDate && /^\d{4}-\d{2}-\d{2}$/.test(input.localDate)
-      ? input.localDate
-      : localDateOfIso(nowIso, input.timeZone ?? this.options.timeZone);
+    const resolvedNow = Number.isFinite(now.getTime()) ? now : (this.options.clock?.() ?? new Date());
+    const visualTime = input.visualTime ?? resolveVisualTime({
+      now: resolvedNow,
+      timeZone: input.timeZone ?? this.options.timeZone,
+      latestUserText: input.userText
+    });
+    const dateKey = visualTime.currentLocalDate;
     const stored = this.current();
-    const state = stored?.dateKey === dateKey ? stored : null;
+    const state = visualTime.mode === 'current' && stored?.dateKey === dateKey ? stored : null;
     // A temporarily incomplete snapshot must not erase known same-day
     // reality. Keep the last committed activity/location until Life or World
     // supplies a newer authoritative value.
@@ -207,7 +218,13 @@ export class ImageContinuityService {
     let changeReason: string | null = state ? null : (stored ? 'new_calendar_day' : 'first_selfie_of_day');
     let explicitOutfitRequest: string | null = null;
 
-    if (state) {
+    if (visualTime.mode === 'retrospective') {
+      outfitMode = 'full_change';
+      changeReason = 'retrospective_scene';
+      if (userText && (EXPLICIT_CHANGE_RE.test(userText) || LAYER_ADJUST_RE.test(userText))) {
+        explicitOutfitRequest = userText;
+      }
+    } else if (state) {
       outfitMode = 'locked';
       if (userText && KEEP_OUTFIT_RE.test(userText)) {
         changeReason = 'user_keep_request';
@@ -247,6 +264,7 @@ export class ImageContinuityService {
         : Math.max(1, previousOutfitRevision + 1);
     const decision: PreparedImageContinuity = {
       dateKey,
+      visualTime,
       currentActivity,
       currentActivityKind,
       currentActivityStartedAt,
@@ -267,7 +285,8 @@ export class ImageContinuityService {
       outfitRevision,
       changeReason,
       activity: currentActivity,
-      location: currentLocation
+      location: currentLocation,
+      timeMode: visualTime.mode
     });
     return decision;
   }
@@ -294,22 +313,48 @@ export class ImageContinuityService {
     const explicitRule = decision.explicitOutfitRequest
       ? `User's explicit outfit request (authoritative): ${decision.explicitOutfitRequest}`
       : null;
+    const sceneRules = decision.visualTime.mode === 'current'
+      ? [
+          `Real current activity: ${activity}.`,
+          `Real current location: ${location}.`,
+          'Use the current activity and location above as authoritative. A new angle, composition, or ordinary location change must not create a different activity or outfit.'
+        ]
+      : [
+          'This is a newly generated retrospective depiction, not current reality and not proof of a stored historical photo.',
+          'Follow the latest explicit past-scene request and intended scene. Do not reuse current Life activity or location as historical facts.'
+        ];
+    const time = decision.visualTime;
     return [
       prompt.trim(),
       '',
       'DAILY VISUAL CONTINUITY — HARD CONSTRAINTS:',
       `Local calendar date: ${decision.dateKey}.`,
-      `Real current activity: ${activity}.`,
-      `Real current location: ${location}.`,
+      ...sceneRules,
       `SOOYA's complete outfit: ${resolvedOutfit}.`,
       outfitRule,
       explicitRule,
       'Ignore and override any earlier clothing description that conflicts with the complete outfit above.',
-      'Use the current activity and location above as authoritative. A new angle, composition, or ordinary location change must not create a different activity or outfit.'
+      '',
+      'VISUAL TIME CONTINUITY — FINAL HARD CONSTRAINTS:',
+      `Real current local time: ${time.currentLocalDate} ${time.currentLocalTime} (${time.currentDayPeriod}, ${time.timeZone}).`,
+      `Time mode: ${time.mode}.`,
+      `Depicted local date: ${time.depictedLocalDate}.`,
+      `Depicted day period: ${time.depictedDayPeriod}.`,
+      `Required scene lighting: ${visualDayPeriodLighting(time.depictedDayPeriod)}.`,
+      'Ignore and override any earlier time-of-day or lighting description that conflicts with this final block.'
     ].filter((line): line is string => Boolean(line)).join('\n');
   }
 
-  commit(decision: PreparedImageContinuity, input: CommitImageContinuityInput): DailyImageContinuityState {
+  commit(decision: PreparedImageContinuity, input: CommitImageContinuityInput): DailyImageContinuityState | null {
+    if (decision.visualTime.mode === 'retrospective') {
+      this.options.onEvent?.('commit_skipped', {
+        reason: 'retrospective_scene',
+        sourceMediaId: cleanOptional(input.mediaId, 160),
+        depictedLocalDate: decision.visualTime.depictedLocalDate,
+        depictedDayPeriod: decision.visualTime.depictedDayPeriod
+      });
+      return this.current();
+    }
     const outfit = cleanOutfit(input.outfit);
     const scene = cleanOptional(input.scene, 1000);
     const mediaId = cleanOptional(input.mediaId, 160);

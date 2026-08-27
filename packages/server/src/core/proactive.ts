@@ -610,7 +610,8 @@ export class ProactiveComposer {
                 previousOutfit: continuity.previousOutfit,
                 outfitMode: continuity.outfitMode,
                 changeReason: continuity.changeReason,
-                explicitOutfitRequest: continuity.explicitOutfitRequest
+                explicitOutfitRequest: continuity.explicitOutfitRequest,
+                visualTime: continuity.visualTime
               }
             }
           : {})
@@ -676,11 +677,13 @@ export class ProactiveComposer {
           scene: groundedScene,
           mediaId: media.id
         });
-        continuityMeta = {
-          ...continuityMeta,
-          outfit: committed.outfit.fullDescription,
-          outfitRevision: committed.outfitRevision
-        };
+        if (continuity.visualTime.mode === 'current' && committed) {
+          continuityMeta = {
+            ...continuityMeta,
+            outfit: committed.outfit.fullDescription,
+            outfitRevision: committed.outfitRevision
+          };
+        }
       }
 
       return {

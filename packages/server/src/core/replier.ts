@@ -739,7 +739,8 @@ export class Replier {
               location: world?.location?.name ?? world?.city?.name ?? null,
               now: world?.now,
               localDate: world?.localDate,
-              timeZone: world?.timeZone
+              timeZone: world?.timeZone,
+              visualTime: generated.visualTime
             });
           }
 
@@ -758,7 +759,8 @@ export class Replier {
                       previousOutfit: continuity.previousOutfit,
                       outfitMode: continuity.outfitMode,
                       changeReason: continuity.changeReason,
-                      explicitOutfitRequest: continuity.explicitOutfitRequest
+                      explicitOutfitRequest: continuity.explicitOutfitRequest,
+                      visualTime: continuity.visualTime
                     }
                   }
                 : {})
@@ -834,11 +836,13 @@ export class Replier {
               scene: imagePrompt,
               mediaId: media.id
             });
-            continuityMeta = {
-              ...continuityMeta,
-              outfit: committed.outfit.fullDescription,
-              outfitRevision: committed.outfitRevision
-            };
+            if (continuity.visualTime.mode === 'current' && committed) {
+              continuityMeta = {
+                ...continuityMeta,
+                outfit: committed.outfit.fullDescription,
+                outfitRevision: committed.outfitRevision
+              };
+            }
           }
 
           this.deps.messages.updatePart(partId, {
