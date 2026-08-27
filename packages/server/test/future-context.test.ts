@@ -85,12 +85,18 @@ describe('ContextBuilder integration (§10/§11)', () => {
   };
 
   it('injects the future section and suppresses memory lines that restate it (§10.4)', async () => {
-    h = await createHarness({ embedding: 'off', env: { FUTURE_ENGINE_ENABLED: 'true' } });
-    // An exam two days out; the future line names its weekday, which the
-    // restating memory echoes — that shared entity is what makes the pair a
-    // duplicate regardless of the real clock the test runs under.
+    h = await createHarness({
+      embedding: 'off',
+      env: { FUTURE_ENGINE_ENABLED: 'true', MEMORY_BACKEND: 'legacy' }
+    });
+    // An exam two days out; the future line and the restating memory must use
+    // the same configured timezone when naming the weekday. Using Date#getDay
+    // here made the fixture disagree with Asia/Shanghai around UTC day edges.
     const target = new Date(Date.now() + 2 * 86_400_000);
-    const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][target.getDay()];
+    const weekday = new Intl.DateTimeFormat('zh-CN', {
+      weekday: 'short',
+      timeZone: h.app.env.LIFE_TIME_ZONE
+    }).format(target);
     h.app.repos.commitments.ingest({
       kind: 'user_event',
       subject: 'user',
@@ -101,9 +107,13 @@ describe('ContextBuilder integration (§10/§11)', () => {
       sourceMessageId: 'seed',
       timeZone: h.app.env.LIFE_TIME_ZONE
     });
-    const restating = h.app.repos.memories.upsert({ kind: 'project', content: `用户最近很重视${weekday}的考试`, sourceMessageId: 'seed' }).record;
+    const memoryText = `用户最近很重视${weekday}的考试`;
+    const restating = h.app.repos.memories.upsert({ kind: 'project', content: memoryText, sourceMessageId: 'seed' }).record;
 
-    const built = await h.app.services.context.build(h.app.config.getPersona(), '考试加油', options);
+    // This assertion is about the legacy-memory/Future dedupe contract, so the
+    // harness explicitly selects that backend instead of the production Ombre
+    // default. Query with the fixture fact itself to make FTS recall stable.
+    const built = await h.app.services.context.build(h.app.config.getPersona(), memoryText, options);
     expect(built.system).toContain('接下来值得记得的事情');
     expect(built.futureLines).toBe(1);
     // §10.4: exactly one current statement of the exam fact — the Future

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../src/db/index.js';
 import { RelationshipThreadRepo } from '../src/db/repos/relationship-thread.repo.js';
 import { RelationshipContextService, RelationshipService } from '../src/core/relationship/service.js';
@@ -7,6 +7,7 @@ import { SALIENCE_HALFLIFE_DAYS } from '../src/core/relationship/types.js';
 
 const open: Database.Database[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   for (const db of open.splice(0)) {
     try {
       db.close();
@@ -120,6 +121,11 @@ describe('RelationshipService.consume (§13/§14 contract)', () => {
 
 describe('salience decay per kind (§4)', () => {
   it('cools and archives on distinct schedules, never one TTL', () => {
+    // RelationshipThreadRepo timestamps direct creates from the wall clock.
+    // Pin it to the same fixture clock used by RelationshipService so this test
+    // remains a five-day decay test instead of drifting as real time advances.
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
     const { repo, svc } = service();
     repo.create({ kind: 'ongoing_joke', title: '猫猫梗', messageId: 'm1' });
     repo.create({ kind: 'unresolved_issue', title: '大事', messageId: 'm1' });
