@@ -1,0 +1,123 @@
+import { addDaysLocalDate, zonedParts } from '../util/time-zone.js';
+
+export type VisualDayPeriod = 'late-night' | 'morning' | 'midday' | 'afternoon' | 'evening';
+export type VisualTimeMode = 'current' | 'retrospective';
+
+export interface VisualTimeContext {
+  timeZone: string;
+  currentInstant: string;
+  currentLocalDate: string;
+  currentLocalTime: string;
+  currentDayPeriod: VisualDayPeriod;
+  mode: VisualTimeMode;
+  depictedLocalDate: string;
+  depictedDayPeriod: VisualDayPeriod;
+  requestedDayPeriod: VisualDayPeriod | null;
+}
+
+export interface ResolveVisualTimeInput {
+  now: Date | string;
+  timeZone?: string;
+  latestUserText?: string;
+  eventAt?: Date | string;
+}
+
+const PERIODS: VisualDayPeriod[] = ['late-night', 'morning', 'midday', 'afternoon', 'evening'];
+const LIGHTING: Record<VisualDayPeriod, string> = {
+  'late-night': 'quiet low-key moonlight and cool blue ambient light',
+  morning: 'soft warm morning sunlight with fresh, gentle shadows',
+  midday: 'clear bright midday daylight with neutral crisp shadows',
+  afternoon: 'warm afternoon sunlight with golden, softened shadows',
+  evening: 'warm sunset and twilight light with a calm amber glow'
+};
+
+function asDate(value: Date | string): Date {
+  return value instanceof Date ? new Date(value.getTime()) : new Date(value);
+}
+
+function localParts(at: Date, timeZone: string) {
+  try { return zonedParts(at, timeZone); } catch { return zonedParts(at, 'UTC'); }
+}
+
+function localDate(parts: ReturnType<typeof zonedParts>): string {
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
+function localTime(parts: ReturnType<typeof zonedParts>): string {
+  return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}:${String(parts.second).padStart(2, '0')}`;
+}
+
+export function visualDayPeriodOfHour(hour: number): VisualDayPeriod {
+  if (hour < 5) return 'late-night';
+  if (hour < 11) return 'morning';
+  if (hour < 14) return 'midday';
+  if (hour < 18) return 'afternoon';
+  return 'evening';
+}
+
+export function requestedVisualDayPeriod(text?: string): VisualDayPeriod | null {
+  if (!text) return null;
+  const value = text.toLowerCase();
+  if (/(凌晨|深夜|late[- ]?night|at night|night)/i.test(value)) return 'evening';
+  if (/(早上|早晨|上午|清晨|morning)/i.test(value)) return 'morning';
+  if (/(中午|午间|midday|noon)/i.test(value)) return 'midday';
+  if (/(下午|afternoon)/i.test(value)) return 'afternoon';
+  if (/(晚上|夜晚|今晚|昨晚|夜景|夜间|傍晚|evening|tonight)/i.test(value)) return 'evening';
+  return null;
+}
+
+function hasPastWord(text: string): boolean {
+  return /(昨天|昨晚|前一天|yesterday|last night|the previous day)/i.test(text);
+}
+
+function isSleepRetrospective(text: string): boolean {
+  return /(睡觉|睡眠|sleep(?:ing)?)/i.test(text) && /(晚上|今晚|昨晚|夜间|night|evening)/i.test(text);
+}
+
+export function resolveVisualTime(input: ResolveVisualTimeInput): VisualTimeContext {
+  const timeZone = input.timeZone ?? 'UTC';
+  const now = asDate(input.now);
+  const currentInstant = Number.isNaN(now.getTime()) ? new Date(0) : now;
+  let validZone = true;
+  try { zonedParts(currentInstant, timeZone); } catch { validZone = false; }
+  const current = localParts(currentInstant, validZone ? timeZone : 'UTC');
+  const currentLocalDate = localDate(current);
+  const currentLocalTime = localTime(current);
+  const currentDayPeriod = visualDayPeriodOfHour(current.hour);
+  const text = input.latestUserText ?? '';
+  const requestedDayPeriod = validZone ? requestedVisualDayPeriod(text) : null;
+  const event = input.eventAt === undefined ? null : asDate(input.eventAt);
+  const validEvent = event && !Number.isNaN(event.getTime()) && validZone;
+  let mode: VisualTimeMode = 'current';
+  let depictedLocalDate = currentLocalDate;
+  let depictedDayPeriod = currentDayPeriod;
+  if (validEvent) {
+    const eventParts = localParts(event, timeZone);
+    mode = 'retrospective';
+    depictedLocalDate = localDate(eventParts);
+    depictedDayPeriod = visualDayPeriodOfHour(eventParts.hour);
+  } else if (validZone && (hasPastWord(text) || isSleepRetrospective(text))) {
+    mode = 'retrospective';
+    depictedLocalDate = addDaysLocalDate(currentLocalDate, -1);
+    depictedDayPeriod = requestedDayPeriod ?? currentDayPeriod;
+  }
+  return { timeZone, currentInstant: currentInstant.toISOString(), currentLocalDate, currentLocalTime, currentDayPeriod, mode, depictedLocalDate, depictedDayPeriod, requestedDayPeriod };
+}
+
+export function visualTimeReplyInstruction(time: VisualTimeContext): string {
+  return time.mode === 'current'
+    ? '未明确图片时段时遵循现实当前时间，并覆盖旧提示。'
+    : '真实时间不可被改写；正文用过去式，允许新生成但不能声称已有历史媒体。';
+}
+
+export function visualDayPeriodLighting(period: VisualDayPeriod): string { return LIGHTING[period]; }
+
+export function visualTimeMetadata(time: VisualTimeContext) {
+  return { timeMode: time.mode, timeZone: time.timeZone, currentInstant: time.currentInstant, currentDayPeriod: time.currentDayPeriod, depictedLocalDate: time.depictedLocalDate, depictedDayPeriod: time.depictedDayPeriod, requestedDayPeriod: time.requestedDayPeriod };
+}
+
+const CHINESE_PERIOD: Record<VisualDayPeriod, string> = { 'late-night': '凌晨', morning: '早上', midday: '中午', afternoon: '下午', evening: '晚上' };
+export function ensureVisualTimeReplyText(text: string, time: VisualTimeContext, hasImage: boolean): string {
+  if (!hasImage || time.mode !== 'retrospective' || /(昨天|昨晚|前一天|过去|曾经|yesterday|last night|previously|before)/i.test(text)) return text;
+  return `现在还是${CHINESE_PERIOD[time.currentDayPeriod]}，不过昨天倒是有一张这种。`;
+}
