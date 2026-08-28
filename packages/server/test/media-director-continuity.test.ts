@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChatProvider, ChatRequest } from '../src/providers/types.js';
 import { DirectorClient } from '../src/core/director/client.js';
 import { MediaDirector } from '../src/core/mediaDirector.js';
+import { visualDayPeriodLighting } from '../src/core/visual-time.js';
 
 function directorWith(reply: string, requests: ChatRequest[] = []): MediaDirector {
   const provider: ChatProvider = {
@@ -37,7 +38,18 @@ describe('MediaDirector image continuity protocol', () => {
         currentLocation: '市图书馆',
         previousOutfit: '黑色轻便休闲外套、浅色内搭、深色长裤和白色休闲鞋',
         outfitMode: 'locked',
-        changeReason: null
+        changeReason: null,
+        visualTime: {
+          timeZone: 'Asia/Shanghai',
+          currentInstant: '2026-08-22T04:00:00.000Z',
+          currentLocalDate: '2026-08-22',
+          currentLocalTime: '12:00:00',
+          currentDayPeriod: 'midday',
+          mode: 'current',
+          depictedLocalDate: '2026-08-22',
+          depictedDayPeriod: 'midday',
+          requestedDayPeriod: null
+        }
       }
     });
 
@@ -46,6 +58,7 @@ describe('MediaDirector image continuity protocol', () => {
     expect(input.type).toBe('text');
     expect(input.type === 'text' ? input.text : '').toContain('"outfitMode": "locked"');
     expect(input.type === 'text' ? input.text : '').toContain('在图书馆看小说');
+    expect(input.type === 'text' ? input.text : '').toContain('"currentDayPeriod": "midday"');
   });
 
   it('keeps the previous outfit in the fallback when the director returns invalid output', async () => {
@@ -56,7 +69,18 @@ describe('MediaDirector image continuity protocol', () => {
         currentActivity: '喝咖啡',
         currentLocation: '街角咖啡店',
         previousOutfit,
-        outfitMode: 'locked'
+        outfitMode: 'locked',
+        visualTime: {
+          timeZone: 'Asia/Shanghai',
+          currentInstant: '2026-08-22T04:00:00.000Z',
+          currentLocalDate: '2026-08-22',
+          currentLocalTime: '12:00:00',
+          currentDayPeriod: 'midday',
+          mode: 'current',
+          depictedLocalDate: '2026-08-22',
+          depictedDayPeriod: 'midday',
+          requestedDayPeriod: null
+        }
       }
     });
 
@@ -65,5 +89,7 @@ describe('MediaDirector image continuity protocol', () => {
     expect(result.prompt).toContain('Keep every garment, color, material, and layer exactly unchanged');
     expect(result.prompt).toContain('Real current activity: 喝咖啡');
     expect(result.prompt).toContain('Real current location: 街角咖啡店');
+    expect(result.prompt).toContain('Real current local time: 2026-08-22 12:00:00');
+    expect(result.prompt).toContain(visualDayPeriodLighting('midday'));
   });
 });

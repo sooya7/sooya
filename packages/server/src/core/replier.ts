@@ -46,6 +46,13 @@ import type { WebSearchResult } from './web-search/types.js';
 import type { WorldSnapshot } from './world-context.js';
 import type { ToolCallRuntime } from '../agent/tool-runtime.js';
 import type { OmbreMemoryBridge } from './ombre-memory.js';
+import {
+  applyVisualTimeToPrompt,
+  ensureVisualTimeReplyText,
+  resolveVisualTime,
+  visualTimeMetadata,
+  type VisualTimeContext
+} from './visual-time.js';
 
 export interface ReplyOptions {
   recentMessages: number;
@@ -77,6 +84,18 @@ export interface GenerationOptions extends ReplyOptions {
   beginPublish: () => Promise<boolean>;
 }
 
+export interface ReplyMediaPlan {
+  readonly sticker: boolean;
+  readonly stickers: readonly string[];
+  readonly stickerRequired: boolean;
+  readonly stickerOnly: boolean;
+  readonly forceDifferent: boolean;
+  readonly imagePrompt: string | null;
+  readonly selfImagePrompt: string | null;
+  readonly voice: boolean;
+  readonly voiceOnly: boolean;
+}
+
 export interface TextGenerationResult {
   /** Fully stripped, speaker-prefix-free visible text. */
   text: string;
@@ -88,6 +107,12 @@ export interface TextGenerationResult {
   firstTokenAt: number | null;
   /** True once the publish barrier opened (text may already be visible). */
   published: boolean;
+  /** Real current clock plus the independently resolved depicted-image time. */
+  visualTime: VisualTimeContext;
+  /** Immutable phase-1 plan used by both wording validation and phase-2 media publication. */
+  mediaPlan: ReplyMediaPlan;
+  /** Immutable read-only world state reused by context and phase-2 media preparation. */
+  worldSnapshot: Readonly<WorldSnapshot> | null;
   /** Set when the provider died AFTER something became visible. */
   interrupted?: Error;
   /**
@@ -160,7 +185,7 @@ export class Replier {
     try {
       const persona = this.deps.config.getPersona();
       const degraded: string[] = [];
-      const userText = userMessages
+      const userTexts = userMessages
         .map((message) =>
           message.content
             .filter((part) => part.type === 'text')
@@ -168,12 +193,19 @@ export class Replier {
             .filter(Boolean)
             .join(' ')
         )
-        .filter(Boolean)
-        .join('\n');
+        .filter(Boolean);
+      const userText = userTexts.join('\n');
+      const latestVisualUserText = userTexts.at(-1) ?? '';
       const userDirectives = userMessages.reduce(
         (merged, message) => mergeDirectives(merged, message.meta?.directives as UserDirectives),
         parseUserDirectives(userText)
       );
+      const world = this.deps.worldSnapshot?.() ?? null;
+      const visualTime = resolveVisualTime({
+        now: world?.now ?? new Date(),
+        timeZone: world?.timeZone ?? 'Asia/Shanghai',
+        latestUserText: latestVisualUserText
+      });
 
       const caps = this.deps.capabilities;
       const capabilityNotes: string[] = [];
@@ -187,7 +219,7 @@ export class Replier {
         && caps.has('tts') && persona.voicePolicy.enabled
         && (userVoiceIntent === 'voice_only' || userVoiceIntent === 'voice_reply');
       const hiddenStickerOnly = userDirectives.stickerOnly === true;
-      const holdDraft = hiddenDraft || hiddenStickerOnly;
+      const holdDraft = hiddenDraft || hiddenStickerOnly || visualTime.mode === 'retrospective';
 
       const allowVision = caps.visionProvider() !== null;
       const chatModel = this.deps.config.chatModelFor('chat');
@@ -208,7 +240,9 @@ export class Replier {
         voiceMoods: VOICE_MOOD_INTENTS,
         capabilityNotes,
         contextWindow,
-        maxOutputTokens
+        maxOutputTokens,
+        visualTime,
+        worldSnapshot: world
       });
       const provider = allowVision && built.visionUsed ? caps.visionProvider()! : caps.chatProvider();
       const selectedModel = built.visionUsed ? visionModel : chatModel;
@@ -218,7 +252,7 @@ export class Replier {
       let nativeSearchAnswer: string | undefined;
       const searchDecision = decideWebSearch(userText);
       if (searchDecision.offer && this.deps.webSearch) {
-        const city = this.deps.worldSnapshot?.().city ?? null;
+        const city = world?.city ?? null;
         const localPrefix = searchDecision.reason === 'local' && city?.name
           ? [city.country ?? '中国', city.region, city.name].filter(Boolean).join('')
           : '';
@@ -466,7 +500,14 @@ export class Replier {
 
       const stripped = stripModelDirectives(rawText);
       const modelDirectives = stripped.directives;
-      const finalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
+      const rawFinalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
+      const mediaPlan = this.planMedia(persona, userDirectives, modelDirectives, rawFinalText);
+      const hasImageDirective = Boolean(mediaPlan.selfImagePrompt ?? mediaPlan.imagePrompt);
+      const finalText = ensureVisualTimeReplyText(
+        rawFinalText,
+        visualTime,
+        hasImageDirective
+      );
       if (textPartId) {
         if (finalText) this.deps.messages.updatePart(textPartId, {
           text: finalText,
@@ -506,6 +547,9 @@ export class Replier {
         contextBudget,
         firstTokenAt,
         published,
+        visualTime,
+        mediaPlan,
+        worldSnapshot: world,
         interrupted,
         hiddenDraft,
         hiddenStickerOnly,
@@ -580,7 +624,7 @@ export class Replier {
     }
 
     const finalText = generated.text;
-    const plan = this.planMedia(persona, userDirectives, generated.directives, finalText);
+    const plan = generated.mediaPlan;
 
     // 3a. Sticker (deferred for hidden-draft replace: the shell does not
     // exist until the voice is ready).
@@ -653,7 +697,9 @@ export class Replier {
       const referenceMediaIds = userMessages.flatMap((message) =>
         message.content.filter((part) => part.type === 'image' && part.mediaId).map((part) => part.mediaId!)
       );
-      const continuityService = plan.selfImagePrompt && referenceMediaIds.length === 0
+      const editingUserImage = referenceMediaIds.length === 1;
+      const generatingNewImage = referenceMediaIds.length === 0;
+      const continuityService = plan.selfImagePrompt && generatingNewImage
         ? this.deps.imageContinuity
         : undefined;
       const baseImageMeta: Record<string, unknown> = {
@@ -674,7 +720,15 @@ export class Replier {
         let finalImagePrompt = imagePrompt;
         let continuity: PreparedImageContinuity | null = null;
         let resolvedOutfit: string | null = null;
-        let continuityMeta: Record<string, unknown> | null = null;
+        let continuityMeta: Record<string, unknown> | null = generatingNewImage
+          ? generated.visualTime.mode === 'current'
+            ? { ...visualTimeMetadata(generated.visualTime) }
+            : {
+                commitState: 'skipped',
+                commitReason: 'retrospective_scene',
+                ...visualTimeMetadata(generated.visualTime)
+              }
+          : null;
         try {
           if (referenceMediaIds.length > 1) {
             throw new ImageReferenceError(
@@ -684,10 +738,9 @@ export class Replier {
             );
           }
 
-          const editingUserImage = referenceMediaIds.length === 1;
           if (continuityService) {
             const life = this.deps.lifeSnapshot?.();
-            const world = this.deps.worldSnapshot?.();
+            const world = generated.worldSnapshot;
             continuity = continuityService.prepare({
               scene: imagePrompt,
               userText,
@@ -697,7 +750,8 @@ export class Replier {
               location: world?.location?.name ?? world?.city?.name ?? null,
               now: world?.now,
               localDate: world?.localDate,
-              timeZone: world?.timeZone
+              timeZone: world?.timeZone,
+              visualTime: generated.visualTime
             });
           }
 
@@ -711,12 +765,13 @@ export class Replier {
                 ? {
                     continuity: {
                       dateKey: continuity.dateKey,
-                      currentActivity: continuity.currentActivity,
-                      currentLocation: continuity.currentLocation,
+                      currentActivity: continuity.visualTime.mode === 'current' ? continuity.currentActivity : null,
+                      currentLocation: continuity.visualTime.mode === 'current' ? continuity.currentLocation : null,
                       previousOutfit: continuity.previousOutfit,
                       outfitMode: continuity.outfitMode,
                       changeReason: continuity.changeReason,
-                      explicitOutfitRequest: continuity.explicitOutfitRequest
+                      explicitOutfitRequest: continuity.explicitOutfitRequest,
+                      visualTime: continuity.visualTime
                     }
                   }
                 : {})
@@ -728,16 +783,29 @@ export class Replier {
           if (continuity) {
             resolvedOutfit ??= continuityService!.resolveOutfit(null, continuity);
             finalImagePrompt = continuityService!.applyToPrompt(finalImagePrompt, continuity, resolvedOutfit);
-            continuityMeta = {
-              dateKey: continuity.dateKey,
-              outfit: resolvedOutfit,
-              outfitMode: continuity.outfitMode,
-              outfitRevision: continuity.outfitRevision,
-              changeReason: continuity.changeReason,
-              activity: continuity.currentActivity,
-              activityKind: continuity.currentActivityKind,
-              location: continuity.currentLocation
-            };
+            continuityMeta = continuity.visualTime.mode === 'current'
+              ? {
+                  dateKey: continuity.dateKey,
+                  outfit: resolvedOutfit,
+                  outfitMode: continuity.outfitMode,
+                  outfitRevision: continuity.outfitRevision,
+                  changeReason: continuity.changeReason,
+                  activity: continuity.currentActivity,
+                  activityKind: continuity.currentActivityKind,
+                  location: continuity.currentLocation,
+                  ...visualTimeMetadata(continuity.visualTime)
+                }
+              : {
+                  dateKey: continuity.dateKey,
+                  outfit: resolvedOutfit,
+                  outfitMode: continuity.outfitMode,
+                  changeReason: continuity.changeReason,
+                  commitState: 'skipped',
+                  commitReason: 'retrospective_scene',
+                  ...visualTimeMetadata(continuity.visualTime)
+                };
+          } else if (generatingNewImage) {
+            finalImagePrompt = applyVisualTimeToPrompt(finalImagePrompt, generated.visualTime);
           }
 
           this.deps.messages.updatePart(partId, {
@@ -792,11 +860,13 @@ export class Replier {
               scene: imagePrompt,
               mediaId: media.id
             });
-            continuityMeta = {
-              ...continuityMeta,
-              outfit: committed.outfit.fullDescription,
-              outfitRevision: committed.outfitRevision
-            };
+            if (continuity.visualTime.mode === 'current' && committed) {
+              continuityMeta = {
+                ...continuityMeta,
+                outfit: committed.outfit.fullDescription,
+                outfitRevision: committed.outfitRevision
+              };
+            }
           }
 
           this.deps.messages.updatePart(partId, {
@@ -1122,17 +1192,7 @@ export class Replier {
     user: UserDirectives,
     model: ModelDirectives,
     text: string
-  ): {
-    sticker: boolean;
-    stickers: string[];
-    stickerRequired: boolean;
-    stickerOnly: boolean;
-    forceDifferent: boolean;
-    imagePrompt: string | null;
-    selfImagePrompt: string | null;
-    voice: boolean;
-    voiceOnly: boolean;
-  } {
+  ): ReplyMediaPlan {
     const caps = this.deps.capabilities;
     const stickersAvailable = this.deps.stickers.count() > 0;
 

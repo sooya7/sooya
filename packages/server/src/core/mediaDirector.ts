@@ -2,6 +2,10 @@ import { DirectorClient } from './director/client.js';
 import { ImageDirectorSchema, VoiceDirectorSchema } from './director/schemas.js';
 import { IMAGE_DIRECTOR_PROMPT, VOICE_DIRECTOR_PROMPT } from './director/prompts.js';
 import type { VoiceDeliveryPlan } from './voice/types.js';
+import {
+  visualDayPeriodLighting,
+  type VisualTimeContext
+} from './visual-time.js';
 
 /**
  * Media Director: the main model decides what to express; this small structured
@@ -42,6 +46,7 @@ export interface ImageDirectorContinuity {
   outfitMode: 'new_day' | 'locked' | 'layer_adjustment' | 'full_change';
   changeReason?: string | null;
   explicitOutfitRequest?: string | null;
+  visualTime: VisualTimeContext;
 }
 
 export interface VoiceDirectorOptions {
@@ -154,6 +159,12 @@ export function fallbackImagePrompt(
     continuity?.currentLocation ? `Real current location: ${continuity.currentLocation}.` : null,
     outfitConstraint,
     continuity?.explicitOutfitRequest ? `Explicit outfit request: ${continuity.explicitOutfitRequest}.` : null,
+    continuity?.visualTime
+      ? `Real current local time: ${continuity.visualTime.currentLocalDate} ${continuity.visualTime.currentLocalTime} (${continuity.visualTime.currentDayPeriod}, ${continuity.visualTime.timeZone}).`
+      : null,
+    continuity?.visualTime
+      ? `Depicted scene: ${continuity.visualTime.mode}, ${continuity.visualTime.depictedLocalDate} ${continuity.visualTime.depictedDayPeriod}. Required lighting: ${visualDayPeriodLighting(continuity.visualTime.depictedDayPeriod)}.`
+      : null,
     'natural smartphone photography, candid daily-life moment, realistic skin texture,',
     'natural body language, physically plausible lighting, realistic shadows,',
     'restrained color grading, subtle depth of field, slightly imperfect casual composition.'

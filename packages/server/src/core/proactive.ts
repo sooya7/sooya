@@ -24,6 +24,7 @@ import type { CommitmentRepo } from '../db/repos/commitment.repo.js';
 import { arbitrate, commitmentCandidates, type ProactiveCandidate } from './proactive-candidates.js';
 import { z } from 'zod';
 import { extractJsonObject } from '../util/json-extract.js';
+import { resolveVisualTime, visualTimeMetadata, type VisualTimeContext } from './visual-time.js';
 import type { FlowTraceService } from './flow-trace.js';
 
 export type { ProactiveMode } from '../db/repos/proactive.repo.js';
@@ -282,7 +283,15 @@ export class ProactiveComposer {
         const provider = this.deps.capabilities.chatProvider();
         const persona = this.deps.config.getPersona();
         const lifeLines = this.deps.life.contextLines(evaluation.lastUserAt ? new Date(evaluation.lastUserAt) : null);
-        const eventContext = this.resolveEventContext(candidate);
+        // One world snapshot feeds event grounding, the publication clock and
+        // media continuity; repeated reads could disagree mid-run.
+        const world = this.deps.worldSnapshot();
+        const eventContext = this.resolveEventContext(candidate, world);
+        const visualTime = resolveVisualTime({
+          now: world.now,
+          timeZone: world.timeZone,
+          eventAt: eventContext.startedAt
+        });
 
         let sharePlan: MomentSharePlan;
         try {
@@ -291,6 +300,7 @@ export class ProactiveComposer {
             persona.systemPrompt,
             lifeLines,
             eventContext,
+            visualTime,
             requestedMode ?? 'text',
             signal,
             this.deps.toolRuntime
@@ -307,7 +317,7 @@ export class ProactiveComposer {
         let prepared: PreparedMedia;
         try {
           this.deps.flowTrace?.stage(flowTraceId, 'proactive.media.started', 'running');
-          prepared = await this.prepareMedia(requestedMode ?? 'text', sharePlan, eventContext, candidate, signal);
+          prepared = await this.prepareMedia(requestedMode ?? 'text', sharePlan, eventContext, visualTime, candidate, signal);
           this.deps.flowTrace?.stage(flowTraceId, 'proactive.media.completed', 'ok', { mode: prepared.finalMode, fallback: prepared.fallbackReason });
         } catch (error) {
           if (signal.aborted) return { kind: 'discarded' };
@@ -561,6 +571,7 @@ export class ProactiveComposer {
     mode: ProactiveMode,
     sharePlan: MomentSharePlan,
     eventContext: ProactiveEventContext,
+    visualTime: VisualTimeContext,
     candidate: LifeLogRow,
     signal: AbortSignal
   ): Promise<PreparedMedia> {
@@ -579,16 +590,13 @@ export class ProactiveComposer {
       const groundedScene = buildGroundedScene(imagePlan, eventContext);
       let continuity: PreparedImageContinuity | null = null;
       if (continuityService) {
-        const world = this.deps.worldSnapshot();
         continuity = continuityService.prepare({
           scene: groundedScene,
           activity: eventContext.activity,
           activityKind: eventContext.kind,
           activityStartedAt: eventContext.startedAt,
           location: eventContext.location?.name ?? null,
-          now: world.now,
-          localDate: world.localDate,
-          timeZone: world.timeZone
+          visualTime
         });
       }
 
@@ -605,12 +613,15 @@ export class ProactiveComposer {
           ? {
               continuity: {
                 dateKey: continuity.dateKey,
-                currentActivity: continuity.currentActivity,
-                currentLocation: continuity.currentLocation,
+                // Retrospective depictions must not borrow current Life facts
+                // as if they were happening now; the event scene stands alone.
+                currentActivity: continuity.visualTime.mode === 'current' ? continuity.currentActivity : null,
+                currentLocation: continuity.visualTime.mode === 'current' ? continuity.currentLocation : null,
                 previousOutfit: continuity.previousOutfit,
                 outfitMode: continuity.outfitMode,
                 changeReason: continuity.changeReason,
-                explicitOutfitRequest: continuity.explicitOutfitRequest
+                explicitOutfitRequest: continuity.explicitOutfitRequest,
+                visualTime: continuity.visualTime
               }
             }
           : {})
@@ -626,16 +637,31 @@ export class ProactiveComposer {
         // Must remain the final prompt layer so no later director/framing pass
         // can weaken the authoritative activity, location, or outfit.
         finalImagePrompt = continuityService.applyToPrompt(finalImagePrompt, continuity, resolvedOutfit);
-        continuityMeta = {
-          dateKey: continuity.dateKey,
-          outfit: resolvedOutfit,
-          outfitMode: continuity.outfitMode,
-          outfitRevision: continuity.outfitRevision,
-          changeReason: continuity.changeReason,
-          activity: continuity.currentActivity,
-          activityKind: continuity.currentActivityKind,
-          location: continuity.currentLocation
-        };
+        const timeFacts = visualTimeMetadata(continuity.visualTime);
+        continuityMeta = continuity.visualTime.mode === 'retrospective'
+          ? {
+              dateKey: continuity.dateKey,
+              outfit: resolvedOutfit,
+              outfitMode: continuity.outfitMode,
+              changeReason: continuity.changeReason,
+              ...timeFacts,
+              // The commit below never touches same-day state for a
+              // retrospective image; record that so the metadata explains the
+              // absent outfit revision.
+              commitState: 'skipped',
+              commitReason: continuity.changeReason
+            }
+          : {
+              dateKey: continuity.dateKey,
+              outfit: resolvedOutfit,
+              outfitMode: continuity.outfitMode,
+              outfitRevision: continuity.outfitRevision,
+              changeReason: continuity.changeReason,
+              activity: continuity.currentActivity,
+              activityKind: continuity.currentActivityKind,
+              location: continuity.currentLocation,
+              ...timeFacts
+            };
       }
 
       const referenceImages = onCamera ? await this.deps.personaReferences.load(finalImagePrompt) : [];
@@ -676,11 +702,13 @@ export class ProactiveComposer {
           scene: groundedScene,
           mediaId: media.id
         });
-        continuityMeta = {
-          ...continuityMeta,
-          outfit: committed.outfit.fullDescription,
-          outfitRevision: committed.outfitRevision
-        };
+        if (committed) {
+          continuityMeta = {
+            ...continuityMeta,
+            outfit: committed.outfit.fullDescription,
+            outfitRevision: committed.outfitRevision
+          };
+        }
       }
 
       return {
@@ -734,13 +762,13 @@ export class ProactiveComposer {
     });
   }
 
-  private resolveEventContext(candidate: LifeLogRow): ProactiveEventContext {
+  private resolveEventContext(candidate: LifeLogRow, world: WorldSnapshot): ProactiveEventContext {
     let location: LifeLocationRow | undefined;
     try {
       const visit = this.deps.locations.visitOverlapping(candidate.started_at, candidate.ended_at);
       location = visit ? this.deps.locations.get(visit.location_id) : undefined;
     } catch { /* optional grounding */ }
-    const snapshot = this.deps.worldSnapshot();
+    const snapshot = world;
     const eventEnd = Date.parse(candidate.ended_at);
     const now = Date.parse(snapshot.now);
     const sameCity = Boolean(location?.city && snapshot.city?.name && location.city === snapshot.city.name);
@@ -772,6 +800,7 @@ async function composeMomentSharePlan(
   personaPrompt: string,
   lifeLines: string[],
   eventContext: ProactiveEventContext,
+  visualTime: VisualTimeContext,
   requestedMode: ProactiveMode,
   signal: AbortSignal,
   toolRuntime?: ToolCallRuntime
@@ -785,6 +814,9 @@ async function composeMomentSharePlan(
         '你是 SOOYA，要把一件真实经历过的小事发到只对用户可见的动态。这里不是私人聊天窗口。',
         '【要发布的历史事件】',
         JSON.stringify(eventContext),
+        visualTime.mode === 'retrospective'
+          ? `【发布时间与事件时间】真实当前时间是 ${visualTime.currentLocalDate} ${visualTime.currentLocalTime}，当前发布时段是 ${visualTime.currentDayPeriod}；事件画面时间是 ${visualTime.depictedLocalDate}，事件画面时段是 ${visualTime.depictedDayPeriod}。正文和图片都必须表现为已经发生的事件，不得写成正在当前发生。`
+          : `【发布时间与事件时间】真实当前时间是 ${visualTime.currentLocalDate} ${visualTime.currentLocalTime}，当前发布时段是 ${visualTime.currentDayPeriod}；事件画面与当前时段一致。`,
         `本次发布方式：${imageMode ? '图片动态' : '文字动态'}。${imageMode ? '请规划一张与正文同一事件的照片。' : 'image 必须为 null。'}`,
         '【规则】text 是一条自然、完整的动态正文，像随手记录生活，不要标题、标签、冒号前缀、系统/Life/模型内容。',
         '不要用“在吗”“睡了吗”“刚想跟你说”“发给你看看”这种私聊式呼叫，也不要为了发动态虚构新事件。',

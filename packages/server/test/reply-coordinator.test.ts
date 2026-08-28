@@ -6,6 +6,7 @@ import type { GenerationOptions, TextGenerationResult } from '../src/core/replie
 import { HttpTimeoutError } from '../src/util/http.js';
 import { abortableDelay, StaleGenerationError } from '../src/util/abort.js';
 import { createHarness, type Harness } from './helpers/harness.js';
+import { resolveVisualTime } from '../src/core/visual-time.js';
 
 const options = { recentMessages: 24, memoryLimit: 8 };
 let harness: Harness | undefined;
@@ -28,6 +29,19 @@ function textResult(overrides: Partial<TextGenerationResult> = {}): TextGenerati
     contextBudget: {},
     firstTokenAt: null,
     published: false,
+    visualTime: resolveVisualTime({ now: '2026-08-26T05:17:23.000Z' }),
+    mediaPlan: {
+      sticker: false,
+      stickers: [],
+      stickerRequired: false,
+      stickerOnly: false,
+      forceDifferent: false,
+      imagePrompt: null,
+      selfImagePrompt: null,
+      voice: false,
+      voiceOnly: false
+    },
+    worldSnapshot: null,
     ...overrides
   };
 }

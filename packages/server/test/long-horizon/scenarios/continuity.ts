@@ -1,4 +1,5 @@
 import type { FutureHarness } from '../harness.js';
+import { resolveVisualTime } from '../../../src/core/visual-time.js';
 
 /**
  * §28 Preference Change (fact_consistency): a changed preference becomes the
@@ -29,7 +30,8 @@ export async function preferenceChange(h: FutureHarness): Promise<void> {
     voiceMoods: '',
     capabilityNotes: [],
     contextWindow: 8_000,
-    maxOutputTokens: 1_000
+    maxOutputTokens: 1_000,
+    visualTime: resolveVisualTime({ now: '2026-08-26T05:17:23.000Z' })
   });
   if (built.system.includes('用户不喝咖啡')) throw new Error('superseded preference still injected as current');
   // History remains queryable even though it left the prompt.

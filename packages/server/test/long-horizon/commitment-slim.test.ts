@@ -3,6 +3,7 @@ import { createFutureHarness, type FutureHarness } from './harness.js';
 import { boundaryDates, retryIdempotency } from './scenarios/commitment-boundary.js';
 import { commitmentLifecycle, unattendedLifecycle } from './scenarios/commitment-lifecycle.js';
 import { contextDedupe } from './scenarios/context-dedupe.js';
+import { resolveVisualTime } from '../../src/core/visual-time.js';
 
 /**
  * PR4 — Commitment Slim Harness: turns the first-stage validation list
@@ -64,7 +65,8 @@ describe('long-horizon: commitment slim harness', () => {
         voiceMoods: '',
         capabilityNotes: [],
         contextWindow: 8_000,
-        maxOutputTokens: 1_000
+        maxOutputTokens: 1_000,
+        visualTime: resolveVisualTime({ now: '2026-08-26T05:17:23.000Z' })
       });
       expect(built.system).not.toContain('接下来值得记得的事情');
     } finally {

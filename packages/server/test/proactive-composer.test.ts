@@ -58,7 +58,7 @@ async function withMoments(options: Parameters<typeof createHarness>[0] = {}): P
       script: options.chat?.script?.map((chunks) => chunks.map(asSharePlan)) ?? [[sharePlan('公园那只橘猫今天格外黏人，踩着我的鞋不肯走。')]]
     },
     startWorkers: false,
-    clock: () => localTime('2026-07-31T17:30')
+    clock: options.clock ?? (() => localTime('2026-07-31T17:30'))
   });
 }
 
@@ -201,6 +201,76 @@ describe('ProactiveComposer -> Moments', () => {
     expect(harness.state.imageRequests).toHaveLength(0);
     const moment = harness.app.repos.moments.get(result.momentId!)!;
     expect(moment.image_media_id).toBeNull();
+    expect(harness.app.services.imageContinuity.current()).toBeNull();
+  });
+
+  it('publishes an afternoon event at 18:30 as retrospective and stores the same two clocks everywhere', async () => {
+    harness = await withMoments({
+      image: 'anuma',
+      clock: () => localTime('2026-07-31T18:30'),
+      chat: {
+        script: [[sharePlan('下午在公园蹲着看猫时，那只橘猫踩着我的鞋不肯走。')]]
+      }
+    });
+    stageCandidate(harness);
+    const snapshotSpy = vi.spyOn(harness.app.services.world, 'snapshot');
+    snapshotSpy.mockClear();
+
+    const result = await harness.app.services.proactive.run({ mode: 'image' });
+
+    expect(result.status).toBe('sent');
+    expect(result.finalMode).toBe('image');
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+    const moment = harness.app.repos.moments.get(result.momentId!)!;
+    expect(moment.text).toContain('下午');
+    const media = harness.app.repos.media.get(moment.image_media_id!)!;
+    const mediaContinuity = JSON.parse(media.meta_json).continuity;
+    const attemptContinuity = harness.app.repos.proactive.list(1)[0]!.detail.continuity;
+    const allChatRequests = JSON.stringify(harness.state.chatCalls.map((request) => request.body));
+    const directorRequest = harness.state.chatCalls[1]!.body as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const directorInput = directorRequest.messages.find((message) => message.role === 'user')!.content;
+    const directorContinuity = JSON.parse(directorInput.slice(directorInput.indexOf('{'))).continuity;
+    const providerPrompt = JSON.stringify(harness.state.imageRequests[0]!.body);
+
+    expect(allChatRequests).toContain('当前发布时段是 evening');
+    expect(allChatRequests).toContain('事件画面时段是 afternoon');
+    expect(allChatRequests).toContain('正文和图片都必须表现为已经发生的事件');
+    expect(directorContinuity).toMatchObject({
+      currentActivity: null,
+      currentLocation: null,
+      visualTime: {
+        mode: 'retrospective',
+        currentLocalDate: '2026-07-31',
+        currentLocalTime: '18:30:00',
+        currentDayPeriod: 'evening',
+        depictedLocalDate: '2026-07-31',
+        depictedDayPeriod: 'afternoon',
+        requestedDayPeriod: null
+      }
+    });
+    expect(providerPrompt).toContain('Time mode: retrospective');
+    expect(providerPrompt).toContain('Depicted local date: 2026-07-31');
+    expect(providerPrompt).toContain('Depicted day period: afternoon');
+    expect(providerPrompt).toContain('warm afternoon sunlight');
+    expect(mediaContinuity).toMatchObject({
+      dateKey: '2026-07-31',
+      timeMode: 'retrospective',
+      timeZone: 'Asia/Shanghai',
+      currentInstant: '2026-07-31T10:30:00.000Z',
+      currentDayPeriod: 'evening',
+      depictedLocalDate: '2026-07-31',
+      depictedDayPeriod: 'afternoon',
+      requestedDayPeriod: null,
+      commitState: 'skipped',
+      commitReason: 'retrospective_scene'
+    });
+    expect(mediaContinuity).not.toHaveProperty('outfitRevision');
+    expect(mediaContinuity).not.toHaveProperty('activity');
+    expect(mediaContinuity).not.toHaveProperty('activityKind');
+    expect(mediaContinuity).not.toHaveProperty('location');
+    expect(attemptContinuity).toEqual(mediaContinuity);
     expect(harness.app.services.imageContinuity.current()).toBeNull();
   });
 

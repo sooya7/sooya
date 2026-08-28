@@ -10,7 +10,6 @@ import type { LifeRuntime } from './life.js';
 import type { MediaTextRepo } from '../db/repos/media-text.repo.js';
 import type { StickerRepo } from '../db/repos/sticker.repo.js';
 import type { StickerLibrary } from '../media/stickers.js';
-import { formatZonedDateTime } from '../util/time-zone.js';
 import { prepareVisionInput } from '../media/vision-input.js';
 import { prepareStickerContextFrames } from '../media/sticker-vision.js';
 import { STICKER_CONTEXT_VISION_MAX_IMAGES } from './stickers/constants.js';
@@ -18,6 +17,11 @@ import type { WorldSnapshot } from './world-context.js';
 import type { FutureContextService } from './future/context.js';
 import type { RelationshipContextService } from './relationship/service.js';
 import { sourceLines, type ContextSourcePipeline } from './context-pipeline.js';
+import {
+  ensureVisualTimeReplyText,
+  visualTimeReplyInstruction,
+  type VisualTimeContext
+} from './visual-time.js';
 
 export interface BuiltContext {
   system: string;
@@ -75,6 +79,10 @@ export interface ContextOptions {
   capabilityNotes: string[];
   contextWindow: number;
   maxOutputTokens: number;
+  /** Single resolved authority for the real clock and any depicted image time. */
+  visualTime: VisualTimeContext;
+  /** Same read-only world snapshot that supplied visualTime for this reply turn. */
+  worldSnapshot?: Readonly<WorldSnapshot> | null;
   /** Combine a rapid-message batch into one user turn for the model. */
   batchMessageIds?: string[];
 }
@@ -107,7 +115,14 @@ export class ContextBuilder {
     const recent = mergeContextMessages(this.messages.recent(opts.recentMessages), opts.batchMessageIds?.map((id) => this.messages.get(id)).filter((message): message is ChatMessage => Boolean(message)) ?? []);
     const activeSummaries = this.summaries.active(4);
     const lastUserAt = lastUserMessageAt(recent, opts.batchMessageIds);
-    const pipelineFragments = this.pipeline ? await this.pipeline.collect({ persona, latestUserText, recent, now: new Date(), lastUserAt }) : [];
+    const pipelineFragments = this.pipeline ? await this.pipeline.collect({
+      persona,
+      latestUserText,
+      recent,
+      now: new Date(opts.visualTime.currentInstant),
+      lastUserAt,
+      worldSnapshot: opts.worldSnapshot
+    }) : [];
     const linesFrom = (sourceId: string, legacy: () => string[]): string[] => sourceLines(this.pipeline, pipelineFragments, sourceId, legacy);
 
     const recallQuery = latestUserText || recent.map(plainText).join('\n').slice(-500);
@@ -116,18 +131,28 @@ export class ContextBuilder {
       : { memories: [], matches: [], strategy: 'none', embeddingCoverage: { withEmbedding: 0, total: 0, ratio: 0 } };
     const inputBudget = Math.max(256, opts.contextWindow - opts.maxOutputTokens - 128);
 
-    const systemParts: string[] = [];
-    systemParts.push(trimToTokenEstimate(persona.systemPrompt.trim(), Math.max(96, Math.floor(inputBudget * 0.4))));
+    const visualTime = opts.visualTime;
+    const retrospectiveRule = visualTime.mode === 'retrospective'
+      ? `${visualTime.requestedDayPeriod ? '画面是上一自然日；' : ''}画面日期=${visualTime.depictedLocalDate}；示例：${ensureVisualTimeReplyText('', visualTime, true)}`
+      : '画面与正文以现实当前时钟为准，旧提示不能覆盖。';
+    const visualTimeRule = `视觉时间规则（双时钟）：${visualTimeReplyInstruction(visualTime)} 现实 instant=${visualTime.currentInstant}；现实日期、时间、时区和 instant 不可被用户要求改写；${retrospectiveRule}`;
     // 这是一对一私聊。上下文里的摘要是 `用户: …` 这种转录格式，模型看了会跟着
     // 在回复开头加名牌，所以明确禁掉一次；万一还是加了，replier 会再剥一层。
-    systemParts.push('你们是一对一私聊，不是群聊。直接说话，回复开头不要加「名字：」这类前缀，也不要复述对方的名字当标签。');
+    const directChatRule = '你们是一对一私聊，不是群聊。直接说话，回复开头不要加「名字：」这类前缀，也不要复述对方的名字当标签。';
+    const mandatoryTokens = estimateTextTokens(`${directChatRule}\n\n${visualTimeRule}`) + 12;
+    const personaBudget = Math.max(16, Math.min(Math.floor(inputBudget * 0.4), inputBudget - mandatoryTokens - 16));
+    const systemParts: string[] = [
+      trimToTokenEstimate(persona.systemPrompt.trim(), personaBudget),
+      directChatRule,
+      visualTimeRule
+    ].filter(Boolean);
     const worldCity = this.pipeline
       ? pipelineFragments.find((fragment) => fragment.sourceId === 'world')?.metadata?.city as WorldSnapshot['city'] | undefined
-      : this.worldSnapshot?.().city;
+      : (opts.worldSnapshot === undefined ? this.worldSnapshot?.() : opts.worldSnapshot)?.city;
     const city = worldCity;
     if (city?.name) {
       const place = [city.country ?? '中国', city.region, city.name].filter(Boolean).join('');
-      systemParts.push(`你当前所在城市是${place}。涉及“附近”“当地”“今天去哪”等本地问题时，以该城市为范围；不要编造具体地址。`);
+      tryAddSystemPart(systemParts, [], `你当前所在城市是${place}。涉及“附近”“当地”“今天去哪”等本地问题时，以该城市为范围；不要编造具体地址。`, inputBudget);
     }
 
     const batchIds = new Set(opts.batchMessageIds ?? []);
@@ -272,11 +297,6 @@ export class ContextBuilder {
     if (opts.capabilityNotes.length > 0) {
       tryAddSystemPart(systemParts, turns, `当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`, inputBudget);
     }
-    const now = new Date();
-    let clock = `${now.toISOString()}（UTC）`;
-    try { clock = `${formatZonedDateTime(now, this.timeZone)}（${this.timeZone}）；服务器 UTC 时间：${now.toISOString()}`; } catch { /* use the explicit UTC fallback */ }
-    tryAddSystemPart(systemParts, turns, `用户当地时间：${clock}。`, inputBudget);
-
     const estimatedInputTokens = estimateContextTokens(systemParts, turns);
     return {
       system: systemParts.filter(Boolean).join('\n\n'),

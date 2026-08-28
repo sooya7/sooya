@@ -11,6 +11,8 @@ export interface ContextRequest {
   recent: ChatMessage[];
   now: Date;
   lastUserAt?: Date | null;
+  /** Immutable world state captured once by the owner of this reply turn. */
+  worldSnapshot?: Readonly<WorldSnapshot> | null;
 }
 
 export interface ContextFragment {
@@ -88,8 +90,11 @@ export function createContextSourcePipeline(deps: {
   });
   pipeline.register({
     id: 'world', priority: 50,
-    collect: () => {
-      const city = deps.worldSnapshot?.().city;
+    collect: (request) => {
+      const snapshot = request.worldSnapshot === undefined
+        ? deps.worldSnapshot?.()
+        : request.worldSnapshot;
+      const city = snapshot?.city;
       if (!city?.name) return null;
       return {
         sourceId: 'world',
