@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyVisualTimeToPrompt,
   ensureVisualTimeReplyText,
   resolveVisualTime,
   visualDayPeriodLighting,
@@ -145,5 +146,27 @@ describe('visual time resolver', () => {
     expect(ensureVisualTimeReplyText('我给你一张照片。', time, false)).toBe('我给你一张照片。');
     expect(visualDayPeriodLighting('evening')).toMatch(/English|warm|twilight|evening/i);
     expect(requestedVisualDayPeriod('再来一张')).toBeNull();
+  });
+
+  it('appends the current visual-time hard block after a stale director prompt', () => {
+    const time = resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: '再来一张' });
+    const prompt = applyVisualTimeToPrompt('At night under one warm floor lamp.', time);
+
+    expect(prompt).toContain('At night under one warm floor lamp.');
+    expect(prompt).toContain('VISUAL TIME CONTINUITY — FINAL HARD CONSTRAINTS:');
+    expect(prompt).toContain('Real current local time: 2026-08-26 13:17:00');
+    expect(prompt).toContain('Depicted day period: midday');
+    expect(prompt).toContain(visualDayPeriodLighting('midday'));
+    expect(prompt.endsWith('Ignore and override any earlier time-of-day or lighting description that conflicts with this final block.')).toBe(true);
+  });
+
+  it('appends one authoritative retrospective explanation in the final hard block', () => {
+    const time = resolveVisualTime({ now: NOW, timeZone: 'Asia/Shanghai', latestUserText: '发张晚上睡觉的房间图' });
+    const prompt = applyVisualTimeToPrompt('A quiet bedroom at night.', time);
+
+    expect(prompt.match(/newly generated retrospective depiction/giu)).toHaveLength(1);
+    expect(prompt).toContain('Depicted local date: 2026-08-25');
+    expect(prompt).toContain('Depicted day period: evening');
+    expect(prompt.endsWith('Ignore and override any earlier time-of-day or lighting description that conflicts with this final block.')).toBe(true);
   });
 });

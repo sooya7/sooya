@@ -47,6 +47,7 @@ import type { WorldSnapshot } from './world-context.js';
 import type { ToolCallRuntime } from '../agent/tool-runtime.js';
 import type { OmbreMemoryBridge } from './ombre-memory.js';
 import {
+  applyVisualTimeToPrompt,
   ensureVisualTimeReplyText,
   resolveVisualTime,
   visualTimeMetadata,
@@ -717,7 +718,13 @@ export class Replier {
         let finalImagePrompt = imagePrompt;
         let continuity: PreparedImageContinuity | null = null;
         let resolvedOutfit: string | null = null;
-        let continuityMeta: Record<string, unknown> | null = null;
+        let continuityMeta: Record<string, unknown> | null = generated.visualTime.mode === 'current'
+          ? { ...visualTimeMetadata(generated.visualTime) }
+          : {
+              commitState: 'skipped',
+              commitReason: 'retrospective_scene',
+              ...visualTimeMetadata(generated.visualTime)
+            };
         try {
           if (referenceMediaIds.length > 1) {
             throw new ImageReferenceError(
@@ -794,6 +801,8 @@ export class Replier {
                   commitReason: 'retrospective_scene',
                   ...visualTimeMetadata(continuity.visualTime)
                 };
+          } else {
+            finalImagePrompt = applyVisualTimeToPrompt(finalImagePrompt, generated.visualTime);
           }
 
           this.deps.messages.updatePart(partId, {

@@ -119,6 +119,24 @@ export function visualTimeReplyInstruction(time: VisualTimeContext): string {
 
 export function visualDayPeriodLighting(period: VisualDayPeriod): string { return LIGHTING[period]; }
 
+export function applyVisualTimeToPrompt(prompt: string, time: VisualTimeContext): string {
+  const retrospectiveRule = time.mode === 'retrospective'
+    ? 'This is a newly generated retrospective depiction, not current reality and not proof of a stored historical photo.'
+    : null;
+  return [
+    prompt.trim(),
+    '',
+    'VISUAL TIME CONTINUITY — FINAL HARD CONSTRAINTS:',
+    `Real current local time: ${time.currentLocalDate} ${time.currentLocalTime} (${time.currentDayPeriod}, ${time.timeZone}).`,
+    `Time mode: ${time.mode}.`,
+    `Depicted local date: ${time.depictedLocalDate}.`,
+    `Depicted day period: ${time.depictedDayPeriod}.`,
+    `Required scene lighting: ${visualDayPeriodLighting(time.depictedDayPeriod)}.`,
+    retrospectiveRule,
+    'Ignore and override any earlier time-of-day or lighting description that conflicts with this final block.'
+  ].filter((line): line is string => Boolean(line)).join('\n');
+}
+
 export function visualTimeMetadata(time: VisualTimeContext) {
   return { timeMode: time.mode, timeZone: time.timeZone, currentInstant: time.currentInstant, currentDayPeriod: time.currentDayPeriod, depictedLocalDate: time.depictedLocalDate, depictedDayPeriod: time.depictedDayPeriod, requestedDayPeriod: time.requestedDayPeriod };
 }

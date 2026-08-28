@@ -326,6 +326,7 @@ describe('ImageContinuityService', () => {
     });
     expect(outfit).toContain('家居');
     expect(prompt).toContain('newly generated retrospective depiction');
+    expect(prompt.match(/newly generated retrospective depiction/giu)).toHaveLength(1);
     expect(prompt).not.toContain('Use the current activity and location above as authoritative');
     expect(prompt).not.toContain('Real current activity: 在图书馆看小说');
 

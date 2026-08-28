@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { SettingsRepo } from '../db/repos/misc.repo.js';
 import {
+  applyVisualTimeToPrompt,
   resolveVisualTime,
-  visualDayPeriodLighting,
   type VisualTimeContext
 } from './visual-time.js';
 
@@ -320,11 +320,9 @@ export class ImageContinuityService {
           'Use the current activity and location above as authoritative. A new angle, composition, or ordinary location change must not create a different activity or outfit.'
         ]
       : [
-          'This is a newly generated retrospective depiction, not current reality and not proof of a stored historical photo.',
           'Follow the latest explicit past-scene request and intended scene. Do not reuse current Life activity or location as historical facts.'
         ];
-    const time = decision.visualTime;
-    return [
+    const continuityPrompt = [
       prompt.trim(),
       '',
       'DAILY VISUAL CONTINUITY — HARD CONSTRAINTS:',
@@ -333,16 +331,9 @@ export class ImageContinuityService {
       `SOOYA's complete outfit: ${resolvedOutfit}.`,
       outfitRule,
       explicitRule,
-      'Ignore and override any earlier clothing description that conflicts with the complete outfit above.',
-      '',
-      'VISUAL TIME CONTINUITY — FINAL HARD CONSTRAINTS:',
-      `Real current local time: ${time.currentLocalDate} ${time.currentLocalTime} (${time.currentDayPeriod}, ${time.timeZone}).`,
-      `Time mode: ${time.mode}.`,
-      `Depicted local date: ${time.depictedLocalDate}.`,
-      `Depicted day period: ${time.depictedDayPeriod}.`,
-      `Required scene lighting: ${visualDayPeriodLighting(time.depictedDayPeriod)}.`,
-      'Ignore and override any earlier time-of-day or lighting description that conflicts with this final block.'
+      'Ignore and override any earlier clothing description that conflicts with the complete outfit above.'
     ].filter((line): line is string => Boolean(line)).join('\n');
+    return applyVisualTimeToPrompt(continuityPrompt, decision.visualTime);
   }
 
   commit(decision: PreparedImageContinuity, input: CommitImageContinuityInput): DailyImageContinuityState | null {
