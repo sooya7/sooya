@@ -142,7 +142,7 @@ export function parseEmotionArg(arg: string | null | undefined): string | null {
 }
 
 /**
- * Reads the intensity (0–1) out of a voice marker argument, e.g.
+ * Reads the intensity (0–1) out of a voice marker, e.g.
  * `[[voice:emotion=shy|intensity=0.3]]`. Absent or unparseable values yield
  * undefined — the director then decides its own intensity.
  */
@@ -221,6 +221,45 @@ export interface StripResult {
 const THINK_TAG_RE = /<\/?think(?:_[0-9a-z_]{8,})?>/gi;
 const THINK_BLOCK_RE = /<think(?:_[0-9a-z_]{8,})?>[\s\S]*?<\/think(?:_[0-9a-z_]{8,})?>/gi;
 const OPEN_THINK_RE = /<think(?:_[0-9a-z_]{8,})?>[\s\S]*$/i;
+
+/**
+ * Some OpenAI-compatible gateways flatten a model tool attempt into text
+ * instead of structured tool_calls. SOOYA does not expose that XML-ish
+ * protocol to users. Only the known image_generation_tool is translated into
+ * the existing image directive path; unknown pseudo tools are stripped but
+ * never executed.
+ */
+const PSEUDO_TOOL_CALL_BLOCK_RE = /<tool_call(?:\s[^>]*)?>[\s\S]*?<\/tool_call\s*>/gi;
+const OPEN_PSEUDO_TOOL_CALL_RE = /<tool_call(?:\s[^>]*)?>[\s\S]*$/i;
+const PSEUDO_TOOL_OPEN_RE = /<tool_call(?:\s[^>]*)?>/i;
+const PSEUDO_TOOL_CLOSE_RE = /<\/tool_call\s*>/i;
+const IMAGE_GENERATION_FUNCTION_RE = /<function\s*=\s*["']?image_generation_tool["']?\s*>/i;
+const PSEUDO_TOOL_CLOSE_TAIL = '</tool_call>'.length - 1;
+
+function pseudoToolParameter(block: string, name: 'prompt' | 'system_prompt'): string | null {
+  const re = new RegExp(`<parameter\\s*=\\s*["']?${name}["']?\\s*>([\\s\\S]*?)<\\/parameter\\s*>`, 'i');
+  const value = re.exec(block)?.[1]?.trim();
+  return value ? value.slice(0, MAX_MARKER_BUFFER) : null;
+}
+
+function absorbPseudoToolCall(block: string, directives: ModelDirectives): void {
+  if (!IMAGE_GENERATION_FUNCTION_RE.test(block)) return;
+  const prompt = pseudoToolParameter(block, 'prompt');
+  if (!prompt) return;
+  const systemPrompt = pseudoToolParameter(block, 'system_prompt') ?? '';
+  if (/\bselfie\b|自拍/i.test(`${systemPrompt}\n${prompt}`)) directives.selfImagePrompt = prompt;
+  else directives.imagePrompt = prompt;
+}
+
+function trailingPseudoToolPrefixIndex(text: string): number {
+  const lower = text.toLowerCase();
+  const tag = '<tool_call>';
+  for (let size = Math.min(tag.length - 1, text.length); size >= 2; size -= 1) {
+    if (lower.endsWith(tag.slice(0, size))) return text.length - size;
+  }
+  const open = /<tool_call(?:\s[^>]*)?$/i.exec(text);
+  return open?.index ?? -1;
+}
 
 /** Removes reasoning traces from a completed text. */
 export function stripThinking(raw: string): string {
@@ -347,7 +386,15 @@ export function stripModelDirectives(raw: string): StripResult {
   let cleaned = partial ? raw.slice(0, partial.index) : raw;
   const singlePartial = TRAILING_SINGLE_PARTIAL_RE.exec(cleaned);
   if (singlePartial && isPartialMarker(singlePartial[0])) cleaned = cleaned.slice(0, singlePartial.index);
-  const text = stripPrivateContextEcho(stripThinking(cleaned))
+  let protocolCleaned = stripPrivateContextEcho(stripThinking(cleaned));
+  protocolCleaned = protocolCleaned.replace(PSEUDO_TOOL_CALL_BLOCK_RE, (block) => {
+    absorbPseudoToolCall(block, directives);
+    return '';
+  });
+  // A truncated pseudo call is private protocol too, but incomplete calls are
+  // never executed because their parameter boundary cannot be trusted.
+  protocolCleaned = protocolCleaned.replace(OPEN_PSEUDO_TOOL_CALL_RE, '');
+  const text = protocolCleaned
     .replace(MARKER_RE, (_m, kind: string, arg?: string) => {
       const k = canonicalMarkerKind(kind);
       const value = (arg ?? '').trim();
@@ -401,11 +448,28 @@ export class StreamingDirectiveFilter {
   private pending = '';
   /** While inside a <think>…</think> block, emitted text is suppressed. */
   private inThink = false;
+  /** Pseudo tool XML is internal protocol and is never user-visible. */
+  private inPseudoToolCall = false;
 
   push(chunk: string): string {
     this.pending += chunk;
     let out = '';
     for (;;) {
+      if (this.inPseudoToolCall) {
+        const close = PSEUDO_TOOL_CLOSE_RE.exec(this.pending);
+        if (close) {
+          this.pending = this.pending.slice(close.index + close[0].length);
+          this.inPseudoToolCall = false;
+          continue;
+        }
+        // Keep only enough suffix to recognize a closing tag split across
+        // chunks. The raw stream is retained separately for final parsing.
+        if (this.pending.length > PSEUDO_TOOL_CLOSE_TAIL) {
+          this.pending = this.pending.slice(-PSEUDO_TOOL_CLOSE_TAIL);
+        }
+        break;
+      }
+
       // Inside a think block: only the closing tag matters.
       if (this.inThink) {
         const m = /<\/think(?:_[0-9a-z_]{8,})?>/i.exec(this.pending);
@@ -421,21 +485,32 @@ export class StreamingDirectiveFilter {
       }
 
       const open = this.pending.indexOf('[');
-      const think = this.pending.search(/<think(?:_[0-9a-z_]{8,})?>/i);
+      const thinkTag = /<think(?:_[0-9a-z_]{8,})?>/i.exec(this.pending);
+      const toolTag = PSEUDO_TOOL_OPEN_RE.exec(this.pending);
+      const think = thinkTag?.index ?? -1;
+      const tool = toolTag?.index ?? -1;
+      const privateTag = [think, tool].filter((index) => index >= 0).sort((a, b) => a - b)[0] ?? -1;
 
-      // A think block opens before any bracket marker: swallow it wholesale.
-      if (think >= 0 && (open < 0 || think < open)) {
-        out += this.pending.slice(0, think);
-        const tag = /<think(?:_[0-9a-z_]{8,})?>/i.exec(this.pending)!;
-        this.pending = this.pending.slice(think + tag[0].length);
-        this.inThink = true;
+      // Private protocol opens before any bracket marker: swallow it wholesale.
+      if (privateTag >= 0 && (open < 0 || privateTag < open)) {
+        out += this.pending.slice(0, privateTag);
+        if (tool === privateTag && toolTag) {
+          this.pending = this.pending.slice(tool + toolTag[0].length);
+          this.inPseudoToolCall = true;
+        } else if (thinkTag) {
+          this.pending = this.pending.slice(think + thinkTag[0].length);
+          this.inThink = true;
+        }
         continue;
       }
 
-      // A dangling "<thin" or "</thi" at the very end could still grow into a
-      // think tag of either direction.
-      const dangling = /<\/?(?:t(?:h(?:i(?:n(?:k(?:_[0-9a-z_]{0,40})?)?)?)?)?)?$/i.exec(this.pending);
-      const searchEnd = dangling ? dangling.index : this.pending.length;
+      // A dangling "<thin" / "<tool_cal" at the end could still become private
+      // protocol in the next chunk, so do not flash that prefix to the user.
+      const danglingThink = /<\/?(?:t(?:h(?:i(?:n(?:k(?:_[0-9a-z_]{0,40})?)?)?)?)?)?$/i.exec(this.pending);
+      const danglingTool = trailingPseudoToolPrefixIndex(this.pending);
+      let searchEnd = this.pending.length;
+      if (danglingThink) searchEnd = Math.min(searchEnd, danglingThink.index);
+      if (danglingTool >= 0) searchEnd = Math.min(searchEnd, danglingTool);
       if (open < 0 || open >= searchEnd) {
         out += this.pending.slice(0, searchEnd);
         this.pending = this.pending.slice(searchEnd);
@@ -469,23 +544,26 @@ export class StreamingDirectiveFilter {
       this.pending = this.pending.slice(end);
       if (!MARKER_EXACT_RE.test(span)) out += span;
     }
-    // An orphan closing tag (no opening <think>) must never reach the user.
-    return out.replace(/<\/think(?:_[0-9a-z_]{8,})?>/gi, '');
+    // Orphan closing tags are protocol debris too and never user-visible.
+    return out
+      .replace(/<\/think(?:_[0-9a-z_]{8,})?>/gi, '')
+      .replace(/<\/tool_call\s*>/gi, '');
   }
 
-  /** Flush whatever is left (an unterminated marker or think block is dropped). */
+  /** Flush whatever is left (an unterminated marker or private block is dropped). */
   flush(): string {
     const rest = this.pending;
     this.pending = '';
-    if (this.inThink) {
+    if (this.inThink || this.inPseudoToolCall) {
       this.inThink = false;
+      this.inPseudoToolCall = false;
       return '';
     }
-    if (rest === '[') return '[';
-    if (MARKER_EXACT_RE.test(rest) || isPartialMarker(rest)) return '';
+    const danglingTool = trailingPseudoToolPrefixIndex(rest);
+    const visibleRest = danglingTool >= 0 ? rest.slice(0, danglingTool) : rest;
+    if (visibleRest === '[') return '[';
+    if (MARKER_EXACT_RE.test(visibleRest) || isPartialMarker(visibleRest)) return '';
     // A trailing partial "<thin…" that never became a think tag: emit it.
-    return rest;
+    return visibleRest.replace(/<\/tool_call\s*>/gi, '');
   }
 }
-
-
