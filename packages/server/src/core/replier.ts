@@ -697,7 +697,9 @@ export class Replier {
       const referenceMediaIds = userMessages.flatMap((message) =>
         message.content.filter((part) => part.type === 'image' && part.mediaId).map((part) => part.mediaId!)
       );
-      const continuityService = plan.selfImagePrompt && referenceMediaIds.length === 0
+      const editingUserImage = referenceMediaIds.length === 1;
+      const generatingNewImage = referenceMediaIds.length === 0;
+      const continuityService = plan.selfImagePrompt && generatingNewImage
         ? this.deps.imageContinuity
         : undefined;
       const baseImageMeta: Record<string, unknown> = {
@@ -718,13 +720,15 @@ export class Replier {
         let finalImagePrompt = imagePrompt;
         let continuity: PreparedImageContinuity | null = null;
         let resolvedOutfit: string | null = null;
-        let continuityMeta: Record<string, unknown> | null = generated.visualTime.mode === 'current'
-          ? { ...visualTimeMetadata(generated.visualTime) }
-          : {
-              commitState: 'skipped',
-              commitReason: 'retrospective_scene',
-              ...visualTimeMetadata(generated.visualTime)
-            };
+        let continuityMeta: Record<string, unknown> | null = generatingNewImage
+          ? generated.visualTime.mode === 'current'
+            ? { ...visualTimeMetadata(generated.visualTime) }
+            : {
+                commitState: 'skipped',
+                commitReason: 'retrospective_scene',
+                ...visualTimeMetadata(generated.visualTime)
+              }
+          : null;
         try {
           if (referenceMediaIds.length > 1) {
             throw new ImageReferenceError(
@@ -734,7 +738,6 @@ export class Replier {
             );
           }
 
-          const editingUserImage = referenceMediaIds.length === 1;
           if (continuityService) {
             const life = this.deps.lifeSnapshot?.();
             const world = generated.worldSnapshot;
@@ -801,7 +804,7 @@ export class Replier {
                   commitReason: 'retrospective_scene',
                   ...visualTimeMetadata(continuity.visualTime)
                 };
-          } else {
+          } else if (generatingNewImage) {
             finalImagePrompt = applyVisualTimeToPrompt(finalImagePrompt, generated.visualTime);
           }
 

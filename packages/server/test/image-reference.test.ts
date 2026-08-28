@@ -21,8 +21,10 @@ function stubProvider(h: Harness) {
   };
   const calls: string[] = [];
   const edits: EditCall[] = [];
-  provider.generate = async () => {
+  const generations: string[] = [];
+  provider.generate = async (prompt) => {
     calls.push('generate');
+    generations.push(prompt);
     return { data: PNG, mime: 'image/png' };
   };
   provider.edit = async (prompt, image, opts) => {
@@ -30,7 +32,7 @@ function stubProvider(h: Harness) {
     edits.push({ prompt, image, mime: opts?.mime });
     return { data: PNG, mime: 'image/png' };
   };
-  return { calls, edits };
+  return { calls, edits, generations };
 }
 
 async function sendImage(h: Harness, mediaId: string, text: string) {
@@ -67,11 +69,18 @@ describe('reference image', () => {
 
     expect(stub.calls).toEqual(['edit']);
     expect(stub.edits[0]?.prompt).toBe('把猫换成橘色');
+    expect(stub.edits[0]?.prompt).not.toContain('VISUAL TIME CONTINUITY — FINAL HARD CONSTRAINTS');
     expect(stub.edits[0]?.image.equals(PNG)).toBe(true);
     expect(stub.edits[0]?.mime).toBe('image/png');
     const image = (body.reply.content as Array<Record<string, any>>).find((part) => part.type === 'image');
     expect(image?.status).toBe('sent');
     expect(image?.meta?.referenceMediaId).toBe(saved.id);
+    expect(image?.meta?.directorPrompt).toBe('把猫换成橘色');
+    expect(image?.meta?.continuity).toBeUndefined();
+    const media = h.app.repos.media.get(image?.mediaId);
+    const mediaMeta = JSON.parse(media!.meta_json);
+    expect(mediaMeta.directorPrompt).toBe('把猫换成橘色');
+    expect(mediaMeta.continuity).toBeUndefined();
   });
 
   it('generates from the prompt alone when the user sent no image', async () => {
@@ -81,6 +90,7 @@ describe('reference image', () => {
     const { body } = await sendText(h.app, '画只猫', 'no-ref');
 
     expect(stub.calls).toEqual(['generate']);
+    expect(stub.generations[0]).toContain('VISUAL TIME CONTINUITY — FINAL HARD CONSTRAINTS');
     const image = (body.reply.content as Array<Record<string, any>>).find((part) => part.type === 'image');
     expect(image?.status).toBe('sent');
     expect(image?.meta?.referenceMediaId).toBeUndefined();
