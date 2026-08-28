@@ -95,6 +95,44 @@ describe('single-bracket directive markers', () => {
   });
 });
 
+describe('flattened pseudo tool calls', () => {
+  const prompt = 'A young East Asian woman with long dark hair, wearing a loose cream/beige oversized sweater, lying comfortably on a beige sofa at night';
+
+  it('turns the leaked image_generation_tool selfie call into the existing self-image directive', () => {
+    const raw = `对不起对不起 忘了这就补！ <tool_call>
+<function=image_generation_tool>
+<parameter=prompt>${prompt}</parameter>
+<parameter=aspect_ratio>3:4</parameter>
+<parameter=system_prompt>You are generating a casual selfie/at-home photo of a young woman. Keep it natural and real.</parameter>
+</function>
+</tool_call>`;
+    const { text, directives } = stripModelDirectives(raw);
+    expect(text).toBe('对不起对不起 忘了这就补！');
+    expect(directives.selfImagePrompt).toBe(prompt);
+    expect(directives.imagePrompt).toBeUndefined();
+  });
+
+  it('maps a generic image tool call to a normal image directive', () => {
+    const raw = `<tool_call><function=image_generation_tool><parameter=prompt>雨夜的东京街口</parameter></function></tool_call>`;
+    const { text, directives } = stripModelDirectives(raw);
+    expect(text).toBe('');
+    expect(directives.imagePrompt).toBe('雨夜的东京街口');
+    expect(directives.selfImagePrompt).toBeUndefined();
+  });
+
+  it('strips unknown pseudo tools without executing them', () => {
+    const { text, directives } = stripModelDirectives('前面<tool_call><function=shell_exec><parameter=prompt>rm -rf /</parameter></function></tool_call>后面');
+    expect(text).toBe('前面后面');
+    expect(directives).toEqual({});
+  });
+
+  it('drops an incomplete pseudo tool call instead of exposing or executing it', () => {
+    const { text, directives } = stripModelDirectives('先等等<tool_call><function=image_generation_tool><parameter=prompt>未完成');
+    expect(text).toBe('先等等');
+    expect(directives).toEqual({});
+  });
+});
+
 describe('StreamingDirectiveFilter with single brackets', () => {
   function stream(chunks: string[]): string {
     const f = new StreamingDirectiveFilter();
@@ -135,5 +173,18 @@ describe('StreamingDirectiveFilter with single brackets', () => {
     expect(stream([stickerMarker.slice(0, 49), stickerMarker.slice(49)])).toBe('');
     expect(stream(['你好', '[[voice]]', '再见'])).toBe('你好再见');
     expect(stream(['你好[[stic', 'ker:开心]]'])).toBe('你好');
+  });
+
+  it('never flashes a pseudo tool call even when every tag is split across chunks', () => {
+    expect(stream([
+      '这就补！ <too',
+      'l_call><function=image_generation_tool><parameter=prompt>沙发自拍',
+      '</parameter><parameter=system_prompt>casual selfie</parameter></function></tool_',
+      'call>好了'
+    ])).toBe('这就补！ 好了');
+  });
+
+  it('drops an unterminated pseudo tool call at end of stream', () => {
+    expect(stream(['前面<tool_', 'call><function=image_generation_tool><parameter=prompt>还没写完'])).toBe('前面');
   });
 });
