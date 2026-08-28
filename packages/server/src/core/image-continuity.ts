@@ -353,7 +353,7 @@ export class ImageContinuityService {
         depictedLocalDate: decision.visualTime.depictedLocalDate,
         depictedDayPeriod: decision.visualTime.depictedDayPeriod
       });
-      return this.current();
+      return null;
     }
     const outfit = cleanOutfit(input.outfit);
     const scene = cleanOptional(input.scene, 1000);

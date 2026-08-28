@@ -49,6 +49,7 @@ import type { OmbreMemoryBridge } from './ombre-memory.js';
 import {
   ensureVisualTimeReplyText,
   resolveVisualTime,
+  visualTimeMetadata,
   type VisualTimeContext
 } from './visual-time.js';
 
@@ -754,8 +755,8 @@ export class Replier {
                 ? {
                     continuity: {
                       dateKey: continuity.dateKey,
-                      currentActivity: continuity.currentActivity,
-                      currentLocation: continuity.currentLocation,
+                      currentActivity: continuity.visualTime.mode === 'current' ? continuity.currentActivity : null,
+                      currentLocation: continuity.visualTime.mode === 'current' ? continuity.currentLocation : null,
                       previousOutfit: continuity.previousOutfit,
                       outfitMode: continuity.outfitMode,
                       changeReason: continuity.changeReason,
@@ -772,16 +773,27 @@ export class Replier {
           if (continuity) {
             resolvedOutfit ??= continuityService!.resolveOutfit(null, continuity);
             finalImagePrompt = continuityService!.applyToPrompt(finalImagePrompt, continuity, resolvedOutfit);
-            continuityMeta = {
-              dateKey: continuity.dateKey,
-              outfit: resolvedOutfit,
-              outfitMode: continuity.outfitMode,
-              outfitRevision: continuity.outfitRevision,
-              changeReason: continuity.changeReason,
-              activity: continuity.currentActivity,
-              activityKind: continuity.currentActivityKind,
-              location: continuity.currentLocation
-            };
+            continuityMeta = continuity.visualTime.mode === 'current'
+              ? {
+                  dateKey: continuity.dateKey,
+                  outfit: resolvedOutfit,
+                  outfitMode: continuity.outfitMode,
+                  outfitRevision: continuity.outfitRevision,
+                  changeReason: continuity.changeReason,
+                  activity: continuity.currentActivity,
+                  activityKind: continuity.currentActivityKind,
+                  location: continuity.currentLocation,
+                  ...visualTimeMetadata(continuity.visualTime)
+                }
+              : {
+                  dateKey: continuity.dateKey,
+                  outfit: resolvedOutfit,
+                  outfitMode: continuity.outfitMode,
+                  changeReason: continuity.changeReason,
+                  commitState: 'skipped',
+                  commitReason: 'retrospective_scene',
+                  ...visualTimeMetadata(continuity.visualTime)
+                };
           }
 
           this.deps.messages.updatePart(partId, {

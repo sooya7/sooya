@@ -329,7 +329,7 @@ describe('ImageContinuityService', () => {
     expect(prompt).not.toContain('Use the current activity and location above as authoritative');
     expect(prompt).not.toContain('Real current activity: 在图书馆看小说');
 
-    expect(service.commit(decision, { outfit, scene: decision.currentScene, mediaId: 'retro_media' })).toEqual(currentState);
+    expect(service.commit(decision, { outfit, scene: decision.currentScene, mediaId: 'retro_media' })).toBeNull();
     expect(service.current()).toEqual(currentState);
     expect(events.at(-1)).toMatchObject({
       event: 'commit_skipped',

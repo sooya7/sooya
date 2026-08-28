@@ -125,6 +125,108 @@ describe('daily visual continuity integration', () => {
     expect(harness.app.services.imageContinuity.current()).toBeNull();
   });
 
+  it('forces an unspecified 13:17 continuation back to current midday despite a stale night director prompt', async () => {
+    harness = await createHarness({
+      image: 'anuma',
+      startWorkers: false,
+      clock: () => localTime('2026-08-26T13:17'),
+      env: { ENABLE_BACKGROUND_JOBS: 'false', LIFE_TIME_ZONE: 'Asia/Shanghai' },
+      chat: {
+        script: [
+          ['再给你一张[[image-self:晚上在家，借着落地灯暖光看书]]'],
+          [directorReply('At night at home, reading under a warm floor lamp.', baselineOutfit)]
+        ]
+      }
+    });
+
+    const body = await sendSelfie(harness, 'visual-time-current-1', '再来一张');
+    const image = body.reply.content.find((part: any) => part.type === 'image');
+    const media = harness.app.repos.media.get(image.mediaId)!;
+    const providerPrompt = JSON.stringify(harness.state.imageRequests[0]!.body);
+
+    expect(providerPrompt).toContain('Real current local time: 2026-08-26 13:17:00');
+    expect(providerPrompt).toContain('Depicted day period: midday');
+    expect(providerPrompt).toContain('clear bright midday daylight');
+    expect(image.meta.continuity).toMatchObject({
+      timeMode: 'current',
+      currentDayPeriod: 'midday',
+      depictedLocalDate: '2026-08-26',
+      depictedDayPeriod: 'midday',
+      requestedDayPeriod: null,
+      outfit: baselineOutfit,
+      outfitRevision: 1
+    });
+    expect(JSON.parse(media.meta_json).continuity).toEqual(image.meta.continuity);
+  });
+
+  it('allows a new night image at 13:17 only as yesterday without leaking current Life facts or continuity state', async () => {
+    harness = await createHarness({
+      image: 'anuma',
+      startWorkers: false,
+      clock: () => localTime('2026-08-26T13:17'),
+      env: {
+        ENABLE_BACKGROUND_JOBS: 'false',
+        ENABLE_LIFE_ENGINE: 'true',
+        LIFE_TIME_ZONE: 'Asia/Shanghai',
+        WORLD_CONTEXT_ENABLED: 'true',
+        LOCATION_MODEL_ENABLED: 'true'
+      },
+      chat: {
+        script: [
+          ['好呀，现在拍给你。[[image-self:晚上在家穿着家居服准备睡觉]]'],
+          [directorReply('At night at home, getting ready to sleep.', '宽松浅色家居上衣、深色柔软家居长裤和室内拖鞋')]
+        ]
+      }
+    });
+    const home = harness.app.services.location.list().find((location) => location.kind === 'home')!;
+    harness.app.services.location.override(home.id, 'test: establish current home location');
+    harness.app.repos.life.advance({
+      activity: '午睡一会儿',
+      kind: 'rest',
+      mood: '平静',
+      startedAt: localTime('2026-08-26T13:00').toISOString(),
+      endsAt: localTime('2026-08-26T14:00').toISOString()
+    });
+    const lifeEventCount = harness.app.repos.life.events().length;
+
+    const body = await sendSelfie(harness, 'visual-time-retro-1', '发张晚上睡觉的照片');
+    const text = body.reply.content.find((part: any) => part.type === 'text')?.text;
+    const image = body.reply.content.find((part: any) => part.type === 'image');
+    const media = harness.app.repos.media.get(image.mediaId)!;
+    const directorBody = harness.state.chatCalls[1]!.body as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const directorInput = directorBody.messages.find((message) => message.role === 'user')!.content;
+    const directorContinuity = JSON.parse(directorInput.slice(directorInput.indexOf('{'))).continuity;
+    const providerPrompt = JSON.stringify(harness.state.imageRequests[0]!.body);
+    const messageContinuity = image.meta.continuity;
+    const mediaContinuity = JSON.parse(media.meta_json).continuity;
+
+    expect(text).toBe('现在还是中午，不过昨天倒是有一张这种。');
+    expect(directorContinuity).toMatchObject({ currentActivity: null, currentLocation: null });
+    expect(JSON.stringify(directorContinuity)).not.toContain('午睡一会儿');
+    expect(providerPrompt).toContain('newly generated retrospective depiction');
+    expect(providerPrompt).toContain('Depicted local date: 2026-08-25');
+    expect(providerPrompt).toContain('Depicted day period: evening');
+    expect(providerPrompt).toContain('宽松浅色家居上衣');
+    expect(messageContinuity).toMatchObject({
+      timeMode: 'retrospective',
+      currentDayPeriod: 'midday',
+      depictedLocalDate: '2026-08-25',
+      depictedDayPeriod: 'evening',
+      requestedDayPeriod: 'evening',
+      commitState: 'skipped',
+      commitReason: 'retrospective_scene'
+    });
+    expect(messageContinuity).not.toHaveProperty('outfitRevision');
+    expect(messageContinuity).not.toHaveProperty('activity');
+    expect(messageContinuity).not.toHaveProperty('activityKind');
+    expect(messageContinuity).not.toHaveProperty('location');
+    expect(mediaContinuity).toEqual(messageContinuity);
+    expect(harness.app.services.imageContinuity.current()).toBeNull();
+    expect(harness.app.repos.life.events()).toHaveLength(lifeEventCount);
+  });
+
   it('shares the same persisted outfit between chat selfies and proactive lifestyle Moments', async () => {
     harness = await createHarness({
       image: 'anuma',
