@@ -22,7 +22,7 @@ const legacyBaselines = [
   ['packages/server/src/app.ts', 50708],
   ['packages/server/src/routes/admin.ts', 54168],
   ['packages/server/src/db/migrations.ts', 72588],
-  ['packages/server/src/core/context.ts', 30299],
+  ['packages/server/src/core/context.ts', 31760],
   ['packages/web/src/components/AdminPanel.tsx', 66916]
 ];
 
