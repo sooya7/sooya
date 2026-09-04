@@ -197,7 +197,31 @@ export interface SooyaApp {
   close: () => Promise<void>;
 }
 
-const VERSION = '1.0.0';
+/*
+ * Single source of truth for the reported version.
+ *
+ * It used to be a hardcoded literal here, duplicating package.json and
+ * RELEASE.json — three copies that drift the moment one is bumped, while
+ * /health/live and /api/admin/system keep reporting the stale one. The server
+ * package.json sits next to dist/ and is copied into the container image
+ * (Dockerfile), so it is readable in every deployment shape.
+ */
+const VERSION = readPackageVersion();
+
+function readPackageVersion(): string {
+  // dist/app.js -> ../package.json; src/app.ts -> ../package.json. Same hop.
+  const candidates = [
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../package.json'),
+    path.resolve(process.cwd(), 'packages/server/package.json')
+  ];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8')) as { version?: unknown };
+      if (typeof parsed.version === 'string' && parsed.version) return parsed.version;
+    } catch { /* try the next candidate */ }
+  }
+  return '0.0.0-unknown';
+}
 
 /** Vite 产物：`index-D9-2lj-S.js` 这类文件名里带内容哈希，内容变了文件名一定会变。 */
 const HASHED_ASSET = /\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
@@ -427,8 +451,19 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       proactiveMode: policy.proactiveMode ?? DEFAULT_LIFE_CONFIG.proactiveMode
     };
   };
-  // Weather identity is the active city (city + country), never a location id.
+  /*
+   * Weather identity is the active city (city + country), never a location id.
+   *
+   * `weather` is constructed *before* the callback that reads it. It used to be
+   * declared after, which only worked because nothing invoked the callback
+   * during construction: `cityWeatherCondition` closed over a `const` in its
+   * temporal dead zone, so the day LocationService called its own callback
+   * eagerly this would have thrown ReferenceError at boot. Declaration order
+   * now matches the dependency, and `location` stays a forward `let` because
+   * the cycle between the two services is genuine.
+   */
   let location: LocationService;
+  const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
   const cityWeatherCondition = (): string | null => {
     const city = location.activeCity();
     if (!city) return null;
@@ -438,7 +473,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   };
   location = new LocationService(repos.locations, repos.audit, opts.clock, cityWeatherCondition, { timeZone: env.LIFE_TIME_ZONE });
   location.setEnabled(env.WORLD_CONTEXT_ENABLED && env.LOCATION_MODEL_ENABLED);
-  const weather = new WeatherService(repos.weather, repos.locations, repos.life, opts.clock);
   weather.setEnabled(env.WORLD_CONTEXT_ENABLED && env.WEATHER_ENABLED);
   // Production provider chain (primary -> secondary -> cache -> unknown);
   // the default Open-Meteo provider is keyless, while an explicit unknown
@@ -567,6 +601,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     messages: repos.messages,
     errorLog: repos.errors
   });
+  /*
+   * Declared here, not below the coordinator: `onCompleted` reads qqConfig, and
+   * having the declaration further down left that read inside a temporal dead
+   * zone — safe only for as long as the callback is never invoked during
+   * construction.
+   */
+  const qqConfig = qqBotConfigFromEnv({ ...process.env, ...opts.env });
+
   const replyCoordinator = new ReplyCoordinator({
     messages: repos.messages,
     batches: repos.replyBatches,
@@ -598,26 +640,26 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
             { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId }
           );
         }
-      // QQ 单通道（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8.2/§16）：回复完成后入队
-      // durable qq.deliver，由 outbox 负责幂等/重试。
-      if (qqConfig.enabled) {
-        repos.jobs.enqueue('qq.deliver', { messageId: outcome.messageId, ...(flowTraceId ? { flowTraceId } : {}) });
-        flowTrace?.stage(flowTraceId, 'qq.delivery.queued', 'running', { messageId: outcome.messageId });
-      } else {
-        flowTrace?.finish(flowTraceId, 'ok', { destination: 'web' });
-      }
-      if (capabilityPolicy.continuity.future) {
-        repos.jobs.enqueue('future.analyze', {
-          batchId,
-          revision,
-          userMessageIds: userMessages.map((message) => message.id),
-          assistantMessageId: outcome.messageId
-        });
-      }
-      if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
-      // Life conversation bridge (§49-50): extracted as a durable job; the
-      // handler re-checks the revision so only the final one applies.
-      if (capabilityPolicy.proactive.lifeCandidates && env.ENABLE_LIFE_V2) {
+        // QQ 单通道（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8.2/§16）：回复完成后入队
+        // durable qq.deliver，由 outbox 负责幂等/重试。
+        if (qqConfig.enabled) {
+          repos.jobs.enqueue('qq.deliver', { messageId: outcome.messageId, ...(flowTraceId ? { flowTraceId } : {}) });
+          flowTrace?.stage(flowTraceId, 'qq.delivery.queued', 'running', { messageId: outcome.messageId });
+        } else {
+          flowTrace?.finish(flowTraceId, 'ok', { destination: 'web' });
+        }
+        if (capabilityPolicy.continuity.future) {
+          repos.jobs.enqueue('future.analyze', {
+            batchId,
+            revision,
+            userMessageIds: userMessages.map((message) => message.id),
+            assistantMessageId: outcome.messageId
+          });
+        }
+        if (summarizer.needsSummary()) repos.jobs.enqueue('summary.build', { batchId });
+        // Life conversation bridge (§49-50): extracted as a durable job; the
+        // handler re-checks the revision so only the final one applies.
+        if (capabilityPolicy.proactive.lifeCandidates && env.ENABLE_LIFE_V2) {
           repos.jobs.enqueue('life.conversation', {
             batchId,
             revision,
@@ -646,8 +688,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     flowTrace,
     replyOptions: { recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT }
   });
-
-  const qqConfig = qqBotConfigFromEnv({ ...process.env, ...opts.env });
 
   const qq = new QqChannel({
     config: qqConfig,
@@ -836,7 +876,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   await cleanupTempFiles([env.mediaDirs.tmp, env.mediaDirs.images, env.mediaDirs.audio, env.mediaDirs.files]);
 
   const state = { startedAt: new Date().toISOString(), dbRecovered: opened.recovered, dbRecoveredFrom: opened.recoveredFrom, dbInconsistent: opened.inconsistent, version: VERSION };
-  const server: FastifyInstance = Fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, bodyLimit: env.MAX_BODY_BYTES, trustProxy: true });
+  // trustProxy governs req.ip, which the rate limiter keys on. See TRUST_PROXY
+  // in config/env.ts for why this is no longer an unconditional `true`.
+  const server: FastifyInstance = Fastify({ loggerInstance: logger as unknown as FastifyBaseLogger, bodyLimit: env.MAX_BODY_BYTES, trustProxy: env.TRUST_PROXY });
   server.setErrorHandler((error, _request, reply) => {
     if (isSafeApplicationError(error)) {
       void reply.code(error.statusCode).send({ error: error.code, message: error.message });
