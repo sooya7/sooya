@@ -38,6 +38,21 @@ assert() { # assert <description> <condition-exit-code>
   if [[ "$2" -eq 0 ]]; then pass "$1"; else fail "$1"; fi
 }
 
+# `set -e` aborts on any failing simple command, so the `cmd; assert "..." $?`
+# idiom could only ever report success: a real failure killed the run before
+# assert was reached. The symptom is a log that just stops -- no FAIL line, no
+# summary, no non-zero exit -- which reads like a crashed harness rather than a
+# failed check, and makes a genuine regression indistinguishable from a bug in
+# this script. Both happened here.
+#
+# Running the command as an `if` condition suspends errexit, so the failure is
+# recorded and every remaining check still runs.
+assert_cmd() { # assert_cmd <description> <command...>
+  local desc="$1"
+  shift
+  if "$@" >/dev/null; then pass "$desc"; else fail "$desc"; fi
+}
+
 # The release under test is installed and started as root (install.sh requires
 # EUID 0), so the server process is root-owned and an unprivileged kill fails
 # silently. Escalate, and match by command line as well as by pidfile so a
@@ -231,13 +246,10 @@ for _ in $(seq 1 40); do
   curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1 && break
   sleep 0.5
 done
-curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1
-assert "service healthy after install" $?
+assert_cmd "service healthy after install" curl -fsS "http://127.0.0.1:$PORT/health/ready"
 
-curl -fsS "http://127.0.0.1:$PORT/health/live" >/dev/null 2>&1
-assert "/health/live reachable without a token" $?
-curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1
-assert "/health/ready reachable without a token" $?
+assert_cmd "/health/live reachable without a token" curl -fsS "http://127.0.0.1:$PORT/health/live"
+assert_cmd "/health/ready reachable without a token" curl -fsS "http://127.0.0.1:$PORT/health/ready"
 # Admin API is the only authenticated HTTP surface; it must reject anonymous callers.
 code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/admin/persona")"
 [[ "$code" == "401" ]]; assert "admin API rejects an anonymous caller (got $code)" $?
@@ -278,22 +290,29 @@ assert "chat history is readable before upgrading" $?
 gallery() {
   curl -fsS -H "x-admin-token: $ADMIN" "http://127.0.0.1:$PORT/api/admin/gallery?limit=100"
 }
-upload_probe() { # upload_probe <filename>
+# A 1x1 PNG, because /api/admin/gallery hardcodes `kind: 'image'` while the
+# upload derives the kind from the *field name*: a `file=@...txt` probe is
+# stored as kind=file and is therefore never listed, so asserting on it could
+# not have succeeded. MediaStore sniffs content too, so the bytes must be a
+# real image rather than a renamed text file.
+PROBE_PNG_B64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+upload_probe() { # upload_probe <name> -> echoes the created media id
   local name="$1"
-  printf 'deploy-probe-%s
-' "$name" > "$PREFIX/run/$name"
-  curl -fsS -X POST "http://127.0.0.1:$PORT/api/admin/media"     -H "x-admin-token: $ADMIN" -F "file=@$PREFIX/run/$name;type=text/plain" > /dev/null
+  base64 -d <<<"$PROBE_PNG_B64" > "$PREFIX/run/$name"
+  # Assert on the returned id rather than the filename: the id is part of the
+  # media reference every gallery item carries, independent of how or whether
+  # the original filename is kept in metadata.
+  curl -fsS -X POST "http://127.0.0.1:$PORT/api/admin/media" \
+    -H "x-admin-token: $ADMIN" -F "image=@$PREFIX/run/$name;type=image/png" \
+    | grep -oE '"id":"[^"]+"' | head -1 | cut -d'"' -f4
 }
 
-upload_probe "pre-upgrade-probe.txt"
-assert "uploaded media before upgrading" $?
-# Capture before grepping, for the reason spelled out further down: `grep -q`
-# exits on the first match, curl takes SIGPIPE, and pipefail turns that into a
-# failure that `set -e` treats as fatal. This line used to pipe directly and
-# killed the whole run right here, silently, with no FAIL and no summary.
+PRE_UPGRADE_MEDIA_ID="$(upload_probe pre-upgrade-probe.png || true)"
+assert_cmd "uploaded media before upgrading" test -n "$PRE_UPGRADE_MEDIA_ID"
+log "pre-upgrade probe media id: ${PRE_UPGRADE_MEDIA_ID:-<none>}"
 PRE_UPGRADE_GALLERY="$(gallery)"
-grep -q 'pre-upgrade-probe.txt' <<<"$PRE_UPGRADE_GALLERY"
-assert "the uploaded media is listed before upgrading" $?
+assert_cmd "the uploaded media is listed before upgrading" \
+  grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$PRE_UPGRADE_GALLERY"
 
 echo "user-uploaded-content" > "$PREFIX/shared/data/media/files/user-file.txt"
 MESSAGES_BEFORE="$(chat_history | grep -c '"id"' || true)"
@@ -312,10 +331,8 @@ fi
 
 /usr/bin/sudo /usr/bin/chown -R "$CURRENT_USER":"$(id -gn)" "$PREFIX" 2>/dev/null || true
 [[ "$(ls -1d "$PREFIX"/releases/*/ | wc -l)" -ge 2 ]]; assert "a second release exists" $?
-[[ "$(sha256sum "$PREFIX/shared/.env" | cut -d' ' -f1)" == "$ENV_SUM_BEFORE" ]]
-assert ".env unchanged by the upgrade" $?
-grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
-assert "custom persona preserved" $?
+assert_cmd ".env unchanged by the upgrade" \n  test "$(sha256sum "$PREFIX/shared/.env" | cut -d' ' -f1)" = "$ENV_SUM_BEFORE"
+assert_cmd "custom persona preserved" \n  grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
 [[ -f "$PREFIX/shared/data/media/files/user-file.txt" ]]; assert "user media preserved" $?
 [[ -f "$PREFIX/shared/data/database/sooya.db" ]]; assert "database file preserved" $?
 ls "$PREFIX"/shared/data/backups/* >/dev/null 2>&1; assert "a pre-upgrade backup was created" $?
@@ -325,13 +342,11 @@ for _ in $(seq 1 40); do
   sleep 0.5
 done
 MESSAGES_AFTER="$(chat_history | grep -c '"id"' || true)"
-[[ "$MESSAGES_AFTER" -ge "$MESSAGES_BEFORE" ]]
-assert "chat history intact after upgrade ($MESSAGES_BEFORE -> $MESSAGES_AFTER)" $?
+assert_cmd "chat history intact after upgrade ($MESSAGES_BEFORE -> $MESSAGES_AFTER)" \n  test "$MESSAGES_AFTER" -ge "$MESSAGES_BEFORE"
 # Capture first: piping curl into `grep -q` lets grep exit early and kills
 # curl with SIGPIPE, which `set -o pipefail` turns into a spurious failure.
-HISTORY_AFTER_UPGRADE="$(gallery)"
-grep -q 'pre-upgrade-probe.txt' <<<"$HISTORY_AFTER_UPGRADE"
-assert "the pre-upgrade media row is still readable" $?
+GALLERY_AFTER_UPGRADE="$(gallery)"
+assert_cmd "the pre-upgrade media row is still readable" \n  grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$GALLERY_AFTER_UPGRADE"
 
 # ================================ 4. rollback =================================
 log "STEP 4: rollback"
@@ -349,13 +364,10 @@ for _ in $(seq 1 40); do
   curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1 && break
   sleep 0.5
 done
-curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1
-assert "service healthy after rollback" $?
-HISTORY_AFTER_ROLLBACK="$(gallery)"
-grep -q 'pre-upgrade-probe.txt' <<<"$HISTORY_AFTER_ROLLBACK"
-assert "user data survived the rollback" $?
-grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
-assert "custom persona survived the rollback" $?
+assert_cmd "service healthy after rollback" curl -fsS "http://127.0.0.1:$PORT/health/ready"
+GALLERY_AFTER_ROLLBACK="$(gallery)"
+assert_cmd "user data survived the rollback" \n  grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$GALLERY_AFTER_ROLLBACK"
+assert_cmd "custom persona survived the rollback" \n  grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
 
 # ============================= 5. backup / restore ============================
 log "STEP 5: backup and restore"
@@ -380,8 +392,8 @@ else
 fi
 
 # Write more data, then restore the older backup and confirm the data rollback.
-upload_probe "post-backup-probe.txt"
-assert "uploaded media after taking the backup" $?
+POST_BACKUP_MEDIA_ID="$(upload_probe post-backup-probe.png || true)"
+assert_cmd "uploaded media after taking the backup" test -n "$POST_BACKUP_MEDIA_ID"
 
 run_as_root bash "$SOURCE_DIR/deploy/restore-backup.sh" --dir "$PREFIX" --file "$ARCHIVE" \
   > "$PREFIX/run/restore.log" 2>&1
@@ -392,8 +404,8 @@ for _ in $(seq 1 40); do
   sleep 0.5
 done
 BODY="$(gallery)"
-grep -q 'pre-upgrade-probe.txt' <<<"$BODY"; assert "restored data contains the original media row" $?
-if grep -q 'post-backup-probe.txt' <<<"$BODY"; then
+assert_cmd "restored data contains the original media row" \n  grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$BODY"
+if grep -q "$POST_BACKUP_MEDIA_ID" <<<"$BODY"; then
   fail "post-backup media row should be gone after restore"
 else
   pass "post-backup media row correctly rolled back"
