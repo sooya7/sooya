@@ -287,7 +287,12 @@ upload_probe() { # upload_probe <filename>
 
 upload_probe "pre-upgrade-probe.txt"
 assert "uploaded media before upgrading" $?
-gallery | grep -q 'pre-upgrade-probe.txt'
+# Capture before grepping, for the reason spelled out further down: `grep -q`
+# exits on the first match, curl takes SIGPIPE, and pipefail turns that into a
+# failure that `set -e` treats as fatal. This line used to pipe directly and
+# killed the whole run right here, silently, with no FAIL and no summary.
+PRE_UPGRADE_GALLERY="$(gallery)"
+grep -q 'pre-upgrade-probe.txt' <<<"$PRE_UPGRADE_GALLERY"
 assert "the uploaded media is listed before upgrading" $?
 
 echo "user-uploaded-content" > "$PREFIX/shared/data/media/files/user-file.txt"
