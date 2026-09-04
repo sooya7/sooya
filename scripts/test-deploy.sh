@@ -275,10 +275,22 @@ chat_history() {
 # shell probe cannot mint. The upgrade contract is therefore verified through
 # the state this script *can* create (persona, media, database) plus the
 # requirement that history stays readable across the switch.
+# `tagline`, not `speakingStyle`: the latter is not in PersonaSchema, and the
+# route parses with `PersonaSchema.partial()`, which silently strips unknown
+# keys. So the PUT returned 200, setPersona() received {}, nothing was written,
+# and this check had been meaningless since the day it was added -- while the
+# two "custom persona preserved" assertions below claimed to verify that a
+# customised persona survives an upgrade. Nobody saw it because a failing grep
+# used to kill the run before any FAIL was printed.
+#
+# Asserting on the file rather than on curl's exit code covers both halves: the
+# write was accepted *and* the value reached disk. A field that gets stripped
+# again cannot quietly pass.
+PERSONA_MARKER="deploy-probe-persona-$$"
 curl -fsS -X PUT "http://127.0.0.1:$PORT/api/admin/persona" \
   -H "content-type: application/json" -H "x-admin-token: $ADMIN" \
-  -d '{"speakingStyle":"自定义人格设置-保留测试"}' > /dev/null
-assert "customised the persona" $?
+  -d "{\"tagline\":\"$PERSONA_MARKER\"}" > /dev/null || true
+assert_cmd "customised the persona" grep -q "$PERSONA_MARKER" "$PREFIX/shared/config/persona.json"
 
 chat_history > /dev/null
 assert "chat history is readable before upgrading" $?
@@ -332,7 +344,7 @@ fi
 /usr/bin/sudo /usr/bin/chown -R "$CURRENT_USER":"$(id -gn)" "$PREFIX" 2>/dev/null || true
 [[ "$(ls -1d "$PREFIX"/releases/*/ | wc -l)" -ge 2 ]]; assert "a second release exists" $?
 assert_cmd ".env unchanged by the upgrade" test "$(sha256sum "$PREFIX/shared/.env" | cut -d' ' -f1)" = "$ENV_SUM_BEFORE"
-assert_cmd "custom persona preserved" grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
+assert_cmd "custom persona preserved" grep -q "$PERSONA_MARKER" "$PREFIX/shared/config/persona.json"
 [[ -f "$PREFIX/shared/data/media/files/user-file.txt" ]]; assert "user media preserved" $?
 [[ -f "$PREFIX/shared/data/database/sooya.db" ]]; assert "database file preserved" $?
 ls "$PREFIX"/shared/data/backups/* >/dev/null 2>&1; assert "a pre-upgrade backup was created" $?
@@ -367,7 +379,7 @@ done
 assert_cmd "service healthy after rollback" curl -fsS "http://127.0.0.1:$PORT/health/ready"
 GALLERY_AFTER_ROLLBACK="$(gallery)"
 assert_cmd "user data survived the rollback" grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$GALLERY_AFTER_ROLLBACK"
-assert_cmd "custom persona survived the rollback" grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
+assert_cmd "custom persona survived the rollback" grep -q "$PERSONA_MARKER" "$PREFIX/shared/config/persona.json"
 
 # ============================= 5. backup / restore ============================
 log "STEP 5: backup and restore"
