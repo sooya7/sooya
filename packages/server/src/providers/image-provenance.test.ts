@@ -1,0 +1,209 @@
+import { describe, expect, it } from 'vitest';
+import zlib from 'node:zlib';
+import { inspectGeneratedImage, readImageBytesFacts } from './image-provenance.js';
+
+/*
+ * Fixtures are built rather than committed: the byte patterns that matter are
+ * the PNG chunk layout and the CBOR key ordering inside a C2PA manifest, and
+ * spelling those out here documents exactly what the parser depends on.
+ *
+ * The manifest shape mirrors real captures from five generators (OpenAI
+ * gpt-image, fal-ai/gpt-image-2, fal-ai/flux-2-klein, Google, Azure).
+ */
+function chunk(type: string, body: Buffer): Buffer {
+  const out = Buffer.alloc(8 + body.byteLength + 4);
+  out.writeUInt32BE(body.byteLength, 0);
+  out.write(type, 4, 'latin1');
+  body.copy(out, 8);
+  const crcInput = Buffer.concat([Buffer.from(type, 'latin1'), body]);
+  out.writeUInt32BE(zlib.crc32 ? zlib.crc32(crcInput) : 0, 8 + body.byteLength);
+  return out;
+}
+
+/**
+ * Encodes a CBOR text string exactly as a real manifest does: a header byte
+ * carrying the length (`0x60 | len` up to 23, else `0x78` + a length byte),
+ * then the bytes.
+ *
+ * The first version of this helper omitted that header, which is precisely the
+ * detail a naive parser gets wrong: scanning for printable characters after
+ * `dname` swallows the header as the first letter, so real images read as
+ * `igpt-image` / `sfal-ai/flux-2-klein` / `fFLUX.2`. The tests passed anyway,
+ * and a correctly-served image would have been reported as a substitution.
+ * Fixtures have to carry the awkward part of the format or they only test the
+ * easy half.
+ */
+function cborText(value: string): Buffer {
+  const bytes = Buffer.from(value, 'utf8');
+  const header = bytes.byteLength <= 23
+    ? Buffer.from([0x60 + bytes.byteLength])
+    : Buffer.from([0x78, bytes.byteLength]);
+  return Buffer.concat([header, bytes]);
+}
+
+function c2paManifest(softwareAgent: string): Buffer {
+  return Buffer.concat([
+    Buffer.from('  jumbfc2pa factionlc2pa.createddwhen msoftwareAgent¢dname', 'latin1'),
+    cborText(softwareAgent),
+    Buffer.from(
+      'gversionc2.0qdigitalSourceTypexFhttp://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia',
+      'latin1'
+    )
+  ]);
+}
+
+function png(width: number, height: number, softwareAgent?: string): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const parts = [Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr)];
+  if (softwareAgent !== undefined) parts.push(chunk('caBX', c2paManifest(softwareAgent)));
+  parts.push(chunk('IDAT', Buffer.from([0x78, 0x9c, 0x63, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01])));
+  parts.push(chunk('IEND', Buffer.alloc(0)));
+  return Buffer.concat(parts);
+}
+
+describe('readImageBytesFacts', () => {
+  it('reads dimensions and the signing model', () => {
+    expect(readImageBytesFacts(png(1024, 1024, 'gpt-image'))).toEqual({
+      width: 1024,
+      height: 1024,
+      softwareAgent: 'gpt-image'
+    });
+  });
+
+  it('reports an unsigned image without failing', () => {
+    expect(readImageBytesFacts(png(512, 512))).toEqual({ width: 512, height: 512, softwareAgent: null });
+  });
+
+  it('never throws on non-PNG or truncated input', () => {
+    expect(readImageBytesFacts(Buffer.from('not an image'))).toEqual({ width: null, height: null, softwareAgent: null });
+    expect(readImageBytesFacts(Buffer.alloc(0))).toEqual({ width: null, height: null, softwareAgent: null });
+    // A PNG cut off mid-chunk must still yield what was readable before the cut.
+    const truncated = png(768, 768, 'gpt-image').subarray(0, 40);
+    expect(readImageBytesFacts(truncated).width).toBe(768);
+  });
+});
+
+describe('inspectGeneratedImage: size', () => {
+  it('flags a smaller image than was requested', () => {
+    const report = inspectGeneratedImage({
+      data: png(512, 512, 'fal-ai/flux-2-klein'),
+      requestedModel: 'anuma/gpt-image-2',
+      requestedSize: '1024x1024'
+    });
+    expect(report.sizeMismatch).toBe(true);
+    expect(report.actualSize).toBe('512x512');
+    expect(report.summary).toContain('requested 1024x1024 but received 512x512');
+  });
+
+  it('stays quiet when the size matches', () => {
+    const report = inspectGeneratedImage({
+      data: png(1024, 1024, 'gpt-image'),
+      requestedModel: 'anuma/gpt-image-2',
+      requestedSize: '1024x1024'
+    });
+    expect(report.sizeMismatch).toBe(false);
+    expect(report.summary).toBeNull();
+  });
+
+  it('does not invent a size mismatch when no size was requested', () => {
+    const report = inspectGeneratedImage({
+      data: png(512, 512, 'gpt-image'),
+      requestedModel: 'anuma/gpt-image-2',
+      requestedSize: null
+    });
+    expect(report.sizeMismatch).toBe(false);
+    expect(report.summary).toBeNull();
+  });
+});
+
+describe('inspectGeneratedImage: model substitution', () => {
+  /*
+   * The production incident this exists for: a request for gpt-image-2 came
+   * back generated by a 4B model, with HTTP 200 and no other signal.
+   */
+  it('catches a substituted model', () => {
+    const report = inspectGeneratedImage({
+      data: png(512, 512, 'fal-ai/flux-2-klein'),
+      requestedModel: 'anuma/gpt-image-2',
+      requestedSize: '1024x1024'
+    });
+    expect(report.provenance).toBe('mismatch');
+    expect(report.softwareAgent).toBe('fal-ai/flux-2-klein');
+    expect(report.summary).toContain('signed by fal-ai/flux-2-klein');
+  });
+
+  it('accepts the same model reached through a different vendor', () => {
+    // Real capture: fal.ai served genuine gpt-image-2 for 13 of the images.
+    for (const agent of ['gpt-image', 'fal-ai/gpt-image-2', 'gpt-image-2']) {
+      const report = inspectGeneratedImage({
+        data: png(1024, 1024, agent),
+        requestedModel: 'anuma/gpt-image-2',
+        requestedSize: '1024x1024'
+      });
+      expect(report.provenance, agent).toBe('match');
+      expect(report.summary, agent).toBeNull();
+    }
+  });
+
+  it('matches FLUX.2 against the flux-2-pro that was asked for', () => {
+    const report = inspectGeneratedImage({
+      data: png(512, 512, 'FLUX.2'),
+      requestedModel: 'anuma/flux-2-pro',
+      requestedSize: null
+    });
+    expect(report.provenance).toBe('match');
+  });
+
+  it('distinguishes flux-2-klein from flux-2-pro', () => {
+    const report = inspectGeneratedImage({
+      data: png(512, 512, 'fal-ai/flux-2-klein'),
+      requestedModel: 'anuma/flux-2-pro',
+      requestedSize: null
+    });
+    expect(report.provenance).toBe('mismatch');
+  });
+
+  /*
+   * Signer names are not model names. `Google C2PA Core Generator Library` and
+   * `OpenAI Media Service API` appear in real manifests and say nothing about
+   * which model ran, so treating them as evidence would cry wolf on every
+   * image. Unknown must stay unknown.
+   */
+  it('does not accuse a signer name of being the wrong model', () => {
+    for (const agent of ['Google C2PA Core Generator Library', 'OpenAI Media Service API', 'Azure OpenAI ImageGen']) {
+      const report = inspectGeneratedImage({
+        data: png(1024, 1024, agent),
+        requestedModel: 'anuma/gpt-image-2',
+        requestedSize: '1024x1024'
+      });
+      expect(report.provenance, agent).toBe('unknown');
+      expect(report.summary, agent).toBeNull();
+    }
+  });
+
+  it('reports unknown provenance for an unsigned image', () => {
+    const report = inspectGeneratedImage({
+      data: png(1024, 1024),
+      requestedModel: 'anuma/gpt-image-2',
+      requestedSize: '1024x1024'
+    });
+    expect(report.provenance).toBe('unknown');
+    expect(report.softwareAgent).toBeNull();
+    expect(report.summary).toBeNull();
+  });
+
+  it('reports both problems together when both apply', () => {
+    const report = inspectGeneratedImage({
+      data: png(512, 512, 'fal-ai/flux-2-klein'),
+      requestedModel: 'anuma/gpt-image-2',
+      requestedSize: '1024x1024'
+    });
+    expect(report.summary).toBe(
+      'requested model anuma/gpt-image-2 but the image is signed by fal-ai/flux-2-klein; requested 1024x1024 but received 512x512'
+    );
+  });
+});

@@ -17,6 +17,14 @@ import {
 export interface ProviderDeps {
   allowPrivateNetwork: boolean;
   fetchImpl?: typeof fetch;
+  /**
+   * Advisory findings a provider noticed about a response that still succeeded
+   * — e.g. an image endpoint that returned a different model, or a smaller
+   * image, than was asked for. Reporting rather than throwing is deliberate:
+   * the user has a usable result and the reply must not fail, but a silent
+   * substitution has to be visible to the operator. See image-provenance.ts.
+   */
+  onProviderNotice?: (notice: { scope: string; message: string; detail?: Record<string, unknown> }) => void;
 }
 
 function joinUrl(base: string, suffix: string): string {

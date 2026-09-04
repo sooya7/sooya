@@ -254,7 +254,21 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const mediaVariants = new ImageVariantService(env.mediaDirs.variants, (message, id) => repos.errors.add('media.variant', message, { id }));
   const stickerLibrary = new StickerLibrary(repos.stickers, repos.media, mediaStore);
   mediaStore.setOnDelete(() => stickerLibrary.invalidate());
-  const capabilities = new CapabilityRegistry(config, { allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH, fetchImpl }, dbHandle);
+  const capabilities = new CapabilityRegistry(config, {
+    allowPrivateNetwork: env.ALLOW_PRIVATE_NETWORK_FETCH,
+    fetchImpl,
+    /*
+     * A provider noticed something wrong with a response that still succeeded —
+     * currently an image endpoint that substituted the model or shrank the
+     * output. Recorded, not thrown: the reply keeps its (degraded) image, but
+     * the substitution becomes visible in 运维与备份 → 错误 instead of being
+     * discovered weeks later by looking at the pictures.
+     */
+    onProviderNotice: ({ scope, message, detail }) => {
+      logger.warn({ ...detail }, `${scope}: ${message}`);
+      try { repos.errors.add(scope, message, detail); } catch { /* never break a reply over a notice */ }
+    }
+  }, dbHandle);
   const metrics = new MetricsService(repos.metrics, opts.clock, env.LIFE_TIME_ZONE);
   metrics.setEnabled(env.METRICS_DASHBOARD_ENABLED);
   const directorClient = new DirectorClient(

@@ -10,20 +10,22 @@ import {
   type ImageProvider
 } from './types.js';
 import { normalizeAbort, safeText, type ProviderDeps } from './chat/openai.js';
+import { inspectGeneratedImage } from './image-provenance.js';
 
 type ImageApiResponse = { data?: Array<{ b64_json?: string; url?: string; mime_type?: string }> };
 
 async function materializeImage(
   json: ImageApiResponse,
   cfg: ImageModelConfig,
-  deps: ProviderDeps
+  deps: ProviderDeps,
+  requestedSize?: string | null
 ): Promise<GeneratedImage> {
   const first = json.data?.[0];
   if (!first) throw new ProviderRequestError('image response contained no data');
   if (first.b64_json) {
     const buf = Buffer.from(first.b64_json, 'base64');
     if (buf.byteLength === 0) throw new ProviderRequestError('image response was empty');
-    return { data: buf, mime: first.mime_type ?? 'image/png' };
+    return reportProvenance({ data: buf, mime: first.mime_type ?? 'image/png' }, cfg, deps, requestedSize);
   }
   if (first.url) {
     const { response, body } = await safeFetch(first.url, {
@@ -32,9 +34,52 @@ async function materializeImage(
     });
     if (!response.ok) throw new ProviderRequestError(`downloading generated image failed: ${response.status}`);
     if (body.byteLength === 0) throw new ProviderRequestError('downloaded image was empty');
-    return { data: body, mime: response.headers.get('content-type') ?? 'image/png' };
+    return reportProvenance({ data: body, mime: response.headers.get('content-type') ?? 'image/png' }, cfg, deps, requestedSize);
   }
   throw new ProviderRequestError('image response contained neither b64_json nor url');
+}
+
+/**
+ * The single choke point every generated image passes through, for both the
+ * OpenAI-style and Anuma providers. Checks what actually came back against
+ * what was asked for and reports a mismatch without failing the request: the
+ * caller has a usable image, and a degraded one is better than no reply. What
+ * must not happen is the substitution going unnoticed, which is exactly what
+ * happened for three weeks in production (see image-provenance.ts).
+ *
+ * Dimensions are also returned on the GeneratedImage so callers can persist
+ * them without re-probing.
+ */
+function reportProvenance(
+  image: GeneratedImage,
+  cfg: ImageModelConfig,
+  deps: ProviderDeps,
+  requestedSize?: string | null
+): GeneratedImage {
+  const report = inspectGeneratedImage({
+    data: image.data,
+    requestedModel: cfg.model,
+    requestedSize: requestedSize ?? cfg.size
+  });
+  if (report.summary) {
+    deps.onProviderNotice?.({
+      scope: 'image.provenance',
+      message: report.summary,
+      detail: {
+        requestedModel: report.requestedModel,
+        requestedSize: report.requestedSize,
+        actualSize: report.actualSize,
+        softwareAgent: report.softwareAgent,
+        provenance: report.provenance
+      }
+    });
+  }
+  return {
+    ...image,
+    ...(report.actualSize
+      ? { width: Number(report.actualSize.split('x')[0]), height: Number(report.actualSize.split('x')[1]) }
+      : {})
+  };
 }
 
 export class OpenAIImageProvider implements ImageProvider {
@@ -92,7 +137,7 @@ export class OpenAIImageProvider implements ImageProvider {
           if (!res.ok)
             throw new ProviderRequestError(`image generation failed with status ${res.status}: ${await safeText(res)}`, res.status);
           const json = (await res.json()) as ImageApiResponse;
-          return await materializeImage(json, this.cfg, this.deps);
+          return await materializeImage(json, this.cfg, this.deps, opts.size ?? this.cfg.size);
         } catch (err) {
           throw normalizeAbort(err, this.cfg.timeoutMs);
         } finally {
@@ -131,7 +176,11 @@ export class OpenAIImageProvider implements ImageProvider {
         throw new ProviderRequestError(message, res.status);
       }
       const json = (await res.json()) as ImageApiResponse;
-      return await materializeImage(json, this.cfg, this.deps);
+      // No requested size: this form deliberately does not send one (the
+      // endpoint supports it, but changing that here is untested), so there is
+      // nothing to compare against and a size check would only false-positive.
+      // The model provenance check still applies.
+      return await materializeImage(json, this.cfg, this.deps, null);
     } catch (err) {
       throw normalizeAbort(err, this.cfg.timeoutMs);
     } finally {
@@ -192,19 +241,28 @@ export class AnumaImageProvider implements ImageProvider {
     return b.endsWith(suffix) ? b : `${b}${suffix}`;
   }
 
-  async generate(prompt: string, opts: { signal?: AbortSignal; referenceImages?: Array<{ data: Buffer; mime: string }> } = {}): Promise<GeneratedImage> {
+  /*
+   * `size` used to be absent from this signature entirely. The ImageProvider
+   * interface declares it, but a narrower parameter list is still assignable,
+   * so nothing flagged that the configured `size` was silently discarded on
+   * this provider — models.json could say 1024x1024 while the request never
+   * mentioned a size at all. Accepting and forwarding it makes the intent
+   * explicit and gives the provenance check something to compare against.
+   */
+  async generate(prompt: string, opts: { size?: string; signal?: AbortSignal; referenceImages?: Array<{ data: Buffer; mime: string }> } = {}): Promise<GeneratedImage> {
     if (!this.configured) throw new ProviderNotConfiguredError('image');
     const refs = opts.referenceImages ?? [];
+    const size = opts.size ?? this.cfg.size;
     if (refs.length === 0) {
       const json = await this.postGeneration(prompt, undefined, opts.signal);
-      return materializeImage(json, this.cfg, this.deps);
+      return materializeImage(json, this.cfg, this.deps, size);
     }
     // 只取第一张：anuma 参考图验证路径为单图（config/image-persona.json verification 记录）
     const ref = refs[0]!;
-    return this.edit(prompt, ref.data, { mime: ref.mime, signal: opts.signal });
+    return this.edit(prompt, ref.data, { mime: ref.mime, signal: opts.signal, size });
   }
 
-  async edit(prompt: string, image: Buffer, opts: { mime?: string; signal?: AbortSignal } = {}): Promise<GeneratedImage> {
+  async edit(prompt: string, image: Buffer, opts: { mime?: string; signal?: AbortSignal; size?: string } = {}): Promise<GeneratedImage> {
     if (!this.configured) throw new ProviderNotConfiguredError('image');
     const mime = (opts.mime ?? 'image/png').split(';')[0]!.trim().toLowerCase();
     if (!ANUMA_REFERENCE_MIMES.has(mime)) {
@@ -214,6 +272,7 @@ export class AnumaImageProvider implements ImageProvider {
       throw new ImageReferenceError('reference_image_too_large', '参考图为空或超过 10MB', `reference image size is ${image.byteLength} bytes`);
     }
     const url = await this.upload(image, mime, opts.signal);
+    const size = opts.size ?? this.cfg.size;
     let json: ImageApiResponse;
     try {
       json = await this.postGeneration(prompt, [url], opts.signal);
@@ -223,7 +282,7 @@ export class AnumaImageProvider implements ImageProvider {
       throw new ImageReferenceError('reference_generation_failed', '参考图生成失败，请稍后重试', e.message);
     }
     try {
-      return await materializeImage(json, this.cfg, this.deps);
+      return await materializeImage(json, this.cfg, this.deps, size);
     } catch (err) {
       const e = err as Error;
       throw new ImageReferenceError('reference_generation_failed', '参考图生成结果无效，请稍后重试', e.message);
@@ -278,6 +337,16 @@ export class AnumaImageProvider implements ImageProvider {
     try {
       const url = this.endpoint('/images/generations');
       await assertSafeUrl(url, this.deps.allowPrivateNetwork);
+      /*
+       * Only fields confirmed against the real endpoint go in the body — see
+       * the "confirmed request fields" test. `size` is deliberately NOT sent:
+       * the gateway in front of this endpoint reduces size to an aspect ratio
+       * (its MCP image tool exposes no resolution parameter at all), so it buys
+       * nothing, and posting an unverified field to a reverse-engineered
+       * endpoint risks a 400 on the whole reply. The requested size is threaded
+       * through in-process instead, purely so the provenance check knows what
+       * was intended.
+       */
       const body: Record<string, unknown> = { model: this.cfg.model, prompt, n: 1 };
       if (inputImages) body.input_images = inputImages;
       const res = await this.fetchImpl(url, {
