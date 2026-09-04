@@ -37,6 +37,34 @@ const originList = z
     return [...new Set(value.split(',').map((origin) => origin.trim()).filter(Boolean))];
   });
 
+/**
+ * Which proxies may set `X-Forwarded-For`, i.e. who is allowed to tell us the
+ * client's address. Fastify derives `req.ip` from this, and `req.ip` is the
+ * rate limiter's per-client key (util/rate-limit.ts).
+ *
+ * The default is `loopback`, matching the documented deployment (Nginx on the
+ * same host, deploy/nginx.conf.example). It used to be an unconditional
+ * `true`, which trusts the header from *any* source: a directly reachable
+ * instance would then let a caller pick its own rate-limit bucket by sending
+ * a forged header, and every logged client address became attacker-chosen.
+ *
+ * Accepted values: `false`/`off` (never trust), `true` (trust everything —
+ * only sane when nothing untrusted can reach the port), a hop count, or a
+ * comma-separated list of proxy addresses/CIDRs that Fastify understands.
+ */
+const trustProxy = z
+  .string()
+  .optional()
+  .transform((value): boolean | number | string => {
+    const raw = value?.trim();
+    if (!raw) return 'loopback';
+    const lowered = raw.toLowerCase();
+    if (['0', 'false', 'no', 'off'].includes(lowered)) return false;
+    if (['1', 'true', 'yes', 'on'].includes(lowered)) return true;
+    if (/^\d+$/.test(raw)) return Number(raw);
+    return raw;
+  });
+
 const webSearchProviders = z
   .string()
   .optional()
@@ -68,6 +96,7 @@ const EnvSchema = z.object({
 
   ADMIN_API_TOKEN: z.string().optional(),
   CORS_ALLOWED_ORIGINS: originList,
+  TRUST_PROXY: trustProxy,
 
   MAX_BODY_BYTES: intish(2 * 1024 * 1024),
   MAX_UPLOAD_BYTES: intish(25 * 1024 * 1024),
