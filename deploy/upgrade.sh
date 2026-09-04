@@ -107,6 +107,14 @@ PROBE_DIR="$(mktemp -d)"
 chown "$SERVICE_USER":"$SERVICE_USER" "$PROBE_DIR"
 # sudo resets PATH to secure_path, which may not contain the node the service uses.
 NODE_BIN="$(command -v node)" || die "node is not on PATH; cannot verify the release"
+# "the probe could not run" and "the probe says the module is broken" are
+# different facts and must not share a message. Without this check a host
+# missing sudo (or denying it by policy) reports a broken native module on
+# every upgrade, sending the operator after a problem that does not exist.
+# Refusing to switch is still correct — an unverifiable release must not become
+# `current` — but the reason has to be the true one.
+command -v sudo >/dev/null 2>&1 \
+  || die "sudo is required to verify the release as $SERVICE_USER but is not installed — not switching, the current release keeps serving"
 if ! sudo -u "$SERVICE_USER" env PROBE_DIR="$PROBE_DIR" HOME="$PROBE_DIR" "$NODE_BIN" -e '
   const path = require("path");
   const Database = require(require.resolve("better-sqlite3", { paths: [process.cwd() + "/packages/server"] }));

@@ -331,8 +331,8 @@ fi
 
 /usr/bin/sudo /usr/bin/chown -R "$CURRENT_USER":"$(id -gn)" "$PREFIX" 2>/dev/null || true
 [[ "$(ls -1d "$PREFIX"/releases/*/ | wc -l)" -ge 2 ]]; assert "a second release exists" $?
-assert_cmd ".env unchanged by the upgrade" \n  test "$(sha256sum "$PREFIX/shared/.env" | cut -d' ' -f1)" = "$ENV_SUM_BEFORE"
-assert_cmd "custom persona preserved" \n  grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
+assert_cmd ".env unchanged by the upgrade" test "$(sha256sum "$PREFIX/shared/.env" | cut -d' ' -f1)" = "$ENV_SUM_BEFORE"
+assert_cmd "custom persona preserved" grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
 [[ -f "$PREFIX/shared/data/media/files/user-file.txt" ]]; assert "user media preserved" $?
 [[ -f "$PREFIX/shared/data/database/sooya.db" ]]; assert "database file preserved" $?
 ls "$PREFIX"/shared/data/backups/* >/dev/null 2>&1; assert "a pre-upgrade backup was created" $?
@@ -342,11 +342,11 @@ for _ in $(seq 1 40); do
   sleep 0.5
 done
 MESSAGES_AFTER="$(chat_history | grep -c '"id"' || true)"
-assert_cmd "chat history intact after upgrade ($MESSAGES_BEFORE -> $MESSAGES_AFTER)" \n  test "$MESSAGES_AFTER" -ge "$MESSAGES_BEFORE"
+assert_cmd "chat history intact after upgrade ($MESSAGES_BEFORE -> $MESSAGES_AFTER)" test "$MESSAGES_AFTER" -ge "$MESSAGES_BEFORE"
 # Capture first: piping curl into `grep -q` lets grep exit early and kills
 # curl with SIGPIPE, which `set -o pipefail` turns into a spurious failure.
 GALLERY_AFTER_UPGRADE="$(gallery)"
-assert_cmd "the pre-upgrade media row is still readable" \n  grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$GALLERY_AFTER_UPGRADE"
+assert_cmd "the pre-upgrade media row is still readable" grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$GALLERY_AFTER_UPGRADE"
 
 # ================================ 4. rollback =================================
 log "STEP 4: rollback"
@@ -366,8 +366,8 @@ for _ in $(seq 1 40); do
 done
 assert_cmd "service healthy after rollback" curl -fsS "http://127.0.0.1:$PORT/health/ready"
 GALLERY_AFTER_ROLLBACK="$(gallery)"
-assert_cmd "user data survived the rollback" \n  grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$GALLERY_AFTER_ROLLBACK"
-assert_cmd "custom persona survived the rollback" \n  grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
+assert_cmd "user data survived the rollback" grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$GALLERY_AFTER_ROLLBACK"
+assert_cmd "custom persona survived the rollback" grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
 
 # ============================= 5. backup / restore ============================
 log "STEP 5: backup and restore"
@@ -404,7 +404,7 @@ for _ in $(seq 1 40); do
   sleep 0.5
 done
 BODY="$(gallery)"
-assert_cmd "restored data contains the original media row" \n  grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$BODY"
+assert_cmd "restored data contains the original media row" grep -q "$PRE_UPGRADE_MEDIA_ID" <<<"$BODY"
 if grep -q "$POST_BACKUP_MEDIA_ID" <<<"$BODY"; then
   fail "post-backup media row should be gone after restore"
 else
