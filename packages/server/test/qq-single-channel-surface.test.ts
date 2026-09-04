@@ -44,4 +44,34 @@ describe('QQ single-channel production surface', () => {
       expect(api).not.toContain(legacy);
     }
   });
+
+  /*
+   * The surface guard above covered env.ts and .env.example but not the README,
+   * which is why the README kept advertising Web chat, SSE and PWA long after
+   * they were deleted — and, worse, kept telling public deployments to set
+   * WEB_CHAT_TOKEN, a variable that no longer exists. A stale README that hands
+   * out a security instruction which silently does nothing is a defect, so it
+   * gets the same structural guard as the code.
+   */
+  it('keeps the README consistent with the single-channel product', () => {
+    const readme = read('README.md');
+    // Only allowed as part of the explicit "this was removed" note.
+    const mentions = readme.split('\n').filter((line) => line.includes('WEB_CHAT_TOKEN'));
+    for (const line of mentions) {
+      expect(line, 'WEB_CHAT_TOKEN may only appear in the removal note').toMatch(/已.*删除|removed/u);
+    }
+    expect(readme, 'README must not instruct operators to set WEB_CHAT_TOKEN').not.toMatch(
+      /^\s*WEB_CHAT_TOKEN\s*=/mu
+    );
+    // The README must name the actual chat channel; a reader cannot otherwise
+    // discover that a QQ bot is required to use the product at all.
+    expect(readme).toMatch(/QQ_BOT_ENABLED/u);
+    expect(readme).toMatch(/QQ_CALLBACK_SECRET/u);
+    expect(readme).toMatch(/api\/qq\/callback/u);
+  });
+
+  it('leaves no deploy script writing the removed chat token', () => {
+    const deploy = read('scripts/test-deploy.sh');
+    expect(deploy).not.toMatch(/^\s*sed -i .*WEB_CHAT_TOKEN/mu);
+  });
 });
