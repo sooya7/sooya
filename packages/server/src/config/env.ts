@@ -49,19 +49,35 @@ const originList = z
  * a forged header, and every logged client address became attacker-chosen.
  *
  * Accepted values: `false`/`off` (never trust), `true` (trust everything —
- * only sane when nothing untrusted can reach the port), a hop count, or a
- * comma-separated list of proxy addresses/CIDRs that Fastify understands.
+ * only sane when nothing untrusted can reach the port), or a comma-separated
+ * list of proxy addresses/CIDRs (`loopback`, `10.0.0.0/8`, …).
+ *
+ * A hop count is deliberately NOT accepted. Fastify removed hop-count support
+ * from `trustProxy` in 5.12 for GHSA-3m5p-2c4r-xxw2: counting hops lets a
+ * caller prepend entries to `X-Forwarded-For` and land on any address it
+ * likes, so `TRUST_PROXY=2` was never the protection it looked like. An
+ * existing numeric value is rejected loudly rather than silently reinterpreted
+ * as an address — a config that quietly stops meaning what it said is how the
+ * unconditional `true` survived in the first place.
  */
 const trustProxy = z
   .string()
   .optional()
-  .transform((value): boolean | number | string => {
+  .transform((value, ctx): boolean | string => {
     const raw = value?.trim();
     if (!raw) return 'loopback';
     const lowered = raw.toLowerCase();
     if (['0', 'false', 'no', 'off'].includes(lowered)) return false;
     if (['1', 'true', 'yes', 'on'].includes(lowered)) return true;
-    if (/^\d+$/.test(raw)) return Number(raw);
+    if (/^\d+$/.test(raw)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `hop counts are not supported (got ${raw}); they allow X-Forwarded-For spoofing `
+          + '(GHSA-3m5p-2c4r-xxw2). Use "loopback", an address/CIDR list, true or false'
+      });
+      return 'loopback';
+    }
     return raw;
   });
 

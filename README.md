@@ -247,7 +247,7 @@ ADMIN_API_TOKEN=换成一个足够长的随机字符串
 CORS_ALLOWED_ORIGINS=
 # 谁有权设置 X-Forwarded-For。req.ip 决定限流分桶，不能无条件信任。
 #   loopback（默认）= 同机 Nginx，对应 deploy/nginx.conf.example
-#   false / 跳数 / CIDR 列表 也都支持
+#   也支持 false 与 CIDR / 地址列表；跳数会被拒绝（可伪造，GHSA-3m5p-2c4r-xxw2）
 TRUST_PROXY=loopback
 ```
 
@@ -437,7 +437,7 @@ SOOYA 刻意保持单用户架构。没有多租户、团队空间、RBAC 或复
 
 - 不要提交 `.env`、API Key、MCP Token 或真实生产配置
 - 公网部署必须设置 `ADMIN_API_TOKEN`（为空时所有 admin 接口返回 503）
-- 按实际拓扑设置 `TRUST_PROXY`。保持默认 `loopback` 即可对应同机 Nginx；不要设成 `true`，除非确认没有不受信来源能直连该端口——那等于让调用方自选限流分桶
+- 按实际拓扑设置 `TRUST_PROXY`。保持默认 `loopback` 即可对应同机 Nginx；不要设成 `true`，除非确认没有不受信来源能直连该端口——那等于让调用方自选限流分桶。跳数形式不被接受（可伪造，见 GHSA-3m5p-2c4r-xxw2）
 - QQ 的 `QQ_APP_SECRET` / `QQ_CALLBACK_SECRET` 只放环境变量，并配置 `QQ_ALLOWED_USERS` 白名单
 - MCP Token 使用 `bearer-env` 注入，不写入 `mcp.json`
 - 不要把 SQLite、备份目录或本地 Ombre MCP 端口直接暴露到公网
