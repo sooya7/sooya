@@ -14,7 +14,7 @@ import {
   type QqPayload,
   type QqValidationData
 } from './types.js';
-import { signValidationResponse, verifyEventSignature } from './verify.js';
+import { isSignableValidationInput, signValidationResponse, verifyEventSignature } from './verify.js';
 import { resolveQqIdentity } from './mapping.js';
 import { c2cMessageToIngress, resolveQuoteReplyTo } from './inbound.js';
 import { downloadQqImageAttachment } from './inbound-media.js';
@@ -55,11 +55,26 @@ export class QqChannel {
     return this.deps.config;
   }
 
-  /** op 13 URL 验证：回传 { plain_token, signature }。入参非法返回 null。 */
+  /**
+   * op 13 URL 验证：回传 { plain_token, signature }。入参非法返回 null。
+   *
+   * 形状校验不是普通的入参检查：op 13 无需凭据即可调用，且与 op 0 共用签名构造，
+   * 放开输入等于开放一个签名预言机（见 verify.ts 中 PLAIN_TOKEN_RE 的说明）。
+   * 被拒绝的请求写安全日志——正常部署一生只会触发几次 op 13，出现拒绝就是信号。
+   */
   handleValidation(data: QqValidationData | undefined): { plain_token: string; signature: string } | null {
     const plainToken = typeof data?.plain_token === 'string' ? data.plain_token.trim() : '';
     const eventTs = typeof data?.event_ts === 'string' ? data.event_ts.trim() : '';
     if (!plainToken || !eventTs) return null;
+    if (!isSignableValidationInput(eventTs, plainToken)) {
+      this.deps.metrics?.record('qq', 'inbound.validation_rejected');
+      this.deps.errors.add('qq.verify', 'rejected url validation payload', {
+        code: 'validation_shape_invalid',
+        plainTokenLength: plainToken.length,
+        eventTsLength: eventTs.length
+      });
+      return null;
+    }
     return {
       plain_token: plainToken,
       signature: signValidationResponse(this.deps.config.callbackSecret, eventTs, plainToken)
