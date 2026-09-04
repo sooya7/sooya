@@ -18,6 +18,36 @@ import crypto from 'node:crypto';
 const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 const SIGNED_BODY_TTL_MS = 5 * 60 * 1000;
 
+/*
+ * op 13 输入的形状约束 —— 这是一条安全边界，不只是入参校验。
+ *
+ * op 13（URL 验证）与 op 0（事件推送）用同一把私钥、同一种 `prefix ‖ payload`
+ * 字节拼接方式签名：
+ *   op 13: sign(event_ts ‖ plain_token)
+ *   op 0 : verify(timestamp ‖ rawBody)
+ * 两者构造完全相同，没有域分隔。而 op 13 分支在签名校验之前、不需要任何凭据
+ * 即可调用（协议要求如此：回调地址验证正是用来证明持有 Secret 的握手）。
+ *
+ * 如果不约束输入，op 13 就是一个开放给全网的、对攻击者任意选定消息的签名预言机：
+ * 把想伪造的事件体当作 plain_token 提交 → 拿回对该事件体有效的签名 → 原样重放为
+ * op 0，verifyEventSignature 会通过。等于 webhook 签名校验被完全绕过。
+ *
+ * 切断方式：能走到 op 0 的 body 必须是合法 JSON 对象（app.ts 的 JSON 解析器会先
+ * 拒掉非 JSON 负载），因此必然含 `{` 与 `"`。下面的字符集刻意排除了这两者以及
+ * 空白与控制字符，使 op 13 在数学上无法产出任何可用于 op 0 的签名，同时仍兼容
+ * 十六进制 / base64 / base64url / JWT 等一切现实中的不透明 token 形态。
+ */
+const PLAIN_TOKEN_RE = /^[A-Za-z0-9._~+/=-]{1,256}$/u;
+const EVENT_TS_RE = /^\d{1,20}$/u;
+
+/**
+ * op 13 的 (event_ts, plain_token) 是否允许被签名。
+ * 返回 false 时调用方必须拒绝请求，不得退化成「签一个空值」。
+ */
+export function isSignableValidationInput(eventTs: string, plainToken: string): boolean {
+  return EVENT_TS_RE.test(eventTs) && PLAIN_TOKEN_RE.test(plainToken);
+}
+
 /** 与官方一致：按字节 repeat secret 直至 >= 32 字节，取前 32 字节。 */
 export function seedFromBotSecret(secret: string): Buffer {
   let bytes = Buffer.from(secret, 'utf8');
@@ -56,6 +86,13 @@ export function verifyEventSignature(secret: string, timestamp: unknown, signatu
 
 /** URL 验证回包签名：hex(ed25519.sign(event_ts + plain_token))。 */
 export function signValidationResponse(secret: string, eventTs: string, plainToken: string): string {
+  /*
+   * 防御性拒签：调用方应当已经校验过形状，但签名原语自己也绝不为可疑输入签名。
+   * 这样即便未来新增一个忘记校验的调用点，签名预言机也不会被重新打开。
+   */
+  if (!isSignableValidationInput(eventTs, plainToken)) {
+    throw new Error('refusing to sign a validation payload with an unexpected shape');
+  }
   const message = Buffer.concat([Buffer.from(eventTs, 'utf8'), Buffer.from(plainToken, 'utf8')]);
   return crypto.sign(null, message, ed25519PrivateKey(seedFromBotSecret(secret))).toString('hex');
 }

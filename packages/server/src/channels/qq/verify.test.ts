@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   derivedPublicKeyHex,
+  isSignableValidationInput,
   isTimestampFresh,
   seedFromBotSecret,
   signEventBody,
@@ -81,16 +82,78 @@ describe('qq verify: timestamp window (replay protection)', () => {
 });
 
 describe('qq verify: URL validation (op 13)', () => {
-  it('signs event_ts + plain_token and can be verified back', () => {
+  it('signs event_ts + plain_token', () => {
     const eventTs = String(Math.floor(Date.now() / 1000));
     const token = '0123456789abcdef';
     const signature = signValidationResponse(SECRET, eventTs, token);
     expect(signature).toMatch(/^[0-9a-f]{128}$/u);
+    /*
+     * op 13 与 op 0 的被签内容构造相同（prefix ‖ payload，同一把私钥），所以一个
+     * op 13 签名在密码学上必然也能通过 op 0 的验签。这条别名是协议决定的、无法
+     * 消除；安全性由「op 13 的 plain_token 不可能是一个 JSON 事件体」来保证，
+     * 而不是由验签环节区分用途来保证。下一组测试锁定这条约束。
+     */
     expect(verifyEventSignature(SECRET, eventTs, signature, Buffer.from(token))).toBe(true);
   });
 
   it('produces a deterministic signature for the same inputs', () => {
     expect(signValidationResponse(SECRET, '1740000000', 'pt1')).toBe(signValidationResponse(SECRET, '1740000000', 'pt1'));
     expect(signValidationResponse(SECRET, '1740000000', 'pt1')).not.toBe(signValidationResponse(SECRET, '1740000000', 'pt2'));
+  });
+});
+
+/*
+ * 签名预言机回归测试。
+ *
+ * 攻击链（修复前可用）：把想伪造的 op 0 事件体当作 plain_token 提交给未鉴权的
+ * op 13 分支 → 服务器返回 sign(event_ts ‖ body) → 以该签名重放为 op 0 事件推送
+ * → verifyEventSignature 通过 → webhook 签名校验被完全绕过。
+ */
+describe('qq verify: op 13 must not act as a signing oracle', () => {
+  const DISPATCH_BODY = JSON.stringify({
+    id: 'evt-forged',
+    op: 0,
+    t: 'C2C_MESSAGE_CREATE',
+    d: { id: 'msg-1', author: { user_openid: 'victim-openid' }, content: 'forged' }
+  });
+
+  it('refuses to sign a JSON dispatch body submitted as plain_token', () => {
+    const eventTs = String(Math.floor(Date.now() / 1000));
+    expect(isSignableValidationInput(eventTs, DISPATCH_BODY)).toBe(false);
+    expect(() => signValidationResponse(SECRET, eventTs, DISPATCH_BODY)).toThrow(/unexpected shape/u);
+  });
+
+  it('rejects every character class that could build a JSON body', () => {
+    const eventTs = '1740000000';
+    for (const candidate of ['{', '}', '"', '{"op":0}', 'a{b', 'a"b', 'a b', 'a\nb', 'a\\b', '[1]', "a'b"]) {
+      expect(isSignableValidationInput(eventTs, candidate)).toBe(false);
+    }
+  });
+
+  it('still accepts realistic opaque token shapes', () => {
+    const eventTs = '1740000000';
+    for (const candidate of [
+      '0123456789abcdef',
+      'Ab3-_x.9~+/=',
+      'eyJhbGciOiJIUzI1NiJ9.eyJhIjoxfQ.c2ln',
+      'a'.repeat(256)
+    ]) {
+      expect(isSignableValidationInput(eventTs, candidate)).toBe(true);
+    }
+  });
+
+  it('constrains event_ts to a unix-seconds shape', () => {
+    expect(isSignableValidationInput('1740000000', 'tok')).toBe(true);
+    for (const candidate of ['', 'not-a-timestamp', '17400000001740000000123', '17.5', '-1', '1740000000 ']) {
+      expect(isSignableValidationInput(candidate, 'tok')).toBe(false);
+    }
+  });
+
+  it('leaves no signable input that verifies as a dispatch body', () => {
+    // 穷举确认：任何被允许签名的 plain_token 都不含 '{'，因此永远无法等于一个
+    // 能通过 app.ts JSON 解析器的 op 0 body。
+    const eventTs = '1740000000';
+    expect(DISPATCH_BODY.startsWith('{')).toBe(true);
+    expect(isSignableValidationInput(eventTs, DISPATCH_BODY)).toBe(false);
   });
 });

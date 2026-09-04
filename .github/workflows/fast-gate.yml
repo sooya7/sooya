@@ -4,6 +4,12 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
+  # Also run on main. The hotspot budget is a ratchet, and a ratchet that is
+  # only ever evaluated on pull requests lets main drift over its own baseline
+  # unnoticed — the next contributor then gets a red gate for a violation that
+  # is not theirs. Evaluating it on merge keeps the failure attributable.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

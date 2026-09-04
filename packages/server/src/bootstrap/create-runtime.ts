@@ -29,7 +29,11 @@ export function createRuntime(opts: RuntimeBootstrapOptions = {}): RuntimeBootst
   const env = loadEnv({ ...process.env, ...opts.env } as NodeJS.ProcessEnv);
   const logger = opts.logger ?? createLogger({ level: env.LOG_LEVEL, logDir: env.NODE_ENV === 'test' ? null : env.logDir, pretty: env.NODE_ENV === 'development' });
   const directFetchImpl = opts.fetchImpl ?? fetch;
-  const fetchImpl = env.SOOYA_HTTP_PROXY ? createProxyFetch(env.SOOYA_HTTP_PROXY) : directFetchImpl;
+  // The proxy transport needs the same body ceiling as safeFetch; without it a
+  // hostile upstream is bounded only by available memory.
+  const fetchImpl = env.SOOYA_HTTP_PROXY
+    ? createProxyFetch(env.SOOYA_HTTP_PROXY, { maxResponseBytes: env.MAX_REMOTE_FETCH_BYTES })
+    : directFetchImpl;
   for (const dir of [env.dataDir, env.dbDir, env.mediaDir, env.backupDir, env.logDir, ...Object.values(env.mediaDirs)]) ensureDirSync(dir);
   const dbFile = path.join(env.dbDir, 'sooya.db');
   const opened = openDatabase({ file: dbFile, backupDir: env.backupDir, onLog: (level, msg, extra) => logger[level]({ ...extra }, msg) });

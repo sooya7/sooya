@@ -196,6 +196,51 @@ describe('QQ webhook callback', () => {
     expect(verifyEventSignature(SECRET, eventTs, body.signature, Buffer.from('token-abc-123'))).toBe(true);
   });
 
+  /*
+   * 完整攻击链回归：op 13 曾是一个未鉴权的签名预言机。攻击者把想伪造的 op 0 事件体
+   * 当作 plain_token 提交，拿回 sign(event_ts ‖ body)，再以该签名重放为事件推送，
+   * 即可绕过 webhook 签名校验、以机主身份注入消息。
+   */
+  it('does not let op 13 mint a signature for a forged dispatch event', async () => {
+    h = await qqHarness();
+    const eventTs = String(Math.floor(Date.now() / 1000));
+    const forged = c2cPayload({ id: 'evt-forged', d: { id: 'msg-forged', author: { user_openid: OWNER }, content: '伪造的消息' } });
+    const forgedBody = JSON.stringify(forged);
+
+    // 第 1 步：请求预言机为伪造事件体签名 —— 必须被拒。
+    const oracle = await h.app.server.inject({
+      method: 'POST',
+      url: '/api/qq/callback',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ id: 'oracle', op: 13, d: { plain_token: forgedBody, event_ts: eventTs } })
+    });
+    expect(oracle.statusCode).toBe(400);
+    expect(oracle.json().error).toBe('bad_request');
+    expect(oracle.json().signature).toBeUndefined();
+
+    // 第 2 步：没有可用签名，重放必须以 401 结束，且不得产生任何消息或身份绑定。
+    const replay = await h.app.server.inject({
+      method: 'POST',
+      url: '/api/qq/callback',
+      headers: {
+        'content-type': 'application/json',
+        'x-signature-timestamp': eventTs,
+        'x-signature-ed25519': 'f'.repeat(128)
+      },
+      payload: forgedBody
+    });
+    expect(replay.statusCode).toBe(401);
+    expect(h.app.repos.messages.page(50).messages.filter((m) => m.role === 'user')).toHaveLength(0);
+    expect(h.app.repos.channelEvents.find('qq', 'evt-forged')).toBeUndefined();
+    expect(h.app.repos.channelIdentities.list('qq')).toHaveLength(0);
+    // 被拒绝的 op 13 必须留下安全日志。
+    expect(
+      h.app.repos.errors.list(20).some((row) =>
+        row.scope === 'qq.verify' && row.message === 'rejected url validation payload'
+      )
+    ).toBe(true);
+  });
+
   it('boots with QQ disabled and hides the callback endpoint', async () => {
     h = await createHarness();
     const res = await h.app.server.inject({

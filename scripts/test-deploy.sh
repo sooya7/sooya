@@ -234,38 +234,64 @@ done
 curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1
 assert "service healthy after install" $?
 
-# Health checks must work even with a chat token set (deployment must not
-# misjudge readiness because of WEB_CHAT_TOKEN).
-sed -i "s|^WEB_CHAT_TOKEN=.*|WEB_CHAT_TOKEN=deploy-probe-token|" "$PREFIX/shared/.env"
-systemctl restart
-for _ in $(seq 1 40); do
-  curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1 && break
-  sleep 0.5
-done
 curl -fsS "http://127.0.0.1:$PORT/health/live" >/dev/null 2>&1
 assert "/health/live reachable without a token" $?
 curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1
 assert "/health/ready reachable without a token" $?
+# Admin API is the only authenticated HTTP surface; it must reject anonymous callers.
+code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/admin/persona")"
+[[ "$code" == "401" ]]; assert "admin API rejects an anonymous caller (got $code)" $?
+# The Web chat API was removed with the QQ single-channel migration; if it ever
+# reappears in a release, this probe fails instead of silently passing.
 code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/messages")"
-[[ "$code" == "401" ]]; assert "chat API is protected by the token (got $code)" $?
+[[ "$code" == "404" ]]; assert "removed Web chat API stays gone (got $code)" $?
 
 # ============================ 2. create user state ============================
 log "STEP 2: create user data to protect"
-TOKEN="deploy-probe-token"
 ADMIN="$(grep -E '^ADMIN_API_TOKEN=' "$PREFIX/shared/.env" | cut -d= -f2-)"
 
-curl -fsS -X POST "http://127.0.0.1:$PORT/api/messages/sync" \
-  -H "content-type: application/json" -H "x-sooya-token: $TOKEN" \
-  -d '{"clientMsgId":"deploy-test-1","content":[{"type":"text","text":"升级前的消息"}]}' > /dev/null
-assert "sent a message before upgrading" $?
+# Reads the durable chat history through the Admin API. Deliberately *not*
+# wrapped in `|| true`: this used to hit the long-deleted /api/messages with
+# `x-sooya-token`, so every call 404'd, the counts were both empty, and the
+# "history intact" assertions passed while verifying nothing at all. A failure
+# to read history after an upgrade must fail the run, not be swallowed.
+chat_history() {
+  curl -fsS -H "x-admin-token: $ADMIN" "http://127.0.0.1:$PORT/api/admin/chat/history?limit=100"
+}
 
+# Inbound messages now require an Ed25519-signed QQ webhook event, which this
+# shell probe cannot mint. The upgrade contract is therefore verified through
+# the state this script *can* create (persona, media, database) plus the
+# requirement that history stays readable across the switch.
 curl -fsS -X PUT "http://127.0.0.1:$PORT/api/admin/persona" \
   -H "content-type: application/json" -H "x-admin-token: $ADMIN" \
   -d '{"speakingStyle":"自定义人格设置-保留测试"}' > /dev/null
 assert "customised the persona" $?
 
+chat_history > /dev/null
+assert "chat history is readable before upgrading" $?
+
+# Media upload is the one *database-backed* user write this harness can perform
+# now that inbound chat requires a signed QQ event. It creates a media row plus
+# a file on disk, which is exactly the pair the upgrade must preserve and the
+# backup restore must roll back.
+gallery() {
+  curl -fsS -H "x-admin-token: $ADMIN" "http://127.0.0.1:$PORT/api/admin/gallery?limit=100"
+}
+upload_probe() { # upload_probe <filename>
+  local name="$1"
+  printf 'deploy-probe-%s
+' "$name" > "$PREFIX/run/$name"
+  curl -fsS -X POST "http://127.0.0.1:$PORT/api/admin/media"     -H "x-admin-token: $ADMIN" -F "file=@$PREFIX/run/$name;type=text/plain" > /dev/null
+}
+
+upload_probe "pre-upgrade-probe.txt"
+assert "uploaded media before upgrading" $?
+gallery | grep -q 'pre-upgrade-probe.txt'
+assert "the uploaded media is listed before upgrading" $?
+
 echo "user-uploaded-content" > "$PREFIX/shared/data/media/files/user-file.txt"
-MESSAGES_BEFORE="$(curl -fsS -H "x-sooya-token: $TOKEN" "http://127.0.0.1:$PORT/api/messages?limit=50" | grep -c '"id"' || true)"
+MESSAGES_BEFORE="$(chat_history | grep -c '"id"' || true)"
 ENV_SUM_BEFORE="$(sha256sum "$PREFIX/shared/.env" | cut -d' ' -f1)"
 log "messages before upgrade: $MESSAGES_BEFORE"
 
@@ -293,14 +319,14 @@ for _ in $(seq 1 40); do
   curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1 && break
   sleep 0.5
 done
-MESSAGES_AFTER="$(curl -fsS -H "x-sooya-token: $TOKEN" "http://127.0.0.1:$PORT/api/messages?limit=50" | grep -c '"id"' || true)"
+MESSAGES_AFTER="$(chat_history | grep -c '"id"' || true)"
 [[ "$MESSAGES_AFTER" -ge "$MESSAGES_BEFORE" ]]
 assert "chat history intact after upgrade ($MESSAGES_BEFORE -> $MESSAGES_AFTER)" $?
 # Capture first: piping curl into `grep -q` lets grep exit early and kills
 # curl with SIGPIPE, which `set -o pipefail` turns into a spurious failure.
-HISTORY_AFTER_UPGRADE="$(curl -fsS -H "x-sooya-token: $TOKEN" "http://127.0.0.1:$PORT/api/messages?limit=50")"
-grep -q '升级前的消息' <<<"$HISTORY_AFTER_UPGRADE"
-assert "the pre-upgrade message is still readable" $?
+HISTORY_AFTER_UPGRADE="$(gallery)"
+grep -q 'pre-upgrade-probe.txt' <<<"$HISTORY_AFTER_UPGRADE"
+assert "the pre-upgrade media row is still readable" $?
 
 # ================================ 4. rollback =================================
 log "STEP 4: rollback"
@@ -320,9 +346,9 @@ for _ in $(seq 1 40); do
 done
 curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1
 assert "service healthy after rollback" $?
-HISTORY_AFTER_ROLLBACK="$(curl -fsS -H "x-sooya-token: $TOKEN" "http://127.0.0.1:$PORT/api/messages?limit=50")"
-grep -q '升级前的消息' <<<"$HISTORY_AFTER_ROLLBACK"
-assert "chat history survived the rollback" $?
+HISTORY_AFTER_ROLLBACK="$(gallery)"
+grep -q 'pre-upgrade-probe.txt' <<<"$HISTORY_AFTER_ROLLBACK"
+assert "user data survived the rollback" $?
 grep -q '自定义人格设置-保留测试' "$PREFIX/shared/config/persona.json"
 assert "custom persona survived the rollback" $?
 
@@ -348,10 +374,9 @@ else
   pass "archive excludes .env by default"
 fi
 
-# Add a message, then restore the older backup and confirm the rollback of data.
-curl -fsS -X POST "http://127.0.0.1:$PORT/api/messages/sync" \
-  -H "content-type: application/json" -H "x-sooya-token: $TOKEN" \
-  -d '{"clientMsgId":"deploy-test-after-backup","content":[{"type":"text","text":"备份之后的消息"}]}' > /dev/null
+# Write more data, then restore the older backup and confirm the data rollback.
+upload_probe "post-backup-probe.txt"
+assert "uploaded media after taking the backup" $?
 
 run_as_root bash "$SOURCE_DIR/deploy/restore-backup.sh" --dir "$PREFIX" --file "$ARCHIVE" \
   > "$PREFIX/run/restore.log" 2>&1
@@ -361,12 +386,12 @@ for _ in $(seq 1 40); do
   curl -fsS "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1 && break
   sleep 0.5
 done
-BODY="$(curl -fsS -H "x-sooya-token: $TOKEN" "http://127.0.0.1:$PORT/api/messages?limit=50")"
-grep -q '升级前的消息' <<<"$BODY"; assert "restored data contains the original message" $?
-if grep -q '备份之后的消息' <<<"$BODY"; then
-  fail "post-backup message should be gone after restore"
+BODY="$(gallery)"
+grep -q 'pre-upgrade-probe.txt' <<<"$BODY"; assert "restored data contains the original media row" $?
+if grep -q 'post-backup-probe.txt' <<<"$BODY"; then
+  fail "post-backup media row should be gone after restore"
 else
-  pass "post-backup message correctly rolled back"
+  pass "post-backup media row correctly rolled back"
 fi
 
 # ================================== summary ===================================
