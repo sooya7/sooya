@@ -24,6 +24,8 @@ export type ImageDirectorOutput = z.infer<typeof ImageDirectorSchema>;
 
 export const VideoDirectorSchema = z.object({
   prompt: z.string().trim().min(10).max(2000),
+  /** Orientation for the clip, e.g. 16:9 / 9:16 / 1:1; resolution stays as configured. */
+  aspectRatio: z.string().trim().max(12).optional(),
   /** Clip length the director judges right for the motion; the provider clamps to what it supports. */
   durationSec: z.number().int().min(2).max(20).optional()
 });

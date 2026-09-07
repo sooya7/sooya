@@ -132,6 +132,8 @@ curl http://127.0.0.1:8788/api/admin/video/generations/<taskId> -H "X-Admin-Toke
 
 可通过 `PUT /api/admin/video` 的 `policy` 字段更新，`GET /api/admin/video` 会带回当前策略。
 
+提示词扩写规则、同日穿搭/时段连续性与可调整的风格词表见 [docs/MEDIA-EXPANSION.md](MEDIA-EXPANSION.md)。
+
 `POST /api/admin/models/video/test` 固定返回 `400 test_unsupported`：视频生成计费且耗时数分钟，不作为连接探针；用 `discover` 拉取模型列表验证地址与密钥，再真发一次任务。
 
 ### QQ 通道

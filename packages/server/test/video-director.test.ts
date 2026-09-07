@@ -40,7 +40,8 @@ describe('MediaDirector video', () => {
     const result = await director.video({ scene: '猫在追激光点', self: false });
     expect(result.prompt).toContain('猫在追激光点');
     expect(result.prompt).toContain('single continuous shot');
-    expect(result.durationSec).toBeUndefined();
+    // The fallback still names a clip length, taken from the spec's lower bound.
+    expect(result.durationSec).toBe(4);
   });
 
   it('pins identity to the first frame for a self clip in the fallback', () => {

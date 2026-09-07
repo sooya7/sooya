@@ -14,6 +14,7 @@ import {
 import { fileTypeFromBuffer } from 'file-type';
 import { ALLOWED_VIDEO_MIME, MediaStore, MediaValidationError } from '../../media/store.js';
 import { ProviderNotConfiguredError, ProviderRequestError, type VideoProvider, type VideoTaskSnapshot } from '../../providers/types.js';
+import { resolveVideoSize } from '../../providers/video.js';
 import { HttpSizeError, SsrfError } from '../../util/http.js';
 import type { MediaRef } from '../types.js';
 import type { CapabilityRegistry } from '../capabilities.js';
@@ -45,6 +46,10 @@ export interface VideoGenerationInput {
   sourceImage?: { data: Buffer; mime: string; name?: string } | null;
   durationSec?: number;
   size?: string;
+  /** Director-chosen orientation; resolved against the configured size. */
+  aspectRatio?: string | null;
+  /** Same-day continuity that produced the prompt, kept for diagnosis. */
+  continuity?: Record<string, unknown> | null;
   origin?: VideoTaskOrigin;
 }
 
@@ -182,7 +187,10 @@ export class VideoGenerationService {
     }
     const params: Record<string, unknown> = {};
     if (input.durationSec !== undefined) params.durationSec = input.durationSec;
-    if (input.size) params.size = input.size;
+    const size = input.size ?? (input.aspectRatio ? resolveVideoSize(cfg.size, input.aspectRatio) : undefined);
+    if (size) params.size = size;
+    if (input.aspectRatio) params.aspectRatio = input.aspectRatio;
+    if (input.continuity) params.continuity = input.continuity;
     if (input.origin) params.origin = input.origin;
 
     const row = this.deps.tasks.create({

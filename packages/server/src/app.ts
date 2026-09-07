@@ -248,7 +248,7 @@ export function staticCacheControl(filePath: string): string {
 
 export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const runtime = createRuntime({ env: opts.env, logger: opts.logger, fetchImpl: opts.fetchImpl });
-  const { env, logger, directFetchImpl, fetchImpl, dbFile, dbHandle, opened, config } = runtime;
+  const { env, logger, directFetchImpl, fetchImpl, dbFile, dbHandle, opened, config, mediaSpec } = runtime;
   const capabilityPolicy = createCapabilityPolicy(env);
   const repos = createRepositories(dbHandle);
   const flowTrace = new FlowTraceService(repos.flowTraces);
@@ -278,7 +278,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     () => capabilities.directorProvider(),
     { metrics, onEvent: (event) => logger.debug({ ...event }, `director.${event.event}`) }
   );
-  const mediaDirector = new MediaDirector(directorClient);
+  // Expansion vocabulary is operator-editable (CONFIG_DIR/media-prompt-spec.json);
+  // the director's hard rules stay in core/director/prompts.ts.
+  const mediaDirector = new MediaDirector(directorClient, () => mediaSpec.get());
   const stickerAnalyzer = new StickerAnalyzer(
     repos.stickers,
     mediaStore,
@@ -1004,6 +1006,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     close: async () => {
       stopModelWatcher?.();
       stopModelWatcher = null;
+      stopSpecWatcher();
       for (const timer of app.recurringTimers.splice(0)) clearInterval(timer);
       await replyCoordinator.stop();
       await worker.stop();
@@ -1012,6 +1015,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       closeDatabase(dbHandle.raw);
     }
   };
+  const stopSpecWatcher = mediaSpec.watch();
   stopModelWatcher = config.watchModels(() => {
     capabilities.rebuild();
     webSearch.rebuild(config.getModels().webSearch);

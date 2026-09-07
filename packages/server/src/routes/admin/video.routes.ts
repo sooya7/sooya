@@ -20,7 +20,9 @@ const GenerationBodySchema = z.object({
   /** Image-to-video: fetch the first frame from a public URL. */
   imageUrl: z.string().url().max(2000).optional(),
   durationSec: z.coerce.number().int().min(1).max(60).optional(),
-  size: z.string().max(20).optional()
+  size: z.string().max(20).optional(),
+  /** Orientation, e.g. 9:16; resolution still comes from the saved size. */
+  aspectRatio: z.string().max(12).optional()
 });
 type GenerationBody = z.infer<typeof GenerationBodySchema>;
 
@@ -155,6 +157,7 @@ export function registerVideoAdminRoutes(app: SooyaApp): void {
         sourceMediaId,
         durationSec: body.durationSec,
         size: body.size,
+        aspectRatio: body.aspectRatio,
         origin: { kind: 'admin' }
       });
       reply.code(202);

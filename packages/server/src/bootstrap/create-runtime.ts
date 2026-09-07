@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { Logger } from 'pino';
 import { loadEnv, type AppEnv } from '../config/env.js';
 import { ConfigStore } from '../config/store.js';
+import { MediaPromptSpecStore } from '../config/media-spec.js';
 import { closeDatabase, openDatabase } from '../db/index.js';
 import { DbHandle } from '../db/handle.js';
 import { createLogger } from '../util/logger.js';
@@ -23,6 +24,8 @@ export interface RuntimeBootstrap {
   dbHandle: DbHandle;
   opened: ReturnType<typeof openDatabase>;
   config: ConfigStore;
+  /** Operator-editable media prompt-expansion vocabulary; hot-reloaded like models.json. */
+  mediaSpec: MediaPromptSpecStore;
 }
 
 export function createRuntime(opts: RuntimeBootstrapOptions = {}): RuntimeBootstrap {
@@ -43,7 +46,11 @@ export function createRuntime(opts: RuntimeBootstrapOptions = {}): RuntimeBootst
     env: { ...process.env, ...opts.env } as NodeJS.ProcessEnv,
     onLog: (level, msg, extra) => logger[level]({ ...extra }, msg)
   });
-  return { env, logger, directFetchImpl, fetchImpl, dbFile, dbHandle, opened, config };
+  const mediaSpec = new MediaPromptSpecStore({
+    configDir: env.configDir,
+    onLog: (level, msg, extra) => logger[level]({ ...extra }, msg)
+  });
+  return { env, logger, directFetchImpl, fetchImpl, dbFile, dbHandle, opened, config, mediaSpec };
 }
 
 export function closeRuntime(runtime: RuntimeBootstrap): void {

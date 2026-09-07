@@ -122,7 +122,7 @@ async function main() {
   // config/ ships only as a template; runtime files are the user's.
   const configDir = path.join(STAGE, 'config');
   await fsp.mkdir(configDir, { recursive: true });
-  for (const leftover of ['models.json', 'persona.json']) {
+  for (const leftover of ['models.json', 'persona.json', 'media-prompt-spec.json']) {
     await fsp.rm(path.join(configDir, leftover), { force: true });
   }
   await fsp.writeFile(
@@ -130,7 +130,7 @@ async function main() {
     [
       '# config/',
       '',
-      'SOOYA writes `persona.json` and `models.json` here on first start.',
+      'SOOYA writes `persona.json`, `models.json` and `media-prompt-spec.json` here on first start.',
       'Both files are runtime state and are intentionally NOT shipped in the release,',
       'so an upgrade can never overwrite your persona or your model configuration.',
       '',
