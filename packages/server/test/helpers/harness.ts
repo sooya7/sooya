@@ -46,6 +46,9 @@ export interface FakeProviderState {
   rerankCalls: number;
   /** Recorded rerank requests so tests can assert the documents sent. */
   rerankRequests: Array<{ url: string; body: Record<string, unknown> }>;
+  /** Recorded OpenAI-style video calls: creation bodies (JSON or multipart fields), polls and downloads. */
+  videoRequests: Array<{ url: string; method: string; body: Record<string, unknown> | null; form: Record<string, string> | null }>;
+  videoPolls: number;
 }
 
 export interface HarnessOptions {
@@ -58,6 +61,12 @@ export interface HarnessOptions {
   /** Fixed dimension for the fake embedding provider. */
   embeddingDim?: number;
   rerank?: 'ok' | 'fail' | 'off';
+  /**
+   * Fake OpenAI Videos endpoint. `ok` queues, reports progress once, then
+   * completes with a tiny mp4; `fail` answers 500 (transient); `reject` answers
+   * 400 (permanent).
+   */
+  video?: 'ok' | 'fail' | 'reject' | 'off';
   /** Custom rerank ordering: indexes into the request's documents array. */
   rerankOrder?: (documents: string[]) => number[];
   /** Exact URL fixtures for channel/media download tests. */
@@ -91,6 +100,7 @@ export interface Harness {
   setChatError: (err: Error | null) => void;
   setImageMode: (mode: 'ok' | 'fail' | 'anuma' | 'off') => void;
   setTtsMode: (mode: 'ok' | 'fail' | 'off') => void;
+  setVideoMode: (mode: 'ok' | 'fail' | 'reject' | 'off') => void;
   cleanup: () => Promise<void>;
 }
 
@@ -137,6 +147,12 @@ export function makeFakeWav(seconds = 2, sampleRate = 16000): Buffer {
 
 export const TEST_PNG = PNG_1x1;
 
+/** Smallest buffer file-type sniffs as video/mp4: an `ftyp isom` box plus an empty `mdat`. */
+export const TEST_MP4 = Buffer.concat([
+  Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom', 'latin1'), Buffer.from([0, 0, 2, 0]), Buffer.from('isomiso2', 'latin1'),
+  Buffer.from([0, 0, 0, 0x10]), Buffer.from('mdat', 'latin1'), Buffer.alloc(8)
+]);
+
 function sseResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -154,12 +170,13 @@ function sseResponse(chunks: string[]): Response {
 
 export async function createHarness(opts: HarnessOptions = {}): Promise<Harness> {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sooya-test-'));
-  const state: FakeProviderState = { chatCalls: [], webSearchCalls: [], discoverCalls: [], discoverHeaders: [], imageCalls: 0, imageRequests: [], ttsCalls: 0, embedCalls: 0, rerankCalls: 0, rerankRequests: [] };
+  const state: FakeProviderState = { chatCalls: [], webSearchCalls: [], discoverCalls: [], discoverHeaders: [], imageCalls: 0, imageRequests: [], ttsCalls: 0, embedCalls: 0, rerankCalls: 0, rerankRequests: [], videoRequests: [], videoPolls: 0 };
 
   let script = opts.chat?.script ?? [['好的。']];
   let chatError: Error | null = opts.chat?.chatError ?? null;
   let imageMode = opts.image ?? 'off';
   let ttsMode = opts.tts ?? 'off';
+  let videoMode = opts.video ?? 'off';
   const embeddingMode = opts.embedding ?? 'off';
   const embeddingDim = opts.embeddingDim ?? 8;
   const rerankMode = opts.rerank ?? 'off';
@@ -256,6 +273,30 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
         headers: { 'content-type': 'application/json' }
       });
     }
+    if (url.includes('/videos')) {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      let form: Record<string, string> | null = null;
+      if (init?.body instanceof FormData) {
+        form = {};
+        for (const [key, value] of init.body.entries()) form[key] = typeof value === 'string' ? value : `file:${(value as File).name}:${(value as File).type}`;
+      }
+      state.videoRequests.push({ url, method, body: (body ?? null) as Record<string, unknown> | null, form });
+      const json = (status: number, payload: unknown) => new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } });
+      if (method === 'POST') {
+        if (videoMode === 'fail') return new Response('video backend exploded', { status: 500 });
+        if (videoMode === 'reject') return json(400, { error: { message: 'unsupported size' } });
+        return json(200, { id: 'video_fake_1', object: 'video', status: 'queued', progress: 0 });
+      }
+      if (method === 'DELETE') return json(200, { id: 'video_fake_1', deleted: true });
+      if (url.endsWith('/content')) {
+        return new Response(new Uint8Array(TEST_MP4), { status: 200, headers: { 'content-type': 'video/mp4' } });
+      }
+      state.videoPolls++;
+      if (videoMode === 'fail') return new Response('video backend exploded', { status: 500 });
+      return state.videoPolls === 1
+        ? json(200, { id: 'video_fake_1', object: 'video', status: 'in_progress', progress: 50 })
+        : json(200, { id: 'video_fake_1', object: 'video', status: 'completed', progress: 100 });
+    }
     if (url.includes('/audio/speech')) {
       state.ttsCalls++;
       if (ttsMode === 'fail') return new Response('tts backend exploded', { status: 500 });
@@ -344,6 +385,21 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
             maxRetries: 0,
             timeoutMs: 5000
           },
+    video:
+      videoMode === 'off'
+        ? { provider: 'none' }
+        : {
+            provider: 'openai-videos',
+            baseUrl: 'https://fake.example.com/v1',
+            apiKey: 'sk-test-key-000000',
+            model: 'fake-video',
+            size: '1280x720',
+            durationSec: 4,
+            maxRetries: 0,
+            timeoutMs: 5000,
+            pollIntervalMs: 1000,
+            maxWaitMs: 60_000
+          },
     rerank:
       rerankMode === 'off'
         ? { provider: 'none' }
@@ -421,6 +477,9 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     },
     setTtsMode: (m) => {
       ttsMode = m;
+    },
+    setVideoMode: (m) => {
+      videoMode = m;
     },
     cleanup: async () => {
       await app.close();

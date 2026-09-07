@@ -114,6 +114,32 @@ export const ImageModelSchema = z.object({
 });
 export type ImageModelConfig = z.infer<typeof ImageModelSchema>;
 
+/**
+ * Video generation (OpenAI Videos protocol: POST /videos, GET /videos/{id},
+ * GET /videos/{id}/content) is an asynchronous job: create a task, poll it,
+ * then download the file. `timeoutMs` bounds one HTTP call; `maxWaitMs` bounds
+ * the whole task from creation to a downloaded file.
+ */
+export const VideoModelSchema = z.object({
+  provider: z.enum(['openai-videos', 'openai-compatible', 'none']).default('none'),
+  baseUrl: z.string().default(''),
+  apiKey: z.string().default(''),
+  /** Same indirection as `tts.apiKeyEnv`: the key stays in the environment. */
+  apiKeyEnv: z.string().default(''),
+  model: z.string().default(''),
+  /** `size` (WxH), e.g. 1280x720 / 720x1280. */
+  size: z.string().max(20).default('1280x720'),
+  durationSec: z.number().int().min(1).max(60).default(5),
+  timeoutMs: z.number().int().min(1000).max(600_000).default(60_000),
+  maxRetries: z.number().int().min(0).max(5).default(1),
+  pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
+  maxWaitMs: z.number().int().min(30_000).max(3_600_000).default(900_000),
+  maxDownloadBytes: z.number().int().min(1_048_576).max(2_147_483_648).default(300 * 1024 * 1024),
+  /** How many tasks may be queued or running at once through the API. */
+  maxActiveTasks: z.number().int().min(1).max(20).default(3)
+});
+export type VideoModelConfig = z.infer<typeof VideoModelSchema>;
+
 export const TtsModelSchema = z.object({
   provider: z.enum(['openai-tts', 'openai-compatible', 'volc-tts', 'fish', 'none']).default('none'),
   baseUrl: z.string().default(''),
@@ -195,7 +221,7 @@ export const RerankModelSchema = z.object({
 export type RerankModelConfig = z.infer<typeof RerankModelSchema>;
 
 /** The fixed capability slots a model can be assigned to. */
-export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'tts', 'rerank'] as const;
+export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'video', 'tts', 'rerank'] as const;
 export const ModelSlotSchema = z.enum(MODEL_SLOTS);
 export type ModelSlot = z.infer<typeof ModelSlotSchema>;
 
@@ -252,6 +278,7 @@ export const ModelsConfigSchema = z.object({
   sticker: ChatModelSchema.optional(),
   embedding: EmbeddingModelSchema.default({}),
   image: ImageModelSchema.default({}),
+  video: VideoModelSchema.default({}),
   tts: TtsModelSchema.default({}),
   rerank: RerankModelSchema.default({}),
   webSearch: WebSearchConfigSchema.default({})

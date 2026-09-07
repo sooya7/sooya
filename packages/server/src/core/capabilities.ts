@@ -4,6 +4,7 @@ import { createEmbeddingProvider, OpenAIEmbeddingProvider } from '../providers/e
 import { createImageProvider } from '../providers/image.js';
 import { createRerankProvider } from '../providers/rerank.js';
 import { createTTSProvider } from '../providers/tts.js';
+import { createVideoProvider } from '../providers/video.js';
 import { ProviderHealthTracker } from '../providers/health.js';
 import type {
   ChatProvider,
@@ -11,10 +12,11 @@ import type {
   HealthStatus,
   ImageProvider,
   RerankProvider,
-  TTSProvider
+  TTSProvider,
+  VideoProvider
 } from '../providers/types.js';
 
-export type CapabilityName = 'chat' | 'vision' | 'summary' | 'director' | 'embedding' | 'image' | 'tts' | 'rerank';
+export type CapabilityName = 'chat' | 'vision' | 'summary' | 'director' | 'embedding' | 'image' | 'video' | 'tts' | 'rerank';
 
 /**
  * Central model gateway / capability registry.
@@ -28,6 +30,7 @@ export class CapabilityRegistry {
   private director!: ChatProvider;
   private embedding!: EmbeddingProvider;
   private image!: ImageProvider;
+  private video!: VideoProvider;
   private tts!: TTSProvider;
   private rerank!: RerankProvider;
 
@@ -51,6 +54,7 @@ export class CapabilityRegistry {
     this.director = this.tracked('director', createChatProvider(this.config.chatModelFor('director'), this.deps));
     this.embedding = this.trackedEmbedding(createEmbeddingProvider(models.embedding, this.deps));
     this.image = createImageProvider(models.image, this.deps);
+    this.video = createVideoProvider(models.video, this.deps);
     this.tts = createTTSProvider(models.tts, this.deps);
     this.rerank = createRerankProvider(models.rerank, this.deps);
   }
@@ -156,6 +160,11 @@ export class CapabilityRegistry {
     return this.image;
   }
 
+  /** Asynchronous text-to-video / image-to-video jobs; see core/video/service.ts. */
+  videoProvider(): VideoProvider {
+    return this.video;
+  }
+
   ttsProvider(): TTSProvider {
     return this.tts;
   }
@@ -183,6 +192,8 @@ export class CapabilityRegistry {
         return this.embedding.configured;
       case 'image':
         return this.image.configured;
+      case 'video':
+        return this.video.configured;
       case 'tts':
         return this.tts.configured;
       case 'rerank':
@@ -194,13 +205,14 @@ export class CapabilityRegistry {
 
   async statuses(): Promise<Record<CapabilityName, HealthStatus>> {
     const visionCfg = this.config.chatModelFor('vision');
-    const [chat, vision, summary, director, embedding, image, tts, rerank] = await Promise.all([
+    const [chat, vision, summary, director, embedding, image, video, tts, rerank] = await Promise.all([
       this.chat.inspectHealth(),
       this.vision.inspectHealth(),
       this.summary.inspectHealth(),
       this.director.inspectHealth(),
       this.embedding.inspectHealth(),
       this.image.inspectHealth(),
+      this.video.inspectHealth(),
       this.tts.inspectHealth(),
       this.rerank.inspectHealth()
     ]);
@@ -217,6 +229,7 @@ export class CapabilityRegistry {
       director: { ...director, capability: 'director', detail: director.configured ? 'media director model' : 'not configured' },
       embedding,
       image,
+      video,
       tts,
       rerank
     };

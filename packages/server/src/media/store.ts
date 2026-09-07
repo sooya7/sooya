@@ -32,7 +32,10 @@ export const ALLOWED_AUDIO_MIME = new Set([
   'audio/flac',
   'video/webm'
 ]);
+/** Generated videos are stored as `kind: 'file'`; the media table has no video kind. */
+export const ALLOWED_VIDEO_MIME = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska']);
 export const ALLOWED_FILE_MIME = new Set([
+  ...ALLOWED_VIDEO_MIME,
   'application/pdf',
   'text/plain',
   'text/markdown',
@@ -258,6 +261,9 @@ function extFromMime(mime: string): string | null {
     'audio/mp4': 'm4a',
     'audio/aac': 'aac',
     'audio/flac': 'flac',
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
+    'video/webm': 'webm',
     'text/plain': 'txt',
     'application/json': 'json',
     'application/pdf': 'pdf'

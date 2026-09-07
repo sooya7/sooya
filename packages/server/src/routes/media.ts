@@ -53,7 +53,8 @@ export function registerMediaRoutes(app: SooyaApp): void {
       reply.code(304);
       return reply.send();
     }
-    if (row.kind === 'file') void reply.header('content-disposition', `attachment; filename="${encodeURIComponent(row.rel_path)}"`);
+    // Generated videos are `file` rows too, but a browser should play them, not download them.
+    if (row.kind === 'file' && !row.mime.startsWith('video/')) void reply.header('content-disposition', `attachment; filename="${encodeURIComponent(row.rel_path)}"`);
     if (variant) {
       // 变体只有几十 KB，没有分段续传的必要；一次发完比维护两套 range 逻辑更安全。
       void reply.header('content-length', String(serveSize));

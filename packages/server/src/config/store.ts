@@ -150,7 +150,7 @@ export class ConfigStore {
    * models.json never contains it. Sections without apiKeyEnv pass through.
    */
   private resolveApiKeyEnv(models: ModelsConfig): ModelsConfig {
-    const sections = ['chat', 'vision', 'summary', 'director', 'sticker', 'embedding', 'image', 'tts', 'rerank'] as const;
+    const sections = ['chat', 'vision', 'summary', 'director', 'sticker', 'embedding', 'image', 'video', 'tts', 'rerank'] as const;
     const next = { ...models } as ModelsConfig & Record<string, { apiKeyEnv?: string; apiKey?: string }>;
     for (const name of sections) {
       const section = next[name];

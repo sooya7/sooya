@@ -43,6 +43,7 @@ import { CapabilityRegistry } from './core/capabilities.js';
 import { DirectorClient } from './core/director/client.js';
 import { MediaDirector } from './core/mediaDirector.js';
 import { ImageContinuityService } from './core/image-continuity.js';
+import { VideoGenerationService } from './core/video/service.js';
 import { MemoryService } from './core/memory.js';
 import { ContextBuilder } from './core/context.js';
 import { createContextSourcePipeline } from './core/context-pipeline.js';
@@ -142,6 +143,7 @@ export interface SooyaApp {
     directorClient: DirectorClient;
     mediaDirector: MediaDirector;
     imageContinuity: ImageContinuityService;
+    video: VideoGenerationService;
     webSearch: WebSearchRegistry;
     memory: MemoryService;
     ombreMemory: OmbreMemoryBridge;
@@ -812,6 +814,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     flowTrace
   });
 
+  const video = new VideoGenerationService({
+    tasks: repos.videoTasks, media: repos.media, mediaStore, jobs: repos.jobs, errors: repos.errors, audit: repos.audit,
+    capabilities, config, assertWritable: (bytes) => storage.assertWritable(bytes),
+    onLog: (level, msg, extra) => logger[level]({ ...extra }, msg)
+  });
+  video.registerJobs(worker);
+
   const agents = new AgentRegistry();
   const agentCapabilities = new CapabilityRegistryStub();
   for (const cap of ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'tts'] as const) {
@@ -971,7 +980,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, future, futureContext, relationship, relationshipContext, timeline, feedback, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery, flowTrace, capabilityPolicy },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, video, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, future, futureContext, relationship, relationshipContext, timeline, feedback, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery, flowTrace, capabilityPolicy },
     state,
     fetchImpl,
     recurringTimers: [],

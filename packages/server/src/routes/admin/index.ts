@@ -4,6 +4,7 @@ import { registerCapabilityAdminRoutes } from './capabilities.routes.js';
 import { registerFutureAdminRoutes, registerLearningAdminRoutes, registerRelationshipAdminRoutes, registerTimelineAdminRoutes } from './continuity.routes.js';
 import { registerFlowTraceAdminRoutes, registerHealthRoutes, registerMediaRoutes, registerProviderHealthAdminRoutes, registerTokenAdminRoutes } from './operations.routes.js';
 import { registerLifeAdminRoutes, registerQqAdminRoutes, registerQqRoutes } from './channel.routes.js';
+import { registerVideoAdminRoutes } from './video.routes.js';
 
 /**
  * Admin HTTP composition root. The core panel API remains compatible while
@@ -24,4 +25,5 @@ export function registerAdminModule(app: SooyaApp): void {
   registerLifeAdminRoutes(app);
   registerFlowTraceAdminRoutes(app);
   registerCapabilityAdminRoutes(app);
+  registerVideoAdminRoutes(app);
 }

@@ -32,6 +32,7 @@ SOOYA
  ├─ Media Director
  │   ├─ 表情包
  │   ├─ 图片生成
+ │   ├─ 视频生成（文生 / 图生，异步）
  │   └─ 语音
  ├─ MCP Host
  │   └─ 外部工具与服务
@@ -102,6 +103,7 @@ SOOYA 有独立的 Life / Proactive 系统，不需要等你每次先发消息�
 
 - 图片理解 / Vision
 - 图片生成（含参考图与视觉时间一致性）
+- 视频生成：文生视频与图生视频，通过 Admin API 提交异步任务并轮询结果（OpenAI Videos `/videos` 协议，兼容 NewAPI 等网关），成片落入媒体库
 - 本地表情包图库与 AI 分析
 - TTS 语音消息
 - Web Search
@@ -165,7 +167,7 @@ MCP Server 定义放在 `config/mcp.json`：
 | 助手配置 | 人设与表达方式 |
 | 双方头像 | 助手与用户头像 |
 | 她的生活 | 此刻在做什么与主动开口 |
-| 模型配置 | Chat / Vision / Summary / Director / Embedding / Rerank / Image / TTS / Web Search |
+| 模型配置 | Chat / Vision / Summary / Director / Embedding / Rerank / Image / Video / TTS / Web Search |
 | 内容管理 | 记忆、表情包、媒体、聊天记录 |
 | MCP 服务 | 连接、工具与策略观测 |
 | 存储治理 | 媒体清理与空间回收 |
@@ -301,7 +303,9 @@ Chat 层支持：
 - Anthropic Messages 风格协议
 - 其他 OpenAI-compatible 服务
 
-Vision、Summary、Media Director、Embedding、Rerank、Image、TTS 和 Web Search 都可以独立配置。
+Vision、Summary、Media Director、Embedding、Rerank、Image、Video、TTS 和 Web Search 都可以独立配置。
+
+视频生成（文生视频 / 图生视频）在「视频生成模型」里配置协议与密钥，然后在同一页面提交任务，或直接调用 `POST /api/admin/video/generations`；接口细节见 [docs/API.md](docs/API.md#视频生成文生视频--图生视频)。
 
 模型密钥由服务端保存，管理页面只返回是否已配置，不回传明文密钥。也可以让 `models.json` 只存环境变量名（`apiKeyEnv`），密钥完全留在环境里。
 
@@ -372,7 +376,7 @@ sooya/
 │   │       ├── channels/      QQ 官方 Bot 单通道（签名、入站、出站 outbox）
 │   │       ├── core/          回复、上下文、Life、记忆、媒体编排
 │   │       ├── mcp/           通用 MCP Host
-│   │       ├── providers/     模型、Embedding、Image、TTS 等适配器
+│   │       ├── providers/     模型、Embedding、Image、Video、TTS 等适配器
 │   │       ├── db/            SQLite、迁移与 repositories
 │   │       ├── routes/        Admin / Media / Health / QQ webhook API
 │   │       └── backup/        备份与恢复

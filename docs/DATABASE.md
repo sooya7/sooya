@@ -258,6 +258,36 @@ CREATE INDEX idx_jobs_status ON jobs(status, run_after);
 任务持久化在数据库里，进程异常退出后重启时 `status='running'` 的任务会被重置为
 `pending` 重新执行——这就是「未完成任务恢复」。
 
+### `video_tasks` — 视频生成任务
+
+```sql
+CREATE TABLE video_tasks (
+  id              TEXT PRIMARY KEY,
+  mode            TEXT NOT NULL CHECK (mode IN ('text','image')),   -- 文生 / 图生
+  prompt          TEXT NOT NULL,
+  status          TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed','cancelled')),
+  provider        TEXT NOT NULL,
+  model           TEXT NOT NULL,
+  params_json     TEXT NOT NULL DEFAULT '{}',   -- 每次请求覆盖的 durationSec / size
+  source_media_id TEXT REFERENCES media(id) ON DELETE SET NULL,   -- 图生视频的首帧
+  remote_id       TEXT,                          -- 上游任务 id
+  progress        INTEGER,
+  attempts        INTEGER NOT NULL DEFAULT 0,    -- 连续瞬时失败次数
+  media_id        TEXT REFERENCES media(id) ON DELETE SET NULL,   -- 成片（kind='file', mime video/*）
+  error           TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  started_at      TEXT,
+  completed_at    TEXT
+);
+CREATE INDEX idx_video_tasks_created ON video_tasks(created_at DESC);
+CREATE INDEX idx_video_tasks_status  ON video_tasks(status, updated_at);
+```
+
+任务的每一步（创建上游任务 / 轮询一次 / 下载落库）都是一条 `video.generate` 后台任务，
+下一步带 `run_after` 重新入队，因此进程重启后仍会继续轮询。成片是普通 `media` 行
+（`origin='generated'`），`meta_json` 里带 `videoTaskId`；被任务引用的媒体不会被孤儿清理回收。
+
 ### `events` — 事件日志（SSE 补偿）
 
 ```sql
