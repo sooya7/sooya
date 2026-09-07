@@ -33,7 +33,7 @@ const legacyBaselines = [
   ['packages/server/src/routes/admin.ts', 55300],
   ['packages/server/src/db/migrations.ts', 74324],
   ['packages/server/src/core/context.ts', 32388],
-  ['packages/web/src/components/AdminPanel.tsx', 68223]
+  ['packages/web/src/components/AdminPanel.tsx', 63224]
 ];
 
 const failures = [];

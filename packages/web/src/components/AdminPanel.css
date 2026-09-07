@@ -1973,3 +1973,312 @@
   border-radius: 10px;
   background: var(--admin-surface-muted, rgba(0, 0, 0, 0.04));
 }
+
+/* 视频生成工作台：任务列表与成片预览 */
+.admin-v2 .admin-video-tasks {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.admin-v2 .admin-video-task {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-alt);
+}
+
+.admin-v2 .admin-video-task[data-status='failed'] {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+.admin-v2 .admin-video-task[data-status='running'],
+.admin-v2 .admin-video-task[data-status='queued'] {
+  border-color: var(--accent);
+}
+
+.admin-v2 .admin-video-task-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 12px;
+  align-items: baseline;
+}
+
+.admin-v2 .admin-video-task-head small {
+  color: var(--admin-muted);
+}
+
+.admin-v2 .admin-video-task p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-v2 .admin-video-preview {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  max-height: 320px;
+  margin-top: 10px;
+  border-radius: 10px;
+  background: #000;
+}
+
+.admin-v2 .admin-code {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--admin-surface-muted, rgba(0, 0, 0, 0.04));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ---- 2026-09 后台梳理：手机排版、状态可见性、对比度 ---- */
+
+/* 统计卡片在手机上两列。旧样式表（styles.css 的 `.admin-page .admin-summary`、
+   FeatureEnhancements 的 640px 规则）会把它压成单列，一屏只剩两张卡；这里用更高的
+   优先级把 v2 面板的意图定下来。 */
+@media (max-width: 760px) {
+  .admin-page.admin-v2 .admin-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .admin-page.admin-v2 .admin-summary-tile {
+    min-height: 92px;
+    padding: 11px;
+  }
+
+  .admin-page.admin-v2 .admin-summary-tile strong {
+    margin-top: 8px;
+    font-size: 16px;
+  }
+
+  /* 横向滑动条：吸附到条目，配合脚本把当前项滚到视野里。 */
+  .admin-mobile-tabs,
+  .admin-v2 .admin-model-layout > aside {
+    scroll-snap-type: x proximity;
+    scroll-padding: 10px;
+  }
+
+  .admin-mobile-tabs button,
+  .admin-v2 .admin-model-item {
+    scroll-snap-align: start;
+  }
+
+  .admin-v2 .admin-model-item {
+    flex-basis: 150px;
+  }
+
+  .admin-v2 .admin-simple-table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 340px) {
+  .admin-page.admin-v2 .admin-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 概览：能力策略卡与上面的统计卡片之间原本没有间距，贴在一起像一张卡。 */
+.admin-v2 .admin-capability-policy {
+  margin-top: 10px;
+}
+
+/* 模型能力列表：一眼看出哪项能用、哪项缺配置、哪项跟随聊天模型。 */
+.admin-v2 .admin-model-item small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-v2 .admin-model-item small span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-v2 .admin-dot {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--admin-faint);
+}
+
+.admin-v2 .admin-dot.on {
+  background: var(--admin-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--admin-success) 16%, transparent);
+}
+
+.admin-v2 .admin-dot.off {
+  background: var(--admin-warning);
+}
+
+/* 模型库：默认收起成一行，表单不再被两段说明顶到屏幕下方。 */
+.admin-v2 .admin-model-library {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px dashed var(--admin-line-strong);
+  border-radius: 12px;
+  background: var(--admin-surface-soft);
+}
+
+.admin-v2 .admin-model-library-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-v2 .admin-model-library-head > div {
+  min-width: 0;
+}
+
+.admin-v2 .admin-model-library-head h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.admin-v2 .admin-model-library-head small {
+  display: block;
+  margin-top: 2px;
+  color: var(--admin-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.admin-v2 .admin-model-library-head button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+/* 形象参考图：三个视角槽位各占一列，缩略图随列宽缩放，文件选择框不再溢出。 */
+.admin-v2 .admin-reference-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+
+.admin-v2 .admin-reference-slots .admin-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  min-width: 0;
+}
+
+.admin-v2 .admin-reference-thumb {
+  display: block;
+  width: 100%;
+  max-width: 180px;
+  aspect-ratio: 1;
+  margin: 0;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+.admin-v2 .admin-reference-thumb.placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--admin-muted);
+  background: var(--admin-surface-soft);
+  font-size: 12px;
+}
+
+.admin-v2 .admin-reference-slots small {
+  overflow-wrap: anywhere;
+}
+
+.admin-v2 .admin-reference-slots input[type='file'] {
+  min-height: 0;
+  padding: 6px;
+  font-size: 12px;
+}
+
+/* 系统提示词通常有几十行，94px 的框只能看到标题。 */
+.admin-v2 [data-testid='admin-persona-form'] textarea {
+  min-height: 280px;
+}
+
+/* 视频生成工作台：卡片内字段纵向排布，说明文字与下一项之间留出呼吸。 */
+.admin-v2 .admin-video-studio {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-v2 .admin-video-studio .admin-card-heading {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.admin-v2 .admin-video-studio .admin-card-heading h3 {
+  margin: 0;
+}
+
+.admin-v2 .admin-video-studio > label {
+  margin: 0;
+}
+
+.admin-v2 .admin-video-studio details summary {
+  cursor: pointer;
+}
+
+/* QQ 投递队列表格之前没有任何样式，表头挤成一行粗体。 */
+.admin-v2 .admin-simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.admin-v2 .admin-simple-table th,
+.admin-v2 .admin-simple-table td {
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--admin-line);
+}
+
+.admin-v2 .admin-simple-table th {
+  color: var(--admin-muted);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.admin-v2 .admin-qq-test-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-v2 .admin-qq-test-row input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* 深色模式：强调色原本沿用浅色的深紫，落在深色底上的徽章、描边按钮和图标几乎看不见。 */
+@media (prefers-color-scheme: dark) {
+  .admin-v2 {
+    --admin-primary-deep: var(--accent-deep);
+    --admin-primary-deeper: var(--accent-deep);
+  }
+}
+
+.admin-v2 .admin-subpage-header-compact {
+  align-items: center;
+}

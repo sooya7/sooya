@@ -119,15 +119,15 @@ export function ReferencesEditor({ onNotice }: { onNotice: (s: string) => void }
   return (
     <section className="admin-form-card" data-testid="reference-settings">
       <div className="admin-panel-heading"><div><h2>形象参考图</h2><p>她发自拍时的长相依据。往哪个视角传，就自动成为该视角的参考图（替换旧图），她生成自拍时按内容自动选用。</p></div></div>
-      <div className="admin-summary">
+      <div className="admin-reference-slots">
         {FRAMING_ORDER.map((framing) => {
           const ref = slotOf(framing);
           return (
             <label className="admin-card" key={framing}>
               <strong>{FRAMING_LABELS[framing]}</strong>
               {ref && thumbs[ref.name]
-                ? <img src={thumbs[ref.name]} alt={ref.name} title={ref.name} style={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 12 }} />
-                : <div style={{ width: 120, height: 120, display: 'grid', placeItems: 'center', background: 'rgba(120,120,140,0.12)', borderRadius: 12 }}>{ref ? '无预览' : '未上传'}</div>}
+                ? <img className="admin-reference-thumb" src={thumbs[ref.name]} alt={ref.name} title={ref.name} />
+                : <div className="admin-reference-thumb placeholder">{ref ? '无预览' : '未上传'}</div>}
               {ref
                 ? <small style={{ wordBreak: 'break-all' }}>{ref.name} · {ref.exists ? bytes(ref.bytes) : '文件缺失'}{ref.configured ? '' : ' · 未启用'}</small>
                 : <small>还没有这个视角的参考图</small>}

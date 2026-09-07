@@ -8,6 +8,8 @@ import { featureApi } from '../lib/features.js';
 import { AvatarEditor, emotionLabel, ReferencesEditor, StorageEditor } from './FeatureAdminPage.js';
 import { LifeObservationPanel } from './life/LifeObservationPanel.js';
 import { WebSearchModelEditor } from './WebSearchModelEditor.js';
+import { VideoStudio } from './VideoStudio.js';
+import { ModelLibrary } from './admin/ModelLibrary.js';
 import { McpAdminPage } from './admin/McpAdminPage.js';
 import { ContentManagementPage } from './admin/ContentManagementPage.js';
 import { QqAdminPage } from './admin/QqAdminPage.js';
@@ -16,16 +18,8 @@ import { AdminShell } from './admin/AdminShell.js';
 import { PAGE_COPY, adminPathForTab, isContentSubroute, tabFromAdminPath, type Tab } from './admin/admin-types.js';
 import {
   interfaceOptions,
-  MODEL_SLOTS,
-  presetsBySlot,
-  removePreset,
-  SLOT_LABELS,
-  SLOT_PROVIDERS,
-  suggestId,
   presetFromConfig,
-  upsertPreset,
-  validatePreset,
-  type ModelPreset,
+  describeSlot,
   type ModelSlot
 } from '../lib/modelPresets.js';
 import {
@@ -60,10 +54,12 @@ const CAPABILITIES = [
   ['embedding', '向量模型'],
   ['rerank', '记忆重排模型'],
   ['image', '图片生成模型'],
+  ['video', '视频生成模型'],
   ['tts', '语音合成模型'],
   ['webSearch', '联网搜索']
 ] as const;
 const CAPABILITY_DESCRIPTIONS: Partial<Record<ModelPanelSelection, string>> = {
+  video: '文生视频 / 图生视频。任务异步执行：提交后在下方看进度、播放结果，也可以直接调用 /api/admin/video/generations。',
   director: '媒体导演统一负责表情选择、语音口语化和图片提示词扩写；未单独配置时回退聊天模型。它处理短结构化文本，不负责读图。'
 };
 type ModelPanelSelection = ModelSlot | 'webSearch';
@@ -241,124 +237,6 @@ function VoiceBehaviorEditor({ onNotice }: { onNotice: (v: string) => void }) {
  * only place an operator can add a model rather than overwrite one; applying a
  * preset is what actually assigns it to its slot on the server.
  */
-function ModelLibrary({ onNotice, onApplied, reloadKey = 0 }: { onNotice: (v: string) => void; onApplied: (models: AdminModels) => void; reloadKey?: number }) {
-  const [presets, setPresets] = useState<ModelPreset[] | null>(null);
-  const [draft, setDraft] = useState<ModelPreset | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  // reloadKey changes when the config form adds an entry, so this list never
-  // keeps a stale copy it would later write back over the new one.
-  useEffect(() => {
-    void adminApi.modelPresets().then((r) => setPresets(r.presets)).catch((e) => onNotice(errorText(e)));
-  }, [onNotice, reloadKey]);
-
-  const commit = async (next: ModelPreset[], message: string) => {
-    setBusy(true);
-    try {
-      const saved = await adminApi.saveModelPresets(next);
-      setPresets(saved.presets);
-      setDraft(null);
-      setEditingId(null);
-      onNotice(message);
-    } catch (e) {
-      onNotice(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submit = () => {
-    if (!draft || !presets) return;
-    const problem = validatePreset(draft, presets, editingId);
-    if (problem) {
-      onNotice(problem);
-      return;
-    }
-    void commit(upsertPreset(presets, draft, editingId), editingId ? '预设已更新' : '预设已添加');
-  };
-
-  const apply = async (preset: ModelPreset) => {
-    setBusy(true);
-    try {
-      const result = await adminApi.applyModelPreset(preset.id);
-      onApplied(result.models);
-      onNotice(`已把「${preset.name}」指派给${SLOT_LABELS[preset.slot]}`);
-    } catch (e) {
-      onNotice(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const update = (patch: Partial<ModelPreset>) => setDraft((prev) => {
-    if (!prev) return prev;
-    const next = { ...prev, ...patch };
-    // A slot change can strand the provider on something that slot rejects.
-    if (patch.slot && !SLOT_PROVIDERS[patch.slot].includes(next.provider)) {
-      next.provider = SLOT_PROVIDERS[patch.slot][0] ?? '';
-    }
-    return next;
-  });
-
-  if (!presets) return <p className="admin-muted">正在读取模型库…</p>;
-  const groups = presetsBySlot(presets);
-
-  return (
-    <section className="admin-model-library" data-testid="admin-model-library">
-      <PanelHeading title="模型库" description="保存模型及其服务器端密钥绑定，指派时一起切换；密钥不会返回浏览器。旧预设仍沿用该能力当前的密钥。" />
-      {groups.length === 0 && <p className="admin-muted">还没有预设。把下面的配置填好后点「存入模型库」，就能在不同模型之间随时切换。</p>}
-      {groups.map(([slot, items]) => (
-        <div className="admin-preset-group" key={slot}>
-          <h3>{SLOT_LABELS[slot]}</h3>
-          {items.map((preset) => (
-            <div className={editingId === preset.id ? 'admin-preset-row active' : 'admin-preset-row'} key={preset.id} data-testid={`admin-preset-${preset.id}`}>
-              <div className="admin-preset-copy">
-                <strong>{preset.name}</strong>
-                <small>{preset.model} · {preset.provider}{preset.baseUrl ? ` · ${preset.baseUrl}` : ''}</small>
-                <small>{preset.apiKeyConfigured
-                  ? '密钥已绑定'
-                  : preset.apiKeyBound
-                    ? '已绑定（无需密钥）'
-                    : '未绑定密钥（旧预设）'}</small>
-                {preset.notes && <small>{preset.notes}</small>}
-              </div>
-              <div className="admin-preset-actions">
-                <button type="button" className="primary" disabled={busy} onClick={() => void apply(preset)}>指派</button>
-                <button type="button" disabled={busy} onClick={() => { setDraft(preset); setEditingId(preset.id); }}>编辑</button>
-                <button type="button" className="admin-danger" disabled={busy} onClick={() => void commit(removePreset(presets, preset.id), '预设已删除')}>删除</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      ))}
-
-      {draft ? (
-        <div className="admin-preset-form" data-testid="admin-preset-form">
-          <label>预设名称<input value={draft.name} onChange={(e) => {
-            const name = e.target.value;
-            update(editingId ? { name } : { name, id: draft.id || suggestId(name) });
-          }} /></label>
-          <label>预设 ID<input value={draft.id} disabled={Boolean(editingId)} onChange={(e) => update({ id: e.target.value })} /></label>
-          <label>指派能力<select value={draft.slot} onChange={(e) => update({ slot: e.target.value as ModelSlot })}>
-            {MODEL_SLOTS.map((slot) => <option key={slot} value={slot}>{SLOT_LABELS[slot]}</option>)}
-          </select></label>
-          <label>接口协议<select value={draft.provider} onChange={(e) => update({ provider: e.target.value })}>
-            {SLOT_PROVIDERS[draft.slot].map((provider) => <option key={provider} value={provider}>{provider}</option>)}
-          </select></label>
-          <label>模型名<input value={draft.model} onChange={(e) => update({ model: e.target.value })} /></label>
-          <label>接口地址<input value={draft.baseUrl} placeholder="留空则用默认地址" onChange={(e) => update({ baseUrl: e.target.value })} /></label>
-          <label>备注<input value={draft.notes} onChange={(e) => update({ notes: e.target.value })} /></label>
-          <div className="admin-preset-form-actions">
-            <button type="button" className="admin-primary" disabled={busy} onClick={submit}>{editingId ? '保存修改' : '添加到模型库'}</button>
-            <button type="button" disabled={busy} onClick={() => { setDraft(null); setEditingId(null); }}>取消</button>
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
 function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [models, setModels] = useState<AdminModels | null>(null);
   const [selected, setSelected] = useState<ModelPanelSelection>('chat');
@@ -373,6 +251,12 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   const [previewing, setPreviewing] = useState(false);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const previewUrlRef = useRef<string | null>(null);
+  const asideRef = useRef<HTMLElement | null>(null);
+
+  // On phones the capability list is a horizontal strip; keep the chosen one in view.
+  useEffect(() => {
+    asideRef.current?.querySelector('.admin-model-item.active')?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+  }, [selected]);
 
   useEffect(() => {
     void adminApi.models().then((r) => setModels(r.models)).catch((e) => onNotice(errorText(e)));
@@ -453,6 +337,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
    */
   const runTest = async () => {
     if (selected === 'webSearch') return;
+    if (selected === 'video') { onNotice('视频生成不做连接测试：先「拉取模型」确认地址和密钥，再在下方提交一次任务'); return; }
     if (selected === 'image' && !confirmAction('测试出图会真实调用图片服务并消耗一次额度，确定继续吗？')) return;
     setTesting(true);
     setTestResult(null);
@@ -496,16 +381,20 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
 
   return (
     <section className="admin-model-layout" data-testid="admin-models-form">
-      <aside>
+      <aside ref={asideRef}>
         <h2>模型能力</h2>
-        {CAPABILITIES.map(([key, label]) => (
-          <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); setKeyDraft(''); setTestResult(null); }}>
-            <span>{label}</span>
-            <small>{key === 'webSearch'
-              ? ((models.webSearch as AdminWebSearchConfig | undefined)?.enabled ? (models.webSearch as AdminWebSearchConfig).providers.join(' → ') : '已关闭')
-              : String((models[key] as Record<string, unknown> | undefined)?.model ?? '未独立配置')}</small>
-          </button>
-        ))}
+        {CAPABILITIES.map(([key, label]) => {
+          const search = models.webSearch as AdminWebSearchConfig | undefined;
+          const status = key === 'webSearch'
+            ? (search?.enabled ? { state: 'on', text: search.providers.join(' → ') } : { state: 'off', text: '已关闭' })
+            : describeSlot(key, models[key] as Record<string, unknown> | undefined);
+          return (
+            <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); setKeyDraft(''); setTestResult(null); }}>
+              <span>{label}</span>
+              <small><i className={`admin-dot ${status.state}`} aria-hidden="true" /><span>{status.text}</span></small>
+            </button>
+          );
+        })}
       </aside>
       <div className="admin-form-card">
         {selected === 'webSearch' ? <>
@@ -594,6 +483,14 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           <label>Anuma 上传超时（毫秒）<input type="number" min="1000" max="120000" value={String(config.uploadTimeoutMs ?? 20000)} onChange={(e) => update('uploadTimeoutMs', Number(e.target.value))} /></label>
           <label>Anuma 上传重试次数<input type="number" min="0" max="3" value={String(config.uploadMaxRetries ?? 2)} onChange={(e) => update('uploadMaxRetries', Number(e.target.value))} /></label>
           <p className="admin-muted admin-form-wide">Anuma 图生图会先上传参考图，再把 HTTPS 地址传给 generations；不会把图片 Base64 或签名地址写入日志。</p>
+        </>}
+        {selected === 'video' && <>
+          <label>视频尺寸（size）<input value={String(config.size ?? '1280x720')} placeholder="1280x720 / 720x1280" onChange={(e) => update('size', e.target.value)} /></label>
+          <label>默认时长（秒）<input type="number" min="1" max="60" value={String(config.durationSec ?? 5)} onChange={(e) => update('durationSec', Number(e.target.value))} /></label>
+          <label>轮询间隔（毫秒）<input type="number" min="1000" max="60000" step="500" value={String(config.pollIntervalMs ?? 5000)} onChange={(e) => update('pollIntervalMs', Number(e.target.value))} /></label>
+          <label>最长等待（毫秒）<input type="number" min="30000" max="3600000" step="60000" value={String(config.maxWaitMs ?? 900000)} onChange={(e) => update('maxWaitMs', Number(e.target.value))} /></label>
+          <label>同时进行的任务上限<input type="number" min="1" max="20" value={String(config.maxActiveTasks ?? 3)} onChange={(e) => update('maxActiveTasks', Number(e.target.value))} /></label>
+          <p className="admin-muted admin-form-wide">视频生成是异步任务：创建 → 轮询 → 下载落库。接口地址填到 /v1 根路径，不要填 /videos；OpenAI 官方与兼容网关（NewAPI 等）都走 /videos 协议。</p>
         </>}
         {selected === 'tts' && <>
           {config.provider !== 'fish' && <label>音色<input value={String(config.voice ?? '')} onChange={(e) => update('voice', e.target.value)} /></label>}
@@ -686,6 +583,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         ) : (
           <small className="admin-muted">「测试连接」会用已保存的配置真发一次最小请求。改了表单要先保存再测。</small>
         )}
+        {selected === 'video' && <VideoStudio onNotice={onNotice} />}
         </>}
       </div>
     </section>

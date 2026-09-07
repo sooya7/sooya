@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import { NAV_GROUPS, TABS, type IconName, type Tab } from './admin-types.js';
 
 export function Icon({ name }: { name: IconName }) {
@@ -19,8 +19,15 @@ export function Icon({ name }: { name: IconName }) {
 }
 
 export function TabButtons({ tab, setTab, mobile }: { tab: Tab; setTab: (tab: Tab) => void; mobile: boolean }) {
+  const navRef = useRef<HTMLElement | null>(null);
+  // The phone strip scrolls sideways; a tab opened from a link would otherwise
+  // sit off-screen with nothing highlighted in view.
+  useEffect(() => {
+    if (!mobile) return;
+    navRef.current?.querySelector('button.active')?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+  }, [mobile, tab]);
   return (
-    <nav className={mobile ? 'admin-mobile-tabs' : 'admin-side-nav'} aria-label="管理面板导航">
+    <nav ref={navRef} className={mobile ? 'admin-mobile-tabs' : 'admin-side-nav'} aria-label="管理面板导航">
       {mobile
         ? TABS.map((item) => (
           <button key={item.id} type="button" data-testid={`admin-tab-${item.id}`} aria-current={tab === item.id ? 'page' : undefined} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>

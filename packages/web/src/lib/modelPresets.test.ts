@@ -4,6 +4,7 @@ import {
   interfaceOptions,
   MAX_PRESETS,
   MODEL_SLOTS,
+  describeSlot,
   normalizePreset,
   presetFromConfig,
   presetsBySlot,
@@ -192,5 +193,21 @@ describe('presetFromConfig（把当前配置存进模型库）', () => {
   it('stops at the library cap', () => {
     const full = Array.from({ length: MAX_PRESETS }, (_, i) => ({ ...(presetFromConfig('chat', cfg, []) as ModelPreset), id: `p${i}` }));
     expect(presetFromConfig('chat', cfg, full)).toMatch(/最多/);
+  });
+});
+
+describe('describeSlot', () => {
+  it('reports a ready slot by its model name', () => {
+    expect(describeSlot('chat', { provider: 'openai-chat', model: 'gpt-5', apiKeyConfigured: true })).toEqual({ state: 'on', text: 'gpt-5' });
+  });
+
+  it('flags a model that has no key instead of calling it ready', () => {
+    expect(describeSlot('image', { provider: 'openai-images', model: 'gpt-image-2', apiKeyConfigured: false })).toEqual({ state: 'off', text: 'gpt-image-2 · 缺少密钥' });
+  });
+
+  it('tells inherited slots apart from genuinely unconfigured ones', () => {
+    expect(describeSlot('vision', undefined)).toEqual({ state: 'inherit', text: '未独立配置，跟随聊天模型' });
+    expect(describeSlot('rerank', { provider: 'none', model: '' })).toEqual({ state: 'off', text: '未配置' });
+    expect(describeSlot('video', undefined)).toEqual({ state: 'off', text: '未配置' });
   });
 });
