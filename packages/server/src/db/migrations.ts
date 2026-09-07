@@ -1731,6 +1731,38 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 48,
+    name: 'video_tasks',
+    up: (db) => {
+      // Text-to-video / image-to-video jobs driven through the admin API. The
+      // vendor job is polled by a durable background job; this row is what the
+      // API reads back. The finished file is an ordinary media row.
+      db.exec(`
+        CREATE TABLE video_tasks (
+          id              TEXT PRIMARY KEY,
+          mode            TEXT NOT NULL CHECK (mode IN ('text','image')),
+          prompt          TEXT NOT NULL,
+          status          TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed','cancelled')),
+          provider        TEXT NOT NULL,
+          model           TEXT NOT NULL,
+          params_json     TEXT NOT NULL DEFAULT '{}',
+          source_media_id TEXT REFERENCES media(id) ON DELETE SET NULL,
+          remote_id       TEXT,
+          progress        INTEGER,
+          attempts        INTEGER NOT NULL DEFAULT 0,
+          media_id        TEXT REFERENCES media(id) ON DELETE SET NULL,
+          error           TEXT,
+          created_at      TEXT NOT NULL,
+          updated_at      TEXT NOT NULL,
+          started_at      TEXT,
+          completed_at    TEXT
+        );
+        CREATE INDEX idx_video_tasks_created ON video_tasks(created_at DESC);
+        CREATE INDEX idx_video_tasks_status ON video_tasks(status, updated_at);
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

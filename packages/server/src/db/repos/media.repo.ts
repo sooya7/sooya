@@ -224,6 +224,7 @@ export class MediaRepo {
         AND NOT EXISTS (SELECT 1 FROM stickers s WHERE s.media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM moments mo WHERE mo.image_media_id = m.id)
         AND NOT EXISTS (SELECT 1 FROM voice_generations vg WHERE vg.media_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM video_tasks vt WHERE vt.source_media_id = m.id OR vt.media_id = m.id)
       ORDER BY m.created_at LIMIT ?
     `).all(limit) as MediaRow[];
   }

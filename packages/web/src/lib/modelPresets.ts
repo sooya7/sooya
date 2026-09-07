@@ -4,7 +4,7 @@
  * cannot drift apart silently: everything here mirrors `ModelPresetSchema`.
  */
 
-export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'tts', 'rerank'] as const;
+export const MODEL_SLOTS = ['chat', 'vision', 'summary', 'director', 'embedding', 'image', 'video', 'tts', 'rerank'] as const;
 export type ModelSlot = (typeof MODEL_SLOTS)[number];
 
 export const SLOT_LABELS: Record<ModelSlot, string> = {
@@ -14,6 +14,7 @@ export const SLOT_LABELS: Record<ModelSlot, string> = {
   director: '媒体导演',
   embedding: '记忆向量',
   image: '生图',
+  video: '视频生成',
   tts: '语音合成',
   rerank: '记忆重排'
 };
@@ -26,6 +27,7 @@ export const SLOT_PROVIDERS: Record<ModelSlot, string[]> = {
   director: ['openai-chat', 'openai-responses', 'anthropic-messages', 'openai-compatible'],
   embedding: ['openai-embeddings', 'openai-compatible'],
   image: ['openai-images', 'anuma-input-images', 'openai-compatible'],
+  video: ['openai-videos', 'openai-compatible'],
   tts: ['openai-tts', 'volc-tts', 'fish', 'openai-compatible'],
   rerank: ['openai-rerank', 'openai-compatible']
 };
@@ -39,6 +41,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   'openai-embeddings': 'OpenAI Embeddings',
   'openai-images': 'OpenAI Images',
   'anuma-input-images': 'Anuma input_images 图生图',
+  'openai-videos': 'OpenAI Videos（Sora 协议 /videos）',
   'openai-tts': 'OpenAI TTS',
   'volc-tts': '火山引擎语音合成（官方协议）',
   'fish': 'Fish Audio（S2.x 官方协议）',
@@ -201,4 +204,25 @@ export function presetsBySlot(list: ModelPreset[]): Array<[ModelSlot, ModelPrese
   return MODEL_SLOTS
     .map((slot) => [slot, list.filter((item) => item.slot === slot)] as [ModelSlot, ModelPreset[]])
     .filter(([, items]) => items.length > 0);
+}
+
+export type SlotState = 'on' | 'off' | 'inherit';
+
+/** Slots that fall back to the chat model when they have no configuration of their own. */
+const INHERITING_SLOTS: ReadonlySet<ModelSlot> = new Set(['vision', 'summary', 'director']);
+
+/**
+ * One-line status for the capability list: what is running there and whether
+ * it is usable. Reads the redacted config the server returns (`apiKeyConfigured`
+ * instead of a key), so a slot with a model name but no key is flagged rather
+ * than shown as ready.
+ */
+export function describeSlot(slot: ModelSlot, config: Record<string, unknown> | undefined): { state: SlotState; text: string } {
+  const provider = String(config?.provider ?? 'none');
+  const model = String(config?.model ?? '').trim();
+  if (!config || provider === 'none' || !model) {
+    return INHERITING_SLOTS.has(slot) ? { state: 'inherit', text: '未独立配置，跟随聊天模型' } : { state: 'off', text: '未配置' };
+  }
+  if (config.apiKeyConfigured !== true) return { state: 'off', text: `${model} · 缺少密钥` };
+  return { state: 'on', text: model };
 }

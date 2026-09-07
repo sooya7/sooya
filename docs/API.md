@@ -51,9 +51,78 @@ QQ 运维状态通过 `/api/admin/qq/*` 查看，Secret 只显示“已配置 / 
 - `POST /api/admin/models/:slot/test`
 - `POST /api/admin/models/:slot/discover`
 - `GET /api/admin/capabilities`
-- 模型库 / Web Search / TTS / Image 等管理接口
+- 模型库 / Web Search / TTS / Image / Video 等管理接口
 
 模型 API Key 只在服务器保存，返回值仅暴露 `apiKeyConfigured` 等布尔状态。
+
+### 视频生成（文生视频 / 图生视频）
+
+视频生成是**异步任务**：提交后立刻返回任务，服务端在后台创建上游任务、轮询进度并把成片下载落库；调用方轮询任务状态，完成后通过 `task.media.url` 读取文件。上游协议在 管理后台 → 模型配置 → 视频生成模型 里配置，走 OpenAI Videos 协议（`/videos`），OpenAI 官方与 NewAPI 等兼容网关均可。
+
+| 端点 | 用途 |
+| --- | --- |
+| `GET /api/admin/video` | 能力状态、已脱敏的模型配置、任务计数 |
+| `PUT /api/admin/video` | 更新视频模型配置（`{ "model": { ... } }`） |
+| `POST /api/admin/video/generations` | 创建任务，返回 `202 { task }` |
+| `GET /api/admin/video/generations` | 任务列表，支持 `limit` / `offset` / `status` |
+| `GET /api/admin/video/generations/:id` | 单个任务与进度 |
+| `POST /api/admin/video/generations/:id/cancel` | 取消任务（同时尽力取消上游） |
+| `DELETE /api/admin/video/generations/:id` | 删除已结束任务的记录（成片仍保留在媒体库） |
+
+创建任务接受 JSON 或 multipart：
+
+| 字段 | 说明 |
+| --- | --- |
+| `prompt` | 必填，视频描述，最多 2000 字符 |
+| `image` | multipart 文件字段；提供后即为图生视频（首帧） |
+| `imageMediaId` | 已存在的媒体 id（先用 `POST /api/admin/media` 上传） |
+| `imageUrl` | 公网图片地址，服务端经 SSRF 校验后下载 |
+| `durationSec` | 可选，1–60，覆盖默认时长 |
+| `size` | 可选，WxH，如 `1280x720` / `720x1280` |
+
+`image`、`imageMediaId`、`imageUrl` 三者只能提供一个；都不提供即为文生视频。
+
+```bash
+# 文生视频
+curl -X POST http://127.0.0.1:8788/api/admin/video/generations \
+  -H "X-Admin-Token: $ADMIN_API_TOKEN" -H "content-type: application/json" \
+  -d '{"prompt":"海边日落，慢镜头推进","durationSec":5}'
+
+# 图生视频（上传首帧）
+curl -X POST http://127.0.0.1:8788/api/admin/video/generations \
+  -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+  -F prompt="让画面动起来" -F image=@first-frame.png
+
+# 轮询
+curl http://127.0.0.1:8788/api/admin/video/generations/<taskId> -H "X-Admin-Token: $ADMIN_API_TOKEN"
+```
+
+任务对象：
+
+```json
+{
+  "task": {
+    "id": "vid_...",
+    "mode": "text",
+    "prompt": "海边日落，慢镜头推进",
+    "status": "succeeded",
+    "progress": 100,
+    "provider": "openai-videos",
+    "model": "sora-2",
+    "params": { "durationSec": 5 },
+    "sourceMedia": null,
+    "media": { "id": "media_...", "kind": "file", "mime": "video/mp4", "bytes": 1234567, "url": "/api/media/media_..." },
+    "error": null,
+    "createdAt": "…", "updatedAt": "…", "startedAt": "…", "completedAt": "…"
+  }
+}
+```
+
+`status` 取值：`queued` → `running` → `succeeded` / `failed` / `cancelled`。失败原因写在 `error`。
+
+创建请求的错误码：`400` 参数错误或参考图不合法；`404` `imageMediaId` 不存在；`429` 排队/生成中的任务已达上限（`maxActiveTasks`）；`503` 视频模型未配置。
+
+`POST /api/admin/models/video/test` 固定返回 `400 test_unsupported`：视频生成计费且耗时数分钟，不作为连接探针；用 `discover` 拉取模型列表验证地址与密钥，再真发一次任务。
 
 ### QQ 通道
 

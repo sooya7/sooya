@@ -301,6 +301,7 @@ export function registerAdminRoutes(app: SooyaApp): void {
     'openai-compatible',
     'openai-embeddings',
     'openai-images',
+    'openai-videos',
     'openai-tts',
     'openai-rerank',
     'anthropic-messages'
@@ -417,6 +418,10 @@ export function registerAdminRoutes(app: SooyaApp): void {
         slot,
         message: '出图会产生真实生成费用，这里不自动触发；用「拉取模型」确认地址和密钥通不通，出图效果在聊天里验证'
       };
+    }
+    if (slot === 'video') {
+      reply.code(400);
+      return { error: 'test_unsupported', slot, message: '视频生成是计费的异步长任务，这里不做连接测试；用「拉取模型」确认地址和密钥，再在下方真发一次生成任务' };
     }
     if (slot === 'vision' && !config.chatModelFor('vision').supportsVision) {
       // Probing would pass while real image messages still fail, because the

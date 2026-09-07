@@ -106,14 +106,14 @@ export function QqAdminPage({ onNotice }: { onNotice: (message: string) => void 
 
   return (
     <section className="admin-mcp-page admin-qq-page" data-testid="admin-qq-page">
-      <header className="admin-subpage-header">
+      {/* The shell already prints the page title and description; repeating
+          them here read as a second heading. Keep the eyebrow and the action. */}
+      <header className="admin-subpage-header admin-subpage-header-compact">
         <div>
-          <span className="admin-eyebrow">CHANNEL · QQ</span>
-          <h2>QQ 通道</h2>
-          <p>QQ 官方 Bot 是 SOOYA 唯一的消息通道与出口。此处只显示状态摘要，Secret 永不显示。</p>
+          <span className="admin-eyebrow">QQ 通道 · 官方 Bot</span>
         </div>
         <button type="button" className="admin-header-button" onClick={() => void load()} disabled={loading} aria-busy={loading} title="刷新 QQ 状态" aria-label="刷新 QQ 状态">
-          refresh
+          {loading ? '刷新中…' : '刷新状态'}
         </button>
       </header>
 

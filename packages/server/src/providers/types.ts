@@ -151,6 +151,51 @@ export interface ImageProvider {
   inspectHealth(): Promise<HealthStatus>;
 }
 
+/** Lifecycle of a vendor-side video job, normalised across protocols. */
+export type VideoRemoteStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+export interface VideoTaskRequest {
+  prompt: string;
+  /** First-frame reference for image-to-video. Absent means text-to-video. */
+  image?: { data: Buffer; mime: string } | null;
+  /** WxH, e.g. 1280x720. */
+  size?: string;
+  durationSec?: number;
+  signal?: AbortSignal;
+}
+
+export interface VideoTaskSnapshot {
+  remoteId: string;
+  status: VideoRemoteStatus;
+  /** 0..100 when the vendor reports it. */
+  progress?: number | null;
+  error?: string | null;
+  /** Direct download location, when the gateway hands out a URL instead of a /content route. */
+  videoUrl?: string | null;
+}
+
+export interface GeneratedVideo {
+  data: Buffer;
+  mime: string;
+}
+
+/**
+ * Video generation is asynchronous everywhere: one call starts a job, further
+ * calls observe it, a last one fetches the bytes. Keeping the three steps
+ * separate lets the caller persist state between them instead of holding a
+ * connection open for minutes.
+ */
+export interface VideoProvider {
+  readonly name: string;
+  readonly configured: boolean;
+  createTask(req: VideoTaskRequest): Promise<VideoTaskSnapshot>;
+  pollTask(remoteId: string, signal?: AbortSignal): Promise<VideoTaskSnapshot>;
+  download(task: VideoTaskSnapshot, opts?: { signal?: AbortSignal; maxBytes?: number }): Promise<GeneratedVideo>;
+  /** Best-effort; vendors without a cancel endpoint resolve without doing anything. */
+  cancelTask(remoteId: string, signal?: AbortSignal): Promise<void>;
+  inspectHealth(): Promise<HealthStatus>;
+}
+
 export interface SynthesizedAudio {
   data: Buffer;
   mime: string;

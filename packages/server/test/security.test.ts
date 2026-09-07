@@ -90,6 +90,8 @@ describe('ADMIN_API_TOKEN', () => {
       ['PUT', '/api/admin/models'],
       ['PUT', '/api/admin/tts'],
       ['PUT', '/api/admin/image'],
+      ['PUT', '/api/admin/video'],
+      ['POST', '/api/admin/video/generations'],
       ['POST', '/api/admin/memories/clear'],
       ['POST', '/api/admin/chat/clear'],
       ['POST', '/api/admin/backups'],

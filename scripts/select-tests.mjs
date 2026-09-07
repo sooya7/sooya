@@ -21,6 +21,7 @@ for (const file of changed) {
   if (file.includes('jobs')) serverTests.add('test/job-priority.test.ts test/job-lanes.test.ts test/critical-path.contract.test.ts');
   if (file.includes('qq')) serverTests.add('test/qq-inbound.test.ts test/qq-delivery.test.ts');
   if (file.includes('flow-trace')) serverTests.add('test/flow-trace.test.ts test/critical-path.contract.test.ts');
+  if (file.includes('video')) serverTests.add('test/provider-video.test.ts test/video-generation.test.ts');
 }
 
 console.log('Changed files:', changed.length ? changed.join(', ') : '(unknown)');
