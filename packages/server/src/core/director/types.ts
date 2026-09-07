@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 
-export type DirectorTask = 'sticker' | 'voice' | 'image';
+export type DirectorTask = 'sticker' | 'voice' | 'image' | 'video';
 
 export interface DirectorRunRequest<T> {
   task: DirectorTask;

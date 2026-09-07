@@ -21,3 +21,10 @@ export const ImageDirectorSchema = z.object({
   outfit: z.string().trim().min(4).max(500).optional()
 });
 export type ImageDirectorOutput = z.infer<typeof ImageDirectorSchema>;
+
+export const VideoDirectorSchema = z.object({
+  prompt: z.string().trim().min(10).max(2000),
+  /** Clip length the director judges right for the motion; the provider clamps to what it supports. */
+  durationSec: z.number().int().min(2).max(20).optional()
+});
+export type VideoDirectorOutput = z.infer<typeof VideoDirectorSchema>;

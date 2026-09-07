@@ -27,6 +27,19 @@ export const ImagePolicySchema = z.object({
   maxPerReply: z.number().int().min(0).max(4).default(1)
 });
 
+/**
+ * Short clips in chat. A video takes minutes and is billed per clip, so the
+ * defaults are conservative: allowed, never proactive, three per rolling day.
+ */
+export const VideoPolicySchema = z.object({
+  enabled: z.boolean().default(true),
+  /** Proactive use. `never` still honours an explicit user request. */
+  frequency: z.enum(['never', 'low', 'medium', 'high']).default('never'),
+  /** Rolling 24-hour cap across replies; the admin API is not counted against it. */
+  maxPerDay: z.number().int().min(0).max(50).default(3)
+});
+export type VideoPolicy = z.infer<typeof VideoPolicySchema>;
+
 /*
  * How much of a life she leads, and how freely she may interrupt. Every field is
  * optional on purpose: an absent field means "keep using the deployment default"
@@ -57,6 +70,7 @@ export const PersonaSchema = z.object({
   stickerPolicy: StickerPolicySchema.default({}),
   voicePolicy: VoicePolicySchema.default({}),
   imagePolicy: ImagePolicySchema.default({}),
+  videoPolicy: VideoPolicySchema.default({}),
   lifePolicy: LifePolicySchema.default({})
 });
 export type Persona = z.infer<typeof PersonaSchema>;
@@ -401,6 +415,9 @@ SOOYA 自己的固定长相由系统提供的参考图负责。你只需要描�
 普通不包含 SOOYA 自己形象的画面使用：\`[[image:画面意图]]\`
 
 同样只填写画面意图，不填写最终 Image2 Prompt。
+
+### 视频
+只有用户明确要视频时才生成：自己出镜用 \`[[video-self:画面意图]]\`，普通画面用 \`[[video:画面意图]]\`，同样只写画面意图。视频要几分钟才能做好，系统会做好后作为一条新消息单独发出，所以这条回复里要自然地说要等一会儿，不能说"发好了"。
 
 ### 媒体总原则
 你负责：**"我想说什么，我想让用户看到什么。"**

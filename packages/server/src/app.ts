@@ -44,6 +44,7 @@ import { DirectorClient } from './core/director/client.js';
 import { MediaDirector } from './core/mediaDirector.js';
 import { ImageContinuityService } from './core/image-continuity.js';
 import { VideoGenerationService } from './core/video/service.js';
+import { createVideoFollowUp } from './core/video/follow-up.js';
 import { MemoryService } from './core/memory.js';
 import { ContextBuilder } from './core/context.js';
 import { createContextSourcePipeline } from './core/context-pipeline.js';
@@ -573,6 +574,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
   const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
 
+  const video = new VideoGenerationService({
+    tasks: repos.videoTasks, media: repos.media, mediaStore, jobs: repos.jobs, errors: repos.errors, audit: repos.audit,
+    capabilities, config, assertWritable: (bytes) => storage.assertWritable(bytes),
+    onLog: (level, msg, extra) => logger[level]({ ...extra }, msg)
+  });
   const replier = new Replier({
     messages: repos.messages,
     media: mediaStore,
@@ -593,7 +599,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     webSearch,
     worldSnapshot: () => world.snapshot(),
     toolRuntime,
-    ombreMemory
+    ombreMemory,
+    video
   });
   const thoughtFlags = readThoughtsFlags(process.env);
   const thoughts = new ThoughtsService({
@@ -688,6 +695,15 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       tx();
     }
   });
+
+  // A finished [[video]] clip becomes its own assistant message and rides the
+  // same durable qq.deliver outbox as every other reply.
+  video.attachFollowUp(createVideoFollowUp({
+    publish: (input) => replyCoordinator.publishProactiveMessage(input),
+    enqueueDelivery: (messageId) => { repos.jobs.enqueue('qq.deliver', { messageId }); },
+    deliveryEnabled: () => qqConfig.enabled,
+    onLog: (level, msg, extra) => logger[level]({ ...extra }, msg)
+  }));
 
   const ingress = new MessageIngressService({
     db: dbHandle,
@@ -814,11 +830,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     flowTrace
   });
 
-  const video = new VideoGenerationService({
-    tasks: repos.videoTasks, media: repos.media, mediaStore, jobs: repos.jobs, errors: repos.errors, audit: repos.audit,
-    capabilities, config, assertWritable: (bytes) => storage.assertWritable(bytes),
-    onLog: (level, msg, extra) => logger[level]({ ...extra }, msg)
-  });
   video.registerJobs(worker);
 
   const agents = new AgentRegistry();

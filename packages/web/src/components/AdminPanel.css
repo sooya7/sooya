@@ -2282,3 +2282,12 @@
 .admin-v2 .admin-subpage-header-compact {
   align-items: center;
 }
+
+.admin-v2 .admin-video-policy {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--admin-line-strong);
+  border-radius: 12px;
+  background: var(--admin-surface-soft);
+}

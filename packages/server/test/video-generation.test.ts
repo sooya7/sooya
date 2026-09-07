@@ -282,7 +282,7 @@ describe('VideoGenerationService with a scripted provider', () => {
     const cancelled: string[] = [];
     const provider = scripted({ cancelTask: async (id) => { cancelled.push(id); } });
     const svc = service(provider);
-    const task = svc.create({ prompt: 'p' });
+    const task = await svc.create({ prompt: 'p' });
     await svc.step(task.id);
     expect(svc.get(task.id)!.status).toBe('running');
 
@@ -297,13 +297,13 @@ describe('VideoGenerationService with a scripted provider', () => {
   it('treats a vendor-declared failure and a permanent request error as final', async () => {
     h = await boot();
     const failing = service(scripted({ pollTask: async () => ({ remoteId: 'r1', status: 'failed', error: 'content policy' }) }));
-    const a = failing.create({ prompt: 'a' });
+    const a = await failing.create({ prompt: 'a' });
     await failing.step(a.id);
     await failing.step(a.id);
     expect(failing.get(a.id)).toMatchObject({ status: 'failed', error: 'content policy' });
 
     const unauthorized = service(scripted({ createTask: async () => { throw new ProviderRequestError('video generation failed with status 401: nope', 401); } }));
-    const b = unauthorized.create({ prompt: 'b' });
+    const b = await unauthorized.create({ prompt: 'b' });
     await unauthorized.step(b.id);
     expect(unauthorized.get(b.id)!.status).toBe('failed');
     expect(unauthorized.get(b.id)!.error).toContain('401');
@@ -315,7 +315,7 @@ describe('VideoGenerationService with a scripted provider', () => {
       pollTask: async (): Promise<VideoTaskSnapshot> => ({ remoteId: 'r1', status: 'succeeded' }),
       download: async () => ({ data: Buffer.from('<html>not a video</html>'), mime: 'video/mp4' })
     }));
-    const task = svc.create({ prompt: 'p' });
+    const task = await svc.create({ prompt: 'p' });
     await svc.step(task.id);
     await svc.step(task.id);
     const done = svc.get(task.id)!;

@@ -32,7 +32,22 @@ export const VIDEO_STATUS_LABELS: Record<VideoTaskStatus, string> = {
 const ACTIVE = new Set<VideoTaskStatus>(['queued', 'running']);
 const POLL_MS = 3000;
 
+export interface VideoPolicy {
+  enabled: boolean;
+  frequency: 'never' | 'low' | 'medium' | 'high';
+  maxPerDay: number;
+}
+
+export const VIDEO_FREQUENCY_LABELS: Record<VideoPolicy['frequency'], string> = {
+  never: '只在用户明确要求时',
+  low: '偶尔主动',
+  medium: '适度主动',
+  high: '经常主动'
+};
+
 export const videoApi = {
+  overview: () => adminRequest<{ policy?: VideoPolicy }>('/api/admin/video'),
+  savePolicy: (policy: Partial<VideoPolicy>) => adminRequest<{ policy: VideoPolicy }>('/api/admin/video', { method: 'PUT', body: { policy } }),
   list: () => adminRequest<{ tasks: VideoTask[]; total: number; active: number }>('/api/admin/video/generations?limit=20'),
   create: (form: FormData) => adminRequest<{ task: VideoTask }>('/api/admin/video/generations', { method: 'POST', body: form }),
   cancel: (id: string) => adminRequest<{ task: VideoTask }>(`/api/admin/video/generations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
@@ -61,7 +76,27 @@ export function VideoStudio({ onNotice }: { onNotice: (v: string) => void }) {
   const [durationSec, setDurationSec] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [policy, setPolicy] = useState<VideoPolicy | null>(null);
+  const [savingPolicy, setSavingPolicy] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    void videoApi.overview().then((r) => { if (r && r.policy) setPolicy(r.policy); }).catch(() => undefined);
+  }, []);
+
+  const savePolicy = async () => {
+    if (!policy) return;
+    setSavingPolicy(true);
+    try {
+      const r = await videoApi.savePolicy(policy);
+      setPolicy(r.policy);
+      onNotice('聊天里的视频策略已保存');
+    } catch (e) {
+      onNotice(errorText(e));
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -128,6 +163,23 @@ export function VideoStudio({ onNotice }: { onNotice: (v: string) => void }) {
         <h3>视频生成</h3>
         <small>不带图是文生视频，带一张参考图就是图生视频。任务在后台执行，完成后可在这里播放，文件也进入媒体库。</small>
       </div>
+      {policy && (
+        <div className="admin-video-policy" data-testid="admin-video-policy">
+          <div className="admin-card-heading">
+            <h3>聊天里的视频</h3>
+            <small>她在回复里写 [[video:…]] 或 [[video-self:…]] 就会排队生成，做好后作为一条新消息单独发出。每条视频都要计费，所以默认只在用户明确要求时才做。</small>
+          </div>
+          <label><span>允许在聊天里发视频</span><input type="checkbox" checked={policy.enabled} onChange={(e) => setPolicy({ ...policy, enabled: e.target.checked })} /></label>
+          <label>
+            主动频率
+            <select value={policy.frequency} onChange={(e) => setPolicy({ ...policy, frequency: e.target.value as VideoPolicy['frequency'] })}>
+              {(Object.keys(VIDEO_FREQUENCY_LABELS) as VideoPolicy['frequency'][]).map((key) => <option key={key} value={key}>{VIDEO_FREQUENCY_LABELS[key]}</option>)}
+            </select>
+          </label>
+          <label>24 小时内最多生成（条）<input type="number" min="0" max="50" value={policy.maxPerDay} onChange={(e) => setPolicy({ ...policy, maxPerDay: Number(e.target.value) })} /></label>
+          <div className="admin-actions"><button type="button" data-testid="admin-video-policy-save" disabled={savingPolicy} onClick={() => void savePolicy()}>{savingPolicy ? '保存中…' : '保存视频策略'}</button></div>
+        </div>
+      )}
       <label>视频描述<textarea value={prompt} rows={3} placeholder="例如：海边日落，镜头缓慢推进，海鸟掠过水面" onChange={(e) => setPrompt(e.target.value)} /></label>
       <label>
         参考图（可选，图生视频）

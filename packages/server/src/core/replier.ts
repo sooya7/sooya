@@ -46,6 +46,8 @@ import type { WebSearchResult } from './web-search/types.js';
 import type { WorldSnapshot } from './world-context.js';
 import type { ToolCallRuntime } from '../agent/tool-runtime.js';
 import type { OmbreMemoryBridge } from './ombre-memory.js';
+import { VideoRequestError, type VideoGenerationService } from './video/service.js';
+import type { Persona } from '../config/schema.js';
 import {
   applyVisualTimeToPrompt,
   ensureVisualTimeReplyText,
@@ -92,6 +94,9 @@ export interface ReplyMediaPlan {
   readonly forceDifferent: boolean;
   readonly imagePrompt: string | null;
   readonly selfImagePrompt: string | null;
+  /** `[[video]]` intent; generated asynchronously after the text is published. */
+  readonly videoPrompt: string | null;
+  readonly selfVideoPrompt: string | null;
   readonly voice: boolean;
   readonly voiceOnly: boolean;
 }
@@ -169,6 +174,8 @@ export class Replier {
       worldSnapshot?: () => WorldSnapshot;
       toolRuntime?: ToolCallRuntime;
       ombreMemory?: OmbreMemoryBridge;
+      /** Text-to-video / image-to-video tasks; absent means the marker is ignored. */
+      video?: VideoGenerationService | null;
     }
   ) {}
 
@@ -210,6 +217,7 @@ export class Replier {
       const caps = this.deps.capabilities;
       const capabilityNotes: string[] = [];
       if (!caps.has('image')) capabilityNotes.push('图片生成不可用');
+      if (persona.videoPolicy.enabled && !caps.has('video')) capabilityNotes.push('视频生成不可用');
       if (!caps.has('tts')) capabilityNotes.push('语音合成不可用');
       if (this.deps.stickers.count() === 0) capabilityNotes.push('没有可用表情包');
       // C5: user-requested voice replies stay hidden until the voice (or its
@@ -242,7 +250,8 @@ export class Replier {
         contextWindow,
         maxOutputTokens,
         visualTime,
-        worldSnapshot: world
+        worldSnapshot: world,
+        videoAvailable: Boolean(this.deps.video) && caps.has('video')
       });
       const provider = allowVision && built.visionUsed ? caps.visionProvider()! : caps.chatProvider();
       const selectedModel = built.visionUsed ? visionModel : chatModel;
@@ -924,6 +933,15 @@ export class Replier {
       else await generateImage();
     }
 
+    // 3b'. Video. A clip is billed and takes minutes, so nothing here waits on
+    // the vendor: the text goes out now, a task is queued, and the file follows
+    // as its own message when it is ready (core/video/follow-up.ts).
+    const videoIntent = plan.selfVideoPrompt ?? plan.videoPrompt;
+    if (videoIntent && !shell) degraded.push('video:deferred');
+    if (shell && videoIntent && this.deps.video) {
+      await this.queueVideo(shell, videoIntent, Boolean(plan.selfVideoPrompt), persona, signal, degraded, finalText, producedParts);
+    }
+
     // 3c. Voice — independent expression system (Part 4): intent → mode →
     // spoken script → naturalness guard → delivery → TTS → publication.
     if (this.deps.voice && this.deps.voiceV2Enabled !== false) {
@@ -1130,6 +1148,69 @@ export class Replier {
     );
   }
 
+  /** Queues a `[[video]]` task for the reply; failures degrade the reply, never fail it. */
+  private async queueVideo(
+    shell: ChatMessage,
+    intent: string,
+    selfie: boolean,
+    persona: Persona,
+    signal: AbortSignal,
+    degraded: string[],
+    finalText: string,
+    producedParts: string[]
+  ): Promise<void> {
+    const video = this.deps.video!;
+    const note = (text: string) => {
+      if (finalText) return;
+      this.deps.messages.appendPart(shell.id, { type: 'text', text, status: 'sent' });
+      producedParts.push('text');
+    };
+    const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    if (video.countCreatedSince(since) >= persona.videoPolicy.maxPerDay) {
+      degraded.push('video:daily_cap');
+      this.deps.messages.updateMeta(shell.id, { video: { status: 'skipped', reason: 'daily_cap', intent: intent.slice(0, 300) } });
+      note('（今天能拍的视频次数用完了，明天再拍给你。）');
+      return;
+    }
+    let prompt = intent;
+    try {
+      if (this.deps.capabilities.has('director')) {
+        const expanded = await this.deps.mediaDirector.video(
+          { scene: intent.slice(0, 400), self: selfie, intent: selfie ? 'a short clip of Sooya herself' : 'a short private clip for the user' },
+          { signal }
+        );
+        if (expanded.prompt.trim()) prompt = expanded.prompt.trim();
+      }
+      let sourceImage: { data: Buffer; mime: string; name?: string } | undefined;
+      if (selfie) {
+        const refs = await this.deps.personaReferences.load(intent);
+        if (refs[0]) sourceImage = { data: refs[0].data, mime: refs[0].mime, name: refs[0].name };
+      }
+      const task = await video.create({
+        prompt,
+        sourceImage,
+        origin: { kind: 'reply', messageId: shell.id, deliver: true, intent: intent.slice(0, 500) }
+      });
+      this.deps.messages.updateMeta(shell.id, {
+        video: { taskId: task.id, status: 'queued', selfie, intent: intent.slice(0, 300), directorPrompt: prompt.slice(0, 1000) }
+      });
+      this.deps.bus.publish('reply.video.queued', { messageId: shell.id, taskId: task.id, selfie });
+    } catch (err) {
+      if (signal.aborted) throw signal.reason;
+      const e = err as Error;
+      const failure = publicFailure('provider_unavailable');
+      const reason = e instanceof VideoRequestError
+        ? e.publicMessage
+        : e instanceof ProviderNotConfiguredError
+          ? '视频生成服务没有配置。'
+          : failure.message;
+      this.deps.errorLog.add('reply.video', failure.code, { incidentId: failure.incidentId, diagnostic: redactDiagnostic(e) });
+      this.deps.messages.updateMeta(shell.id, { video: { status: 'failed', reason, intent: intent.slice(0, 300) } });
+      degraded.push(e instanceof VideoRequestError ? `video:${e.code}` : 'video:provider_unavailable');
+      note(`（本来想给你拍段视频，但${reason}）`);
+    }
+  }
+
   private createShell(
     userMessages: ChatMessage[],
     latestUserMessage: ChatMessage,
@@ -1232,6 +1313,23 @@ export class Replier {
     if (selfImagePrompt && !caps.has('image')) selfImagePrompt = null;
     if (imagePrompt && !caps.has('image') && !user.wantImage && !model.imagePrompt) imagePrompt = null;
 
+    // Video. Only when a video model exists: without one the marker would just
+    // promise a clip nobody can make. Self clips need a reference first frame;
+    // without references they fall back to a plain clip of the described scene.
+    let videoPrompt: string | null = null;
+    let selfVideoPrompt: string | null = null;
+    if (persona.videoPolicy.enabled && caps.has('video') && this.deps.video) {
+      const hasReferences = persona.referenceImages.length > 0;
+      if (model.selfVideoPrompt) {
+        if (hasReferences) selfVideoPrompt = model.selfVideoPrompt;
+        else videoPrompt = model.selfVideoPrompt;
+      } else if (model.videoPrompt) videoPrompt = model.videoPrompt;
+      else if (user.wantVideo && user.videoPrompt) {
+        if (user.selfVideoIntent && hasReferences) selfVideoPrompt = user.videoPrompt;
+        else videoPrompt = user.videoPrompt;
+      }
+    }
+
     // Voice
     let voice = false;
     if (persona.voicePolicy.enabled && !user.noVoice) {
@@ -1239,7 +1337,7 @@ export class Replier {
     }
     const voiceOnly = voice && (user.voiceOnly === true || model.voiceOnly === true);
 
-    return { sticker, stickers: stickerIntents, stickerRequired, stickerOnly, forceDifferent, imagePrompt, selfImagePrompt, voice, voiceOnly };
+    return { sticker, stickers: stickerIntents, stickerRequired, stickerOnly, forceDifferent, imagePrompt, selfImagePrompt, videoPrompt, selfVideoPrompt, voice, voiceOnly };
   }
 
   private recentPlainContext(limit: number): string {
