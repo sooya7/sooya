@@ -44,8 +44,11 @@ jobs:
         working-directory: packages/server
       - name: Changed web tests
         shell: bash
+        # On pull requests only run the web suite when packages/web changed. On
+        # push / dispatch there is no base ref: the old command then failed its
+        # diff and fell into the else branch by accident. Say so explicitly.
         run: |
-          if git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- packages/web; then
+          if [ -n "${{ github.base_ref }}" ] && git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- packages/web; then
             echo 'No web source changes; skipping web unit tests.'
           else
             npm run test -w @sooya/web
