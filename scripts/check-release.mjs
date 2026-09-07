@@ -58,7 +58,7 @@ const FORBIDDEN_PATH_RE = [
   { re: /(^|\/)coverage(\/|$)/, why: 'coverage output' },
   { re: /(^|\/)\.git(\/|$)/, why: 'git metadata' },
   { re: /\.(pem|key|p12|pfx)$/, why: 'private key material' },
-  { re: /(^|\/)config\/(models|persona)\.json$/, why: 'runtime config that would overwrite user settings' },
+  { re: /(^|\/)config\/(models|persona|media-prompt-spec)\.json$/, why: 'runtime config that would overwrite user settings' },
   { re: /qq[-_]?(login|session|token)/i, why: 'QQ login data' }
 ];
 

@@ -257,7 +257,7 @@ export class AnumaImageProvider implements ImageProvider {
       const json = await this.postGeneration(prompt, undefined, opts.signal);
       return materializeImage(json, this.cfg, this.deps, size);
     }
-    // 只取第一张：anuma 参考图验证路径为单图（config/image-persona.json verification 记录）
+    // 只取第一张：anuma 参考图验证路径为单图（部署侧 verification 记录）
     const ref = refs[0]!;
     return this.edit(prompt, ref.data, { mime: ref.mime, signal: opts.signal, size });
   }

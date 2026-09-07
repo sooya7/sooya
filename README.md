@@ -308,6 +308,8 @@ Vision、Summary、Media Director、Embedding、Rerank、Image、Video、TTS 和
 
 视频生成（文生视频 / 图生视频）在「视频生成模型」里配置协议与密钥，然后在同一页面提交任务，或直接调用 `POST /api/admin/video/generations`；接口细节见 [docs/API.md](docs/API.md#视频生成文生视频--图生视频)。
 
+图片与视频的提示词扩写规则、同日连续性与可调整的风格词表见 **[docs/MEDIA-EXPANSION.md](docs/MEDIA-EXPANSION.md)**；风格与负面词表存放在 `CONFIG_DIR/media-prompt-spec.json`，改完即时生效。
+
 模型密钥由服务端保存，管理页面只返回是否已配置，不回传明文密钥。也可以让 `models.json` 只存环境变量名（`apiKeyEnv`），密钥完全留在环境里。
 
 ### 6. 启动 Ombre Brain

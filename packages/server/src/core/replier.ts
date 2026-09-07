@@ -47,11 +47,13 @@ import type { WorldSnapshot } from './world-context.js';
 import type { ToolCallRuntime } from '../agent/tool-runtime.js';
 import type { OmbreMemoryBridge } from './ombre-memory.js';
 import { VideoRequestError, type VideoGenerationService } from './video/service.js';
+import { applyVideoContinuity, prepareVideoContinuity, videoContinuityMetadata } from './video/continuity.js';
 import type { Persona } from '../config/schema.js';
 import {
   applyVisualTimeToPrompt,
   ensureVisualTimeReplyText,
   resolveVisualTime,
+  visualDayPeriodLighting,
   visualTimeMetadata,
   type VisualTimeContext
 } from './visual-time.js';
@@ -939,7 +941,7 @@ export class Replier {
     const videoIntent = plan.selfVideoPrompt ?? plan.videoPrompt;
     if (videoIntent && !shell) degraded.push('video:deferred');
     if (shell && videoIntent && this.deps.video) {
-      await this.queueVideo(shell, videoIntent, Boolean(plan.selfVideoPrompt), persona, signal, degraded, finalText, producedParts);
+      await this.queueVideo({ shell, intent: videoIntent, selfie: Boolean(plan.selfVideoPrompt), persona, signal, degraded, finalText, producedParts, userText, generated });
     }
 
     // 3c. Voice — independent expression system (Part 4): intent → mode →
@@ -1149,16 +1151,19 @@ export class Replier {
   }
 
   /** Queues a `[[video]]` task for the reply; failures degrade the reply, never fail it. */
-  private async queueVideo(
-    shell: ChatMessage,
-    intent: string,
-    selfie: boolean,
-    persona: Persona,
-    signal: AbortSignal,
-    degraded: string[],
-    finalText: string,
-    producedParts: string[]
-  ): Promise<void> {
+  private async queueVideo(input: {
+    shell: ChatMessage;
+    intent: string;
+    selfie: boolean;
+    persona: Persona;
+    signal: AbortSignal;
+    degraded: string[];
+    finalText: string;
+    producedParts: string[];
+    userText: string;
+    generated: TextGenerationResult;
+  }): Promise<void> {
+    const { shell, intent, selfie, persona, signal, degraded, finalText, producedParts, userText, generated } = input;
     const video = this.deps.video!;
     const note = (text: string) => {
       if (finalText) return;
@@ -1173,26 +1178,78 @@ export class Replier {
       return;
     }
     let prompt = intent;
+    let aspectRatio: string | null = null;
+    let durationSec: number | undefined;
     try {
+      // A clip of her has to agree with the photo she may have sent minutes
+      // ago: same outfit, same place, right time of day. Read-only — the clip
+      // follows the day's outfit and never redefines it (video/continuity.ts).
+      const continuity = selfie && this.deps.imageContinuity
+        ? prepareVideoContinuity(this.deps.imageContinuity, {
+            scene: intent,
+            userText,
+            activity: this.deps.lifeSnapshot?.().activity ?? null,
+            activityKind: this.deps.lifeSnapshot?.().kind ?? null,
+            activityStartedAt: this.deps.lifeSnapshot?.().startedAt ?? null,
+            location: generated.worldSnapshot?.location?.name ?? generated.worldSnapshot?.city?.name ?? null,
+            now: generated.worldSnapshot?.now,
+            localDate: generated.worldSnapshot?.localDate,
+            timeZone: generated.worldSnapshot?.timeZone,
+            visualTime: generated.visualTime
+          })
+        : null;
       if (this.deps.capabilities.has('director')) {
         const expanded = await this.deps.mediaDirector.video(
           { scene: intent.slice(0, 400), self: selfie, intent: selfie ? 'a short clip of Sooya herself' : 'a short private clip for the user' },
-          { signal }
+          {
+            signal,
+            ...(continuity
+              ? {
+                  continuity: {
+                    dateKey: continuity.dateKey,
+                    outfit: continuity.outfit,
+                    activity: continuity.activity,
+                    location: continuity.location,
+                    lighting: visualDayPeriodLighting(continuity.visualTime.depictedDayPeriod),
+                    depictedDayPeriod: continuity.visualTime.depictedDayPeriod,
+                    timeMode: continuity.visualTime.mode
+                  }
+                }
+              : {})
+          }
         );
         if (expanded.prompt.trim()) prompt = expanded.prompt.trim();
+        aspectRatio = expanded.aspectRatio?.trim() || null;
+        durationSec = expanded.durationSec;
       }
+      // The hard constraints are appended after expansion so a director that
+      // ignored them in prose still cannot produce a conflicting clip.
+      if (continuity) prompt = applyVideoContinuity(prompt, continuity, selfie);
+      else prompt = applyVisualTimeToPrompt(prompt, generated.visualTime);
       let sourceImage: { data: Buffer; mime: string; name?: string } | undefined;
       if (selfie) {
         const refs = await this.deps.personaReferences.load(intent);
         if (refs[0]) sourceImage = { data: refs[0].data, mime: refs[0].mime, name: refs[0].name };
       }
+      const continuityMeta = continuity ? videoContinuityMetadata(continuity, selfie) : null;
       const task = await video.create({
         prompt,
         sourceImage,
+        aspectRatio,
+        durationSec,
+        ...(continuityMeta ? { continuity: continuityMeta } : {}),
         origin: { kind: 'reply', messageId: shell.id, deliver: true, intent: intent.slice(0, 500) }
       });
       this.deps.messages.updateMeta(shell.id, {
-        video: { taskId: task.id, status: 'queued', selfie, intent: intent.slice(0, 300), directorPrompt: prompt.slice(0, 1000) }
+        video: {
+          taskId: task.id,
+          status: 'queued',
+          selfie,
+          intent: intent.slice(0, 300),
+          directorPrompt: prompt.slice(0, 1000),
+          ...(aspectRatio ? { aspectRatio } : {}),
+          ...(continuityMeta ? { continuity: continuityMeta } : {})
+        }
       });
       this.deps.bus.publish('reply.video.queued', { messageId: shell.id, taskId: task.id, selfie });
     } catch (err) {

@@ -15,6 +15,26 @@ import { normalizeAbort, safeText, type ProviderDeps } from './chat/openai.js';
 const DEFAULT_MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024;
 
 /**
+ * Turns a director-chosen aspect ratio into a concrete `size` for the request.
+ *
+ * The configured size supplies the resolution; only the orientation is
+ * reinterpreted, so a deployment that paid for 1280x720 never silently gets a
+ * larger (more expensive) frame because a clip should be vertical. An
+ * unparseable or absent ratio keeps the configured size untouched.
+ */
+export function resolveVideoSize(configuredSize: string, aspectRatio?: string | null): string {
+  const dims = /^(\d{2,5})\s*[x×]\s*(\d{2,5})$/i.exec((configuredSize ?? '').trim());
+  const ratio = /^(\d{1,3})\s*[:：]\s*(\d{1,3})$/.exec((aspectRatio ?? '').trim());
+  if (!dims || !ratio) return configuredSize;
+  const long = Math.max(Number(dims[1]), Number(dims[2]));
+  const short = Math.min(Number(dims[1]), Number(dims[2]));
+  const [w, h] = [Number(ratio[1]), Number(ratio[2])];
+  if (!w || !h) return configuredSize;
+  if (w === h) return `${short}x${short}`;
+  return w > h ? `${long}x${short}` : `${short}x${long}`;
+}
+
+/**
  * Vendors spell the same lifecycle differently; everything downstream only
  * needs the five states. Unknown words are treated as "still running" rather
  * than as a failure so a new vendor status never kills a task that would have
