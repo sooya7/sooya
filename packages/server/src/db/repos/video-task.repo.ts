@@ -113,6 +113,11 @@ export class VideoTaskRepo {
     return row.n;
   }
 
+  /** Tasks created at or after `iso`, regardless of outcome: failed attempts still spent the budget. */
+  countCreatedSince(iso: string): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM video_tasks WHERE created_at >= ?').get(iso) as { n: number }).n;
+  }
+
   /** Tasks still owed a result: what the API caller is waiting on. */
   countActive(): number {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM video_tasks WHERE status IN ('queued','running')").get() as { n: number }).n;

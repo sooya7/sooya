@@ -147,6 +147,7 @@ export interface AdminPersona {
   stickerPolicy: Record<string, unknown>;
   voicePolicy: Record<string, unknown>;
   imagePolicy: Record<string, unknown>;
+  videoPolicy?: Record<string, unknown>;
 }
 
 export type AdminWebSearchProvider = 'doubao' | 'tavily' | 'responses';

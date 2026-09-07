@@ -86,4 +86,29 @@ describe('VideoStudio', () => {
     expect(onNotice).toHaveBeenCalledWith('先写一句视频描述');
     expect(api.adminRequest.mock.calls.filter(([, options]) => (options as { method?: string } | undefined)?.method === 'POST')).toHaveLength(0);
   });
+
+  it('shows the chat policy from the overview and saves it through PUT /api/admin/video', async () => {
+    api.adminRequest.mockImplementation(async (path: string, options?: { method?: string; body?: unknown }) => {
+      if (path === '/api/admin/video' && options?.method === 'PUT') return { policy: { ...(options.body as { policy: Record<string, unknown> }).policy, enabled: true, frequency: 'never' } };
+      if (path === '/api/admin/video') return { policy: { enabled: true, frequency: 'never', maxPerDay: 3 } };
+      return { tasks: [], total: 0, active: 0 };
+    });
+    const onNotice = vi.fn();
+    await act(async () => root!.render(<VideoStudio onNotice={onNotice} />));
+
+    const section = container!.querySelector('[data-testid="admin-video-policy"]')!;
+    expect(section.textContent).toContain('聊天里的视频');
+    const cap = section.querySelector('input[type="number"]') as HTMLInputElement;
+    expect(cap.value).toBe('3');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(cap, '5');
+      cap.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { (container!.querySelector('[data-testid="admin-video-policy-save"]') as HTMLButtonElement).click(); });
+
+    const put = api.adminRequest.mock.calls.find(([path, options]) => path === '/api/admin/video' && (options as { method?: string } | undefined)?.method === 'PUT');
+    expect((put?.[1] as { body: { policy: { maxPerDay: number } } }).body.policy.maxPerDay).toBe(5);
+    expect(onNotice).toHaveBeenCalledWith('聊天里的视频策略已保存');
+  });
 });

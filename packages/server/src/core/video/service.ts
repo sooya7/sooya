@@ -1,6 +1,6 @@
 import type { ConfigStore } from '../../config/store.js';
 import type { VideoModelConfig } from '../../config/schema.js';
-import type { MediaRepo } from '../../db/repos/media.repo.js';
+import type { MediaRepo, MediaRow } from '../../db/repos/media.repo.js';
 import { toMediaRef } from '../../db/repos/media.repo.js';
 import type { ErrorLogRepo, JobRepo } from '../../db/repos/misc.repo.js';
 import type { AuditRepo } from '../../db/repos/feature.repo.js';
@@ -26,12 +26,32 @@ export const VIDEO_JOB_TYPE = 'video.generate';
 const MAX_STEP_FAILURES = 5;
 const MAX_PROMPT_CHARS = 2000;
 
+/** Who asked for the clip, and what should happen when it is ready. */
+export interface VideoTaskOrigin {
+  kind: 'admin' | 'reply' | 'proactive';
+  /** The assistant message whose text promised the clip. */
+  messageId?: string;
+  /** Publish the finished clip as a follow-up chat message and deliver it. */
+  deliver?: boolean;
+  /** The model's original 画面意图 before director expansion. */
+  intent?: string;
+}
+
 export interface VideoGenerationInput {
   prompt: string;
   /** First frame for image-to-video; already persisted as a media row. */
   sourceMediaId?: string | null;
+  /** First frame as raw bytes (a persona reference); persisted here as a media row. */
+  sourceImage?: { data: Buffer; mime: string; name?: string } | null;
   durationSec?: number;
   size?: string;
+  origin?: VideoTaskOrigin;
+}
+
+/** What the chat side does once a task settles; see core/video/follow-up.ts. */
+export interface VideoFollowUp {
+  onSucceeded(task: PublicVideoTask, media: MediaRow): void | Promise<void>;
+  onFailed(task: PublicVideoTask, reason: string): void | Promise<void>;
 }
 
 export interface PublicVideoTask {
@@ -43,6 +63,7 @@ export interface PublicVideoTask {
   provider: string;
   model: string;
   params: Record<string, unknown>;
+  origin: VideoTaskOrigin | null;
   remoteId: string | null;
   sourceMedia: MediaRef | null;
   media: MediaRef | null;
@@ -90,7 +111,14 @@ export interface VideoGenerationDeps {
  * API reads back, and it survives restarts because the jobs table does.
  */
 export class VideoGenerationService {
+  private followUp: VideoFollowUp | null = null;
+
   constructor(private readonly deps: VideoGenerationDeps) {}
+
+  /** Hooks that turn a finished task into a chat message; wired once the coordinator exists. */
+  attachFollowUp(followUp: VideoFollowUp): void {
+    this.followUp = followUp;
+  }
 
   registerJobs(worker: JobWorker): void {
     worker.register(
@@ -116,8 +144,13 @@ export class VideoGenerationService {
     return this.provider().configured;
   }
 
+  /** Tasks created in the last window, for the persona's rolling daily cap. */
+  countCreatedSince(iso: string): number {
+    return this.deps.tasks.countCreatedSince(iso);
+  }
+
   /** Validates, persists and schedules a task. Throws VideoRequestError on caller mistakes. */
-  create(input: VideoGenerationInput): PublicVideoTask {
+  async create(input: VideoGenerationInput): Promise<PublicVideoTask> {
     const provider = this.provider();
     if (!provider.configured) throw new VideoRequestError('not_configured', '视频生成模型还没配置好（接口协议、地址、模型名、密钥缺一不可）', 503);
     const prompt = input.prompt.trim();
@@ -134,10 +167,23 @@ export class VideoGenerationService {
       if (row.kind !== 'image' && row.kind !== 'sticker') throw new VideoRequestError('source_not_image', '参考图必须是图片', 400);
       if (!this.deps.mediaStore.exists(row)) throw new VideoRequestError('source_not_found', '参考图文件已不在磁盘上', 404);
       sourceMediaId = row.id;
+    } else if (input.sourceImage) {
+      // A persona reference lives on disk, not in the media table; persist a
+      // copy so the task row can point at it like any other first frame.
+      const row = await this.deps.mediaStore.save({
+        kind: 'image',
+        origin: 'builtin',
+        data: input.sourceImage.data,
+        declaredMime: input.sourceImage.mime,
+        filename: input.sourceImage.name,
+        meta: { videoFirstFrame: true }
+      });
+      sourceMediaId = row.id;
     }
     const params: Record<string, unknown> = {};
     if (input.durationSec !== undefined) params.durationSec = input.durationSec;
     if (input.size) params.size = input.size;
+    if (input.origin) params.origin = input.origin;
 
     const row = this.deps.tasks.create({
       mode: sourceMediaId ? 'image' : 'text',
@@ -197,11 +243,11 @@ export class VideoGenerationService {
     if (!task || VIDEO_TASK_TERMINAL.has(task.status)) return task;
     const provider = this.provider();
     const cfg = this.cfg();
-    if (!provider.configured) return this.fail(task, '视频生成模型未配置，任务无法继续');
+    if (!provider.configured) return await this.fail(task, '视频生成模型未配置，任务无法继续');
     const startedAtMs = Date.parse(task.created_at);
     if (this.now() - startedAtMs > cfg.maxWaitMs) {
       if (task.remote_id) await provider.cancelTask(task.remote_id).catch(() => undefined);
-      return this.fail(task, `等待了 ${Math.round(cfg.maxWaitMs / 60_000)} 分钟仍未生成完成，已放弃`);
+      return await this.fail(task, `等待了 ${Math.round(cfg.maxWaitMs / 60_000)} 分钟仍未生成完成，已放弃`);
     }
     try {
       let snapshot: VideoTaskSnapshot;
@@ -219,7 +265,7 @@ export class VideoGenerationService {
       }
       return await this.apply(this.deps.tasks.get(task.id)!, snapshot, provider);
     } catch (err) {
-      return this.handleStepError(this.deps.tasks.get(task.id) ?? task, err as Error);
+      return await this.handleStepError(this.deps.tasks.get(task.id) ?? task, err as Error);
     }
   }
 
@@ -237,7 +283,7 @@ export class VideoGenerationService {
         return updated;
       }
       case 'failed':
-        return this.fail(task, snapshot.error ?? '上游视频服务报告生成失败');
+        return await this.fail(task, snapshot.error ?? '上游视频服务报告生成失败');
       case 'cancelled': {
         const updated = this.deps.tasks.update(task.id, { status: 'cancelled', completedAt: nowIso(), error: snapshot.error ?? null });
         this.deps.audit?.add('video', 'task.cancelled_upstream', task.id);
@@ -282,20 +328,21 @@ export class VideoGenerationService {
         });
         this.deps.audit?.add('video', 'task.succeeded', task.id, { mediaId: media.id, bytes: media.bytes, mime: media.mime });
         this.deps.onLog?.('info', 'video task succeeded', { taskId: task.id, mediaId: media.id, bytes: media.bytes });
+        if (updated) await this.notify((hooks) => hooks.onSucceeded(this.toPublic(updated), media), updated.id);
         return updated;
       }
     }
   }
 
-  private handleStepError(task: VideoTaskRow, err: Error): VideoTaskRow | undefined {
+  private async handleStepError(task: VideoTaskRow, err: Error): Promise<VideoTaskRow | undefined> {
     const detail = err.message.slice(0, 300);
     if (isPermanent(err)) {
       this.deps.errors.add('video.generate', `${task.id}: ${detail}`, { taskId: task.id, permanent: true });
-      return this.fail(task, publicErrorFor(err));
+      return await this.fail(task, publicErrorFor(err));
     }
     const attempts = task.attempts + 1;
     this.deps.errors.add('video.generate', `${task.id}: ${detail}`, { taskId: task.id, attempt: attempts });
-    if (attempts >= MAX_STEP_FAILURES) return this.fail(task, `连续 ${attempts} 次没能联系上视频服务：${detail}`);
+    if (attempts >= MAX_STEP_FAILURES) return await this.fail(task, `连续 ${attempts} 次没能联系上视频服务：${detail}`);
     const updated = this.deps.tasks.update(task.id, { attempts, error: detail });
     // Back off a little further each time, capped so a poll never sleeps past the deadline.
     const delay = Math.min(this.cfg().pollIntervalMs * Math.pow(2, attempts), 120_000);
@@ -303,11 +350,22 @@ export class VideoGenerationService {
     return updated;
   }
 
-  private fail(task: VideoTaskRow, message: string): VideoTaskRow | undefined {
+  private async fail(task: VideoTaskRow, message: string): Promise<VideoTaskRow | undefined> {
     const updated = this.deps.tasks.update(task.id, { status: 'failed', error: message.slice(0, 300), completedAt: nowIso() });
     this.deps.audit?.add('video', 'task.failed', task.id, { error: message.slice(0, 300) });
     this.deps.onLog?.('warn', 'video task failed', { taskId: task.id, error: message.slice(0, 300) });
+    if (updated) await this.notify((hooks) => hooks.onFailed(this.toPublic(updated), message.slice(0, 300)), updated.id);
     return updated;
+  }
+
+  /** A follow-up that throws must not turn a settled task back into an error. */
+  private async notify(run: (hooks: VideoFollowUp) => void | Promise<void>, taskId: string): Promise<void> {
+    if (!this.followUp) return;
+    try {
+      await run(this.followUp);
+    } catch (err) {
+      this.deps.errors.add('video.follow_up', (err as Error).message.slice(0, 300), { taskId });
+    }
   }
 
   private async buildRequest(task: VideoTaskRow) {
@@ -339,6 +397,10 @@ export class VideoGenerationService {
   toPublic(row: VideoTaskRow): PublicVideoTask {
     const media = row.media_id ? this.deps.media.get(row.media_id) : undefined;
     const source = row.source_media_id ? this.deps.media.get(row.source_media_id) : undefined;
+    // `origin` is bookkeeping for the chat follow-up; callers see it as its own
+    // field, and `params` stays the per-request generation overrides only.
+    const { origin: rawOrigin, ...params } = videoTaskParams(row);
+    const origin = rawOrigin && typeof rawOrigin === 'object' ? rawOrigin as VideoTaskOrigin : null;
     return {
       id: row.id,
       mode: row.mode,
@@ -347,7 +409,8 @@ export class VideoGenerationService {
       progress: row.progress,
       provider: row.provider,
       model: row.model,
-      params: videoTaskParams(row),
+      params,
+      origin,
       remoteId: row.remote_id,
       sourceMedia: source ? toMediaRef(source) : null,
       media: media ? toMediaRef(media) : null,

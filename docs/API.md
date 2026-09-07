@@ -122,6 +122,16 @@ curl http://127.0.0.1:8788/api/admin/video/generations/<taskId> -H "X-Admin-Toke
 
 创建请求的错误码：`400` 参数错误或参考图不合法；`404` `imageMediaId` 不存在；`429` 排队/生成中的任务已达上限（`maxActiveTasks`）；`503` 视频模型未配置。
 
+**聊天里的视频。** 配好视频模型后，主模型会被告知两个标记：`[[video:画面意图]]`（文生视频）与 `[[video-self:画面意图]]`（用形象参考图作首帧的图生视频）；用户明确说「拍个视频」时即使模型漏写标记也会兜底触发。回复文字先照常发出，视频任务在后台完成后会作为**一条新的 assistant 消息**发布（`meta.videoFollowUp = true`，`file` 类型分段，MIME `video/*`），并走同一条 `qq.deliver` 出站队列以 QQ 视频消息（file_type 2）投递；失败时改发一句说明文字。策略在人设的 `videoPolicy` 里：
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 是否允许在聊天里生成视频 |
+| `frequency` | `never` | 主动发视频的频率；`never` 仍会响应用户的明确要求 |
+| `maxPerDay` | `3` | 滚动 24 小时内的上限，Admin API 创建的任务不计入 |
+
+可通过 `PUT /api/admin/video` 的 `policy` 字段更新，`GET /api/admin/video` 会带回当前策略。
+
 `POST /api/admin/models/video/test` 固定返回 `400 test_unsupported`：视频生成计费且耗时数分钟，不作为连接探针；用 `discover` 拉取模型列表验证地址与密钥，再真发一次任务。
 
 ### QQ 通道

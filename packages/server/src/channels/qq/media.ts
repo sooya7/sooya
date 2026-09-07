@@ -16,11 +16,15 @@ import type { MediaStore } from '../../media/store.js';
 export type QqFileType = 1 | 2 | 3 | 4;
 
 /** 保守上限（官方文档未给统一数值；部署侧如遇失败可在此收紧）。 */
-export const QQ_MEDIA_SIZE_LIMITS: Record<'image' | 'audio' | 'file', number> = {
+export const QQ_MEDIA_SIZE_LIMITS: Record<'image' | 'audio' | 'video' | 'file', number> = {
   image: 25 * 1024 * 1024,
   audio: 5 * 1024 * 1024,
+  /** 生成的短片通常 5–30 MB；base64 上传体积再乘 4/3，所以不给太宽。 */
+  video: 50 * 1024 * 1024,
   file: 25 * 1024 * 1024
 };
+/** 官方只列了 mp4；其他容器按不支持处理，由投递层降级。 */
+const SUPPORTED_VIDEO_MIME = new Set(['video/mp4']);
 
 const SUPPORTED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif']);
 const CONVERTIBLE_IMAGE_MIME = new Set(['image/webp', 'image/avif']);
@@ -62,11 +66,17 @@ export function classifyQqMedia(row: MediaRow): QqMediaClassify {
     if (SUPPORTED_AUDIO_MIME.has(row.mime)) return { fileType: 3, supported: true };
     return { fileType: 3, supported: false, reason: `unsupported audio mime ${row.mime}` };
   }
+  // 生成的视频以 kind=file 存储（media 表没有 video 种类），按 MIME 识别成 QQ 视频消息。
+  if (row.mime.startsWith('video/')) {
+    if (SUPPORTED_VIDEO_MIME.has(row.mime)) return { fileType: 2, supported: true };
+    return { fileType: 2, supported: false, reason: `unsupported video mime ${row.mime}` };
+  }
   return { fileType: 4, supported: true };
 }
 
 export function mediaSizeLimit(fileType: QqFileType): number {
   if (fileType === 3) return QQ_MEDIA_SIZE_LIMITS.audio;
+  if (fileType === 2) return QQ_MEDIA_SIZE_LIMITS.video;
   if (fileType === 1) return QQ_MEDIA_SIZE_LIMITS.image;
   return QQ_MEDIA_SIZE_LIMITS.file;
 }
@@ -97,6 +107,6 @@ export async function prepareQqMedia(mediaStore: MediaStore, row: MediaRow): Pro
 
 function safeFilename(row: MediaRow): string {
   const base = `sooya-${row.id.slice(-8)}`;
-  const ext = row.mime === 'image/png' ? 'png' : row.mime === 'image/jpeg' ? 'jpg' : row.mime === 'image/gif' ? 'gif' : row.mime.startsWith('audio/mpeg') ? 'mp3' : row.mime === 'audio/wav' || row.mime === 'audio/x-wav' ? 'wav' : 'bin';
+  const ext = row.mime === 'image/png' ? 'png' : row.mime === 'image/jpeg' ? 'jpg' : row.mime === 'image/gif' ? 'gif' : row.mime.startsWith('audio/mpeg') ? 'mp3' : row.mime === 'audio/wav' || row.mime === 'audio/x-wav' ? 'wav' : row.mime === 'video/mp4' ? 'mp4' : 'bin';
   return `${base}.${ext}`;
 }

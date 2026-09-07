@@ -23,6 +23,11 @@ export interface UserDirectives {
   noSticker?: boolean;
   noVoice?: boolean;
   anotherSticker?: boolean;
+  /** The user asked for a short video clip ("拍段视频"、"做个视频"). */
+  wantVideo?: boolean;
+  videoPrompt?: string | null;
+  /** The clip should show HER, so it goes through [[video-self]] with a reference first frame. */
+  selfVideoIntent?: boolean;
 }
 
 const STICKER_PATTERNS = [
@@ -67,6 +72,20 @@ const IMAGE_PROMPT_EXTRACT = [
   /generate (?:an? )?image of (.+)$/i
 ];
 
+const VIDEO_PATTERNS = [
+  /(?:生成|做|拍|来|发|给我|要|想要|录|剪)(?:一)?(?:个|段|条|支)?(?:小|短)?视频/,
+  /视频(?:给我|来一段|来一个)/,
+  /(?:generate|make|create|send|shoot|record) (?:me )?(?:a |one )?(?:short )?(?:video|clip)/i
+];
+/** The clip is meant to show her, not an arbitrary scene. */
+const SELF_VIDEO_PATTERNS = [/(?:你的|你自己|自己的|拍.{0,4}你|录.{0,4}你).{0,6}视频/, /视频.{0,6}(?:你的|你自己|你在)/, /(?:video|clip) of (?:you|yourself)/i];
+const VIDEO_PROMPT_EXTRACT = [
+  /(?:生成|做|拍|来|发|给我|录)(?:一)?(?:个|段|条|支)?(?:小|短)?视频[，,:：]?\s*(.+)$/,
+  /(?:generate|make|create|shoot|record) (?:me )?(?:a |one )?(?:short )?(?:video|clip) (?:of|about|showing) (.+)$/i
+];
+/** Words that mean the user really wants a still picture, so a video match must not swallow it. */
+const STILL_IMAGE_WORDS = /(?:照片|相片|图片?|画|自拍|插画|海报|selfie|photo|pic\b|image|draw)/i;
+
 /**
  * 「你会画画吗」「能读出来吗」问的是能力，不是下指令。直接按指令触发会把能力问题
  * 当真去调一次昂贵的生图/语音。判定：有「会/能/可以…」+ 能力词作宾语（图/画/语音/
@@ -110,6 +129,26 @@ export function parseUserDirectives(text: string): UserDirectives {
     }
     if (!d.imagePrompt) d.imagePrompt = t;
   }
+
+  if (has(VIDEO_PATTERNS)) {
+    d.wantVideo = true;
+    if (has(SELF_VIDEO_PATTERNS)) d.selfVideoIntent = true;
+    for (const p of VIDEO_PROMPT_EXTRACT) {
+      const m = p.exec(t);
+      if (m?.[1] && m[1].trim().length >= 2) {
+        d.videoPrompt = m[1].trim().replace(/[。.!！~]+$/, '');
+        break;
+      }
+    }
+    if (!d.videoPrompt) d.videoPrompt = t;
+    // 「拍个视频」also trips the photo patterns through 拍个; only keep the image
+    // request when the sentence really mentions a still picture as well.
+    if (d.wantImage && !STILL_IMAGE_WORDS.test(t)) {
+      delete d.wantImage;
+      delete d.imagePrompt;
+      delete d.selfieIntent;
+    }
+  }
   return d;
 }
 
@@ -120,6 +159,10 @@ export interface ModelDirectives {
   sticker?: string | null;
   imagePrompt?: string | null;
   selfImagePrompt?: string | null;
+  /** `[[video:画面意图]]`: a short clip, generated asynchronously and delivered later. */
+  videoPrompt?: string | null;
+  /** `[[video-self:画面意图]]`: a clip of her, seeded with a persona reference as first frame. */
+  selfVideoPrompt?: string | null;
   voice?: boolean;
   voiceOnly?: boolean;
   stickerOnly?: boolean;
@@ -154,8 +197,8 @@ export function parseIntensityArg(arg: string | null | undefined): number | unde
   return Math.min(1, Math.max(0, value));
 }
 
-const MARKER_KINDS = ['sticker', 'image', 'image-self', 'voice', 'voice-only', 'sticker-only', '表情包', '图片', '语音'] as const;
-const KIND_ALT = 'image-self|sticker-only|voice-only|sticker|image|voice|表情包|图片|语音';
+const MARKER_KINDS = ['sticker', 'image', 'image-self', 'video', 'video-self', 'voice', 'voice-only', 'sticker-only', '表情包', '图片', '视频', '语音'] as const;
+const KIND_ALT = 'image-self|video-self|sticker-only|voice-only|sticker|image|video|voice|表情包|图片|视频|语音';
 
 /**
  * The prompt teaches `[[marker]]`, but models emit the single-bracket form and
@@ -401,6 +444,8 @@ export function stripModelDirectives(raw: string): StripResult {
       if (k === 'sticker') addStickerDirective(directives, value || 'auto');
       else if (k === 'image') directives.imagePrompt = value || null;
       else if (k === 'image-self') directives.selfImagePrompt = value || null;
+      else if (k === 'video') directives.videoPrompt = value || null;
+      else if (k === 'video-self') directives.selfVideoPrompt = value || null;
       else if (k === 'voice') {
         directives.voice = true;
         const mood = parseEmotionArg(value);
@@ -431,13 +476,17 @@ function addStickerDirective(directives: ModelDirectives, intent: string): void 
   directives.stickers = [...(directives.stickers ?? []), intent].slice(0, 8);
 }
 
-function canonicalMarkerKind(kind: string): 'sticker' | 'image' | 'image-self' | 'voice' | 'voice-only' | 'sticker-only' {
+type MarkerKind = 'sticker' | 'image' | 'image-self' | 'video' | 'video-self' | 'voice' | 'voice-only' | 'sticker-only';
+
+function canonicalMarkerKind(kind: string): MarkerKind {
   const normalized = kind.toLowerCase();
   if (normalized === '表情包') return 'sticker';
   if (normalized === '图片') return 'image';
+  if (normalized === '视频') return 'video';
   if (normalized === '语音') return 'voice';
   if (normalized === 'image-self') return 'image-self';
-  return normalized as 'sticker' | 'image' | 'image-self' | 'voice' | 'voice-only' | 'sticker-only';
+  if (normalized === 'video-self') return 'video-self';
+  return normalized as MarkerKind;
 }
 
 /**

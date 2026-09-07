@@ -36,25 +36,41 @@ export function registerVideoAdminRoutes(app: SooyaApp): void {
   server.get('/api/admin/video', guard, async () => ({
     capability: (await services.capabilities.statuses()).video,
     model: config.safeModels().video,
+    policy: config.getPersona().videoPolicy,
     active: repos.videoTasks.countActive(),
     total: repos.videoTasks.count()
   }));
 
   server.put('/api/admin/video', guard, async (req, reply) => {
-    const parsed = z.object({ model: z.record(z.unknown()) }).safeParse(req.body ?? {});
+    const parsed = z.object({
+      model: z.record(z.unknown()).optional(),
+      /** How she may use [[video]] in chat; mirrors VideoPolicySchema. */
+      policy: z.object({
+        enabled: z.boolean().optional(),
+        frequency: z.enum(['never', 'low', 'medium', 'high']).optional(),
+        maxPerDay: z.number().int().min(0).max(50).optional()
+      }).optional()
+    }).refine((body) => body.model || body.policy, { message: 'model or policy is required' }).safeParse(req.body ?? {});
     if (!parsed.success) {
       reply.code(400);
       return { error: 'bad_request', issues: parsed.error.issues };
     }
     try {
-      config.setModels({ video: parsed.data.model });
+      if (parsed.data.model) {
+        config.setModels({ video: parsed.data.model });
+        services.capabilities.rebuild();
+        repos.audit.add('video', 'model.updated');
+      }
+      if (parsed.data.policy) {
+        const persona = config.getPersona();
+        config.setPersona({ videoPolicy: { ...persona.videoPolicy, ...parsed.data.policy } });
+        repos.audit.add('video', 'policy.updated', null, parsed.data.policy);
+      }
     } catch (err) {
       reply.code(400);
       return { error: 'bad_request', message: (err as Error).message.slice(0, 300) };
     }
-    services.capabilities.rebuild();
-    repos.audit.add('video', 'model.updated');
-    return { model: config.safeModels().video, capability: (await services.capabilities.statuses()).video };
+    return { model: config.safeModels().video, policy: config.getPersona().videoPolicy, capability: (await services.capabilities.statuses()).video };
   });
 
   server.post('/api/admin/video/generations', guard, async (req, reply) => {
@@ -134,11 +150,12 @@ export function registerVideoAdminRoutes(app: SooyaApp): void {
     }
 
     try {
-      const task = video.create({
+      const task = await video.create({
         prompt: body.prompt,
         sourceMediaId,
         durationSec: body.durationSec,
-        size: body.size
+        size: body.size,
+        origin: { kind: 'admin' }
       });
       reply.code(202);
       return { task };

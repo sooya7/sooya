@@ -1,4 +1,5 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
+import { videoMarkerInstructions } from './video/instructions.js';
 import type { SummaryRepo } from '../db/repos/misc.repo.js';
 import type { MemoryService, RecallMatch, RecallResult } from './memory.js';
 import type { Persona } from '../config/schema.js';
@@ -85,6 +86,8 @@ export interface ContextOptions {
   worldSnapshot?: Readonly<WorldSnapshot> | null;
   /** Combine a rapid-message batch into one user turn for the model. */
   batchMessageIds?: string[];
+  /** A video model is configured, so the [[video]] markers may be taught. */
+  videoAvailable?: boolean;
 }
 
 export class ContextBuilder {
@@ -381,6 +384,8 @@ export class ContextBuilder {
           break;
         case 'file':
           {
+            const mime = p.media?.mime ?? (p.mediaId ? this.mediaRepo.get(p.mediaId)?.mime : undefined) ?? '';
+            if (mime.startsWith('video/')) { textBits.push(`[${msg.role === 'user' ? '用户' : 'SOOYA'}发送了视频]`); break; }
             const name = p.media?.name ?? p.mediaId ?? '';
             const extracted = p.mediaId ? this.mediaText.get(p.mediaId) : undefined;
             if (extracted?.status === 'ready') textBits.push(`[文件:${name}]\n${extracted.text ?? ''}`);
@@ -610,6 +615,7 @@ function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): st
     }
     lines.push('硬规则：图片/照片/自拍只有写了上述标记才会真正生成。如果你在文字里说“给你拍了”“看这张图”“拍好了”之类，却没写标记，用户只会看到文字而看不到图，等于欺骗用户。所以只要提到要发图/拍照/自拍，就必须同时写上对应标记；如果这条回复不打算真的发图，就不要在文字里声称发了图。');
   }
+  if (persona.videoPolicy.enabled && opts.videoAvailable) lines.push(...videoMarkerInstructions(persona));
   if (persona.voicePolicy.enabled) {
     lines.push('· [[voice]] 把这条文字同时用语音发出来。');
     lines.push('· [[voice-only]] 这一条只发语音，不显示文字（文字会作为语音文稿保留）。');
