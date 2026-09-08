@@ -330,10 +330,67 @@ describe('createProxyFetch: streaming, bounds and socket lifecycle', () => {
 
   it('refuses body types it cannot serialise rather than sending "[object Object]"', async () => {
     const fetchImpl = createProxyFetch('socks5h://127.0.0.1:1080');
-    const form = new FormData();
-    form.append('a', 'b');
-    await expect(fetchImpl('https://example.invalid/x', { method: 'POST', body: form }))
-      .rejects.toThrow(/cannot serialise a FormData body/u);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      }
+    });
+    await expect(fetchImpl('https://example.invalid/x', { method: 'POST', body: stream as unknown as BodyInit }))
+      .rejects.toThrow(/cannot serialise a ReadableStream body/u);
+  });
+
+  it('serialises a multipart body and sends the boundary it generated', async () => {
+    const fixture = await startChunkedFixture();
+    try {
+      const fetchImpl = createProxyFetch(`socks5h://127.0.0.1:${fixture.socksPort}`, { rejectUnauthorized: false });
+      // Not valid utf8: proves the attachment is not round-tripped through a string.
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x80]);
+      const form = new FormData();
+      form.set('prompt', 'a red cube');
+      form.set('image', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'image.png');
+      const pending = fetchImpl(`https://127.0.0.1:${fixture.originPort}/images/edits`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer k' },
+        body: form
+      });
+      const raw = await fixture.request;
+      const head = raw.toString('latin1');
+      const boundary = /content-type: multipart\/form-data; boundary=([^\r\n]+)/iu.exec(head)?.[1];
+      // Without the boundary the origin parses an empty part list, so the
+      // header and the bytes have to agree.
+      expect(boundary).toBeTruthy();
+      expect(head).toContain(`--${boundary!}`);
+      expect(head).toContain('name="prompt"');
+      expect(head).toContain('filename="image.png"');
+      expect(raw.includes(png)).toBe(true);
+      fixture.finish();
+      await pending;
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('replaces a caller content-type that cannot describe the multipart bytes', async () => {
+    const fixture = await startChunkedFixture();
+    try {
+      const fetchImpl = createProxyFetch(`socks5h://127.0.0.1:${fixture.socksPort}`, { rejectUnauthorized: false });
+      const form = new FormData();
+      form.set('a', 'b');
+      const pending = fetchImpl(`https://127.0.0.1:${fixture.originPort}/x`, {
+        method: 'POST',
+        // A boundary-less multipart type: keeping it would silently send an
+        // unparseable request.
+        headers: { 'content-type': 'multipart/form-data' },
+        body: form
+      });
+      const raw = await fixture.request;
+      expect(raw.toString('latin1')).toMatch(/content-type: multipart\/form-data; boundary=/iu);
+      fixture.finish();
+      await pending;
+    } finally {
+      await fixture.close();
+    }
   });
 
   it('destroys the proxy socket once the response body ends', async () => {
