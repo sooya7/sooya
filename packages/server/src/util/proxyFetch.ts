@@ -76,22 +76,49 @@ function parseProxyUrl(raw: string): URL {
 }
 
 /**
+ * The caller's `content-type` wins, per the fetch spec — except for a multipart
+ * type carrying no boundary. That one cannot describe the bytes we just
+ * produced (the boundary is chosen during serialisation), and sending it makes
+ * the origin parse an empty part list instead of the attachment.
+ */
+function shouldAdoptGeneratedContentType(headers: Headers, generated: string): boolean {
+  const existing = headers.get('content-type');
+  if (!existing) return true;
+  return generated.startsWith('multipart/') && !/;\s*boundary=/i.test(existing);
+}
+
+/**
  * Normalises a fetch body to bytes.
  *
- * `Buffer.from(String(body))` — the previous implementation — round-trips
- * through utf8 and is therefore *lossy for binary*: any byte sequence that is
- * not valid utf8 comes out as U+FFFD, and a FormData/stream body degrades to
- * the literal string "[object FormData]". Binary payloads are passed through
+ * `Buffer.from(String(body))` — the original implementation — round-tripped
+ * through utf8 and was therefore *lossy for binary*: any byte sequence that is
+ * not valid utf8 came out as U+FFFD. Binary payloads are passed through
  * untouched, and anything this transport genuinely cannot serialise fails
  * loudly instead of being silently corrupted.
+ *
+ * `FormData`/`URLSearchParams`/`Blob` are handed to `Response`, the only thing
+ * that knows the boundary it generated — so the bytes and the `content-type`
+ * header must come from the *same* Response instance. Without this branch a
+ * multipart request (an image edit carrying a reference image) threw
+ * `ProxyUnsupportedBodyError` on every attempt whenever a proxy was configured,
+ * which is deterministic rather than intermittent: the reference-image path was
+ * simply unavailable behind a proxy.
  */
-function encodeBody(body: RequestInit['body']): Buffer | undefined {
+async function encodeBody(body: RequestInit['body'], headers: Headers): Promise<Buffer | undefined> {
   if (body == null) return undefined;
   if (typeof body === 'string') return Buffer.from(body, 'utf8');
   if (Buffer.isBuffer(body)) return body;
   if (body instanceof Uint8Array) return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
   if (body instanceof ArrayBuffer) return Buffer.from(body);
   if (ArrayBuffer.isView(body)) return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+  if (body instanceof FormData || body instanceof URLSearchParams || body instanceof Blob) {
+    const encoded = new Response(body);
+    const generated = encoded.headers.get('content-type');
+    if (generated && shouldAdoptGeneratedContentType(headers, generated)) {
+      headers.set('content-type', generated);
+    }
+    return Buffer.from(await encoded.arrayBuffer());
+  }
   throw new ProxyUnsupportedBodyError(
     `proxy transport cannot serialise a ${body.constructor?.name ?? typeof body} body; pass a string or bytes`
   );
@@ -368,7 +395,7 @@ export function createProxyFetch(proxyUrl: string, opts: { rejectUnauthorized?: 
     const url = new URL(String(input));
     const method = init?.method ?? 'GET';
     const headers = new Headers(init?.headers);
-    const body = encodeBody(init?.body);
+    const body = await encodeBody(init?.body, headers);
     const targetPort = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
     const signal = init?.signal ?? undefined;
 
