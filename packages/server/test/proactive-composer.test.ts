@@ -117,7 +117,7 @@ describe('ProactiveComposer -> Moments', () => {
   });
 
   it('plans a grounded lifestyle photo with SOOYA in frame and stores it as a Moment media reference', async () => {
-    harness = await withMoments({ image: 'anuma' });
+    harness = await withMoments({ image: 'ok' });
     stageCandidate(harness);
     const park = harness.app.repos.locations.create({ name: '社区公园', kind: 'park', city: '宁波', source: 'admin' });
     harness.app.repos.locations.recordVisit({ locationId: park.id, enteredAt: localTime('2026-07-31T14:00').toISOString(), leftAt: localTime('2026-07-31T17:00').toISOString() });
@@ -138,13 +138,13 @@ describe('ProactiveComposer -> Moments', () => {
     expect(body).toContain('SOOYA herself must be visibly present');
     expect(body).toContain('Do not use first-person POV');
     expect(body).not.toContain('Keep the photographer completely out of frame');
-    expect(harness.state.imageRequests[0]!.body.input_images).toBeDefined();
+    expect(harness.state.imageRequests[0]!.form?.image).toMatch(/^file:/);
     expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({ photoKind: 'lifestyle', referenceUsed: true, destination: 'moments' });
   });
 
   it.each(['selfie', 'lifestyle'] as const)('uses persona references for every on-camera proactive Moment (%s)', async (kind) => {
     harness = await withMoments({
-      image: 'anuma',
+      image: 'ok',
       chat: {
         script: [[sharePlan(
           '窗边这杯咖啡意外地好喝，今天的光也很舒服。',
@@ -155,14 +155,14 @@ describe('ProactiveComposer -> Moments', () => {
     stageCandidate(harness);
     const result = await harness.app.services.proactive.run({ mode: 'image' });
     expect(result.status).toBe('sent');
-    expect(harness.state.imageRequests[0]!.body.input_images).toBeDefined();
+    expect(harness.state.imageRequests[0]!.form?.image).toMatch(/^file:/);
     expect(JSON.stringify(harness.state.imageRequests[0]!.body)).not.toContain('POV identity constraint');
     expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({ photoKind: kind, referenceUsed: true, destination: 'moments' });
   });
 
   it('normalizes a legacy pov plan into an on-camera lifestyle photo before it reaches the image provider', async () => {
     harness = await withMoments({
-      image: 'anuma',
+      image: 'ok',
       chat: { script: [[JSON.stringify({ text: '蹲下来的时候它居然没有跑开。', image: { kind: 'pov', scene: '雨后公园步道旁的橘猫' } })]] }
     });
     stageCandidate(harness);
@@ -178,7 +178,7 @@ describe('ProactiveComposer -> Moments', () => {
     expect(body).toContain('Do not use first-person POV');
     expect(body).not.toContain('Keep the photographer completely out of frame');
     expect(body).toContain('去公园看猫');
-    expect(harness.state.imageRequests[0]!.body.input_images).toBeDefined();
+    expect(harness.state.imageRequests[0]!.form?.image).toMatch(/^file:/);
     const moment = harness.app.repos.moments.get(result.momentId!)!;
     expect(moment.image_kind).toBe('lifestyle');
     expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({
@@ -190,7 +190,7 @@ describe('ProactiveComposer -> Moments', () => {
   });
 
   it('falls back to a text Moment when persona references are unavailable for an on-camera photo', async () => {
-    harness = await withMoments({ image: 'anuma', env: { SOOYA_REFERENCES_DIR: '/nonexistent-sooya-refs' } });
+    harness = await withMoments({ image: 'ok', env: { SOOYA_REFERENCES_DIR: '/nonexistent-sooya-refs' } });
     stageCandidate(harness);
 
     const result = await harness.app.services.proactive.run({ mode: 'image' });
@@ -206,7 +206,7 @@ describe('ProactiveComposer -> Moments', () => {
 
   it('publishes an afternoon event at 18:30 as retrospective and stores the same two clocks everywhere', async () => {
     harness = await withMoments({
-      image: 'anuma',
+      image: 'ok',
       clock: () => localTime('2026-07-31T18:30'),
       chat: {
         script: [[sharePlan('下午在公园蹲着看猫时，那只橘猫踩着我的鞋不肯走。')]]
