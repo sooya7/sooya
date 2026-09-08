@@ -94,7 +94,7 @@ describe('model preset editing', () => {
   it('starts a new draft on a provider the chosen slot supports', () => {
     expect(validatePreset({ ...emptyPreset('tts'), id: 'x', name: 'x', model: 'x' }, [])).toBeNull();
     expect(validatePreset({ ...emptyPreset('image'), id: 'x', name: 'x', model: 'x' }, [])).toBeNull();
-    expect(interfaceOptions('image').map((option) => option.value)).toContain('anuma-input-images');
+    expect(interfaceOptions('image').map((option) => option.value)).toContain('openai-images');
   });
 });
 

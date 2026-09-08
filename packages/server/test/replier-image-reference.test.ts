@@ -64,7 +64,7 @@ describe('image reference reply orchestration', () => {
   });
 
   it('uses persona references for an [[image-self]] selfie and marks it in metadata', async () => {
-    h = await createHarness({ image: 'anuma', chat: { script: [['发一张[[image-self:我站在窗边的自拍]]']] } });
+    h = await createHarness({ image: 'ok', chat: { script: [['发一张[[image-self:我站在窗边的自拍]]']] } });
     const response = await h.app.server.inject({
       method: 'POST',
       url: '/api/messages/sync',
@@ -76,8 +76,12 @@ describe('image reference reply orchestration', () => {
     expect(image.status).toBe('sent');
     expect(image.meta.selfie).toBe(true);
 
-    const gen = h.state.imageRequests.filter((r) => r.url.includes('/images/generations')).pop();
-    expect(gen?.body).toMatchObject({ input_images: ['https://cdn.example/reference.png'] });
+    // The persona reference rides the edits form, and the configured size rides
+    // with it — a selfie that silently dropped either one is the regression this
+    // guards: the reference keeps her face consistent, the size keeps the frame.
+    const edit = h.state.imageRequests.filter((r) => r.url.includes('/images/edits')).pop();
+    expect(edit?.form?.image).toMatch(/^file:image\.png:image\/png$/);
+    expect(edit?.form?.size).toBe('1024x1024');
   });
 });
 

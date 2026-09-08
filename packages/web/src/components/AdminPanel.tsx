@@ -267,7 +267,6 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   }, []);
 
   const config = (models?.[selected] ?? {}) as Record<string, unknown>;
-  const discoveryUnsupported = config.provider === 'anuma-input-images';
   const update = (key: string, value: unknown) => setModels((prev) => ({
     ...(prev ?? {}),
     [selected]: { ...config, [key]: value }
@@ -310,10 +309,6 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   /** Asks the endpoint what it serves. The key stays server-side. */
   const pull = async () => {
     if (selected === 'webSearch') return;
-    if (discoveryUnsupported) {
-      onNotice('Anuma 不提供模型列表，请手动填写模型名');
-      return;
-    }
     if (keyDraft.trim()) {
       onNotice('请先点击“保存模型配置”，再拉取模型列表');
       return;
@@ -417,7 +412,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           模型名
           <span className="admin-inline-field">
             <input list="admin-model-options" value={String(config.model ?? '')} onChange={(e) => update('model', e.target.value)} />
-            <button type="button" data-testid="admin-model-pull" disabled={pulling || discoveryUnsupported} onClick={() => void pull()}>{pulling ? '拉取中…' : '拉取模型'}</button>
+            <button type="button" data-testid="admin-model-pull" disabled={pulling} onClick={() => void pull()}>{pulling ? '拉取中…' : '拉取模型'}</button>
           </span>
           <datalist id="admin-model-options">
             {(available ?? []).map((name) => <option key={name} value={name} />)}
@@ -425,9 +420,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           <small>
             {available
               ? `拉取到 ${available.length} 个模型，点输入框可选；列表可能不全，仍可手填。`
-              : discoveryUnsupported
-                ? 'Anuma 不提供模型列表接口，请直接填写供应商提供的模型名。'
-                : '从接口地址拉取该服务提供的模型名。密钥不会离开服务器。'}
+              : '从接口地址拉取该服务提供的模型名。密钥不会离开服务器。'}
           </small>
         </label>
         <label className="admin-form-wide">
@@ -478,12 +471,6 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           </label>
         )}
         {selected === 'image' && <label>图片尺寸<input value={String(config.size ?? '')} onChange={(e) => update('size', e.target.value)} /></label>}
-        {selected === 'image' && config.provider === 'anuma-input-images' && <>
-          <p className="field-help">生成阶段不会自动重试，以免一次请求产生多张图片。</p>
-          <label>Anuma 上传超时（毫秒）<input type="number" min="1000" max="120000" value={String(config.uploadTimeoutMs ?? 20000)} onChange={(e) => update('uploadTimeoutMs', Number(e.target.value))} /></label>
-          <label>Anuma 上传重试次数<input type="number" min="0" max="3" value={String(config.uploadMaxRetries ?? 2)} onChange={(e) => update('uploadMaxRetries', Number(e.target.value))} /></label>
-          <p className="admin-muted admin-form-wide">Anuma 图生图会先上传参考图，再把 HTTPS 地址传给 generations；不会把图片 Base64 或签名地址写入日志。</p>
-        </>}
         {selected === 'video' && <>
           <label>视频尺寸（size）<input value={String(config.size ?? '1280x720')} placeholder="1280x720 / 720x1280" onChange={(e) => update('size', e.target.value)} /></label>
           <label>默认时长（秒）<input type="number" min="1" max="60" value={String(config.durationSec ?? 5)} onChange={(e) => update('durationSec', Number(e.target.value))} /></label>

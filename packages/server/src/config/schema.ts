@@ -113,7 +113,16 @@ export const EmbeddingModelSchema = z.object({
 export type EmbeddingModelConfig = z.infer<typeof EmbeddingModelSchema>;
 
 export const ImageModelSchema = z.object({
-  provider: z.enum(['openai-images', 'openai-compatible', 'anuma-input-images', 'none']).default('none'),
+  /**
+   * `anuma-input-images` was removed with the Anuma gateway. Restored backups
+   * and hand-edited files can still name it, and a hard enum failure here takes
+   * the whole server down at boot over one dead slot — so it degrades to
+   * `none`, which surfaces as "image not configured" and is recoverable from
+   * the admin panel.
+   */
+  provider: z
+    .preprocess((v) => (v === 'anuma-input-images' ? 'none' : v), z.enum(['openai-images', 'openai-compatible', 'none']))
+    .default('none'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
   /** Optional NewAPI user id required by its frontend model-list endpoints. */
@@ -122,9 +131,7 @@ export const ImageModelSchema = z.object({
   size: z.string().default('1024x1024'),
   responseFormat: z.enum(['url', 'b64_json']).optional(),
   timeoutMs: z.number().int().min(1000).max(600_000).default(120_000),
-  maxRetries: z.number().int().min(0).max(5).default(1),
-  uploadTimeoutMs: z.number().int().min(1000).max(120_000).default(20_000),
-  uploadMaxRetries: z.number().int().min(0).max(3).default(2)
+  maxRetries: z.number().int().min(0).max(5).default(1)
 });
 export type ImageModelConfig = z.infer<typeof ImageModelSchema>;
 

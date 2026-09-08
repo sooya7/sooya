@@ -80,13 +80,13 @@ describe('拉取模型列表', () => {
     expect(body.source).toBe('https://other.example.com/v2/models');
   });
 
-  it('does not pretend Anuma exposes a model-list endpoint', async () => {
-    h = await boot({ discover: { payload: { data: [{ id: 'anuma-image' }] } } });
+  it('does not pretend a vendor-specific protocol exposes a model-list endpoint', async () => {
+    h = await boot({ discover: { payload: { data: [{ id: 'some-voice' }] } } });
     await h.app.server.inject({
       method: 'PUT', url: '/api/admin/models', headers: ADMIN,
-      payload: { image: { provider: 'anuma-input-images', baseUrl: 'https://fake.example.com/v1', apiKey: 'anuma-key', model: 'anuma-image' } }
+      payload: { tts: { provider: 'volc-tts', baseUrl: 'https://fake.example.com/v1', apiKey: 'volc-key', model: 'some-voice' } }
     });
-    const { res, body } = await discover('image');
+    const { res, body } = await discover('tts');
     expect(res.statusCode).toBe(400);
     expect(body.error).toBe('discovery_unsupported');
   });

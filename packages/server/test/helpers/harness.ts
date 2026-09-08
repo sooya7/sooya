@@ -39,8 +39,13 @@ export interface FakeProviderState {
   discoverCalls: string[];
   discoverHeaders: Array<Record<string, string>>;
   imageCalls: number;
-  /** Recorded image generation/upload requests, so tests can assert input_images. */
-  imageRequests: Array<{ url: string; body: Record<string, unknown> }>;
+  /**
+   * Recorded image generation/edit requests, so tests can assert what was sent.
+   * `body` is the JSON generations payload; `form` is the multipart edits one
+   * (reference images ride that path, so it is the only place their attachment
+   * and the requested size are observable).
+   */
+  imageRequests: Array<{ url: string; body: Record<string, unknown>; form: Record<string, string> | null }>;
   ttsCalls: number;
   embedCalls: number;
   rerankCalls: number;
@@ -55,7 +60,7 @@ export interface HarnessOptions {
   env?: Record<string, string>;
   chat?: FakeChatOptions;
   /** Enable a fake image provider that returns a real PNG. */
-  image?: 'ok' | 'fail' | 'anuma' | 'off';
+  image?: 'ok' | 'fail' | 'off';
   tts?: 'ok' | 'fail' | 'off';
   embedding?: 'ok' | 'fail' | 'off';
   /** Fixed dimension for the fake embedding provider. */
@@ -98,7 +103,7 @@ export interface Harness {
   /** Replace the scripted chat responses at runtime. */
   setChatScript: (script: string[][]) => void;
   setChatError: (err: Error | null) => void;
-  setImageMode: (mode: 'ok' | 'fail' | 'anuma' | 'off') => void;
+  setImageMode: (mode: 'ok' | 'fail' | 'off') => void;
   setTtsMode: (mode: 'ok' | 'fail' | 'off') => void;
   setVideoMode: (mode: 'ok' | 'fail' | 'reject' | 'off') => void;
   cleanup: () => Promise<void>;
@@ -257,16 +262,24 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       }
       return sseResponse(chunks);
     }
-    if (url.includes('/media/upload')) {
-      if (imageMode === 'fail') return new Response('image backend exploded', { status: 500 });
-      return new Response(JSON.stringify({ url: 'https://cdn.example/reference.png' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' }
-      });
-    }
     if (url.includes('/images/generations') || url.includes('/images/edits')) {
       state.imageCalls++;
-      state.imageRequests.push({ url, body: (body ?? {}) as Record<string, unknown> });
+      let imageForm: Record<string, string> | null = null;
+      if (init?.body instanceof FormData) {
+        imageForm = {};
+        for (const [key, value] of init.body.entries()) {
+          imageForm[key] = typeof value === 'string' ? value : `file:${(value as File).name}:${(value as File).type}`;
+        }
+      }
+      // `body` carries the fields whichever transport was used, so a test that
+      // only cares what prompt reached the provider does not have to know that
+      // reference images switch the call from JSON to multipart. `form` stays
+      // available for the attachment itself.
+      state.imageRequests.push({
+        url,
+        body: (body ?? imageForm ?? {}) as Record<string, unknown>,
+        form: imageForm
+      });
       if (imageMode === 'fail') return new Response('image backend exploded', { status: 500 });
       return new Response(JSON.stringify({ data: [{ b64_json: PNG_1x1.toString('base64') }] }), {
         status: 200,
@@ -354,25 +367,14 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
     image:
       imageMode === 'off'
         ? { provider: 'none' }
-        : imageMode === 'anuma'
-          ? {
-              provider: 'anuma-input-images',
-              baseUrl: 'https://fake.example.com/v1',
-              apiKey: 'sk-test-key-000000',
-              model: 'fake-anuma-image',
-              maxRetries: 0,
-              timeoutMs: 5000,
-              uploadTimeoutMs: 1000,
-              uploadMaxRetries: 0
-            }
-          : {
-              provider: 'openai-images',
-              baseUrl: 'https://fake.example.com/v1',
-              apiKey: 'sk-test-key-000000',
-              model: 'fake-image',
-              maxRetries: 0,
-              timeoutMs: 5000
-            },
+        : {
+            provider: 'openai-images',
+            baseUrl: 'https://fake.example.com/v1',
+            apiKey: 'sk-test-key-000000',
+            model: 'fake-image',
+            maxRetries: 0,
+            timeoutMs: 5000
+          },
     tts:
       ttsMode === 'off'
         ? { provider: 'none' }

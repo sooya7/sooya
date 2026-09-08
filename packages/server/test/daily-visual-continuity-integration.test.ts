@@ -55,7 +55,7 @@ const baselineOutfit = '黑色轻便休闲外套、浅色简洁内搭、深色�
 describe('daily visual continuity integration', () => {
   it('keeps two ordinary same-day chat selfies in one outfit even if the second director drifts', async () => {
     harness = await createHarness({
-      image: 'anuma',
+      image: 'ok',
       startWorkers: false,
       clock: () => localTime('2026-08-22T15:30'),
       env: {
@@ -127,7 +127,7 @@ describe('daily visual continuity integration', () => {
 
   it('forces an unspecified 13:17 continuation back to current midday despite a stale night director prompt', async () => {
     harness = await createHarness({
-      image: 'anuma',
+      image: 'ok',
       startWorkers: false,
       clock: () => localTime('2026-08-26T13:17'),
       env: { ENABLE_BACKGROUND_JOBS: 'false', LIFE_TIME_ZONE: 'Asia/Shanghai' },
@@ -161,7 +161,7 @@ describe('daily visual continuity integration', () => {
 
   it('allows a new night image at 13:17 only as yesterday without leaking current Life facts or continuity state', async () => {
     harness = await createHarness({
-      image: 'anuma',
+      image: 'ok',
       startWorkers: false,
       clock: () => localTime('2026-08-26T13:17'),
       env: {
@@ -229,7 +229,7 @@ describe('daily visual continuity integration', () => {
 
   it('forces a standard generated image back to current midday without creating outfit continuity', async () => {
     harness = await createHarness({
-      image: 'anuma',
+      image: 'ok',
       startWorkers: false,
       clock: () => localTime('2026-08-26T13:17'),
       env: { ENABLE_BACKGROUND_JOBS: 'false', LIFE_TIME_ZONE: 'Asia/Shanghai' },
@@ -270,7 +270,7 @@ describe('daily visual continuity integration', () => {
 
   it('turns a standard requested night image into yesterday without creating outfit continuity', async () => {
     harness = await createHarness({
-      image: 'anuma',
+      image: 'ok',
       startWorkers: false,
       clock: () => localTime('2026-08-26T13:17'),
       env: { ENABLE_BACKGROUND_JOBS: 'false', LIFE_TIME_ZONE: 'Asia/Shanghai' },
@@ -315,7 +315,7 @@ describe('daily visual continuity integration', () => {
 
   it('shares the same persisted outfit between chat selfies and proactive lifestyle Moments', async () => {
     harness = await createHarness({
-      image: 'anuma',
+      image: 'ok',
       startWorkers: false,
       clock: () => localTime('2026-08-22T17:30'),
       env: {
@@ -357,7 +357,7 @@ describe('daily visual continuity integration', () => {
     expect(proactivePrompt).toContain(baselineOutfit);
     expect(proactivePrompt).toContain('Keep every garment type');
     expect(proactivePrompt).toContain('LIFESTYLE COMPOSITION');
-    expect(harness.state.imageRequests[1]!.body.input_images).toBeDefined();
+    expect(harness.state.imageRequests[1]!.form?.image).toMatch(/^file:/);
 
     const state = harness.app.services.imageContinuity.current();
     expect(state).toMatchObject({
