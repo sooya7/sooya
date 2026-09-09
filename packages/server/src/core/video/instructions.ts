@@ -11,7 +11,7 @@ export function videoMarkerInstructions(persona: Persona): string[] {
     '· [[video:画面意图]] 生成并发送一段几秒钟的短视频。视频要几分钟才能做好，系统会在做好后作为一条新消息单独发出；所以这条回复里要自然地告诉用户需要等一会儿，不要说"发好了""看这段"。'
   ];
   if (persona.referenceImages.length > 0) {
-    lines.push('· [[video-self:画面意图]] 生成一段你自己出镜的短视频。系统会用你的形象参考图作为首帧，保证长相一致；写明视角（正面半身、全身、侧脸）便于选参考图。');
+    lines.push('· [[video-self:画面意图]] 生成一段你自己出镜的短视频。系统会保证你的形象长相一致；写明视角（正面半身、全身、侧脸）便于选参考图。');
   }
   const proactive = persona.videoPolicy.frequency === 'never'
     ? '只在用户明确要视频时使用，不要主动发。'
