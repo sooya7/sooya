@@ -58,6 +58,8 @@ import {
   type VisualTimeContext
 } from './visual-time.js';
 
+export const VIDEO_QUEUED_PLACEHOLDER_TEXT = '（好呀，等我几分钟拍一段给你~）';
+
 export interface ReplyOptions {
   recentMessages: number;
   memoryLimit: number;
@@ -1236,9 +1238,29 @@ export class Replier {
       if (continuity) prompt = applyVideoContinuity(prompt, continuity, selfie);
       else prompt = applyVisualTimeToPrompt(prompt, generated.visualTime);
       let sourceImage: { data: Buffer; mime: string; name?: string } | undefined;
+      let dynamicKeyframe = false;
       if (selfie) {
         const refs = await this.deps.personaReferences.load(intent);
-        if (refs[0]) sourceImage = { data: refs[0].data, mime: refs[0].mime, name: refs[0].name };
+        if (this.deps.capabilities.has('image') && refs.length > 0) {
+          try {
+            const imageProvider = this.deps.capabilities.imageProvider();
+            const keyframePrompt = `${prompt}, cinematic opening frame snapshot, candid realistic photograph`;
+            const keyframe = await imageProvider.generate(keyframePrompt, {
+              referenceImages: refs,
+              signal
+            });
+            sourceImage = { data: keyframe.data, mime: keyframe.mime, name: 'scene_keyframe.png' };
+            dynamicKeyframe = true;
+          } catch (err) {
+            if (signal.aborted) throw signal.reason;
+            this.deps.errorLog.add('reply.video', 'keyframe_generation_fallback', {
+              diagnostic: redactDiagnostic(err)
+            });
+            if (refs[0]) sourceImage = { data: refs[0].data, mime: refs[0].mime, name: refs[0].name };
+          }
+        } else if (refs[0]) {
+          sourceImage = { data: refs[0].data, mime: refs[0].mime, name: refs[0].name };
+        }
       }
       const continuityMeta = continuity ? videoContinuityMetadata(continuity, selfie) : null;
       const task = await video.create({
@@ -1254,6 +1276,7 @@ export class Replier {
           taskId: task.id,
           status: 'queued',
           selfie,
+          dynamicKeyframe,
           intent: intent.slice(0, 300),
           directorPrompt: prompt.slice(0, 1000),
           ...(aspectRatio ? { aspectRatio } : {}),
@@ -1261,6 +1284,10 @@ export class Replier {
         }
       });
       this.deps.bus.publish('reply.video.queued', { messageId: shell.id, taskId: task.id, selfie });
+      if (!finalText) {
+        this.deps.messages.appendPart(shell.id, { type: 'text', text: VIDEO_QUEUED_PLACEHOLDER_TEXT, status: 'sent' });
+        if (!producedParts.includes('text')) producedParts.push('text');
+      }
     } catch (err) {
       if (signal.aborted) throw signal.reason;
       const e = err as Error;

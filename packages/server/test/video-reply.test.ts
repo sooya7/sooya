@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, TEST_MP4, type Harness, type HarnessOptions } from './helpers/harness.js';
 import { VIDEO_FAILED_TEXT } from '../src/core/video/follow-up.js';
+import { VIDEO_QUEUED_PLACEHOLDER_TEXT } from '../src/core/replier.js';
 import type { ChatMessage } from '../src/core/types.js';
 
 let h: Harness | null = null;
@@ -137,5 +138,30 @@ describe('[[video]] in a reply', () => {
     await say('你好');
     expect(JSON.stringify(h.state.chatCalls[0]!.body)).not.toContain(taught);
     expect(JSON.stringify(h.state.chatCalls[0]!.body)).toContain('视频生成不可用');
+  });
+
+  it('supplies a placeholder note when the model generated video without accompanying text', async () => {
+    h = await boot('[[video:海浪冲刷沙滩]]');
+    const reply = await say('发个海浪视频');
+    const text = reply.content.find((part) => part.type === 'text');
+    expect(text?.text).toBe(VIDEO_QUEUED_PLACEHOLDER_TEXT);
+    expect(reply.note ?? '').not.toContain('empty-reply-guard');
+  });
+
+  it('generates a scene keyframe using the image provider when image capability is available', async () => {
+    h = await createHarness({
+      video: 'ok',
+      image: 'ok',
+      chat: { script: [['等一下哈[[video-self:我在窗边对你挥手，正面半身]]']] }
+    });
+    const reply = await say('录一段你自己的视频');
+    const queued = reply.meta?.video as { taskId: string; selfie: boolean; dynamicKeyframe?: boolean };
+    expect(queued.selfie).toBe(true);
+    expect(queued.dynamicKeyframe).toBe(true);
+    const task = h.app.services.video.get(queued.taskId)!;
+    expect(task.mode).toBe('image');
+    expect(h.state.imageCalls).toBe(1);
+    await h.app.services.worker.drain();
+    expect(h.state.videoRequests[0]!.form).toMatchObject({ model: 'fake-video' });
   });
 });
