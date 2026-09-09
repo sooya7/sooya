@@ -91,6 +91,46 @@ describe('OpenAI Videos provider', () => {
     expect(calls[0]!.headers['content-type']).toBeUndefined();
   });
 
+  // Agnes AI rejects the protocol above twice over: `mode` is mandatory, and a
+  // first frame has to arrive as base64 inside JSON. Both were 400s in
+  // production, so each shape is pinned here.
+  describe('agnes dialect', () => {
+    it('sends mode=text as JSON for a text-to-video job', async () => {
+      const { calls, fetchImpl } = recorder(() => json(200, { id: 'task_1', status: 'queued' }));
+      const provider = new OpenAIVideoProvider(
+        openai({ dialect: 'agnes', size: '720P', durationSec: 5 }), deps(fetchImpl)
+      );
+      await provider.createTask({ prompt: '图书馆靠窗' });
+      expect(calls[0]!.headers['content-type']).toBe('application/json');
+      expect(calls[0]!.body).toEqual({ model: 'sora-2', prompt: '图书馆靠窗', seconds: '5', size: '720P', mode: 'text' });
+    });
+
+    it('sends mode=keyframe with a base64 data URI instead of multipart', async () => {
+      const { calls, fetchImpl } = recorder(() => json(200, { id: 'task_2', status: 'queued' }));
+      const provider = new OpenAIVideoProvider(
+        openai({ dialect: 'agnes', size: '720P' }), deps(fetchImpl)
+      );
+      await provider.createTask({ prompt: '让画面动起来', image: { data: PNG, mime: 'image/png' }, aspectRatio: '9:16' });
+      expect(calls[0]!.form).toBeNull();
+      expect(calls[0]!.body).toEqual({
+        model: 'sora-2',
+        prompt: '让画面动起来',
+        seconds: '8',
+        size: '720P',
+        mode: 'keyframe',
+        aspect_ratio: '9:16',
+        first_frame: `data:image/png;base64,${PNG.toString('base64')}`
+      });
+    });
+
+    it('omits aspect_ratio when the director did not choose one', async () => {
+      const { calls, fetchImpl } = recorder(() => json(200, { id: 'task_3', status: 'queued' }));
+      const provider = new OpenAIVideoProvider(openai({ dialect: 'agnes', size: '720P' }), deps(fetchImpl));
+      await provider.createTask({ prompt: 'p' });
+      expect(calls[0]!.body).not.toHaveProperty('aspect_ratio');
+    });
+  });
+
   it('polls the job and maps progress and status', async () => {
     const { calls, fetchImpl } = recorder(() => json(200, { id: 'video_1', status: 'in_progress', progress: 42 }));
     const provider = new OpenAIVideoProvider(openai(), deps(fetchImpl));

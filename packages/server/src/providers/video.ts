@@ -229,6 +229,11 @@ abstract class HttpVideoProvider implements VideoProvider {
  * `GET /videos/{id}/content`), also spoken by OpenAI-compatible gateways.
  * Text-only requests go as JSON; a first-frame image switches to multipart
  * because the reference has to travel as a file part (`input_reference`).
+ *
+ * `cfg.dialect` selects the vendor's exact request shape. Agnes AI rejects both
+ * halves of the above: it demands a `mode` field and takes the first frame as a
+ * base64 data URI inside JSON, answering multipart with 400. See
+ * `agnesBody` below.
  */
 export class OpenAIVideoProvider extends HttpVideoProvider {
   readonly name: string;
@@ -253,6 +258,29 @@ export class OpenAIVideoProvider extends HttpVideoProvider {
     };
   }
 
+  /**
+   * Agnes AI request body. `mode` is mandatory and picks the media contract:
+   * `text` forbids every media field, `keyframe` requires a first frame. The
+   * frame goes in as a data URI because the gateway only accepts JSON bodies and
+   * cannot fetch our private media URLs.
+   */
+  private agnesBody(req: VideoTaskRequest, seconds: string, size: string): Record<string, unknown> {
+    const body: Record<string, unknown> = {
+      model: this.cfg.model,
+      prompt: req.prompt,
+      seconds,
+      mode: req.image ? 'keyframe' : 'text'
+    };
+    // Agnes takes a resolution label (`720P`) and reads orientation from
+    // `aspect_ratio`; a `WxH` size is rejected with "size must be 720P".
+    if (size) body.size = size;
+    if (req.aspectRatio) body.aspect_ratio = req.aspectRatio;
+    if (req.image) {
+      body.first_frame = `data:${req.image.mime};base64,${Buffer.from(req.image.data).toString('base64')}`;
+    }
+    return body;
+  }
+
   async createTask(req: VideoTaskRequest): Promise<VideoTaskSnapshot> {
     if (!this.configured) throw new ProviderNotConfiguredError('video');
     const url = this.endpoint('/videos');
@@ -261,7 +289,13 @@ export class OpenAIVideoProvider extends HttpVideoProvider {
     return withRetry(
       async () => {
         let init: RequestInit;
-        if (req.image) {
+        if (this.cfg.dialect === 'agnes') {
+          init = {
+            method: 'POST',
+            headers: this.authHeaders({ 'content-type': 'application/json' }),
+            body: JSON.stringify(this.agnesBody(req, seconds, size))
+          };
+        } else if (req.image) {
           const form = new FormData();
           form.set('model', this.cfg.model);
           form.set('prompt', req.prompt);

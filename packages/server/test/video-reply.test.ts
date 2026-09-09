@@ -108,6 +108,22 @@ describe('[[video]] in a reply', () => {
     expect(h.app.services.video.list().total).toBe(0);
   });
 
+  // The model answers "做好了会发过来" on its own (instructions.ts tells it to),
+  // and the cap check runs after that text already exists. Skipping the notice
+  // whenever the model spoke would leave the promise standing with no clip.
+  it('says the cap out loud even when the model already promised a clip', async () => {
+    h = await boot('好～拍了一段，做好了会发过来，等一下哦[[video:海边]]');
+    h.app.config.setPersona({ videoPolicy: { enabled: true, frequency: 'never', maxPerDay: 0 } });
+    const capped = await say('拍段海边视频', 'cap-promise');
+    expect(capped.meta?.video).toMatchObject({ status: 'skipped', reason: 'daily_cap' });
+    expect(h.app.services.video.list().total).toBe(0);
+
+    const text = capped.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n');
+    // The promise stays, and the correction follows it — the user is told.
+    expect(text).toContain('做好了会发过来');
+    expect(text).toContain('用完了');
+  });
+
   it('teaches the markers only when a video model is configured', async () => {
     h = await boot('好');
     await say('你好');

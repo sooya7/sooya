@@ -1165,16 +1165,25 @@ export class Replier {
   }): Promise<void> {
     const { shell, intent, selfie, persona, signal, degraded, finalText, producedParts, userText, generated } = input;
     const video = this.deps.video!;
-    const note = (text: string) => {
-      if (finalText) return;
-      this.deps.messages.appendPart(shell.id, { type: 'text', text, status: 'sent' });
-      producedParts.push('text');
+    /**
+     * A clip that will not happen has to be said out loud. When the model stayed
+     * silent the notice is the whole message; when it already promised a clip
+     * ("做好了会发过来"), dropping the notice would leave that promise standing
+     * forever, so it is appended as a correction instead. `correction` is the
+     * wording for that case.
+     */
+    const note = (text: string, correction: string) => {
+      this.deps.messages.appendPart(shell.id, { type: 'text', text: finalText ? correction : text, status: 'sent' });
+      if (!producedParts.includes('text')) producedParts.push('text');
     };
     const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
     if (video.countCreatedSince(since) >= persona.videoPolicy.maxPerDay) {
       degraded.push('video:daily_cap');
       this.deps.messages.updateMeta(shell.id, { video: { status: 'skipped', reason: 'daily_cap', intent: intent.slice(0, 300) } });
-      note('（今天能拍的视频次数用完了，明天再拍给你。）');
+      note(
+        '（今天能拍的视频次数用完了，明天再拍给你。）',
+        '（不过今天能拍的视频次数已经用完了，这次没能拍成，明天再补给你。）'
+      );
       return;
     }
     let prompt = intent;
@@ -1264,7 +1273,10 @@ export class Replier {
       this.deps.errorLog.add('reply.video', failure.code, { incidentId: failure.incidentId, diagnostic: redactDiagnostic(e) });
       this.deps.messages.updateMeta(shell.id, { video: { status: 'failed', reason, intent: intent.slice(0, 300) } });
       degraded.push(e instanceof VideoRequestError ? `video:${e.code}` : 'video:provider_unavailable');
-      note(`（本来想给你拍段视频，但${reason}）`);
+      note(
+        `（本来想给你拍段视频，但${reason}）`,
+        `（刚说要拍的视频没做成：${reason}）`
+      );
     }
   }
 
