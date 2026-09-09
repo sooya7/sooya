@@ -389,7 +389,11 @@ export class VideoGenerationService {
       prompt: task.prompt,
       image,
       durationSec: typeof params.durationSec === 'number' ? params.durationSec : cfg.durationSec,
-      size: typeof params.size === 'string' && params.size ? params.size : cfg.size
+      size: typeof params.size === 'string' && params.size ? params.size : cfg.size,
+      // Gateways that take a resolution label instead of pixel dimensions
+      // (`agnes`) read orientation from their own field, so the director's
+      // choice has to travel alongside the resolved size.
+      aspectRatio: typeof params.aspectRatio === 'string' && params.aspectRatio ? params.aspectRatio : null
     };
   }
 

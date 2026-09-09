@@ -143,12 +143,23 @@ export type ImageModelConfig = z.infer<typeof ImageModelSchema>;
  */
 export const VideoModelSchema = z.object({
   provider: z.enum(['openai-videos', 'openai-compatible', 'none']).default('none'),
+  /**
+   * Which request shape the gateway actually speaks. `openai` is the documented
+   * OpenAI Videos protocol. `agnes` is Agnes AI's variant, which differs in two
+   * ways that both reject a request outright: `mode` is required, and a first
+   * frame travels as a base64 data URI in JSON rather than a multipart file
+   * part. Guessing wrong costs a 400 on every clip, so it is declared here.
+   */
+  dialect: z.enum(['openai', 'agnes']).default('openai'),
   baseUrl: z.string().default(''),
   apiKey: z.string().default(''),
   /** Same indirection as `tts.apiKeyEnv`: the key stays in the environment. */
   apiKeyEnv: z.string().default(''),
   model: z.string().default(''),
-  /** `size` (WxH), e.g. 1280x720 / 720x1280. */
+  /**
+   * `size` (WxH), e.g. 1280x720 / 720x1280. Agnes only accepts its own label
+   * (`720P`), and derives orientation from `aspect_ratio` instead.
+   */
   size: z.string().max(20).default('1280x720'),
   durationSec: z.number().int().min(1).max(60).default(5),
   timeoutMs: z.number().int().min(1000).max(600_000).default(60_000),

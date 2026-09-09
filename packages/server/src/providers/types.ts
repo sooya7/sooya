@@ -160,6 +160,11 @@ export interface VideoTaskRequest {
   image?: { data: Buffer; mime: string } | null;
   /** WxH, e.g. 1280x720. */
   size?: string;
+  /**
+   * W:H, e.g. 9:16. Gateways that take a resolution label instead of pixel
+   * dimensions (`agnes`) express orientation only through this field.
+   */
+  aspectRatio?: string | null;
   durationSec?: number;
   signal?: AbortSignal;
 }
