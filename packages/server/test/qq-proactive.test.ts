@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
 
 let harness: Harness | null = null;
@@ -113,6 +113,36 @@ describe('QQ proactive delivery (PR 5)', () => {
     expect(prompt).toContain('对方：我去睡了');
     expect(prompt).toContain('对方上一次说话是约 9 小时前');
     expect(prompt).not.toContain('这里不是私人聊天窗口');
+  });
+
+  it('carries stage summaries and long-term memory into the private message', async () => {
+    harness = await withReachOut('你上次说的面试准备得怎么样啦？', true);
+    stage();
+    harness.app.repos.summaries.create({ fromSeq: 1, toSeq: 1, content: '- 用户说下周要去面试，有点紧张。' });
+    harness.app.repos.memories.upsert({ kind: 'profile', content: '用户睡前习惯说我去睡了，喜欢猫', importance: 0.9 });
+
+    harness.app.repos.jobs.enqueue('life.tick', {});
+    await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.messages.page(50).messages.some((m) => m.meta?.proactive === true));
+
+    const prompt = JSON.stringify(harness.state.chatCalls[0]!.body);
+    expect(prompt).toContain('你们以前聊过的重点');
+    expect(prompt).toContain('用户说下周要去面试，有点紧张。');
+    expect(prompt).toContain('你记得的关于对方');
+    expect(prompt).toContain('喜欢猫');
+  });
+
+  it('still sends when the memory source fails', async () => {
+    harness = await withReachOut('刚去公园看猫。', true);
+    stage();
+    const recall = vi.spyOn(harness.app.services.memory, 'recall').mockRejectedValue(new Error('memory down'));
+
+    harness.app.repos.jobs.enqueue('life.tick', {});
+    await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.messages.page(50).messages.some((m) => m.meta?.proactive === true));
+
+    expect(recall).toHaveBeenCalled();
+    expect(JSON.stringify(harness.state.chatCalls[0]!.body)).not.toContain('你记得的关于对方');
   });
 
   it('stops sharing after two unanswered proactive messages until the user replies', async () => {

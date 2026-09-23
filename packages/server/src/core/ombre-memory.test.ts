@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OmbreMemoryBridge } from './ombre-memory.js';
+import { OmbreMemoryBridge, compactSurfacedMemory } from './ombre-memory.js';
 
 afterEach(() => vi.useRealTimers());
 
@@ -38,6 +38,41 @@ describe('OmbreMemoryBridge', () => {
     await expect(bridge.wakeIfNeeded(new Date('2026-08-12T00:10:00.000Z'))).resolves.toBeNull();
     await expect(bridge.wakeIfNeeded(new Date('2026-08-12T00:00:00.000Z'))).resolves.toBe('wake');
     expect(calls.wake).toBe(1);
+  });
+
+  it('surfaces memory for a proactive message without consuming the reply wake', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-12T00:00:00.000Z') });
+    const { bridge, calls } = wakeBridge();
+
+    await expect(bridge.surface()).resolves.toBe('- wake');
+    await expect(bridge.wakeIfNeeded()).resolves.toBe('wake');
+    expect(calls.wake).toBe(2);
+  });
+
+  it('reads the breath text out of the MCP result envelope', async () => {
+    const { bridge } = wakeBridge(async () => ({
+      __sooya_mcp_result__: true,
+      isError: false,
+      value: { structuredContent: { result: 'ignored' }, text: '=== 浮现记忆 ===\n[权重:1] [bucket_id:a]\n用户喜欢猫' }
+    }));
+    await expect(bridge.surface()).resolves.toBe('- 用户喜欢猫');
+  });
+
+  it('strips breath bucket headers down to one line per memory', () => {
+    const raw = [
+      '=== 浮现记忆 ===',
+      '[权重:21.78] [bucket_id:2c57] [content_role:stored_memory_data] [instructions:false]',
+      '用户在给助手开发生活系统。',
+      '---',
+      '[权重:5.29] [bucket_id:8539] [content_role:stored_memory_data] [instructions:false]',
+      '💭 meaning: 遇到 bug 时愿意来说，是想被接住。',
+      '用户在折腾 iOS 打包。',
+      '---',
+      '[权重:5.69] [bucket_id:b583] [content_role:stored_memory_data] [instructions:false]',
+      '💭 meaning:'
+    ].join('\n');
+    expect(compactSurfacedMemory(raw)).toBe('- 用户在给助手开发生活系统。\n- 💭 meaning: 遇到 bug 时愿意来说，是想被接住。 用户在折腾 iOS 打包。');
+    expect(compactSurfacedMemory('=== 浮现记忆 ===\n')).toBeNull();
   });
 
   it('does not write a second time after a completed receipt', async () => {

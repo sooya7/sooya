@@ -7,6 +7,7 @@ import type { OmbreCommitRepo } from '../db/repos/ombre.repo.js';
 import { memoryHealth } from '../mcp/health.js';
 import type { McpManager } from '../mcp/manager.js';
 import type { EventBus } from '../events/bus.js';
+import { SOOYA_MCP_RESULT, type SooyaMcpResultEnvelope } from '../mcp/result.js';
 
 export interface MemoryCommitInput {
   batchId: string;
@@ -51,6 +52,22 @@ export class OmbreMemoryBridge {
       return normalized.content || null;
     } catch (error) {
       this.options.bus?.publish('ombre.memory.error', { phase: 'wake', error: safeError(error) });
+      throw error;
+    }
+  }
+
+  /**
+   * Proactive read of the same surfaced memory. It deliberately leaves the
+   * reply wake clock alone, so the user's next reply still gets its own wake.
+   */
+  async surface(signal?: AbortSignal): Promise<string | null> {
+    const tool = this.options.registry.get('ombre.breath');
+    if (!tool || !this.options.policy.check(tool, 'proactive').allowed) return null;
+    try {
+      const result = await tool.handler({}, { phase: 'proactive', signal });
+      return compactSurfacedMemory(surfacedText(result));
+    } catch (error) {
+      this.options.bus?.publish('ombre.memory.error', { phase: 'proactive', error: safeError(error) });
       throw error;
     }
   }
@@ -215,6 +232,34 @@ export class OmbreMemoryBridge {
       return false;
     }
   }
+}
+
+/** The plain text of a breath result, whichever envelope the MCP bridge used. */
+function surfacedText(result: unknown): string {
+  const value = typeof result === 'object' && result !== null && (result as Record<string, unknown>)[SOOYA_MCP_RESULT] === true
+    ? (result as SooyaMcpResultEnvelope).value
+    : result;
+  if (typeof value === 'string') return value;
+  const record = (typeof value === 'object' && value !== null ? value : {}) as { text?: unknown; structuredContent?: { result?: unknown }; result?: unknown };
+  if (typeof record.text === 'string') return record.text;
+  if (typeof record.structuredContent?.result === 'string') return record.structuredContent.result;
+  return typeof record.result === 'string' ? record.result : '';
+}
+
+/**
+ * breath output carries a "[权重:…] [bucket_id:…]" header per memory; a prompt
+ * only needs the memory text, one bullet per bucket.
+ */
+export function compactSurfacedMemory(text: string): string | null {
+  const items = text
+    .split(/^---\s*$/mu)
+    .map((block) => block
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !/^===.*===$/u.test(line) && !/^(\[[^\]]*\]\s*)+$/u.test(line) && !/^💭\s*meaning:\s*$/u.test(line))
+      .join(' '))
+    .filter(Boolean);
+  return items.length ? items.map((item) => `- ${item}`).join('\n') : null;
 }
 
 function safeError(error: unknown): string {
