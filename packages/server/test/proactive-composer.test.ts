@@ -234,9 +234,9 @@ describe('ProactiveComposer -> Moments', () => {
     const directorContinuity = JSON.parse(directorInput.slice(directorInput.indexOf('{'))).continuity;
     const providerPrompt = JSON.stringify(harness.state.imageRequests[0]!.body);
 
-    expect(allChatRequests).toContain('当前发布时段是 evening');
-    expect(allChatRequests).toContain('事件画面时段是 afternoon');
-    expect(allChatRequests).toContain('正文和图片都必须表现为已经发生的事件');
+    expect(allChatRequests).toContain('2026-07-31 18:30:00（evening）');
+    expect(allChatRequests).toContain('那件小事发生在 2026-07-31 afternoon');
+    expect(allChatRequests).toContain('要当成已经过去的事');
     expect(directorContinuity).toMatchObject({
       currentActivity: null,
       currentLocation: null,

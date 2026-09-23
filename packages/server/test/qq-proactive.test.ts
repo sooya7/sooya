@@ -100,6 +100,55 @@ describe('QQ proactive delivery (PR 5)', () => {
     expect(harness.app.repos.jobs.list(20).filter((job) => job.type === 'qq.deliver')).toHaveLength(0);
   });
 
+  it('writes a private message to the user with the recent conversation in view', async () => {
+    harness = await withReachOut('下午去公园看猫了，有只橘猫一直踩我鞋，好想让你也摸摸。', true);
+    stage();
+
+    harness.app.repos.jobs.enqueue('life.tick', {});
+    await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.messages.page(50).messages.some((m) => m.meta?.proactive === true));
+
+    const prompt = JSON.stringify(harness.state.chatCalls[0]!.body);
+    expect(prompt).toContain('只发给对方一个人');
+    expect(prompt).toContain('对方：我去睡了');
+    expect(prompt).toContain('对方上一次说话是约 9 小时前');
+    expect(prompt).not.toContain('这里不是私人聊天窗口');
+  });
+
+  it('stops sharing after two unanswered proactive messages until the user replies', async () => {
+    harness = await withReachOut('刚去公园看猫。', true);
+    stage();
+    for (const text of ['在忙吗～', '今天好安静呀']) {
+      harness.app.repos.messages.create({ role: 'assistant', status: 'sent', parts: [{ type: 'text', text }], meta: { proactive: true } });
+    }
+
+    harness.app.repos.jobs.enqueue('life.tick', {});
+    await harness.app.services.worker.drain(5);
+    await waitUntil(() => harness!.app.repos.proactive.list(20).length > 0);
+
+    expect(harness.app.repos.proactive.list(1)[0]).toMatchObject({ status: 'blocked', blockedReason: 'awaiting_reply' });
+    expect(harness.app.repos.moments.list()).toHaveLength(0);
+  });
+
+  it('waits twice as long while her last proactive message is unanswered', async () => {
+    harness = await withReachOut('刚去公园看猫。', true);
+    stage();
+    // 100 min ago: past the jittered 60–96 min gap, inside the doubled one.
+    harness.app.repos.moments.create({
+      candidateId: 'life-earlier', text: '练了一下午琴', imageMediaId: null, imageKind: null, activity: '练琴',
+      locationId: null, locationName: null, city: null, weatherCondition: null, temperatureC: null,
+      createdAt: localTime('2026-07-31T15:50').toISOString()
+    });
+    harness.app.repos.messages.create({ role: 'assistant', status: 'sent', parts: [{ type: 'text', text: '在忙吗～' }], meta: { proactive: true } });
+
+    expect(harness.app.services.proactive.evaluate()).toMatchObject({ reach: false, reason: 'moment_gap', unansweredProactive: 1 });
+
+    harness.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '刚看到' }] });
+    const answered = harness.app.services.proactive.evaluate();
+    expect(answered.unansweredProactive).toBe(0);
+    expect(answered.reason).not.toBe('moment_gap');
+  });
+
   it('delays a proactive reach-out while a QQ delivery is still in flight', async () => {
     harness = await withReachOut('刚去公园看猫。', true);
     stage();
