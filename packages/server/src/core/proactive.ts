@@ -42,6 +42,8 @@ export interface ProactiveEvaluation {
   selected: ProactiveCandidate | null;
   lastUserAt: string | null;
   lastAssistantAt: string | null;
+  /** Her proactive messages since the user last spoke. */
+  unansweredProactive: number;
 }
 
 export interface ProactiveRunResult {
@@ -117,11 +119,23 @@ interface ProactiveEventContext {
 }
 
 const TOPIC_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** After this many unanswered proactive messages she waits for the user. */
+const MAX_UNANSWERED_PROACTIVE = 2;
+
+/** What she knows about the user when she decides to speak first. */
+interface RelationContext {
+  conversation: string[];
+  hoursSinceUser: number | null;
+  unanswered: number;
+  recentProactive: string[];
+}
 
 /**
- * Historical name kept for compatibility. This service now turns shareable
- * Life events into a private Moments feed. It never writes assistant messages
- * and never enqueues reply push notifications.
+ * Historical name kept for compatibility. Every proactive message is a private
+ * one-to-one message to the user — there is no audience besides them. A Life
+ * event is only a possible reason to speak; the Moment row is her internal
+ * record of it, and with QQ enabled the same text is delivered as a chat
+ * message.
  */
 export class ProactiveComposer {
   constructor(
@@ -167,9 +181,11 @@ export class ProactiveComposer {
     const lastAssistant = [...recent].reverse().find((message) => message.role === 'assistant');
 
     const decision = this.deps.life.shouldReachOut(null, null);
+    const unanswered = unansweredProactiveCount(recent);
     const base = {
       lastUserAt: lastUser?.createdAt ?? null,
-      lastAssistantAt: lastAssistant?.createdAt ?? null
+      lastAssistantAt: lastAssistant?.createdAt ?? null,
+      unansweredProactive: unanswered
     };
     const blockedEval = (reason: string): ProactiveEvaluation => ({
       reach: false, reason, candidate: decision.candidate, selected: null, ...base
@@ -184,10 +200,14 @@ export class ProactiveComposer {
     }
 
     // Same hard gates for every candidate source.
+    // A person's rhythm, not a grid: the gap stretches by a stable per-message
+    // jitter, and doubles while her last message is still unanswered.
     const latest = this.deps.moments.latest();
     if (latest) {
       const elapsed = this.deps.life.now().getTime() - Date.parse(latest.created_at);
-      const gap = this.deps.life.settings.quietGapMinutes * 60_000;
+      const gap = this.deps.life.settings.quietGapMinutes * 60_000
+        * gapJitter(latest.id)
+        * (unanswered > 0 ? 2 : 1);
       if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed < gap) {
         return blockedEval('moment_gap');
       }
@@ -201,7 +221,10 @@ export class ProactiveComposer {
 
     // ---- Candidate collection ----
     const candidates: ProactiveCandidate[] = [];
-    if (decision.reach && decision.candidate) {
+    // Ignored twice: she stops sharing her day and waits until the user is
+    // back. Commitments the user cares about may still come through.
+    const awaitingReply = unanswered >= MAX_UNANSWERED_PROACTIVE;
+    if (decision.reach && decision.candidate && !awaitingReply) {
       const lifeCandidate = decision.candidate;
       if (!this.recentlyDiscussed(lifeCandidate, recent) && !this.recentlyShared(lifeCandidate)) {
         candidates.push({
@@ -221,7 +244,9 @@ export class ProactiveComposer {
     }
     // Preserve Life's own verdict (e.g. nothing_worth_saying) when no source
     // contributed a candidate — the admin panel surfaces this reason as-is.
-    if (candidates.length === 0) return blockedEval(decision.candidate ? 'recent_topic' : decision.reason);
+    if (candidates.length === 0) {
+      return blockedEval(awaitingReply ? 'awaiting_reply' : decision.candidate ? 'recent_topic' : decision.reason);
+    }
 
     const recentlySentKeys = new Set(
       this.deps.attempts
@@ -303,6 +328,7 @@ export class ProactiveComposer {
             visualTime,
             requestedMode ?? 'text',
             signal,
+            this.relationContext(evaluation, world),
             this.deps.toolRuntime
           );
           this.deps.flowTrace?.stage(flowTraceId, 'proactive.composition.completed', 'ok');
@@ -579,7 +605,8 @@ export class ProactiveComposer {
     if (!this.deps.capabilities.has('image')) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_unavailable' };
     if (signal.aborted) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'aborted' };
     const imagePlan = sharePlan.image;
-    if (!imagePlan) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_plan_missing' };
+    // Photos are optional: she only attaches one when she wants to show it.
+    if (!imagePlan) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'no_photo_chosen' };
 
     // Every proactive image kind is on-camera, so both share the persona
     // reference chain and the same daily visual continuity state.
@@ -734,6 +761,17 @@ export class ProactiveComposer {
     }
   }
 
+  private relationContext(evaluation: ProactiveEvaluation, world: WorldSnapshot): RelationContext {
+    const lastUserMs = evaluation.lastUserAt ? Date.parse(evaluation.lastUserAt) : NaN;
+    const nowMs = Date.parse(world.now);
+    return {
+      conversation: this.deps.messages.recent(16).map((message) => conversationLine(message, world.timeZone)).filter(Boolean),
+      hoursSinceUser: Number.isFinite(lastUserMs) && Number.isFinite(nowMs) ? Math.max(0, (nowMs - lastUserMs) / 3_600_000) : null,
+      unanswered: evaluation.unansweredProactive,
+      recentProactive: this.deps.moments.list(6).map((moment) => moment.text.replace(/\s+/gu, ' ').slice(0, 80))
+    };
+  }
+
   private recentlyDiscussed(candidate: LifeLogRow, messages: ChatMessage[]): boolean {
     const now = this.deps.life.now().getTime();
     const candidateTopics = topicTokens(candidate.activity);
@@ -803,6 +841,7 @@ async function composeMomentSharePlan(
   visualTime: VisualTimeContext,
   requestedMode: ProactiveMode,
   signal: AbortSignal,
+  relation: RelationContext,
   toolRuntime?: ToolCallRuntime
 ): Promise<MomentSharePlan> {
   const imageMode = requestedMode === 'image';
@@ -811,15 +850,26 @@ async function composeMomentSharePlan(
       system: [
         personaPrompt.trim(),
         ...lifeLines.map((line) => `【当前状态，仅用于语气连续性】${line}`),
-        '你是 SOOYA，要把一件真实经历过的小事发到只对用户可见的动态。这里不是私人聊天窗口。',
-        '【要发布的历史事件】',
+        '你现在想主动给对方发一条私聊消息。你们是一对一的关系，这条消息只发给对方一个人，没有别的读者，你也没有朋友圈或动态要发。',
+        '【你们最近的聊天，从旧到新】',
+        relation.conversation.length ? relation.conversation.join('\n') : '（最近没有聊天记录）',
+        relationStatusLine(relation),
+        '【你最近经历的一件小事——可以当作开口的由头，也可以完全不提】',
         JSON.stringify(eventContext),
         visualTime.mode === 'retrospective'
-          ? `【发布时间与事件时间】真实当前时间是 ${visualTime.currentLocalDate} ${visualTime.currentLocalTime}，当前发布时段是 ${visualTime.currentDayPeriod}；事件画面时间是 ${visualTime.depictedLocalDate}，事件画面时段是 ${visualTime.depictedDayPeriod}。正文和图片都必须表现为已经发生的事件，不得写成正在当前发生。`
-          : `【发布时间与事件时间】真实当前时间是 ${visualTime.currentLocalDate} ${visualTime.currentLocalTime}，当前发布时段是 ${visualTime.currentDayPeriod}；事件画面与当前时段一致。`,
-        `本次发布方式：${imageMode ? '图片动态' : '文字动态'}。${imageMode ? '请规划一张与正文同一事件的照片。' : 'image 必须为 null。'}`,
-        '【规则】text 是一条自然、完整的动态正文，像随手记录生活，不要标题、标签、冒号前缀、系统/Life/模型内容。',
-        '不要用“在吗”“睡了吗”“刚想跟你说”“发给你看看”这种私聊式呼叫，也不要为了发动态虚构新事件。',
+          ? `【时间】现在是 ${visualTime.currentLocalDate} ${visualTime.currentLocalTime}（${visualTime.currentDayPeriod}）；那件小事发生在 ${visualTime.depictedLocalDate} ${visualTime.depictedDayPeriod}，提起时要当成已经过去的事，不要说成正在发生。`
+          : `【时间】现在是 ${visualTime.currentLocalDate} ${visualTime.currentLocalTime}（${visualTime.currentDayPeriod}），那件小事就发生在这个时段。`,
+        relation.recentProactive.length
+          ? `【你最近主动发过的消息，不要重复其中的内容、说法和意象】\n${relation.recentProactive.map((text) => `- ${text}`).join('\n')}`
+          : '',
+        '【规则】',
+        '先想清楚此刻为什么想找对方：想对方了、接着上次没聊完的话、惦记对方说过的事，或者想把这件小事讲给对方听。挑最自然的那一个，不必每次都讲自己的日常。',
+        '对方好久没来，就先在意对方本身；你上一条对方还没回，就别再自顾自分享，轻轻问一句或撒个娇就好。',
+        'text 就是你要发出去的那句话：短、口语、直接对着对方说，通常一两句、不超过 50 字，可以用换行分成两小句。',
+        '禁止日记体和旁白式开头（如“昨天下午……”“折腾了一晚上……”），禁止写成朋友圈文案；不要标题、标签、冒号前缀、系统/Life/模型内容；不要编造没发生过的事。',
+        imageMode
+          ? '可以配一张照片，但只有这件事你真的想拍给对方看时才配；多数时候 image 为 null。'
+          : 'image 必须为 null。',
         '如果有图片，必须与 text 是同一件具体小事，只能选择 lifestyle 或 selfie。',
         'lifestyle：SOOYA 本人清晰出现在画面中，自然进行这件真实生活事件对应的动作（吃饭、喝东西、看书、走路、摸猫等）。默认优先 lifestyle。不要把食物、风景、桌面或物件单独拍成主体；如果事件涉及吃东西，就拍 SOOYA 正在吃；如果事件涉及某个地点，就拍 SOOYA 在该地点进行当前活动。',
         'selfie：只有当这件事自然适合直接面对镜头分享自己时才选择。允许自然半身、侧脸、镜前或带环境的自拍。',
@@ -827,7 +877,7 @@ async function composeMomentSharePlan(
         repairReason ? `上一版未通过检查：${repairReason}。请只重新返回完整 JSON。` : '',
         '只输出 JSON：{"text":"...","image":null 或 {"kind":"selfie|lifestyle","scene":"...","action":"...","mood":"...","framing":"front|side|full-body|environment"}}。'
       ].filter(Boolean).join('\n'),
-      messages: [{ role: 'user', content: [{ type: 'text', text: '为这件真实经历写一条生活动态。' }] }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: '（对方没有说话，你主动开口）' }] }],
       temperature: 0.8,
       maxTokens: 450,
       jsonMode: true,
@@ -859,7 +909,7 @@ function validateMomentText(text: string): { ok: boolean; reason?: string } {
   const normalized = text.trim().replace(/^["“”「」]|["“”「」]$/gu, '').trim();
   if (Array.from(normalized.replace(/\s/gu, '')).length < 6) return { ok: false, reason: '文本太短或只是残片' };
   if (/^(刚刚|刚才|刚发生的事|刚才发生的事|最近|今天)[：:]?$/u.test(normalized)) return { ok: false, reason: '只是标题或时间残片' };
-  if (/^(在吗|睡了吗|干嘛呢)[？?。.]?$/u.test(normalized)) return { ok: false, reason: '像私聊呼叫，不像动态正文' };
+  if (/^(在吗|睡了吗|干嘛呢)[？?。.]?$/u.test(normalized)) return { ok: false, reason: '只有一句空洞的呼叫，没有想说的内容' };
   if (/(因为|所以|然后|但是|不过|顺道|本来想|正准备|刚准备)$/u.test(normalized)) return { ok: false, reason: '句子以悬空连接词结尾' };
   return { ok: true };
 }
@@ -899,7 +949,7 @@ function buildGroundedScene(image: ActiveMomentImagePlan, context: ProactiveEven
   return [
     `真实生活事件：${context.activity}。`,
     `实际地点：${location}。`,
-    `这条动态要拍：${image.scene}。`,
+    `这张照片要拍：${image.scene}。`,
     image.action ? `动作：${image.action}。` : '',
     `照片类型：${photoType}。`,
     weather,
@@ -931,6 +981,56 @@ function applyMomentCompositionConstraints(prompt: string, image: ActiveMomentIm
 function isUniqueConstraint(error: unknown): boolean {
   const code = (error as { code?: string }).code ?? '';
   return typeof code === 'string' && code.includes('SQLITE_CONSTRAINT');
+}
+
+function relationStatusLine(relation: RelationContext): string {
+  const since = relation.hoursSinceUser === null
+    ? '对方还没跟你说过话。'
+    : relation.hoursSinceUser < 1
+      ? '对方不到一小时前刚说过话。'
+      : relation.hoursSinceUser < 48
+        ? `对方上一次说话是约 ${Math.round(relation.hoursSinceUser)} 小时前。`
+        : `对方已经 ${Math.floor(relation.hoursSinceUser / 24)} 天没说话了。`;
+  const waiting = relation.unanswered > 0 ? '你上一条主动发的消息对方还没回。' : '';
+  return `【对方的状态】${since}${waiting}`;
+}
+
+/** Her proactive messages after the user's latest message (recent is oldest-first). */
+function unansweredProactiveCount(recent: ChatMessage[]): number {
+  let count = 0;
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const message = recent[i]!;
+    if (message.role === 'user') break;
+    if (message.role === 'assistant' && message.meta?.proactive === true) count++;
+  }
+  return count;
+}
+
+/** Stable 1.0–1.6 multiplier so consecutive gaps are not the same length. */
+function gapJitter(seed: string): number {
+  let hash = 0;
+  for (const char of seed) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return 1 + (hash % 600) / 1000;
+}
+
+function conversationLine(message: ChatMessage, timeZone: string): string {
+  const body = message.content
+    .map((part) => part.type === 'text' ? part.text ?? ''
+      : part.type === 'audio' ? part.transcript ?? '[语音]'
+      : part.type === 'image' ? '[图片]'
+      : part.type === 'sticker' ? '[表情]'
+      : '')
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!body || message.role === 'system') return '';
+  let at = '';
+  try {
+    at = new Intl.DateTimeFormat('zh-CN', { timeZone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+      .format(new Date(message.createdAt));
+  } catch { /* unknown zone: omit the timestamp */ }
+  return `${at ? `${at} ` : ''}${message.role === 'user' ? '对方' : '你'}：${body.slice(0, 80)}`;
 }
 
 function textOf(message: ChatMessage): string {
