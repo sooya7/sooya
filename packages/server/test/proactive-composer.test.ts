@@ -274,6 +274,15 @@ describe('ProactiveComposer -> Moments', () => {
     expect(harness.app.services.imageContinuity.current()).toBeNull();
   });
 
+  it('asks once more when the model does not return the share-plan JSON shape', async () => {
+    harness = await withMoments({ chat: { script: [[JSON.stringify({ text: '', image: null })], [JSON.stringify({ text: '路边的猫盯了我好久，尾巴还扫到了鞋边。', image: null })]] } });
+    stageCandidate(harness);
+    const result = await harness.app.services.proactive.run({ mode: 'text' });
+    expect(result.status).toBe('sent');
+    expect(harness.app.repos.moments.get(result.momentId!)?.text).toContain('路边的猫');
+    expect(JSON.stringify(harness.state.chatCalls[1]!.body)).toContain('没有返回合法的 JSON');
+  });
+
   it('repairs an incomplete Moment caption once and refuses a second invalid caption', async () => {
     harness = await withMoments({ chat: { script: [[JSON.stringify({ text: '刚刚', image: null })], [JSON.stringify({ text: '路边的猫盯了我好久，尾巴还扫到了鞋边。', image: null })]] } });
     stageCandidate(harness);

@@ -3,7 +3,7 @@ import type { ProactiveAttemptRepo, ProactiveMode } from '../db/repos/proactive.
 import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
 import type { LifeLogRow } from '../db/repos/life.repo.js';
 import type { MomentRepo, MomentImageKind } from '../db/repos/moment.repo.js';
-import type { JobRepo } from '../db/repos/misc.repo.js';
+import type { JobRepo, SummaryRepo } from '../db/repos/misc.repo.js';
 import type { ChannelDeliveryRepo } from '../db/repos/channel-delivery.repo.js';
 import { QQ_CHANNEL_NAME } from '../channels/qq/types.js';
 import type { CapabilityRegistry } from './capabilities.js';
@@ -26,6 +26,8 @@ import { z } from 'zod';
 import { extractJsonObject } from '../util/json-extract.js';
 import { resolveVisualTime, visualTimeMetadata, type VisualTimeContext } from './visual-time.js';
 import type { FlowTraceService } from './flow-trace.js';
+import type { FutureContextService } from './future/context.js';
+import type { RelationshipContextService } from './relationship/service.js';
 
 export type { ProactiveMode } from '../db/repos/proactive.repo.js';
 
@@ -121,13 +123,29 @@ interface ProactiveEventContext {
 const TOPIC_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** After this many unanswered proactive messages she waits for the user. */
 const MAX_UNANSWERED_PROACTIVE = 2;
+/** How much of the chat she rereads before speaking first. */
+const RELATION_RECENT_MESSAGES = 30;
+const RELATION_LINE_CHARS = 150;
+const RELATION_SUMMARIES = 4;
+const RELATION_SUMMARY_CHARS = 400;
+const RELATION_MEMORY_CHARS = 1500;
+/** Memory is an enhancement: a slow recall must not hold up the message. */
+const RELATION_MEMORY_TIMEOUT_MS = 8_000;
 
-/** What she knows about the user when she decides to speak first. */
+/**
+ * What she knows about the user when she decides to speak first — the same
+ * sources a normal reply sees: recent chat, stage summaries, long-term memory,
+ * ongoing threads and upcoming plans.
+ */
 interface RelationContext {
   conversation: string[];
   hoursSinceUser: number | null;
   unanswered: number;
   recentProactive: string[];
+  summaries: string[];
+  memory: string | null;
+  threads: string[];
+  upcoming: string[];
 }
 
 /**
@@ -167,6 +185,12 @@ export class ProactiveComposer {
       /** §22-26: learned preference multiplier, applied after hard gates only. */
       feedbackWeight?: (kind: string) => number;
       flowTrace?: FlowTraceService;
+      /** Background she carries into a proactive message; each source is optional. */
+      summaries?: SummaryRepo;
+      relationship?: RelationshipContextService;
+      future?: FutureContextService;
+      /** Long-term memory about the user (Ombre or legacy), already rendered as text. */
+      recallMemory?: (query: string, signal: AbortSignal) => Promise<string | null>;
     }
   ) {}
 
@@ -292,7 +316,7 @@ export class ProactiveComposer {
 
     // Commitment care is a chat message, not a Moment (§1.7): semantic
     // candidate in, model-worded message out, one durable QQ delivery.
-    if (selected.source === 'commitment') return this.runCommitmentCandidate(selected, attempt.id, flowTraceId);
+    if (selected.source === 'commitment') return this.runCommitmentCandidate(selected, attempt.id, evaluation, flowTraceId);
 
     const candidate = selected.lifeCandidate;
     if (!candidate) return this.blocked('no_candidate', null, requestedMode, flowTraceId);
@@ -328,7 +352,7 @@ export class ProactiveComposer {
             visualTime,
             requestedMode ?? 'text',
             signal,
-            this.relationContext(evaluation, world),
+            await this.relationContext(evaluation, world, signal),
             this.deps.toolRuntime
           );
           this.deps.flowTrace?.stage(flowTraceId, 'proactive.composition.completed', 'ok');
@@ -502,15 +526,21 @@ export class ProactiveComposer {
    * §1.7: the commitment hands the model a semantic candidate (event,
    * distance), never a canned "提醒：你今天面试" line. The wording stays hers.
    */
-  private async runCommitmentCandidate(candidate: ProactiveCandidate, attemptId: string, flowTraceId?: string): Promise<ProactiveRunResult> {
+  private async runCommitmentCandidate(candidate: ProactiveCandidate, attemptId: string, evaluation: ProactiveEvaluation, flowTraceId?: string): Promise<ProactiveRunResult> {
     const info = candidate.commitment!;
     try {
       const provider = this.deps.capabilities.chatProvider();
       this.deps.flowTrace?.stage(flowTraceId, 'proactive.composition.started', 'running');
       const persona = this.deps.config.getPersona();
+      const world = this.deps.worldSnapshot();
+      const relation = await this.relationContext(evaluation, world, new AbortController().signal);
       const result = await provider.complete({
         system: [
           persona.systemPrompt.trim(),
+          ...relationBackgroundLines({ ...relation, upcoming: [] }),
+          '【你们最近的聊天，从旧到新】',
+          relation.conversation.length ? relation.conversation.join('\n') : '（最近没有聊天记录）',
+          relationStatusLine(relation),
           '你想在合适的时机自然地提起用户接下来的一件事，就像恋人随口关心一句。',
           JSON.stringify({ event: info.title, kind: info.kind, distance_minutes: info.distanceMinutes }),
           '写一条 40 字以内的消息：自然、带一点你自己的语气，可以顺带加油或好奇。',
@@ -761,15 +791,38 @@ export class ProactiveComposer {
     }
   }
 
-  private relationContext(evaluation: ProactiveEvaluation, world: WorldSnapshot): RelationContext {
+  private async relationContext(evaluation: ProactiveEvaluation, world: WorldSnapshot, signal: AbortSignal): Promise<RelationContext> {
     const lastUserMs = evaluation.lastUserAt ? Date.parse(evaluation.lastUserAt) : NaN;
     const nowMs = Date.parse(world.now);
+    const recent = this.deps.messages.recent(RELATION_RECENT_MESSAGES);
     return {
-      conversation: this.deps.messages.recent(16).map((message) => conversationLine(message, world.timeZone)).filter(Boolean),
+      conversation: recent.map((message) => conversationLine(message, world.timeZone)).filter(Boolean),
       hoursSinceUser: Number.isFinite(lastUserMs) && Number.isFinite(nowMs) ? Math.max(0, (nowMs - lastUserMs) / 3_600_000) : null,
       unanswered: evaluation.unansweredProactive,
-      recentProactive: this.deps.moments.list(6).map((moment) => moment.text.replace(/\s+/gu, ' ').slice(0, 80))
+      recentProactive: this.deps.moments.list(6).map((moment) => moment.text.replace(/\s+/gu, ' ').slice(0, 80)),
+      summaries: optionalLines(() => (this.deps.summaries?.active(RELATION_SUMMARIES) ?? [])
+        .slice()
+        .sort((a, b) => a.from_seq - b.from_seq)
+        .map((summary) => summary.content.trim().slice(0, RELATION_SUMMARY_CHARS))),
+      memory: await this.recallMemory(recent, signal),
+      threads: optionalLines(() => this.deps.relationship?.contextLines() ?? []),
+      upcoming: optionalLines(() => this.deps.future?.contextLines() ?? [])
     };
+  }
+
+  private async recallMemory(recent: ChatMessage[], signal: AbortSignal): Promise<string | null> {
+    if (!this.deps.recallMemory) return null;
+    const query = recent.map(textOf).filter(Boolean).join('\n').slice(-500);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeout = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), RELATION_MEMORY_TIMEOUT_MS); });
+      const text = await Promise.race([this.deps.recallMemory(query, signal), timeout]);
+      return text?.trim() ? text.trim().slice(0, RELATION_MEMORY_CHARS) : null;
+    } catch {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private recentlyDiscussed(candidate: LifeLogRow, messages: ChatMessage[]): boolean {
@@ -851,6 +904,7 @@ async function composeMomentSharePlan(
         personaPrompt.trim(),
         ...lifeLines.map((line) => `【当前状态，仅用于语气连续性】${line}`),
         '你现在想主动给对方发一条私聊消息。你们是一对一的关系，这条消息只发给对方一个人，没有别的读者，你也没有朋友圈或动态要发。',
+        ...relationBackgroundLines(relation),
         '【你们最近的聊天，从旧到新】',
         relation.conversation.length ? relation.conversation.join('\n') : '（最近没有聊天记录）',
         relationStatusLine(relation),
@@ -863,7 +917,8 @@ async function composeMomentSharePlan(
           ? `【你最近主动发过的消息，不要重复其中的内容、说法和意象】\n${relation.recentProactive.map((text) => `- ${text}`).join('\n')}`
           : '',
         '【规则】',
-        '先想清楚此刻为什么想找对方：想对方了、接着上次没聊完的话、惦记对方说过的事，或者想把这件小事讲给对方听。挑最自然的那一个，不必每次都讲自己的日常。',
+        '先想清楚此刻为什么想找对方：想对方了、接着上次没聊完的话、惦记对方说过的事或接下来的安排，或者想把这件小事讲给对方听。挑最自然的那一个，不必每次都讲自己的日常。',
+        '摘要和记忆是你心里记着的事，可以自然地惦记起来，但不要一次翻出好几件，不要像在复述档案，也不要只盯着最近一条消息。',
         '对方好久没来，就先在意对方本身；你上一条对方还没回，就别再自顾自分享，轻轻问一句或撒个娇就好。',
         'text 就是你要发出去的那句话：短、口语、直接对着对方说，通常一两句、不超过 50 字，可以用换行分成两小句。',
         '禁止日记体和旁白式开头（如“昨天下午……”“折腾了一晚上……”），禁止写成朋友圈文案；不要标题、标签、冒号前缀、系统/Life/模型内容；不要编造没发生过的事。',
@@ -896,7 +951,15 @@ async function composeMomentSharePlan(
       : { ...parsed.data, image: null, legacyPovNormalized: false };
   };
 
-  const first = await request();
+  let first: MomentSharePlan;
+  try {
+    first = await request();
+  } catch (error) {
+    // A reply that is not the JSON shape (null, prose, missing fields) is the
+    // most common non-network failure; one repair turn usually fixes it.
+    if (!(error instanceof Error && error.message.startsWith('invalid_share_plan'))) throw error;
+    first = await request('没有返回合法的 JSON，或缺少 text / image 字段');
+  }
   const firstValidation = validateMomentText(first.text);
   if (firstValidation.ok) return first;
   const repaired = await request(firstValidation.reason);
@@ -1030,7 +1093,26 @@ function conversationLine(message: ChatMessage, timeZone: string): string {
     at = new Intl.DateTimeFormat('zh-CN', { timeZone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
       .format(new Date(message.createdAt));
   } catch { /* unknown zone: omit the timestamp */ }
-  return `${at ? `${at} ` : ''}${message.role === 'user' ? '对方' : '你'}：${body.slice(0, 80)}`;
+  return `${at ? `${at} ` : ''}${message.role === 'user' ? '对方' : '你'}：${body.slice(0, RELATION_LINE_CHARS)}`;
+}
+
+/** Optional context source: a failure means the block is simply left out. */
+function optionalLines(read: () => string[]): string[] {
+  try {
+    return read().map((line) => line.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Long-term background shared by every proactive prompt; empty blocks are dropped. */
+function relationBackgroundLines(relation: RelationContext): string[] {
+  return [
+    relation.summaries.length ? `【你们以前聊过的重点（阶段摘要，从旧到新）】\n${relation.summaries.map((line) => `- ${line.replace(/^[-·]\s*/u, '')}`).join('\n')}` : '',
+    relation.memory ? `【你记得的关于对方、关于你们的事（记忆系统浮现，可能不完整）】\n${relation.memory}` : '',
+    relation.threads.length ? `【你们之间正在延续的事情】\n${relation.threads.join('\n')}` : '',
+    relation.upcoming.length ? `【对方接下来的安排、你们说好的事】\n${relation.upcoming.join('\n')}` : ''
+  ].filter(Boolean);
 }
 
 function textOf(message: ChatMessage): string {

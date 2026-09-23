@@ -776,7 +776,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     commitments: repos.commitments,
     futureProactiveEnabled: capabilityPolicy.proactive.futureCandidates,
     feedbackWeight: (kind: string) => feedback.weightFor(kind)
-    ,flowTrace
+    ,flowTrace,
+    summaries: repos.summaries,
+    relationship: capabilityPolicy.continuity.relationship ? relationshipContext : undefined,
+    future: capabilityPolicy.continuity.future ? futureContext : undefined,
+    recallMemory: env.MEMORY_BACKEND === 'ombre' ? (_q, signal) => ombreMemory.surface(signal) : (q) => memory.recallText(q)
   });
   const backups = new BackupService({
     db: () => dbHandle,

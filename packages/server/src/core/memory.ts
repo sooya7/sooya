@@ -256,6 +256,12 @@ export class MemoryService {
    * configured, the vector top candidates are re-scored by it; a rerank
    * failure degrades to pure vector ordering.
    */
+  /** Recall rendered as prompt lines, or null when nothing relevant is stored. */
+  async recallText(query: string, limit = 6): Promise<string | null> {
+    const recall = await this.recall(query, limit);
+    return recall.memories.map((record) => `- [${record.kind}] ${record.content}`).join('\n') || null;
+  }
+
   async recall(query: string, limit = 8): Promise<RecallResult> {
     const total = this.repo.count(true);
     const withEmbedding = this.repo.countWithEmbeddings();
