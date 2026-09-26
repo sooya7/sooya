@@ -198,6 +198,9 @@
   border-radius: 8px;
 }
 .cs-nav-link svg { flex: none; opacity: 0.8; }
+/* the nav may scroll on short screens, but never shows a scrollbar */
+.cs-nav { scrollbar-width: none; }
+.cs-nav::-webkit-scrollbar { display: none; }
 .cs-nav-link:hover { background: var(--c-nav-hover); color: var(--c-ink); }
 .cs-nav-link[aria-current='page'] { background: var(--c-paper); color: var(--c-jade); font-weight: 600; box-shadow: var(--c-lift); }
 .cs-nav-link[aria-current='page'] svg { opacity: 1; }
@@ -276,6 +279,11 @@
     box-shadow: 0 0 0 100vmax transparent;
   }
   .cs-shell[data-nav-open='true'] .cs-nav { transform: none; box-shadow: 0 0 0 100vmax rgba(10, 16, 20, 0.36); }
+  /* tighter drawer so all thirteen pages fit on one phone screen */
+  .cs-nav { gap: 0.875rem; padding-top: calc(0.875rem + env(safe-area-inset-top, 0px)); padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px)); }
+  .cs-nav-link { padding-block: 0.375rem; }
+  .cs-nav-group h2 { margin-bottom: 0.125rem; }
+  .cs-nav-foot .cs-nav-link { padding-block: 0.25rem; }
   .cs-main { margin: 0; border-radius: 0; box-shadow: none; min-height: 100dvh; }
   .cs-icon-btn {
     display: inline-grid;
