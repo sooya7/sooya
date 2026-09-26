@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type CSSProperties,
   type InputHTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
@@ -15,7 +16,8 @@ import {
 import { ApiError } from '../lib/api.js';
 import { adminFailureKind } from '../lib/admin.js';
 import type { MomentData } from './Moment.js';
-import { Icon } from './icons.js';
+import { ROUTES, type ConsoleRoute } from './routes.js';
+import { Icon, routeIcon, sectionIcon } from './icons.js';
 
 /* ------------------------------------------------------------ context */
 
@@ -29,13 +31,16 @@ export interface ConsoleContextValue {
   navigate: (path: string) => void;
   /** Her current state, shared with the strip so pages do not refetch it. */
   moment: MomentData | null;
+  /** The page being shown, for its icon and accent. */
+  route: ConsoleRoute;
 }
 
 export const ConsoleContext = createContext<ConsoleContextValue>({
   notify: () => {},
   markClean: () => {},
   navigate: () => {},
-  moment: null
+  moment: null,
+  route: ROUTES[0]!
 });
 
 export const useConsole = () => useContext(ConsoleContext);
@@ -119,44 +124,76 @@ export function Page({ title, intro, register = 'system', actions, children, hea
   /** The title is still announced to screen readers, but something else on screen already says it. */
   headless?: boolean;
 }) {
+  const { route } = useConsole();
   return (
-    <section className="cs-page" data-register={register} aria-labelledby="cs-page-title">
+    <section className="cs-page" data-register={register} aria-labelledby="cs-page-title" style={{ '--h': route.hue } as CSSProperties}>
       <header className={headless ? 'cs-sr' : 'cs-page-head'}>
-        <h1 id="cs-page-title">{title}</h1>
-        {intro && <p>{intro}</p>}
-        {actions && <div className="cs-actions">{actions}</div>}
+        <span className="cs-emblem" aria-hidden="true"><Icon name={routeIcon(route.slug)} size={26} /></span>
+        <div className="cs-page-title">
+          <h1 id="cs-page-title">{title}</h1>
+          {intro && <p>{intro}</p>}
+        </div>
+        {actions && <div className="cs-actions cs-page-actions">{actions}</div>}
       </header>
       {children}
     </section>
   );
 }
 
+const PHONE_QUERY = '(max-width: 760px)';
+
+/** True on phone-width screens; follows rotation and window resizes. */
+export function useIsPhone(): boolean {
+  const [phone, setPhone] = useState(() => typeof window !== 'undefined' && window.matchMedia(PHONE_QUERY).matches);
+  useEffect(() => {
+    const query = window.matchMedia(PHONE_QUERY);
+    const update = () => setPhone(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  return phone;
+}
+
 /**
- * A titled block. The explanation stays folded behind 说明 so pages read as content, not prose;
- * anything the reader must see before acting belongs in a Callout inside the body instead.
+ * A titled block. The explanation stays folded behind a help icon so pages read as content, not
+ * prose. On phones a section collapses to one tappable row, so a page opens as a short index;
+ * the body stays mounted while folded, so half-filled forms and loaded data survive.
  */
-export function Section({ title, desc, wide, children, id }: {
+export function Section({ title, desc, wide, children, id, defaultOpen }: {
   title: string; desc?: ReactNode; wide?: boolean; children: ReactNode; id?: string;
+  /** Start expanded on phones too (pages people open to read, like the landing page). */
+  defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const phone = useIsPhone();
+  const [expanded, setExpanded] = useState(() => defaultOpen || !(typeof window !== 'undefined' && window.matchMedia(PHONE_QUERY).matches));
   const descId = useId();
+  const bodyId = useId();
+  const { route } = useConsole();
+  const folded = phone && !expanded;
+  const mark = <span className="cs-mark" aria-hidden="true"><Icon name={sectionIcon(title, routeIcon(route.slug))} size={16} /></span>;
   return (
-    <section className="cs-section" data-wide={wide ? 'true' : undefined} id={id}>
+    <section className="cs-section" data-wide={wide ? 'true' : undefined} data-folded={folded ? '' : undefined} data-phone={phone ? '' : undefined} id={id}>
       <header className="cs-section-head">
-        <h2>{title}</h2>
-        {desc && (
+        <h2>
+          {phone ? (
+            <button type="button" className="cs-section-toggle" aria-expanded={expanded} aria-controls={bodyId} onClick={() => setExpanded((v) => !v)}>
+              {mark}<span className="cs-section-name">{title}</span><Icon name="chevron" size={18} className="cs-chevron" />
+            </button>
+          ) : <>{mark}{title}</>}
+        </h2>
+        {desc && !folded && (
           <button type="button" className="cs-info" aria-expanded={open} aria-controls={descId} aria-label={open ? '收起说明' : '这一节是做什么的'}
             title={open ? '收起说明' : '这一节是做什么的'} onClick={() => setOpen((v) => !v)}>
             <Icon name="info" size={16} />
           </button>
         )}
       </header>
-      {desc && <p className="cs-section-desc" id={descId} hidden={!open}>{desc}</p>}
-      <div className="cs-section-body">{children}</div>
+      {desc && <p className="cs-section-desc" id={descId} hidden={!open || folded}>{desc}</p>}
+      <div className="cs-section-body" id={bodyId} hidden={folded}>{children}</div>
     </section>
   );
 }
-
 export function Tabs<T extends string>({ tabs, value, onChange, label }: {
   tabs: Array<{ id: T; label: string }>; value: T; onChange: (id: T) => void; label: string;
 }) {
@@ -317,8 +354,14 @@ export function Callout({ tone, children }: { tone?: Exclude<Tone, 'off'>; child
   return <div className="cs-callout" data-tone={tone} role={tone === 'bad' ? 'alert' : undefined}>{children}</div>;
 }
 
-export function Empty({ children, action }: { children: ReactNode; action?: ReactNode }) {
-  return <div className="cs-empty"><p>{children}</p>{action}</div>;
+export function Empty({ children, action, icon }: { children: ReactNode; action?: ReactNode; icon?: string }) {
+  const { route } = useConsole();
+  return (
+    <div className="cs-empty">
+      <span className="cs-empty-art" aria-hidden="true"><Icon name={icon ?? routeIcon(route.slug)} size={28} /></span>
+      <div className="cs-empty-text"><p>{children}</p>{action}</div>
+    </div>
+  );
 }
 
 export function Loading({ children = '正在读取…' }: { children?: ReactNode }) {

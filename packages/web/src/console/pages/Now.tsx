@@ -45,7 +45,7 @@ export default function Now() {
   return (
     <Page title="此刻" register="her" headless>
       {moment !== null && !overview && (
-        <Section title="她的生活" desc="顶部的状态来自生活模拟。">
+        <Section defaultOpen title="她的生活" desc="顶部的状态来自生活模拟。">
           <Empty action={<Button kind="quiet" size="sm" onClick={() => navigate(consolePath('life'))}>去生活页面看看</Button>}>
             读不到生活模拟的数据，可能是生活功能没有开启。
           </Empty>
@@ -53,7 +53,7 @@ export default function Now() {
       )}
 
       {vitals && (
-        <Section title="身体和情绪" desc="数值越偏向一边，她的言行越会受影响。可以在生活页面调整。">
+        <Section defaultOpen title="身体和情绪" desc="数值越偏向一边，她的言行越会受影响。可以在生活页面调整。">
           <div className="cs-meters">
             <div className="cs-meters-group">
               <h3>撑着她的</h3>
@@ -74,7 +74,7 @@ export default function Now() {
       )}
 
       {overview && (overview.openThreads.length > 0 || overview.recentEvents.length > 0) && (
-        <Section title="她惦记的事" desc="还没结束的事情，以及最近发生的。">
+        <Section defaultOpen title="她惦记的事" desc="还没结束的事情，以及最近发生的。">
           {overview.openThreads.length > 0 && (
             <div className="cs-list">
               {overview.openThreads.map((thread) => (
@@ -98,7 +98,7 @@ export default function Now() {
         </Section>
       )}
 
-      <Section title="系统" desc="只列出需要你注意的部分。" wide>
+      <Section defaultOpen title="系统" desc="只列出需要你注意的部分。" wide>
         <Loadable state={health} label="系统状态">
           {({ system, capabilities, backups, errors }) => {
             const entries = Object.entries(capabilities.capabilities ?? {});

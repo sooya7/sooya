@@ -114,8 +114,9 @@ function Shell({ onLock }: { onLock: () => void }) {
     notify,
     markClean: () => setDirtyState(false),
     navigate: go,
-    moment
-  }), [go, moment, notify, setDirtyState]);
+    moment,
+    route
+  }), [go, moment, notify, route, setDirtyState]);
 
   const onLinkClick = (event: MouseEvent<HTMLAnchorElement>, target: ConsoleRoute) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;

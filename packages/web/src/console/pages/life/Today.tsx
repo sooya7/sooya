@@ -65,6 +65,7 @@ function NowSection({ panel }: { panel: LifePanelData }) {
 
   return (
     <Section
+      defaultOpen
       title="她现在"
       desc="比顶部那一条更细：这段活动进行到哪、今天过的是什么样的一天、人在哪。"
     >
