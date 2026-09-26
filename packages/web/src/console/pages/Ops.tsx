@@ -1,5 +1,5 @@
 import { policyReasonText } from '../labels.js';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import {
   adminApi, adminRequest, type AdminCapabilities, type AdminError, type AdminJob, type AdminSystemStatus, type MetricAggregate, type MetricsDistribution
 } from '../../lib/admin.js';
@@ -476,11 +476,16 @@ function sumOf(rows: MetricAggregate[], category: string, metric: string): numbe
 }
 function avgOf(rows: MetricAggregate[], category: string, metric: string): number | null {
   const row = rows.find((r) => r.category === category && r.metric === metric);
-  return row && row.count > 0 ? row.avg : null;
+  return row && row.count > 0 ? avgValue(row) : null;
+}
+/** The metrics endpoint sends sum and count; the average is derived here when it is missing. */
+function avgValue(row: MetricAggregate): number {
+  return typeof row.avg === 'number' && Number.isFinite(row.avg) ? row.avg : row.count > 0 ? row.sum / row.count : 0;
 }
 const rate = (good: number, total: number) => total > 0 ? `${Math.round((good / total) * 100)}%` : '—';
 const seconds = (ms: number | null) => ms === null || !Number.isFinite(ms) ? '—' : ms < 1000 ? '1 秒内' : `${(ms / 1000).toFixed(1)} 秒`;
-const num = (n: number) => Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+const num = (n: number | null | undefined) => typeof n !== 'number' || !Number.isFinite(n) ? '—'
+  : Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 1 });
 
 function MetricsTab() {
   const [days, setDays] = useState('7');
@@ -505,7 +510,7 @@ function MetricsTab() {
         {picker}
         <Loadable state={data} label="统计">
           {({ aggregates }) => empty ? (
-            <Empty>这段时间没有统计数据。统计默认关闭，要在服务器上把 METRICS_DASHBOARD_ENABLED 设为 true 并重启，之后才会开始记录。</Empty>
+            <Empty>这段时间还没有统计数据。如果一直是空的，检查服务器上的 METRICS_DASHBOARD_ENABLED 是否设为 true。</Empty>
           ) : (
             <Facts items={[
               ['到她开口的平均等待', seconds(avgOf(aggregates, 'reply', 'first_visible_ms'))],
@@ -530,7 +535,7 @@ function MetricsTab() {
                         <td>{metricLabel(row.category, row.metric)}</td>
                         <td data-num>{num(row.count)}</td>
                         <td data-num>{num(row.sum)}</td>
-                        <td data-num>{num(row.avg)}</td>
+                        <td data-num>{num(avgValue(row))}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -636,6 +641,12 @@ function initialTab(): TabId {
 
 export default function Ops() {
   const [tab, setTab] = useState<TabId>(initialTab);
+  // follow the address when only its #fragment changes (a link to #errors while the page is open)
+  useEffect(() => {
+    const onHash = () => setTab(initialTab());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
   const change = (next: TabId) => {
     setTab(next);
     try { window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}#${next}`); } catch { /* ignore */ }

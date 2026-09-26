@@ -31,6 +31,8 @@ export interface ConsoleContextValue {
   navigate: (path: string) => void;
   /** Her current state, shared with the strip so pages do not refetch it. */
   moment: MomentData | null;
+  /** Re-read her state now (after moving her, changing her city…) instead of waiting for the minute tick. */
+  refreshMoment: () => void;
   /** The page being shown, for its icon and accent. */
   route: ConsoleRoute;
 }
@@ -40,6 +42,7 @@ export const ConsoleContext = createContext<ConsoleContextValue>({
   markClean: () => {},
   navigate: () => {},
   moment: null,
+  refreshMoment: () => {},
   route: ROUTES[0]!
 });
 

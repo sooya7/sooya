@@ -1,9 +1,13 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Button } from '../../ui.js';
 
+const LAYER_KEY = 'csMediaLayer';
+let pendingBack: number | null = null;
+const isLayerEntry = () => Boolean((window.history.state as Record<string, unknown> | null)?.[LAYER_KEY]);
+
 /**
  * Full-screen layer for looking at one item: the media on one side, details and
- * actions on the other. Esc closes, arrow keys step through the list.
+ * actions on the other. Esc and the browser's back close it, arrow keys step through the list.
  */
 export function Layer({ title, position, onClose, onPrev, onNext, media, children }: {
   title: string;
@@ -30,10 +34,29 @@ export function Layer({ title, position, onClose, onPrev, onNext, media, childre
       else if (!typing && event.key === 'ArrowRight') handlers.current.onNext?.();
     };
     window.addEventListener('keydown', onKey);
+
+    // Phones close a full-screen view with the back gesture: the layer owns one history entry
+    // (same URL, marked in state) and the browser's back pops it to close the layer.
+    if (pendingBack !== null) { window.clearTimeout(pendingBack); pendingBack = null; }
+    if (!isLayerEntry()) window.history.pushState({ ...(window.history.state ?? {}), [LAYER_KEY]: true }, '');
+    let poppedByBack = false;
+    const onPop = () => {
+      if (isLayerEntry()) return;
+      poppedByBack = true;
+      handlers.current.onClose();
+    };
+    window.addEventListener('popstate', onPop);
+
     return () => {
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('popstate', onPop);
       document.body.style.overflow = overflow;
       before?.focus?.();
+      // Closed from inside (button, Esc): drop our entry so history does not grow. Deferred so a
+      // StrictMode remount, which runs this cleanup and mounts again at once, can take it back.
+      if (!poppedByBack && isLayerEntry()) {
+        pendingBack = window.setTimeout(() => { pendingBack = null; if (isLayerEntry()) window.history.back(); }, 0);
+      }
     };
   }, []);
 

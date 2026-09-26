@@ -21,8 +21,61 @@ const state = {
   failTts: false,
   delayMs: 0,
   chunkDelayMs: 6,
-  calls: { chat: 0, image: 0, tts: 0, embedding: 0 }
+  calls: { chat: 0, image: 0, tts: 0, embedding: 0 },
+  weather: { geocode: [], forecast: [] }
 };
+
+/*
+ * Two cities with clearly different weather, so a spec can tell whose weather
+ * the server is showing: 宁波 is clear and mild, 杭州 is rainy and warm.
+ */
+const WEATHER_CITIES = {
+  宁波: { lat: 29.87, lng: 121.55, code: 0, temp: 18.2 },
+  杭州: { lat: 30.27, lng: 120.16, code: 61, temp: 26.4 }
+};
+
+/** Asia/Shanghai wall-clock "YYYY-MM-DDTHH:mm" for a UTC instant. */
+function shanghaiClock(ms) {
+  return new Date(ms + 8 * 3600_000).toISOString().slice(0, 16);
+}
+
+function openMeteoBody(city) {
+  const now = Date.now();
+  const hourStart = Math.floor(now / 3600_000) * 3600_000;
+  const hours = Array.from({ length: 12 }, (_, i) => shanghaiClock(hourStart + i * 3600_000));
+  const days = Array.from({ length: 3 }, (_, i) => shanghaiClock(now + i * 86_400_000).slice(0, 10));
+  return {
+    timezone: 'Asia/Shanghai',
+    utc_offset_seconds: 28800,
+    current: {
+      time: shanghaiClock(Math.floor(now / 900_000) * 900_000),
+      temperature_2m: city.temp,
+      relative_humidity_2m: 70,
+      apparent_temperature: city.temp,
+      precipitation: city.code === 61 ? 1.2 : 0,
+      weather_code: city.code,
+      wind_speed_10m: 9,
+      visibility: 10000,
+      pressure_msl: 1012
+    },
+    hourly: {
+      time: hours,
+      temperature_2m: hours.map(() => city.temp),
+      precipitation: hours.map(() => (city.code === 61 ? 1.2 : 0)),
+      weather_code: hours.map(() => city.code),
+      wind_speed_10m: hours.map(() => 9)
+    },
+    daily: {
+      time: days,
+      weather_code: days.map(() => city.code),
+      temperature_2m_max: days.map(() => city.temp + 2),
+      temperature_2m_min: days.map(() => city.temp - 4),
+      precipitation_sum: days.map(() => (city.code === 61 ? 8 : 0)),
+      sunrise: days.map((day) => `${day}T05:50`),
+      sunset: days.map((day) => `${day}T17:40`)
+    }
+  };
+}
 
 /* ------------------------------ media builders ---------------------------- */
 
@@ -112,14 +165,17 @@ const server = http.createServer(async (req, res) => {
     if (typeof patch.failTts === 'boolean') state.failTts = patch.failTts;
     if (typeof patch.delayMs === 'number') state.delayMs = patch.delayMs;
     if (typeof patch.chunkDelayMs === 'number') state.chunkDelayMs = patch.chunkDelayMs;
-    if (patch.resetCalls) state.calls = { chat: 0, image: 0, tts: 0, embedding: 0 };
+    if (patch.resetCalls) {
+      state.calls = { chat: 0, image: 0, tts: 0, embedding: 0 };
+      state.weather = { geocode: [], forecast: [] };
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, state: { ...state, queueLength: state.queue.length } }));
     return;
   }
   if (url === '/__control' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ calls: state.calls, queueLength: state.queue.length }));
+    res.end(JSON.stringify({ calls: state.calls, queueLength: state.queue.length, weather: state.weather }));
     return;
   }
 
@@ -230,6 +286,26 @@ const server = http.createServer(async (req, res) => {
         data: inputs.map((t, index) => ({ embedding: embeddingFor(t), index }))
       })
     );
+    return;
+  }
+
+  // open-meteo stand-in (WEATHER_BASE_URL / WEATHER_GEOCODING_BASE_URL point
+  // here), so weather follows the active city without touching the internet.
+  if (url.startsWith('/v1/search')) {
+    const name = new URL(url, 'http://mock').searchParams.get('name') ?? '';
+    state.weather.geocode.push(name);
+    const city = WEATHER_CITIES[name];
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ results: city ? [{ name, latitude: city.lat, longitude: city.lng }] : [] }));
+    return;
+  }
+  if (url.startsWith('/v1/forecast')) {
+    const params = new URL(url, 'http://mock').searchParams;
+    const lat = Number(params.get('latitude'));
+    const city = Object.entries(WEATHER_CITIES).find(([, c]) => Math.abs(c.lat - lat) < 0.01);
+    state.weather.forecast.push(city?.[0] ?? String(lat));
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(openMeteoBody(city?.[1] ?? WEATHER_CITIES['宁波'])));
     return;
   }
 

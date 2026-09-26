@@ -23,7 +23,7 @@ function initialTab(): TabId {
 }
 
 export default function Life() {
-  const { markClean } = useConsole();
+  const { markClean, refreshMoment } = useConsole();
   const [tab, setTab] = useState<TabId>(initialTab);
   // Tabs stay mounted after the first visit so a half-filled form survives switching.
   const [visited, setVisited] = useState<Set<TabId>>(() => new Set([initialTab()]));
@@ -43,7 +43,8 @@ export default function Life() {
     dirty.current.delete(key);
     if (dirty.current.size === 0) markClean();
   }, [markClean]);
-  const refresh = useCallback(() => setVersion((n) => n + 1), []);
+  // every change on this page can move her, so the strip at the top re-reads too
+  const refresh = useCallback(() => { setVersion((n) => n + 1); refreshMoment(); }, [refreshMoment]);
 
   const tz = panel.data?.settings.tzOffsetMinutes ?? 480;
   const ctx = useMemo<LifeContextValue>(() => ({ version, pulse, refresh, tz, touch, settle }), [version, pulse, refresh, tz, touch, settle]);

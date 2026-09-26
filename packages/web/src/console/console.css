@@ -280,9 +280,10 @@ html, body { margin: 0; background: #e2e8e3; }
     width: min(18rem, 86vw);
     transform: translateX(-102%);
     transition: transform 180ms ease;
-    box-shadow: 0 0 0 100vmax transparent;
   }
-  .cs-shell[data-nav-open='true'] .cs-nav { transform: none; box-shadow: 0 0 0 100vmax rgba(10, 16, 20, 0.36); }
+  .cs-shell[data-nav-open='true'] .cs-nav { transform: none; }
+  /* a real layer behind the drawer: tapping it closes the drawer instead of reaching the page */
+  .cs-shell .cs-scrim { position: fixed; inset: 0; z-index: 39; display: block; padding: 0; border: 0; background: rgba(10, 16, 20, 0.36); cursor: pointer; }
   /* tighter drawer so all thirteen pages fit on one phone screen */
   .cs-nav { gap: 0.875rem; padding-top: calc(0.875rem + env(safe-area-inset-top, 0px)); padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px)); }
   .cs-nav-link { padding-block: 0.375rem; }
@@ -409,6 +410,7 @@ html, body { margin: 0; background: #e2e8e3; }
 /* ------------------------------------------------- phone tab bar & notices */
 
 .cs-tabbar { display: none; }
+.cs-scrim { display: none; }
 .cs-dirty-pill {
   position: fixed;
   z-index: 30;
@@ -611,8 +613,28 @@ html, body { margin: 0; background: #e2e8e3; }
 .cs-field { display: grid; align-content: start; gap: 0.375rem; min-width: 0; }
 .cs-field[data-span='full'] { grid-column: 1 / -1; }
 .cs-field-label { font-size: var(--t-sm); color: var(--c-ink-2); }
-/* hints appear while the field is in use, so a resting form is just labels and values */
-.cs-field-hint { display: none; font-size: var(--t-xs); color: var(--c-ink-3); }
+/*
+ * Hints appear while the field is in use, so a resting form is just labels and values. They float
+ * below the control instead of taking space: a hint that pushed the layout down made the button under
+ * the field move away between press and release. pointer-events: none lets clicks pass through it.
+ */
+.cs-field { position: relative; }
+.cs-field-hint {
+  display: none;
+  position: absolute;
+  z-index: 15;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  max-width: min(100%, 26rem);
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--r-control);
+  background: var(--c-ink);
+  color: var(--c-paper);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  box-shadow: 0 6px 18px -8px rgba(10, 16, 20, 0.45);
+  pointer-events: none;
+}
 .cs-field:focus-within .cs-field-hint { display: block; }
 .cs-field-error { font-size: var(--t-xs); color: var(--c-danger); }
 
@@ -930,5 +952,5 @@ html, body { margin: 0; background: #e2e8e3; }
 @media (prefers-reduced-motion: reduce) {
   .cs *,
   .cs *::before,
-  .cs *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+  .cs *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }

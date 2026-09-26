@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { adminApi, type AdminLifeOverview, type AdminPersona, type WeatherStatus } from '../lib/admin.js';
 import { mediaThumbnailPath } from '../lib/authenticatedMedia.js';
 import { useAuthenticatedMedia } from '../lib/useAuthenticatedMedia.js';
@@ -47,8 +47,10 @@ export function phaseFor(now: number, sunrise: number | null, sunset: number | n
   return now > rise && now < set ? 'day' : 'night';
 }
 
-export function useMoment(refreshMs = 60_000): MomentData | null {
+export function useMoment(refreshMs = 60_000): { data: MomentData | null; reload: () => void } {
   const [data, setData] = useState<MomentData | null>(null);
+  const [tick, setTick] = useState(0);
+  const reload = useCallback(() => setTick((n) => n + 1), []);
   useEffect(() => {
     let alive = true;
     const load = async () => {
@@ -71,8 +73,8 @@ export function useMoment(refreshMs = 60_000): MomentData | null {
     void load();
     const timer = window.setInterval(() => void load(), refreshMs);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [refreshMs]);
-  return data;
+  }, [refreshMs, tick]);
+  return { data, reload };
 }
 
 function useNow(stepMs = 30_000): Date {

@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
 import { ADMIN_UNAUTHORIZED_EVENT, clearAdminToken, getAdminToken, setAdminToken } from '../lib/admin.js';
 import { navigate as appNavigate, usePathname } from '../lib/navigation.js';
 import { Icon, routeIcon } from './icons.js';
 import { HerAvatar, MomentHero, MomentStrip, useMoment } from './Moment.js';
 import { PAGES } from './pages/index.js';
 import { ROUTES, canonicalPath, consolePath, routeFromPath, type ConsoleRoute } from './routes.js';
-import { Button, ConsoleContext, Field, Input, type ConsoleContextValue } from './ui.js';
+import { Button, Callout, ConsoleContext, Field, Input, type ConsoleContextValue } from './ui.js';
 // 霞鹜文楷 (OFL): the console's soft, slightly handwritten face. Split by unicode range, so a page
 // downloads only the glyphs it shows; bundled here so it never depends on a foreign font CDN.
 import 'lxgw-wenkai-screen-webfont/lxgwwenkaigbscreen.css';
@@ -65,7 +65,7 @@ function Shell({ onLock }: { onLock: () => void }) {
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const moment = useMoment();
+  const { data: moment, reload: refreshMoment } = useMoment();
 
   const setDirtyState = useCallback((value: boolean) => { dirtyRef.current = value; setDirty(value); }, []);
 
@@ -109,8 +109,9 @@ function Shell({ onLock }: { onLock: () => void }) {
     markClean: () => setDirtyState(false),
     navigate: go,
     moment,
+    refreshMoment,
     route
-  }), [go, moment, notify, route, setDirtyState]);
+  }), [go, moment, notify, refreshMoment, route, setDirtyState]);
 
   const onLinkClick = (event: MouseEvent<HTMLAnchorElement>, target: ConsoleRoute) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
@@ -120,7 +121,10 @@ function Shell({ onLock }: { onLock: () => void }) {
   };
 
   // Any edit inside the page marks it dirty, except search boxes, filters and uploads.
-  const onInputCapture = (event: FormEvent<HTMLElement>) => {
+  // This listens in the bubble phase: marking dirty during capture re-rendered the shell before
+  // the field's own onChange ran, and React restored the controlled value — the first keystroke vanished.
+  const onInput = (event: FormEvent<HTMLElement>) => {
+    if (dirtyRef.current) return;
     const target = event.target as HTMLElement;
     if (target instanceof HTMLInputElement && (target.type === 'file' || target.type === 'search')) return;
     if (target.closest('[data-no-dirty]')) return;
@@ -136,7 +140,8 @@ function Shell({ onLock }: { onLock: () => void }) {
   return (
     <ConsoleContext.Provider value={context}>
       <div className="cs-shell" data-nav-open={navOpen ? 'true' : undefined}>
-        <nav className="cs-nav" aria-label="管理栏目" id="cs-nav" onClick={(e) => { if (e.target === e.currentTarget) setNavOpen(false); }}>
+        {navOpen && <button type="button" className="cs-scrim" aria-label="关闭栏目" onClick={() => setNavOpen(false)} />}
+        <nav className="cs-nav" aria-label="管理栏目" id="cs-nav">
           <a className="cs-her" href={consolePath('')} onClick={(e) => onLinkClick(e, ROUTES[0]!)} aria-label="回到此刻">
             <HerAvatar persona={moment?.persona ?? null} />
             <span>
@@ -173,8 +178,10 @@ function Shell({ onLock }: { onLock: () => void }) {
           {route.slug === ''
             ? <MomentHero data={moment} />
             : <MomentStrip data={moment} onOpen={route.slug === 'life' ? undefined : () => go(consolePath('life'))} />}
-          <main onInputCapture={onInputCapture}>
-            <Page key={route.slug} />
+          <main onInput={onInput}>
+            <PageBoundary key={route.slug} label={route.label}>
+              <Page />
+            </PageBoundary>
           </main>
         </div>
       </div>
@@ -201,4 +208,21 @@ function Shell({ onLock }: { onLock: () => void }) {
       </div>
     </ConsoleContext.Provider>
   );
+}
+
+/** One page failing must not blank the whole console: show what broke and a way back. */
+class PageBoundary extends Component<{ label: string; children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <section className="cs-page">
+        <Callout tone="bad">
+          「{this.props.label}」这一页出错了：{this.state.error.message || '未知错误'}。其他页面不受影响。{' '}
+          <Button kind="text" size="sm" onClick={() => this.setState({ error: null })}>重新加载这一页</Button>
+        </Callout>
+      </section>
+    );
+  }
 }
