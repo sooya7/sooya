@@ -1,3 +1,4 @@
+import { policyReasonText } from '../labels.js';
 import { useMemo, useState } from 'react';
 import {
   adminApi, adminRequest, type AdminCapabilities, type AdminError, type AdminJob, type AdminSystemStatus, type MetricAggregate, type MetricsDistribution
@@ -280,18 +281,11 @@ function onOffStatus(on: boolean | undefined) {
   return <Status tone={on ? 'ok' : 'off'}>{on ? '开启' : '关闭'}</Status>;
 }
 
-const REASONS: Record<string, string> = {
-  'qq bot is disabled': 'QQ 通道没有开启',
-  'qq bot is not configured': 'QQ 机器人凭据不完整',
-  'no proactive candidate engine is enabled': '生活话题和约定提醒都没有开启',
-  'qq proactive delivery is disabled': 'QQ 主动消息被关掉了（QQ_PROACTIVE_ENABLED）'
-};
-
 function PolicyList({ caps }: { caps: AdminCapabilities }) {
   const p = caps.policy;
   if (!p) return <Empty>服务端没有返回能力策略。</Empty>;
   const pro = p.proactive;
-  const reasons = (pro?.reasons ?? []).map((r) => REASONS[r] ?? r);
+  const reasons = (pro?.reasons ?? []).map(policyReasonText);
   return (
     <>
       {pro && (

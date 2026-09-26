@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import { ADMIN_UNAUTHORIZED_EVENT, clearAdminToken, getAdminToken, setAdminToken } from '../lib/admin.js';
 import { APP_NAVIGATION_EVENT, navigate as appNavigate } from '../lib/navigation.js';
-import { MomentStrip, useMoment } from './Moment.js';
+import { Icon, routeIcon } from './icons.js';
+import { HerAvatar, MomentHero, MomentStrip, useMoment } from './Moment.js';
 import { PAGES } from './pages/index.js';
 import { ROUTES, consolePath, routeFromPath, type ConsoleRoute } from './routes.js';
 import { Button, ConsoleContext, Field, Input, type ConsoleContextValue } from './ui.js';
@@ -138,7 +139,13 @@ function Shell({ onLock }: { onLock: () => void }) {
     <ConsoleContext.Provider value={context}>
       <div className="cs-shell" data-nav-open={navOpen ? 'true' : undefined}>
         <nav className="cs-nav" aria-label="管理栏目" id="cs-nav" onClick={(e) => { if (e.target === e.currentTarget) setNavOpen(false); }}>
-          <a className="cs-brand" href={consolePath('')} onClick={(e) => onLinkClick(e, ROUTES[0]!)}>SOOYA</a>
+          <a className="cs-her" href={consolePath('')} onClick={(e) => onLinkClick(e, ROUTES[0]!)} aria-label="回到此刻">
+            <HerAvatar persona={moment?.persona ?? null} />
+            <span>
+              <span className="cs-her-name">{moment?.persona?.name ?? 'SOOYA'}</span>
+              <span className="cs-her-line">{moment?.persona?.tagline || '管理后台'}</span>
+            </span>
+          </a>
           {groups.map(([title, items, register]) => (
             <div className="cs-nav-group" data-register={register} key={title}>
               <h2>{title}</h2>
@@ -150,23 +157,31 @@ function Shell({ onLock }: { onLock: () => void }) {
                   aria-current={item.slug === route.slug ? 'page' : undefined}
                   onClick={(e) => onLinkClick(e, item)}
                 >
+                  <Icon name={routeIcon(item.slug)} size={18} />
                   {item.label}
                 </a>
               ))}
             </div>
           ))}
           <div className="cs-nav-foot">
-            <a className="cs-btn" data-kind="text" href="/admin">回到旧版后台</a>
-            <Button kind="text" onClick={() => { if (!dirtyRef.current || window.confirm(LEAVE_QUESTION)) onLock(); }}>退出登录</Button>
+            <a className="cs-nav-link" href="/admin"><Icon name="back" size={18} />回到旧版后台</a>
+            <button type="button" className="cs-nav-link" onClick={() => { if (!dirtyRef.current || window.confirm(LEAVE_QUESTION)) onLock(); }}>
+              <Icon name="exit" size={18} />退出登录
+            </button>
+            <span className="cs-nav-product">SOOYA 管理后台</span>
           </div>
         </nav>
         <div className="cs-main">
           <div className="cs-mobile-bar">
-            <Button kind="quiet" size="sm" aria-expanded={navOpen} aria-controls="cs-nav" onClick={() => setNavOpen(true)}>栏目</Button>
-            <span>{route.label}</span>
-            {dirty ? <span className="cs-dirty">未保存</span> : <span />}
+            <button type="button" className="cs-icon-btn" aria-label="打开栏目" aria-expanded={navOpen} aria-controls="cs-nav" onClick={() => setNavOpen(true)}>
+              <Icon name="menu" size={20} />
+            </button>
+            <span className="cs-mobile-title">{route.label}</span>
+            {dirty && <span className="cs-dirty">未保存</span>}
           </div>
-          <MomentStrip data={moment} onOpen={route.slug === 'life' ? undefined : () => go(consolePath('life'))} />
+          {route.slug === ''
+            ? <MomentHero data={moment} />
+            : <MomentStrip data={moment} onOpen={route.slug === 'life' ? undefined : () => go(consolePath('life'))} />}
           <main onInputCapture={onInputCapture}>
             <Page key={route.slug} />
           </main>

@@ -112,12 +112,14 @@ export function useAction() {
 
 /* ------------------------------------------------------------- layout */
 
-export function Page({ title, intro, register = 'system', actions, children }: {
+export function Page({ title, intro, register = 'system', actions, children, headless }: {
   title: string; intro?: ReactNode; register?: 'her' | 'system'; actions?: ReactNode; children: ReactNode;
+  /** The title is still announced to screen readers, but something else on screen already says it. */
+  headless?: boolean;
 }) {
   return (
     <section className="cs-page" data-register={register} aria-labelledby="cs-page-title">
-      <header className="cs-page-head">
+      <header className={headless ? 'cs-sr' : 'cs-page-head'}>
         <h1 id="cs-page-title">{title}</h1>
         {intro && <p>{intro}</p>}
         {actions && <div className="cs-actions">{actions}</div>}
