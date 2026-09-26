@@ -244,6 +244,101 @@ export function Select({ options, ...props }: SelectHTMLAttributes<HTMLSelectEle
   );
 }
 
+/* ------------------------------------------------------- date & time */
+
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** YYYY-MM-DD of "now" shifted by a zone offset in minutes (UTC fields read as that zone's wall clock). */
+function dayIn(offsetMinutes: number, addDays = 0): string {
+  const d = new Date(Date.now() + offsetMinutes * 60_000 + addDays * 86_400_000);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+function dayLabel(day: string, today: string): string {
+  const [y, m, d] = day.split('-').map(Number);
+  const date = new Date(Date.UTC(y!, m! - 1, d!));
+  const base = `${m}/${d} ${WEEKDAYS[date.getUTCDay()]}`;
+  const diff = Math.round((date.getTime() - new Date(`${today}T00:00:00Z`).getTime()) / 86_400_000);
+  const near: Record<number, string> = { [-1]: '昨天', 0: '今天', 1: '明天', 2: '后天' };
+  return near[diff] ? `${near[diff]}（${base}）` : base;
+}
+
+/**
+ * Pick a day and a time from two lists instead of typing into a date field.
+ * The value is a wall-clock "YYYY-MM-DDTHH:mm" (or '' for none) in the zone given by offsetMinutes,
+ * the same shape <input type="datetime-local"> produces, so callers keep their conversions.
+ */
+export function DateTimePicker({ value, onChange, offsetMinutes = -new Date().getTimezoneOffset(), days = 14, step = 15, emptyLabel = '不定', label }: {
+  value: string; onChange: (next: string) => void; offsetMinutes?: number; days?: number; step?: number; emptyLabel?: string; label: string;
+}) {
+  const today = dayIn(offsetMinutes);
+  const [day = '', time = ''] = value ? value.split('T') : [];
+  const dayList = Array.from({ length: days }, (_, i) => dayIn(offsetMinutes, i));
+  if (day && !dayList.includes(day)) dayList.unshift(day);
+  const times = Array.from({ length: (24 * 60) / step }, (_, i) => `${pad2(Math.floor((i * step) / 60))}:${pad2((i * step) % 60)}`);
+  const hm = time.slice(0, 5);
+  if (hm && !times.includes(hm)) times.push(hm);
+  times.sort();
+  /** A sensible time when only the day is picked: the next slot today, otherwise the morning. */
+  const defaultTime = (pickedDay: string) => {
+    if (pickedDay !== today) return '09:00';
+    const now = new Date(Date.now() + offsetMinutes * 60_000);
+    const next = Math.ceil((now.getUTCHours() * 60 + now.getUTCMinutes() + 1) / step) * step;
+    return next >= 24 * 60 ? '23:45' : `${pad2(Math.floor(next / 60))}:${pad2(next % 60)}`;
+  };
+  return (
+    <span className="cs-dt">
+      <select className="cs-select" aria-label={`${label}：哪天`} value={day}
+        onChange={(e) => onChange(e.target.value ? `${e.target.value}T${hm || defaultTime(e.target.value)}` : '')}>
+        <option value="">{emptyLabel}</option>
+        {dayList.map((d) => <option key={d} value={d}>{dayLabel(d, today)}</option>)}
+      </select>
+      <select className="cs-select" aria-label={`${label}：几点`} value={hm} disabled={!day}
+        onChange={(e) => onChange(`${day}T${e.target.value}`)}>
+        {!hm && <option value="">几点</option>}
+        {times.map((t) => <option key={t} value={t}>{t}</option>)}
+      </select>
+    </span>
+  );
+}
+
+type RangePreset = 'all' | 'today' | 'week' | 'month' | 'custom';
+
+/** Date filter as one tap: all / today / last 7 / last 30 days, with exact dates only when asked for. */
+export function DateRange({ from, to, onChange, label = '时间' }: {
+  from: string; to: string; onChange: (from: string, to: string) => void; label?: string;
+}) {
+  const local = -new Date().getTimezoneOffset();
+  const today = dayIn(local);
+  const presets: Array<[RangePreset, string, string, string]> = [
+    ['all', '全部', '', ''],
+    ['today', '今天', today, today],
+    ['week', '最近 7 天', dayIn(local, -6), today],
+    ['month', '最近 30 天', dayIn(local, -29), today]
+  ];
+  const matched = presets.find(([, , f, t]) => f === from && t === to)?.[0];
+  const [custom, setCustom] = useState(!matched);
+  const active: RangePreset = custom ? 'custom' : matched ?? 'custom';
+  return (
+    <div className="cs-range" role="group" aria-label={label}>
+      <div className="cs-chips">
+        {presets.map(([id, text, f, t]) => (
+          <button key={id} type="button" className="cs-chip" aria-pressed={active === id} onClick={() => { setCustom(false); onChange(f, t); }}>{text}</button>
+        ))}
+        <button type="button" className="cs-chip" aria-pressed={active === 'custom'} onClick={() => setCustom(true)}>自定义</button>
+      </div>
+      {active === 'custom' && (
+        <div className="cs-range-custom">
+          <input className="cs-input" type="date" aria-label="从哪天" value={from} max={to || undefined} onChange={(e) => onChange(e.target.value, to)} />
+          <span className="cs-muted">到</span>
+          <input className="cs-input" type="date" aria-label="到哪天" value={to} min={from || undefined} onChange={(e) => onChange(from, e.target.value)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Switch({ checked, onChange, label, disabled }: {
   checked: boolean; onChange: (next: boolean) => void; label: ReactNode; disabled?: boolean;
 }) {

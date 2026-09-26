@@ -6,6 +6,9 @@ import { HerAvatar, MomentHero, MomentStrip, useMoment } from './Moment.js';
 import { PAGES } from './pages/index.js';
 import { ROUTES, consolePath, routeFromPath, type ConsoleRoute } from './routes.js';
 import { Button, ConsoleContext, Field, Input, type ConsoleContextValue } from './ui.js';
+// 霞鹜文楷 (OFL): the console's soft, slightly handwritten face. Split by unicode range, so a page
+// downloads only the glyphs it shows; bundled here so it never depends on a foreign font CDN.
+import 'lxgw-wenkai-screen-webfont/lxgwwenkaigbscreen.css';
 import './console.css';
 
 interface Toast { id: number; message: string; tone?: 'ok' | 'bad' }

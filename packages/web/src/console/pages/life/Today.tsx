@@ -7,8 +7,8 @@ import { weatherConditionLabel } from '../../../lib/worldDisplay.js';
 import { formatTemperature } from '../../../lib/numberDisplay.js';
 import {
   Button, Callout, ConfirmButton, Empty, Facts, Field, Fields, Input, Loadable, Meter, Section, Select, Tag,
-  fmtAgo, useAction, useLoad
-} from '../../ui.js';
+  fmtAgo, useAction, useLoad,
+  DateTimePicker } from '../../ui.js';
 import {
   PLAN_KINDS, PLAN_SOURCE, planStatusLabel, THREAD_STATUS, TRAVEL_MODE, VITALS, browserDiffers, fraction, fromHerInput, herDay, herRange,
   herToday, herWhen, parseJsonArray, threadCategoryLabel, toHerInput, useLife, vitalTone, vitalsScale
@@ -403,10 +403,10 @@ function PlanForm({ plan, onDone, onCancel }: { plan?: PlanRow; onDone: () => vo
           <Select value={kind} options={kinds} onChange={(e) => change(setKind)(e.target.value)} />
         </Field>
         <Field label="打算几点开始" hint={zoneHint ?? '可以不填。'}>
-          <Input type="datetime-local" value={start} onChange={(e) => change(setStart)(e.target.value)} />
+          <DateTimePicker label="开始" value={start} offsetMinutes={tz} onChange={change(setStart)} />
         </Field>
         <Field label="打算几点结束" hint="可以不填。">
-          <Input type="datetime-local" value={end} onChange={(e) => change(setEnd)(e.target.value)} />
+          <DateTimePicker label="结束" value={end} offsetMinutes={tz} onChange={change(setEnd)} />
         </Field>
       </Fields>
       <div className="cs-actions">

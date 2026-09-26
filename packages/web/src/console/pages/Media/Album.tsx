@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { featureApi, type FeatureMedia } from '../../../lib/features.js';
 import {
-  Button, Callout, ConfirmButton, Empty, Field, Input, Loading, Section, Select, Switch, Tag, errorMessage, fmtBytes, fmtTime, useAction, useConsole
-} from '../../ui.js';
+  Button, Callout, ConfirmButton, Empty, Field, Input, Loading, Section, Select, Switch, Tag, errorMessage, fmtBytes, fmtTime, useAction, useConsole,
+  DateRange } from '../../ui.js';
 import { MediaViewer } from './MediaViewer.js';
 import { ORIGIN_LABELS, Thumb, batchSummary, downloadMedia, explain, useDebounced, usePaged, useSelection } from './shared.js';
 
@@ -70,8 +70,10 @@ export function Album({ onShowAll }: { onShowAll: () => void }) {
         <div className="media-filters">
           <Field label="搜索"><Input type="search" value={search} placeholder="文件名、标签或聊天里的文字" onChange={(e) => setSearch(e.target.value)} /></Field>
           <Field label="来源"><Select value={origin} options={ORIGIN_OPTIONS} onChange={(e) => setOrigin(e.target.value)} /></Field>
-          <Field label="从哪天"><Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></Field>
-          <Field label="到哪天"><Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></Field>
+        </div>
+        <div className="cs-field media-range">
+          <span className="cs-field-label">时间</span>
+          <DateRange from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
         </div>
       </div>
       <div className="cs-actions media-toolbar" data-no-dirty>

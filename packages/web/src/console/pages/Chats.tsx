@@ -6,8 +6,8 @@ import { useAuthenticatedMedia } from '../../lib/useAuthenticatedMedia.js';
 import { consolePath } from '../routes.js';
 import {
   Button, Callout, ConfirmButton, Empty, Field, Input, Loadable, Page, Section, Select, Tag,
-  errorMessage, fmtTime, useAction, useConsole, useLoad
-} from '../ui.js';
+  errorMessage, fmtTime, useAction, useConsole, useLoad,
+  DateRange } from '../ui.js';
 import './Chats.css';
 
 /* ---------------------------------------------------------------- types */
@@ -209,13 +209,12 @@ export default function Chats() {
             </Field>
             <Button type="submit" busy={history.loading && Boolean(filters.q)}>搜索</Button>
           </div>
+          <div className="cs-field">
+            <span className="cs-field-label">时间</span>
+            <DateRange from={filters.from} to={filters.to} onChange={(from, to) => update({ from, to })} />
+            {rangeError && <span className="cs-field-error">{rangeError}</span>}
+          </div>
           <div className="chat-filter-row">
-            <Field label="从哪天">
-              <Input type="date" value={filters.from} onChange={(e) => update({ from: e.target.value })} />
-            </Field>
-            <Field label="到哪天" error={rangeError}>
-              <Input type="date" value={filters.to} onChange={(e) => update({ to: e.target.value })} />
-            </Field>
             <Field label="谁说的">
               <Select
                 value={filters.role}
