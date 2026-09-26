@@ -33,6 +33,7 @@ import { parseVoiceIntent } from './voice/intent.js';
 import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
 import type { MediaDirector } from './mediaDirector.js';
+import { BehaviorDecisionService, applyBehaviorDecision, decisionPrompt, type BehaviorDecision } from './behavior-decision.js';
 import type {
   ImageContinuityService,
   PreparedImageContinuity,
@@ -66,6 +67,7 @@ export interface ReplyOptions {
 }
 
 export interface ReplyOutcome {
+  behaviorDecision?: BehaviorDecision;
   messageId: string;
   ok: boolean;
   parts: string[];
@@ -106,6 +108,7 @@ export interface ReplyMediaPlan {
 }
 
 export interface TextGenerationResult {
+  behaviorDecision?: BehaviorDecision;
   /** Fully stripped, speaker-prefix-free visible text. */
   text: string;
   /** Raw model output before directive stripping. */
@@ -231,6 +234,10 @@ export class Replier {
         && caps.has('tts') && persona.voicePolicy.enabled
         && (userVoiceIntent === 'voice_only' || userVoiceIntent === 'voice_reply');
       const hiddenStickerOnly = userDirectives.stickerOnly === true;
+      // Runs alongside context building; it is only needed once the system prompt is assembled.
+      const pendingDecision = new BehaviorDecisionService(() => this.deps.config.getModels().decision)
+        .evaluate(userText, this.recentPlainContext(6), signal);
+      pendingDecision.catch(() => { /* awaited below; avoids an unhandled rejection if context building fails first */ });
       const holdDraft = hiddenDraft || hiddenStickerOnly || visualTime.mode === 'retrospective';
 
       const allowVision = caps.visionProvider() !== null;
@@ -257,10 +264,18 @@ export class Replier {
         worldSnapshot: world,
         videoAvailable: Boolean(this.deps.video) && caps.has('video')
       });
+      const behaviorDecision = await pendingDecision;
+      if (behaviorDecision.status === 'ok') {
+        if (!userDirectives.wantImage && (!caps.has('image') || !persona.imagePolicy.enabled || persona.imagePolicy.frequency === 'never')) behaviorDecision.media.image = false;
+        if (!userDirectives.wantVideo && (!caps.has('video') || !persona.videoPolicy.enabled || persona.videoPolicy.frequency === 'never')) behaviorDecision.media.video = false;
+        const voice = this.deps.voice;
+        if (!userDirectives.wantVoice && voice && (voice.preferences.autoVoiceFrequency === 'never' || voice.autoCountToday() >= voice.dailyAutoCap)) behaviorDecision.media.voice = false;
+      }
+      if (behaviorDecision.status === 'unavailable' || behaviorDecision.status === 'unconfigured') degraded.push('behavior_decision_unavailable');
       const provider = allowVision && built.visionUsed ? caps.visionProvider()! : caps.chatProvider();
       const selectedModel = built.visionUsed ? visionModel : chatModel;
       const requestMaxTokens = Math.min(selectedModel.maxTokens, maxOutputTokens);
-      let requestSystem = built.system;
+      let requestSystem = built.system + decisionPrompt(behaviorDecision);
       let webSearchResult: WebSearchResult | undefined;
       let nativeSearchAnswer: string | undefined;
       const searchDecision = decideWebSearch(userText);
@@ -282,7 +297,7 @@ export class Replier {
         const nativeSearch = provider.name === 'openai-responses' && selectedModel.supportsTools
           ? async (nativeSignal: AbortSignal): Promise<WebSearchResult | null> => {
               const native = await provider.complete({
-                system: built.system,
+                system: requestSystem,
                 messages: built.turns,
                 maxTokens: requestMaxTokens,
                 temperature: undefined,
@@ -512,7 +527,7 @@ export class Replier {
       }
 
       const stripped = stripModelDirectives(rawText);
-      const modelDirectives = stripped.directives;
+      const modelDirectives = applyBehaviorDecision(stripped.directives, userDirectives, behaviorDecision);
       const rawFinalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
       const mediaPlan = this.planMedia(persona, userDirectives, modelDirectives, rawFinalText);
       const hasImageDirective = Boolean(mediaPlan.selfImagePrompt ?? mediaPlan.imagePrompt);
@@ -554,6 +569,7 @@ export class Replier {
 
       return {
         text: finalText,
+        behaviorDecision,
         rawText,
         directives: modelDirectives,
         degraded,
@@ -948,7 +964,8 @@ export class Replier {
 
     // 3c. Voice — independent expression system (Part 4): intent → mode →
     // spoken script → naturalness guard → delivery → TTS → publication.
-    if (this.deps.voice && this.deps.voiceV2Enabled !== false) {
+    if (this.deps.voice && this.deps.voiceV2Enabled !== false &&
+      (generated.behaviorDecision?.media.voice !== false || userDirectives.wantVoice === true || ['voice_only', 'voice_reply', 'read_aloud'].includes(parseVoiceIntent(userText)))) {
       const userIntent = parseVoiceIntent(userText);
       // P0-3: replace/voice-only is reserved for EXPLICIT user intent. A model
       // that emits [[voice-only]] on its own is downgraded to complement — the
@@ -1127,7 +1144,8 @@ export class Replier {
     }, 'reply.content.done', (message) => ({ message, degraded }), () => [
       { type: 'reply.content.done', payload: { messageId: shell.id, parts: producedParts } }
     ]);
-    return { messageId: shell.id, ok: true, parts: producedParts, degraded };
+    if (generated.behaviorDecision?.status !== 'disabled') this.deps.messages.updateMeta(shell.id, { behaviorDecision: generated.behaviorDecision });
+    return { messageId: shell.id, ok: true, parts: producedParts, degraded, behaviorDecision: generated.behaviorDecision };
   }
 
   /** Legacy one-shot reply used when REPLY_INTERRUPTIBLE_GENERATION=false. */
@@ -1393,13 +1411,15 @@ export class Replier {
     }
     const stickerOnly = sticker && (user.stickerOnly === true || model.stickerOnly === true);
 
-    // Image
+    // Image. A prohibition only stands when nothing in the batch explicitly asks.
+    const imageBlocked = user.noImage === true && user.wantImage !== true;
+    const videoBlocked = user.noVideo === true && user.wantVideo !== true;
     let imagePrompt: string | null = null;
     let selfImagePrompt: string | null = null;
-    if (persona.imagePolicy.enabled && persona.referenceImages.length > 0) {
+    if (persona.imagePolicy.enabled && !imageBlocked && persona.referenceImages.length > 0) {
       if (model.selfImagePrompt) selfImagePrompt = model.selfImagePrompt;
     }
-    if (persona.imagePolicy.enabled) {
+    if (persona.imagePolicy.enabled && !imageBlocked) {
       if (model.imagePrompt) imagePrompt = model.imagePrompt;
       else if (user.wantImage && user.imagePrompt) {
         if (user.selfieIntent && persona.referenceImages.length > 0) selfImagePrompt = user.imagePrompt;
@@ -1414,7 +1434,7 @@ export class Replier {
     // without references they fall back to a plain clip of the described scene.
     let videoPrompt: string | null = null;
     let selfVideoPrompt: string | null = null;
-    if (persona.videoPolicy.enabled && caps.has('video') && this.deps.video) {
+    if (persona.videoPolicy.enabled && !videoBlocked && caps.has('video') && this.deps.video) {
       const hasReferences = persona.referenceImages.length > 0;
       if (model.selfVideoPrompt) {
         if (hasReferences) selfVideoPrompt = model.selfVideoPrompt;

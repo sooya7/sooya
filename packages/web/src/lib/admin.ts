@@ -510,6 +510,8 @@ export const adminApi = {
   models: () => adminRequest<{ models: AdminModels }>('/api/admin/models'),
   updateModels: (patch: AdminModels) =>
     adminRequest<{ models: AdminModels }>('/api/admin/models', { method: 'PUT', body: patch }),
+  testBehaviorDecision: (text: string) => adminRequest<{ ok: boolean; result: { status: string; memory: string; probabilities?: Record<string, number> } }>(
+    '/api/admin/behavior-decision/test', { method: 'POST', body: { text } }),
   lifeOverview: () => adminRequest<AdminLifeOverview>('/api/admin/life/overview'),
   lifeVitals: () => adminRequest<{ vitals: AdminLifeVitals | null }>('/api/admin/life/vitals'),
   adjustVitals: (field: string, delta: number) =>

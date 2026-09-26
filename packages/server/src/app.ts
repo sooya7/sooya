@@ -656,10 +656,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
       const flowTraceId = userMessages
         .map((message) => message.meta?.flowTraceId)
         .find((value): value is string => typeof value === 'string' && value.length > 0);
-      // The batch is already marked completed by the coordinator (revision-
-      // fenced); this hook only enqueues the downstream jobs atomically.
+      // The coordinator completed this revision; enqueue downstream jobs atomically.
       const tx = dbHandle.transaction(() => {
-        if (capabilityPolicy.memory.write) {
+        if (capabilityPolicy.memory.write && outcome.behaviorDecision?.memory !== 'skip') {
           repos.jobs.enqueue(
             env.MEMORY_BACKEND === 'ombre' ? 'ombre.memory_commit' : 'memory.extract',
             { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId }

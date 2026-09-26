@@ -22,6 +22,8 @@ export interface UserDirectives {
   stickerOnly?: boolean;
   noSticker?: boolean;
   noVoice?: boolean;
+  noImage?: boolean;
+  noVideo?: boolean;
   anotherSticker?: boolean;
   /** The user asked for a short video clip ("拍段视频"、"做个视频"). */
   wantVideo?: boolean;
@@ -55,6 +57,7 @@ const IMAGE_PATTERNS = [
   /拍(?:一)?(?:张|个)(?:照|相|自拍)?/,
   /(?:发|来|给|要|想)(?:一)?(?:张|个|幅)(?:照片|相片|照)/,
   /(?:发|来|给|要|想)(?:一)?(?:张|个|幅)?(?:照片|相片)/,
+  /(?:发|来|给我?|要)(?:一)?(?:张|幅)图/,
   /(?:看看|看下|看一?下).{0,6}(?:照片|相片|自拍)/,
   /(?:给我看|让我看).{0,6}(?:照片|相片|自拍)/,
   /拍(?:一)?(?:张|个)你的(?:照片|相片|照)/,
@@ -83,6 +86,16 @@ const VIDEO_PROMPT_EXTRACT = [
   /(?:生成|做|拍|来|发|给我|录)(?:一)?(?:个|段|条|支)?(?:小|短)?视频[，,:：]?\s*(.+)$/,
   /(?:generate|make|create|shoot|record) (?:me )?(?:a |one )?(?:short )?(?:video|clip) (?:of|about|showing) (.+)$/i
 ];
+/**
+ * Explicit prohibitions. A verb is required before a bare 图 so that
+ * 「别图省事」 is not read as "no images".
+ */
+const NO_IMAGE_RE = /(?:不要|别|不用|无需)再?(?:(?:生成|发|画|拍|做|配)(?:一)?(?:张|个|幅)?(?:图片?|照片|相片)|图片|照片|相片)/;
+const NO_VIDEO_RE = /(?:不要|别|不用|无需)再?(?:(?:生成|发|拍|做|录)(?:一)?(?:个|段|条)?)?视频/;
+const TEXT_ONLY_RE = /(?:只用|只发|纯)文字/;
+/** 「我发张照片给你看」: the user is the one sending, not asking for a picture. 「给我发」 is still a request. */
+const USER_SENDS_RE = /(?:^|(?<=[，,。！!？?~～\s]))我(?:再|先|也|就)?(?:发|传)(?:一)?(?:张|个|幅)?(?:图片?|照片|相片)/;
+const globalRe = (re: RegExp) => new RegExp(re.source, 'g');
 /** Words that mean the user really wants a still picture, so a video match must not swallow it. */
 const STILL_IMAGE_WORDS = /(?:照片|相片|图片?|画|自拍|插画|海报|selfie|photo|pic\b|image|draw)/i;
 
@@ -117,33 +130,46 @@ export function parseUserDirectives(text: string): UserDirectives {
     d.voiceOnly = true;
   } else if (has(VOICE_PATTERNS)) d.wantVoice = true;
 
-  if (has(IMAGE_PATTERNS)) {
+  // 「别发照片了，画张插画给我」：否定片段先抠掉，剩下的部分仍在要图就照常出图；
+  // 只有剩下的部分不再要图时才算明确禁止。
+  const textOnly = TEXT_ONLY_RE.test(t);
+  const deniesImage = textOnly || NO_IMAGE_RE.test(t);
+  const deniesVideo = textOnly || NO_VIDEO_RE.test(t);
+  const rest = [NO_IMAGE_RE, NO_VIDEO_RE, TEXT_ONLY_RE, USER_SENDS_RE]
+    .reduce((text, re) => text.replace(globalRe(re), '，'), t);
+  const hasRest = (patterns: RegExp[]) => patterns.some((p) => p.test(rest));
+  const imageAsked = hasRest(IMAGE_PATTERNS);
+  const videoAsked = hasRest(VIDEO_PATTERNS);
+  if (deniesImage && !imageAsked) d.noImage = true;
+  if (deniesVideo && !videoAsked) d.noVideo = true;
+
+  if (imageAsked) {
     d.wantImage = true;
-    if (has(SELFIE_PATTERNS)) d.selfieIntent = true;
+    if (hasRest(SELFIE_PATTERNS)) d.selfieIntent = true;
     for (const p of IMAGE_PROMPT_EXTRACT) {
-      const m = p.exec(t);
+      const m = p.exec(rest);
       if (m?.[1] && m[1].trim().length >= 2) {
         d.imagePrompt = m[1].trim().replace(/[。.!！~]+$/, '');
         break;
       }
     }
-    if (!d.imagePrompt) d.imagePrompt = t;
+    if (!d.imagePrompt) d.imagePrompt = rest;
   }
 
-  if (has(VIDEO_PATTERNS)) {
+  if (videoAsked) {
     d.wantVideo = true;
-    if (has(SELF_VIDEO_PATTERNS)) d.selfVideoIntent = true;
+    if (hasRest(SELF_VIDEO_PATTERNS)) d.selfVideoIntent = true;
     for (const p of VIDEO_PROMPT_EXTRACT) {
-      const m = p.exec(t);
+      const m = p.exec(rest);
       if (m?.[1] && m[1].trim().length >= 2) {
         d.videoPrompt = m[1].trim().replace(/[。.!！~]+$/, '');
         break;
       }
     }
-    if (!d.videoPrompt) d.videoPrompt = t;
+    if (!d.videoPrompt) d.videoPrompt = rest;
     // 「拍个视频」also trips the photo patterns through 拍个; only keep the image
     // request when the sentence really mentions a still picture as well.
-    if (d.wantImage && !STILL_IMAGE_WORDS.test(t)) {
+    if (d.wantImage && !STILL_IMAGE_WORDS.test(rest)) {
       delete d.wantImage;
       delete d.imagePrompt;
       delete d.selfieIntent;

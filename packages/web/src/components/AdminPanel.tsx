@@ -7,6 +7,7 @@ import { formatAdminDateTime } from '../lib/adminDisplay.js';
 import { featureApi } from '../lib/features.js';
 import { AvatarEditor, emotionLabel, ReferencesEditor, StorageEditor } from './FeatureAdminPage.js';
 import { LifeObservationPanel } from './life/LifeObservationPanel.js';
+import { DecisionModelEditor } from './DecisionModelEditor.js';
 import { WebSearchModelEditor } from './WebSearchModelEditor.js';
 import { VideoStudio } from './VideoStudio.js';
 import { ModelLibrary } from './admin/ModelLibrary.js';
@@ -56,13 +57,14 @@ const CAPABILITIES = [
   ['image', '图片生成模型'],
   ['video', '视频生成模型'],
   ['tts', '语音合成模型'],
-  ['webSearch', '联网搜索']
+  ['webSearch', '联网搜索'],
+  ['decision', '行为决策']
 ] as const;
 const CAPABILITY_DESCRIPTIONS: Partial<Record<ModelPanelSelection, string>> = {
   video: '文生视频 / 图生视频。任务异步执行：提交后在下方看进度、播放结果，也可以直接调用 /api/admin/video/generations。',
   director: '媒体导演统一负责表情选择、语音口语化和图片提示词扩写；未单独配置时回退聊天模型。它处理短结构化文本，不负责读图。'
 };
-type ModelPanelSelection = ModelSlot | 'webSearch';
+type ModelPanelSelection = ModelSlot | 'webSearch' | 'decision';
 
 function formatBytes(value: unknown): string {
   const n = typeof value === 'number' ? value : 0;
@@ -273,7 +275,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
   }));
 
   const save = async () => {
-    if (!models || selected === 'webSearch') return;
+    if (!models || (selected === 'webSearch' || selected === 'decision')) return;
     try {
       const typed = keyDraft.trim();
       const r = await adminApi.updateModels({ [selected]: { ...config, ...(typed ? { apiKey: typed } : {}) } });
@@ -308,7 +310,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
 
   /** Asks the endpoint what it serves. The key stays server-side. */
   const pull = async () => {
-    if (selected === 'webSearch') return;
+    if ((selected === 'webSearch' || selected === 'decision')) return;
     if (keyDraft.trim()) {
       onNotice('请先点击“保存模型配置”，再拉取模型列表');
       return;
@@ -331,7 +333,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
    * apart from "actually works". Unsaved form edits are not part of the probe.
    */
   const runTest = async () => {
-    if (selected === 'webSearch') return;
+    if ((selected === 'webSearch' || selected === 'decision')) return;
     if (selected === 'video') { onNotice('视频生成不做连接测试：先「拉取模型」确认地址和密钥，再在下方提交一次任务'); return; }
     if (selected === 'image' && !confirmAction('测试出图会真实调用图片服务并消耗一次额度，确定继续吗？')) return;
     setTesting(true);
@@ -352,7 +354,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
 
   /** Saves what is on screen into the library as a new entry. */
   const addToLibrary = async () => {
-    if (selected === 'webSearch') return;
+    if ((selected === 'webSearch' || selected === 'decision')) return;
     if (keyDraft.trim()) {
       onNotice('请先点击“保存模型配置”，再存入模型库');
       return;
@@ -382,6 +384,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
           const search = models.webSearch as AdminWebSearchConfig | undefined;
           const status = key === 'webSearch'
             ? (search?.enabled ? { state: 'on', text: search.providers.join(' → ') } : { state: 'off', text: '已关闭' })
+            : key === 'decision' ? ((models.decision as Record<string, unknown>)?.enabled ? { state: 'on', text: String((models.decision as Record<string, unknown>).model) } : { state: 'off', text: '已关闭' })
             : describeSlot(key, models[key] as Record<string, unknown> | undefined);
           return (
             <button key={key} type="button" className={selected === key ? 'admin-model-item active' : 'admin-model-item'} onClick={() => { setSelected(key); setAvailable(null); setKeyDraft(''); setTestResult(null); }}>
@@ -392,7 +395,7 @@ function ModelsPanel({ onNotice }: { onNotice: (v: string) => void }) {
         })}
       </aside>
       <div className="admin-form-card">
-        {selected === 'webSearch' ? <>
+        {selected === 'decision' ? <DecisionModelEditor config={models.decision as Record<string, unknown>} onSaved={setModels} onNotice={onNotice} /> : selected === 'webSearch' ? <>
           <PanelHeading title="联网搜索" description="配置聊天需要外部实时信息时使用的搜索提供方。" />
           <WebSearchModelEditor
             config={models.webSearch as AdminWebSearchConfig}
