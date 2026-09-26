@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import { ADMIN_UNAUTHORIZED_EVENT, clearAdminToken, getAdminToken, setAdminToken } from '../lib/admin.js';
-import { APP_NAVIGATION_EVENT, navigate as appNavigate } from '../lib/navigation.js';
+import { navigate as appNavigate, usePathname } from '../lib/navigation.js';
 import { Icon, routeIcon } from './icons.js';
 import { HerAvatar, MomentHero, MomentStrip, useMoment } from './Moment.js';
 import { PAGES } from './pages/index.js';
-import { ROUTES, consolePath, routeFromPath, type ConsoleRoute } from './routes.js';
+import { ROUTES, canonicalPath, consolePath, routeFromPath, type ConsoleRoute } from './routes.js';
 import { Button, ConsoleContext, Field, Input, type ConsoleContextValue } from './ui.js';
 // 霞鹜文楷 (OFL): the console's soft, slightly handwritten face. Split by unicode range, so a page
 // downloads only the glyphs it shows; bundled here so it never depends on a foreign font CDN.
@@ -12,20 +12,6 @@ import 'lxgw-wenkai-screen-webfont/lxgwwenkaigbscreen.css';
 import './console.css';
 
 interface Toast { id: number; message: string; tone?: 'ok' | 'bad' }
-
-function usePathname(): string {
-  const [pathname, setPathname] = useState(() => window.location.pathname);
-  useEffect(() => {
-    const update = () => setPathname(window.location.pathname);
-    window.addEventListener('popstate', update);
-    window.addEventListener(APP_NAVIGATION_EVENT, update);
-    return () => {
-      window.removeEventListener('popstate', update);
-      window.removeEventListener(APP_NAVIGATION_EVENT, update);
-    };
-  }, []);
-  return pathname;
-}
 
 const TAB_SLUGS = ['', 'life', 'memory', 'chats'];
 const TAB_LABELS: Record<string, string> = { chats: '聊天' };
@@ -69,6 +55,11 @@ function Lock({ onUnlock }: { onUnlock: (token: string) => void }) {
 
 function Shell({ onLock }: { onLock: () => void }) {
   const pathname = usePathname();
+  // Old addresses (retired admin sub-pages, /gallery, /console) move to their new page in place.
+  useEffect(() => {
+    const target = canonicalPath(pathname);
+    if (target) appNavigate(target, { replace: true });
+  }, [pathname]);
   const route = routeFromPath(pathname);
   const [navOpen, setNavOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -171,7 +162,6 @@ function Shell({ onLock }: { onLock: () => void }) {
             </div>
           ))}
           <div className="cs-nav-foot">
-            <a className="cs-nav-link" href="/admin"><Icon name="back" size={18} />回到旧版后台</a>
             <button type="button" className="cs-nav-link" onClick={() => { if (!dirtyRef.current || window.confirm(LEAVE_QUESTION)) onLock(); }}>
               <Icon name="exit" size={18} />退出登录
             </button>

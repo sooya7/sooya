@@ -13,7 +13,7 @@ SOOYA 不是一个多会话 ChatGPT 克隆，也不是把模型 API 套进聊天
 > SOOYA 是**单通道**架构：
 >
 > - **QQ 官方 Bot 是唯一的用户聊天入口与消息出口。**
-> - Web 端只有管理后台 `/admin` 和图库 `/gallery`，两者都由 Admin Token 保护。
+> - Web 端只有管理后台 `/admin`（手机优先，由 Admin Token 保护）；图库在后台的「相册与表情」页，旧地址 `/gallery` 会自动跳过去。
 > - 旧的 Web Chat、SSE 聊天接口、PWA 与浏览器推送已下线，`WEB_CHAT_TOKEN` 一并删除。
 >
 > 也就是说：**跑 SOOYA 需要一个 QQ 开放平台的机器人**（AppID / AppSecret / Bot Secret）。

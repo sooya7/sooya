@@ -120,6 +120,10 @@
 /* [hidden] must win over component display rules (sections fold with it) */
 .cs [hidden] { display: none !important; }
 
+/* the page itself: no default margin, and the ground colour behind overscroll */
+html, body { margin: 0; background: #e2e8e3; }
+@media (prefers-color-scheme: dark) { html, body { background: #0d1216; } }
+
 /* ------------------------------------------------------------------ shell */
 
 .cs-shell {
