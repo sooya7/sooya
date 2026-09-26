@@ -220,7 +220,7 @@
 .cs-page-head { display: grid; gap: 0.5rem; margin-bottom: 1.75rem; }
 .cs-page-head h1 { font-size: var(--t-2xl); line-height: 1.2; font-weight: 650; letter-spacing: 0.01em; }
 .cs-page[data-register='her'] .cs-page-head h1 { font-family: var(--c-serif); font-size: 2.125rem; font-weight: 600; letter-spacing: 0.04em; }
-.cs-page-head p { color: var(--c-ink-2); max-width: 40em; }
+.cs-page-head p { color: var(--c-ink-2); max-width: 60em; }
 
 
 @media (max-width: 760px) {
@@ -451,23 +451,40 @@
 
 /* ---------------------------------------------------------------- sections */
 
-.cs-section {
-  display: grid;
-  grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr);
-  gap: 1rem 2.5rem;
-  padding-block: 1.75rem;
-  border-top: 1px solid var(--c-rule);
-}
-.cs-section:first-of-type { border-top: 0; padding-top: 0.5rem; }
-.cs-section-head { display: grid; align-content: start; gap: 0.375rem; }
+/* A section is a title over one block. The explanation is folded behind 说明. */
+.cs-section { display: grid; gap: 0.625rem; padding-block: 0 1.75rem; }
+.cs-section-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.25rem 0.875rem; padding-inline: 0.25rem; }
 .cs-section-head h2 { font-size: 1.125rem; font-weight: 650; line-height: 1.35; }
 .cs-page[data-register='her'] .cs-section-head h2 { font-family: var(--c-serif); font-weight: 600; }
-.cs-section-head p { font-size: var(--t-sm); color: var(--c-ink-2); }
-.cs-section-body { min-width: 0; display: grid; gap: 1.25rem; align-content: start; }
-.cs-section[data-wide='true'] { grid-template-columns: minmax(0, 1fr); }
+.cs-info {
+  align-self: center;
+  display: inline-grid;
+  place-items: center;
+  padding: 0.125rem;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--c-ink-3);
+  cursor: pointer;
+  opacity: 0.7;
+}
+.cs-info:hover { opacity: 1; }
+.cs-info:hover,
+.cs-info[aria-expanded='true'] { color: var(--c-jade); }
+.cs-section-desc { padding-inline: 0.25rem; max-width: 48em; font-size: var(--t-sm); color: var(--c-ink-2); }
+.cs-section-body {
+  min-width: 0;
+  display: grid;
+  gap: 1.25rem;
+  align-content: start;
+  padding: 1.25rem 1.5rem;
+  background: var(--c-sheet);
+  border: 1px solid var(--c-rule);
+  border-radius: 14px;
+}
 
-@media (max-width: 900px) {
-  .cs-section { grid-template-columns: minmax(0, 1fr); gap: 0.875rem; }
+@media (max-width: 760px) {
+  .cs-section-body { padding: 1rem; border-radius: 12px; }
 }
 
 /* ------------------------------------------------------------------- form */
@@ -477,7 +494,9 @@
 .cs-field { display: grid; align-content: start; gap: 0.375rem; min-width: 0; }
 .cs-field[data-span='full'] { grid-column: 1 / -1; }
 .cs-field-label { font-size: var(--t-sm); color: var(--c-ink-2); }
-.cs-field-hint { font-size: var(--t-xs); color: var(--c-ink-3); }
+/* hints appear while the field is in use, so a resting form is just labels and values */
+.cs-field-hint { display: none; font-size: var(--t-xs); color: var(--c-ink-3); }
+.cs-field:focus-within .cs-field-hint { display: block; }
 .cs-field-error { font-size: var(--t-xs); color: var(--c-danger); }
 
 .cs-input,
@@ -593,6 +612,7 @@
 .cs-fact { display: grid; gap: 0.125rem; min-width: 0; }
 .cs-fact dt { font-size: var(--t-xs); color: var(--c-ink-3); }
 .cs-fact dd { font-size: var(--t-lg); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.cs-fact dd[data-empty] { color: var(--c-ink-3); font-weight: 400; }
 
 .cs-meter { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr) 2.75rem; align-items: center; gap: 0.75rem; font-size: var(--t-sm); }
 .cs-meter-track { height: 6px; border-radius: 3px; background: var(--c-sunk); overflow: hidden; }

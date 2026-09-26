@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -14,6 +15,7 @@ import {
 import { ApiError } from '../lib/api.js';
 import { adminFailureKind } from '../lib/admin.js';
 import type { MomentData } from './Moment.js';
+import { Icon } from './icons.js';
 
 /* ------------------------------------------------------------ context */
 
@@ -129,15 +131,27 @@ export function Page({ title, intro, register = 'system', actions, children, hea
   );
 }
 
+/**
+ * A titled block. The explanation stays folded behind 说明 so pages read as content, not prose;
+ * anything the reader must see before acting belongs in a Callout inside the body instead.
+ */
 export function Section({ title, desc, wide, children, id }: {
   title: string; desc?: ReactNode; wide?: boolean; children: ReactNode; id?: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const descId = useId();
   return (
     <section className="cs-section" data-wide={wide ? 'true' : undefined} id={id}>
-      <div className="cs-section-head">
+      <header className="cs-section-head">
         <h2>{title}</h2>
-        {desc && <p>{desc}</p>}
-      </div>
+        {desc && (
+          <button type="button" className="cs-info" aria-expanded={open} aria-controls={descId} aria-label={open ? '收起说明' : '这一节是做什么的'}
+            title={open ? '收起说明' : '这一节是做什么的'} onClick={() => setOpen((v) => !v)}>
+            <Icon name="info" size={16} />
+          </button>
+        )}
+      </header>
+      {desc && <p className="cs-section-desc" id={descId} hidden={!open}>{desc}</p>}
       <div className="cs-section-body">{children}</div>
     </section>
   );
@@ -279,7 +293,7 @@ export function Facts({ items }: { items: Array<[string, ReactNode]> }) {
   return (
     <dl className="cs-facts">
       {items.map(([label, value]) => (
-        <div className="cs-fact" key={label}><dt>{label}</dt><dd>{value ?? '—'}</dd></div>
+        <div className="cs-fact" key={label}><dt>{label}</dt><dd data-empty={value === null || value === undefined || value === '' || value === '—' ? '' : undefined}>{value ?? '—'}</dd></div>
       ))}
     </dl>
   );
