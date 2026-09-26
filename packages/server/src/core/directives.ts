@@ -22,6 +22,8 @@ export interface UserDirectives {
   stickerOnly?: boolean;
   noSticker?: boolean;
   noVoice?: boolean;
+  noImage?: boolean;
+  noVideo?: boolean;
   anotherSticker?: boolean;
   /** The user asked for a short video clip ("拍段视频"、"做个视频"). */
   wantVideo?: boolean;
@@ -117,7 +119,11 @@ export function parseUserDirectives(text: string): UserDirectives {
     d.voiceOnly = true;
   } else if (has(VOICE_PATTERNS)) d.wantVoice = true;
 
-  if (has(IMAGE_PATTERNS)) {
+  if (/(?:不要|别|不用|无需)(?:生成|发|画|拍|做)?(?:图片?|照片|视频)|(?:只用|只发|纯)文字/.test(t)) {
+    if (/(?:不要|别|不用|无需)(?:生成|发|画|拍|做)?(?:图片?|照片)|(?:只用|只发|纯)文字/.test(t)) d.noImage = true;
+    if (/(?:不要|别|不用|无需)(?:生成|发|拍|做)?视频|(?:只用|只发|纯)文字/.test(t)) d.noVideo = true;
+  }
+  if (has(IMAGE_PATTERNS) && !d.noImage) {
     d.wantImage = true;
     if (has(SELFIE_PATTERNS)) d.selfieIntent = true;
     for (const p of IMAGE_PROMPT_EXTRACT) {
@@ -130,7 +136,7 @@ export function parseUserDirectives(text: string): UserDirectives {
     if (!d.imagePrompt) d.imagePrompt = t;
   }
 
-  if (has(VIDEO_PATTERNS)) {
+  if (has(VIDEO_PATTERNS) && !d.noVideo) {
     d.wantVideo = true;
     if (has(SELF_VIDEO_PATTERNS)) d.selfVideoIntent = true;
     for (const p of VIDEO_PROMPT_EXTRACT) {

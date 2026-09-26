@@ -14,6 +14,7 @@ import { DEFAULT_SPEECH_STYLE } from '../core/voice/style.js';
 import { extractJsonObject } from '../util/json-extract.js';
 import { OmbreCatalogUnavailableError } from '../core/ombre-admin.js';
 import { AdminMessageRepo, type AdminHistoryOptions } from '../db/repos/message-admin.js';
+import { BehaviorDecisionService } from '../core/behavior-decision.js';
 
 function modelRows(payload: unknown): unknown[] {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
@@ -235,6 +236,13 @@ export function registerAdminRoutes(app: SooyaApp): void {
       reply.code(400);
       return { error: 'invalid_models', message: (err as Error).message.slice(0, 500) };
     }
+  });
+
+  server.post('/api/admin/behavior-decision/test', guard, async (req, reply) => {
+    const parsed = z.object({ text: z.string().trim().min(1).max(4000) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad_request' });
+    const result = await new BehaviorDecisionService(() => config.getModels().decision).evaluate(parsed.data.text, '', undefined, true);
+    return { ok: result.status === 'ok', result };
   });
 
   const WebSearchTestSchema = z.object({
