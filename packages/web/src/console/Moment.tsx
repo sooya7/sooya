@@ -201,6 +201,11 @@ export function MomentStrip({ data, onOpen }: { data: MomentData | null; onOpen?
         {onOpen && <button type="button" className="cs-moment-link" onClick={onOpen}>她的一天</button>}
         <SkyArc minutes={d.minutes} sunrise={d.sunrise} sunset={d.sunset} />
       </div>
+      {/* phones get the day as a thin line instead of the arc: daylight lit, a dot for now */}
+      <span className="cs-moment-progress" aria-hidden="true">
+        <span className="cs-moment-progress-lit" style={{ left: `${((d.sunrise ?? 360) / 1440) * 100}%`, width: `${(Math.max(0, (d.sunset ?? 1080) - (d.sunrise ?? 360)) / 1440) * 100}%` }} />
+        <span className="cs-moment-progress-now" style={{ left: `${(d.minutes / 1440) * 100}%` }} />
+      </span>
     </div>
   );
 }

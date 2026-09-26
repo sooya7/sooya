@@ -75,3 +75,30 @@
 /* preset rows: actions sit under the text so a two-step confirm never squeezes the name */
 .cs .mdl-presets .cs-list-item { grid-template-columns: minmax(0, 1fr); }
 .cs .mdl-presets .cs-list-item > .cs-actions { gap: 0.5rem; }
+
+/* phones: capabilities become one swipeable row so the editor starts on the first screen */
+@media (max-width: 760px) {
+  .cs .mdl-caps {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: var(--gutter);
+    margin-inline: calc(-1 * var(--gutter));
+    padding: 0 var(--gutter) 0.75rem;
+    scrollbar-width: none;
+  }
+  .cs .mdl-caps::-webkit-scrollbar { display: none; }
+  .cs .mdl-cap-group { display: contents; }
+  .cs .mdl-cap {
+    flex: 0 0 auto;
+    width: 9.5rem;
+    scroll-snap-align: start;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--c-rule-2);
+    border-radius: 10px;
+    background: var(--c-sheet);
+  }
+  .cs .mdl-cap::before { display: none; }
+  .cs .mdl-cap[aria-current='true'] { border-color: var(--c-jade); background: var(--c-jade-wash); }
+}

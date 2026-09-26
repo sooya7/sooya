@@ -222,7 +222,6 @@
 .cs-page[data-register='her'] .cs-page-head h1 { font-family: var(--c-serif); font-size: 2.125rem; font-weight: 600; letter-spacing: 0.04em; }
 .cs-page-head p { color: var(--c-ink-2); max-width: 40em; }
 
-.cs-mobile-bar { display: none; }
 
 @media (max-width: 760px) {
   .cs-shell { grid-template-columns: minmax(0, 1fr); }
@@ -237,15 +236,6 @@
   }
   .cs-shell[data-nav-open='true'] .cs-nav { transform: none; box-shadow: 0 0 0 100vmax rgba(10, 16, 20, 0.36); }
   .cs-main { margin: 0; border-radius: 0; box-shadow: none; min-height: 100dvh; }
-  .cs-mobile-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: calc(0.5rem + env(safe-area-inset-top, 0px)) var(--gutter) 0.5rem;
-    background: var(--c-paper);
-    border-bottom: 1px solid var(--c-rule);
-  }
-  .cs-mobile-bar .cs-mobile-title { flex: 1; min-width: 0; font-weight: 600; }
   .cs-icon-btn {
     display: inline-grid;
     place-items: center;
@@ -333,12 +323,85 @@
 @media (max-width: 1100px) {
   .cs-moment-link { display: none; }
 }
+.cs-moment-progress { display: none; }
+
 @media (max-width: 760px) {
-  .cs-moment { position: static; grid-template-columns: auto minmax(0, 1fr) auto; border-radius: 0; padding-block: 0.75rem; column-gap: 0.75rem; }
-  .cs-moment .cs-moment-time { display: none; }
-  .cs-moment-activity { font-size: var(--t-lg); }
-  .cs-moment .cs-sky { width: 88px; height: auto; }
-  .cs-moment .cs-sky-label { display: none; }
+  /* on phones the strip is the top bar: her, what she is doing, her clock */
+  .cs-moment {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: 0.75rem;
+    border-radius: 0;
+    padding: calc(0.625rem + env(safe-area-inset-top, 0px)) var(--gutter) 0.75rem;
+  }
+  .cs-moment .cs-moment-time { order: 3; justify-items: end; }
+  .cs-moment .cs-moment-clock { font-size: var(--t-xl); }
+  .cs-moment .cs-moment-day { text-align: right; }
+  .cs-moment-activity { font-size: var(--t-md); }
+  .cs-moment-place { font-size: var(--t-xs); }
+  .cs-moment-side { display: none; }
+  .cs-moment-progress {
+    display: block;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: color-mix(in srgb, var(--m-ink) 12%, transparent);
+  }
+  .cs-moment-progress-lit { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--m-ink) 30%, transparent); }
+  .cs-moment-progress-now { position: absolute; top: -2px; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; background: var(--m-ink); }
+  .cs-moment[data-phase='night'] .cs-moment-progress-now { background: var(--m-night-glow); }
+}
+
+/* ------------------------------------------------- phone tab bar & notices */
+
+.cs-tabbar { display: none; }
+.cs-dirty-pill {
+  position: fixed;
+  z-index: 30;
+  right: 1.25rem;
+  bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  padding: 0.375rem 0.875rem;
+  border-radius: 999px;
+  background: var(--c-amber-wash);
+  color: var(--c-amber);
+  border: 1px solid color-mix(in srgb, var(--c-amber) 35%, transparent);
+  font-size: var(--t-sm);
+  backdrop-filter: blur(6px);
+}
+
+@media (max-width: 760px) {
+  .cs-tabbar {
+    position: fixed;
+    z-index: 35;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    padding: 0.375rem 0.25rem calc(0.375rem + env(safe-area-inset-bottom, 0px));
+    background: color-mix(in srgb, var(--c-paper) 92%, transparent);
+    border-top: 1px solid var(--c-rule);
+    backdrop-filter: blur(12px);
+  }
+  .cs-tab-item {
+    display: grid;
+    justify-items: center;
+    gap: 0.125rem;
+    min-width: 0;
+    padding: 0.25rem 0.125rem;
+    border: 0;
+    background: none;
+    color: var(--c-ink-3);
+    font-size: 0.6875rem;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .cs-tab-item span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cs-tab-item[aria-current='page'] { color: var(--c-jade); font-weight: 600; }
+  .cs-page { padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px)); }
+  .cs-dirty-pill { right: 50%; transform: translateX(50%); bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)); white-space: nowrap; }
+  .cs-toasts { bottom: calc(5rem + env(safe-area-inset-bottom, 0px)); }
 }
 
 /* ------------------------------------------------------ hero (landing page) */

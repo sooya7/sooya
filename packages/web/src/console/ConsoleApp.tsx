@@ -24,6 +24,9 @@ function usePathname(): string {
   return pathname;
 }
 
+const TAB_SLUGS = ['', 'life', 'memory', 'chats'];
+const TAB_LABELS: Record<string, string> = { chats: '聊天' };
+
 const LEAVE_QUESTION = '这一页有没保存的修改，离开后会丢失。确定离开吗？';
 
 export default function ConsoleApp() {
@@ -172,13 +175,7 @@ function Shell({ onLock }: { onLock: () => void }) {
           </div>
         </nav>
         <div className="cs-main">
-          <div className="cs-mobile-bar">
-            <button type="button" className="cs-icon-btn" aria-label="打开栏目" aria-expanded={navOpen} aria-controls="cs-nav" onClick={() => setNavOpen(true)}>
-              <Icon name="menu" size={20} />
-            </button>
-            <span className="cs-mobile-title">{route.label}</span>
-            {dirty && <span className="cs-dirty">未保存</span>}
-          </div>
+
           {route.slug === ''
             ? <MomentHero data={moment} />
             : <MomentStrip data={moment} onOpen={route.slug === 'life' ? undefined : () => go(consolePath('life'))} />}
@@ -187,6 +184,24 @@ function Shell({ onLock }: { onLock: () => void }) {
           </main>
         </div>
       </div>
+      {/* phones: the pages used most, one tap away; everything else behind 更多 */}
+      <nav className="cs-tabbar" aria-label="常用栏目">
+        {TAB_SLUGS.map((slug) => {
+          const item = ROUTES.find((r) => r.slug === slug)!;
+          return (
+            <a key={slug} className="cs-tab-item" href={consolePath(slug)} aria-current={route.slug === slug ? 'page' : undefined} onClick={(e) => onLinkClick(e, item)}>
+              <Icon name={routeIcon(slug)} size={22} />
+              <span>{TAB_LABELS[slug] ?? item.label}</span>
+            </a>
+          );
+        })}
+        <button type="button" className="cs-tab-item" aria-current={TAB_SLUGS.includes(route.slug) ? undefined : 'page'}
+          aria-expanded={navOpen} aria-controls="cs-nav" onClick={() => setNavOpen(true)}>
+          <Icon name="menu" size={22} />
+          <span>{TAB_SLUGS.includes(route.slug) ? '更多' : route.label}</span>
+        </button>
+      </nav>
+      {dirty && <div className="cs-dirty-pill" role="status">这一页有没保存的修改</div>}
       <div className="cs-toasts" aria-live="polite">
         {toasts.map((toast) => <div className="cs-toast" data-tone={toast.tone} key={toast.id}>{toast.message}</div>)}
       </div>
