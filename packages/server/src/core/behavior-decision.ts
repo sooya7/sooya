@@ -28,7 +28,7 @@ const probability = z.number().finite().min(0).max(1);
 const answer = z.object({ type: z.literal('noul'), noul: probability });
 const responseSchema = z.object({ answers: z.object({ memory: answer, image: answer, video: answer, voice: answer }) });
 export interface BehaviorDecision {
-  status: 'ok' | 'disabled' | 'unconfigured' | 'unavailable';
+  status: 'ok' | 'disabled' | 'skipped' | 'unconfigured' | 'unavailable';
   memory: 'save' | 'review' | 'skip';
   media: Partial<Record<'image' | 'video' | 'voice', boolean>>;
   probabilities?: Record<'memory' | 'image' | 'video' | 'voice', number>;
@@ -57,6 +57,8 @@ export class BehaviorDecisionService {
     const memory = explicitMemoryIntent(userText) ?? 'review';
     const fallback = (status: BehaviorDecision['status']): BehaviorDecision => ({ status, memory, media: {} });
     if (!config.enabled && !test) return { status: 'disabled', memory: 'review', media: {} };
+    // Image-only or sticker-only turns carry nothing to judge; keep the original flow.
+    if (!userText.trim()) return { status: 'skipped', memory: 'review', media: {} };
     if (!config.baseUrl.trim() || !config.apiKey.trim()) return fallback('unconfigured');
     signal?.throwIfAborted();
     try {

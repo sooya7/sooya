@@ -86,5 +86,26 @@ describe('System One behavior decisions', () => {
     expect(applyBehaviorDecision({}, { noVoice: true }, { ...decision, media: { voice: true } })).toEqual({});
     expect(parseUserDirectives('不要生成图片，也别发视频')).toMatchObject({ noImage: true, noVideo: true });
   });
+  it.each([
+    '别发照片了，画张插画给我',
+    '不要照片，画一张风景图',
+    '别图省事，给我画张图'
+  ])('keeps an explicit image request next to a prohibition: %s', (text) => {
+    const d = parseUserDirectives(text);
+    expect(d).toMatchObject({ wantImage: true });
+    expect(d.noImage).toBeUndefined();
+    expect(d.imagePrompt).not.toMatch(/(?:发|不要)照片/);
+  });
+  it('still recognizes plain prohibitions', () => {
+    expect(parseUserDirectives('别发照片，文字说就行')).toMatchObject({ noImage: true });
+    expect(parseUserDirectives('别发照片，文字说就行').wantImage).toBeUndefined();
+    expect(parseUserDirectives('只用文字回答就行')).toMatchObject({ noImage: true, noVideo: true });
+    expect(parseUserDirectives('不用视频，拍张照片给我')).toMatchObject({ noVideo: true, wantImage: true });
+    expect(parseUserDirectives('别图省事').noImage).toBeUndefined();
+  });
+  it('does not ask the provider about a turn without text', async () => {
+    expect(await new BehaviorDecisionService(() => config()).evaluate('  ', 'recent')).toEqual({ status: 'skipped', memory: 'review', media: {} });
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
   it('validates threshold ordering', () => expect(() => config({ memoryReviewThreshold: 0.8, memorySaveThreshold: 0.6 })).toThrow());
 });

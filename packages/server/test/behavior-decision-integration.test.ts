@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BehaviorDecisionService, type BehaviorDecision } from '../src/core/behavior-decision.js';
+import { ContextBuilder } from '../src/core/context.js';
 import { createHarness, type Harness } from './helpers/harness.js';
 import type { ChatMessage } from '../src/core/types.js';
 let h: Harness | null = null;
@@ -47,6 +48,31 @@ describe('behavior decisions in the real reply pipeline', () => {
     await say('不要生成图片，也别发视频');
     expect(h.state.imageCalls).toBe(0);
     expect(h.app.services.video.list().total).toBe(0);
+  });
+  it('generates an explicitly requested drawing even when the same message declines photos', async () => {
+    vi.spyOn(BehaviorDecisionService.prototype, 'evaluate').mockResolvedValue(decision());
+    h = await createHarness({ image: 'ok', chat: { script: [['好，画给你。']] } });
+    const reply = await say('别发照片了，画张插画给我');
+    expect(h.state.imageCalls).toBe(1);
+    expect(reply.content.some((p) => p.type === 'image')).toBe(true);
+  });
+  it('builds the context while the decision request is still in flight', async () => {
+    let release!: () => void;
+    let buildStartedBeforeDecision = false;
+    let decided = false;
+    vi.spyOn(BehaviorDecisionService.prototype, 'evaluate').mockImplementation(() => new Promise((resolve) => {
+      release = () => { decided = true; resolve(decision({ memory: 'review', media: {} })); };
+    }));
+    const build = ContextBuilder.prototype.build;
+    vi.spyOn(ContextBuilder.prototype, 'build').mockImplementation(async function (this: ContextBuilder, ...args) {
+      buildStartedBeforeDecision = !decided;
+      release();
+      return build.apply(this, args);
+    });
+    h = await createHarness({ chat: { script: [['正常回复。']] } });
+    const reply = await say('今天天气不错');
+    expect(buildStartedBeforeDecision).toBe(true);
+    expect(reply.content.some((p) => p.text === '正常回复。')).toBe(true);
   });
   it('saves and redacts provider configuration and restricts the test endpoint to admins', async () => {
     h = await createHarness({ env: { ADMIN_API_TOKEN: 'admin-test-token' } });

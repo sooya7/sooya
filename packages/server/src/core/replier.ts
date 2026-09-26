@@ -234,15 +234,10 @@ export class Replier {
         && caps.has('tts') && persona.voicePolicy.enabled
         && (userVoiceIntent === 'voice_only' || userVoiceIntent === 'voice_reply');
       const hiddenStickerOnly = userDirectives.stickerOnly === true;
-      const behaviorDecision = await new BehaviorDecisionService(() => this.deps.config.getModels().decision)
+      // Runs alongside context building; it is only needed once the system prompt is assembled.
+      const pendingDecision = new BehaviorDecisionService(() => this.deps.config.getModels().decision)
         .evaluate(userText, this.recentPlainContext(6), signal);
-      if (behaviorDecision.status === 'ok') {
-        if (!userDirectives.wantImage && (!caps.has('image') || !persona.imagePolicy.enabled || persona.imagePolicy.frequency === 'never')) behaviorDecision.media.image = false;
-        if (!userDirectives.wantVideo && (!caps.has('video') || !persona.videoPolicy.enabled || persona.videoPolicy.frequency === 'never')) behaviorDecision.media.video = false;
-        const voice = this.deps.voice;
-        if (!userDirectives.wantVoice && voice && (voice.preferences.autoVoiceFrequency === 'never' || voice.autoCountToday() >= voice.dailyAutoCap)) behaviorDecision.media.voice = false;
-      }
-      if (behaviorDecision.status === 'unavailable' || behaviorDecision.status === 'unconfigured') degraded.push('behavior_decision_unavailable');
+      pendingDecision.catch(() => { /* awaited below; avoids an unhandled rejection if context building fails first */ });
       const holdDraft = hiddenDraft || hiddenStickerOnly || visualTime.mode === 'retrospective';
 
       const allowVision = caps.visionProvider() !== null;
@@ -269,6 +264,14 @@ export class Replier {
         worldSnapshot: world,
         videoAvailable: Boolean(this.deps.video) && caps.has('video')
       });
+      const behaviorDecision = await pendingDecision;
+      if (behaviorDecision.status === 'ok') {
+        if (!userDirectives.wantImage && (!caps.has('image') || !persona.imagePolicy.enabled || persona.imagePolicy.frequency === 'never')) behaviorDecision.media.image = false;
+        if (!userDirectives.wantVideo && (!caps.has('video') || !persona.videoPolicy.enabled || persona.videoPolicy.frequency === 'never')) behaviorDecision.media.video = false;
+        const voice = this.deps.voice;
+        if (!userDirectives.wantVoice && voice && (voice.preferences.autoVoiceFrequency === 'never' || voice.autoCountToday() >= voice.dailyAutoCap)) behaviorDecision.media.voice = false;
+      }
+      if (behaviorDecision.status === 'unavailable' || behaviorDecision.status === 'unconfigured') degraded.push('behavior_decision_unavailable');
       const provider = allowVision && built.visionUsed ? caps.visionProvider()! : caps.chatProvider();
       const selectedModel = built.visionUsed ? visionModel : chatModel;
       const requestMaxTokens = Math.min(selectedModel.maxTokens, maxOutputTokens);
@@ -1408,13 +1411,15 @@ export class Replier {
     }
     const stickerOnly = sticker && (user.stickerOnly === true || model.stickerOnly === true);
 
-    // Image
+    // Image. A prohibition only stands when nothing in the batch explicitly asks.
+    const imageBlocked = user.noImage === true && user.wantImage !== true;
+    const videoBlocked = user.noVideo === true && user.wantVideo !== true;
     let imagePrompt: string | null = null;
     let selfImagePrompt: string | null = null;
-    if (persona.imagePolicy.enabled && !user.noImage && persona.referenceImages.length > 0) {
+    if (persona.imagePolicy.enabled && !imageBlocked && persona.referenceImages.length > 0) {
       if (model.selfImagePrompt) selfImagePrompt = model.selfImagePrompt;
     }
-    if (persona.imagePolicy.enabled && !user.noImage) {
+    if (persona.imagePolicy.enabled && !imageBlocked) {
       if (model.imagePrompt) imagePrompt = model.imagePrompt;
       else if (user.wantImage && user.imagePrompt) {
         if (user.selfieIntent && persona.referenceImages.length > 0) selfImagePrompt = user.imagePrompt;
@@ -1429,7 +1434,7 @@ export class Replier {
     // without references they fall back to a plain clip of the described scene.
     let videoPrompt: string | null = null;
     let selfVideoPrompt: string | null = null;
-    if (persona.videoPolicy.enabled && !user.noVideo && caps.has('video') && this.deps.video) {
+    if (persona.videoPolicy.enabled && !videoBlocked && caps.has('video') && this.deps.video) {
       const hasReferences = persona.referenceImages.length > 0;
       if (model.selfVideoPrompt) {
         if (hasReferences) selfVideoPrompt = model.selfVideoPrompt;

@@ -32,7 +32,7 @@ export function DecisionModelEditor({ config, onSaved, onNotice }: {
     try {
       const response = await adminApi.testBehaviorDecision(sample);
       const names: Record<string, string> = { memory: '记忆', image: '图片', video: '视频', voice: '语音' };
-      const memory: Record<string, string> = { save: '进入记忆提取', review: '交由现有记忆流程复核', skip: '跳过本轮记忆' };
+      const memory: Record<string, string> = { save: '照常进入记忆流程（高置信）', review: '照常进入记忆流程', skip: '跳过本轮自动记忆' };
       setResult(response.ok ? `${memory[response.result.memory]}。${Object.entries(response.result.probabilities ?? {}).map(([name, value]) => `${names[name] ?? name} ${(value * 100).toFixed(1)}%`).join(' · ')}`
         : response.result.status === 'unconfigured' ? '请先保存接口地址和密钥。' : '决策服务未返回有效结果，请检查地址、密钥和超时时间。聊天会继续使用原流程。');
     } catch (error) { setResult(error instanceof Error ? error.message : '测试失败'); }
@@ -53,10 +53,9 @@ export function DecisionModelEditor({ config, onSaved, onNotice }: {
     <label>API Key<input type="password" autoComplete="new-password" value={key} placeholder={config?.apiKeyConfigured && draft.provider === config.provider ? '已配置，留空保持原密钥' : '填写当前提供方的密钥'} onChange={(e) => { setKey(e.target.value); setDirty(true); }} /></label>
     <p className="admin-muted">切换提供方需重新填写密钥。测试只返回判断结果，不会写入记忆或生成媒体。</p>
     <label>超时（毫秒）<input type="number" min="250" max="15000" value={draft.timeoutMs} onChange={(e) => update({ timeoutMs: Number(e.target.value) })} /></label>
-    <label>记忆保存阈值<input type="number" min="0.5" max="1" step="0.01" value={draft.memorySaveThreshold} onChange={(e) => update({ memorySaveThreshold: Number(e.target.value) })} /></label>
-    <label>记忆复核阈值<input type="number" min="0" max="0.85" step="0.01" value={draft.memoryReviewThreshold} onChange={(e) => update({ memoryReviewThreshold: Number(e.target.value) })} /></label>
+    <label>记忆跳过阈值<input type="number" min="0" max={draft.memorySaveThreshold} step="0.01" value={draft.memoryReviewThreshold} onChange={(e) => update({ memoryReviewThreshold: Number(e.target.value) })} /></label>
     <label>媒体判断阈值<input type="number" min="0.51" max="1" step="0.01" value={draft.mediaThreshold} onChange={(e) => update({ mediaThreshold: Number(e.target.value) })} /></label>
-    <p className="admin-muted">记忆低于复核阈值时跳过；中间区间交给现有提取流程。媒体概率高于阈值时建议使用，低于 1 减阈值时不主动使用，中间区间由主模型决定。概率不是正确率保证。</p>
+    <p className="admin-muted">记忆概率低于跳过阈值时，本轮不做自动记忆提取；其余情况照常交给现有记忆流程判断和保存。媒体概率高于阈值时建议使用，低于 1 减阈值时不主动使用，中间区间由主模型决定。概率不是正确率保证。</p>
     <div className="admin-actions admin-form-wide"><button type="button" disabled={busy} onClick={() => void save()}>保存行为决策配置</button></div>
     <label className="admin-form-wide">测试消息<textarea value={sample} onChange={(e) => { setSample(e.target.value); setResult(''); }} maxLength={4000} /></label>
     <div className="admin-actions admin-form-wide"><button type="button" disabled={busy || dirty || !sample.trim()} onClick={() => void test()}>{busy ? '处理中…' : '测试已保存配置'}</button></div>

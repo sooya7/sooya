@@ -24,5 +24,10 @@ it('tests saved settings without invoking generation and displays probabilities'
   expect(api.testBehaviorDecision).toHaveBeenCalledTimes(1);
   expect(api.updateModels).not.toHaveBeenCalled();
   expect(container.textContent).toContain('语音 99.0%');
-  expect(container.textContent).toContain('交由现有记忆流程复核');
+  expect(container.textContent).toContain('照常进入记忆流程');
+});
+it('exposes only the memory threshold that changes behavior', async () => {
+  await act(async () => root.render(<DecisionModelEditor config={saved} onSaved={vi.fn()} onNotice={vi.fn()} />));
+  expect(container.textContent).toContain('记忆跳过阈值');
+  expect(container.textContent).not.toContain('记忆保存阈值');
 });
