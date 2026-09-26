@@ -1,0 +1,69 @@
+/* 形象 page. */
+
+.cs .look-pick { position: relative; }
+.cs .look-pick:focus-within { outline: 2px solid var(--c-jade); outline-offset: 2px; }
+.cs .look-pick[aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
+.cs .look-pick[aria-disabled='true']:hover { background: transparent; }
+
+/* avatars: two side by side, stacked on narrow screens */
+.cs .look-avatars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.5rem 2rem;
+}
+.cs .look-avatar { display: flex; align-items: flex-start; gap: 1rem; min-width: 0; }
+.cs .look-avatar-frame {
+  flex: none;
+  width: 7rem;
+  height: 7rem;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--c-sunk);
+  display: grid;
+  place-items: center;
+}
+.cs .look-avatar-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cs .look-avatar-empty { font-size: var(--t-xs); color: var(--c-ink-3); }
+.cs .look-avatar-info { display: grid; gap: 0.375rem; justify-items: start; min-width: 0; padding-top: 0.25rem; }
+.cs .look-avatar-title { font-family: var(--c-serif); font-size: var(--t-lg); font-weight: 600; }
+
+/* reference slots */
+.cs .look-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 1.5rem 1.25rem;
+}
+.cs .look-slot { display: grid; gap: 0.625rem; align-content: start; min-width: 0; }
+.cs .look-ref-frame { aspect-ratio: 4 / 5; }
+.cs .look-ref-frame img { object-fit: cover; }
+.cs .look-ref-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.25rem;
+  font-size: var(--t-sm);
+  color: var(--c-ink-3);
+}
+.cs .look-slot-info { display: grid; gap: 0.3125rem; min-width: 0; }
+.cs .look-slot-title { font-family: var(--c-serif); font-size: var(--t-lg); font-weight: 600; }
+.cs .look-slot-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.cs .look-slot-info .cs-actions { margin-top: 0.25rem; }
+
+/* all files */
+.cs .look-file { align-items: center; }
+.cs .look-file-main { display: flex; align-items: center; gap: 0.875rem; min-width: 0; }
+.cs .look-file-thumb { flex: none; width: 3.5rem; height: 3.5rem; aspect-ratio: 1; }
+.cs .look-file-thumb .look-ref-empty { font-size: var(--t-xs); text-align: center; }
+.cs .look-file-text { display: grid; gap: 0.25rem; min-width: 0; }
+.cs .look-loose { display: grid; gap: 0.5rem; }
+
+@media (max-width: 520px) {
+  .cs .look-slots { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+  .cs .look-slot { grid-template-columns: 6.5rem minmax(0, 1fr); gap: 0.875rem; align-items: start; }
+  .cs .look-ref-empty { font-size: var(--t-xs); }
+  .cs .look-file { grid-template-columns: minmax(0, 1fr); }
+  .cs .look-file .cs-list-side { justify-content: flex-start; }
+  .cs .look-avatar-frame { width: 5.5rem; height: 5.5rem; }
+}

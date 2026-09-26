@@ -8,15 +8,18 @@ const budgets = [
   ['packages/server/src/routes/features.ts', 15_000],
   ['packages/server/src/routes/admin/index.ts', 15_000],
   ['packages/server/src/core/jobs/registry.ts', 15_000],
-  ['packages/web/src/components/admin/AdminShell.tsx', 20_000],
-  ['packages/web/src/components/admin/AdminNavigation.tsx', 20_000]
+  // the admin console's shared pieces: every page leans on them, so they must stay small
+  ['packages/web/src/console/ConsoleApp.tsx', 15_000],
+  ['packages/web/src/console/ui.tsx', 30_000],
+  ['packages/web/src/console/console.css', 45_000]
 ];
+/** No single console page may grow past this; split it (see pages/life, pages/models) instead. */
+const CONSOLE_PAGE_LIMIT = 40_000;
 const legacyHotspots = [
   'packages/server/src/app.ts',
   'packages/server/src/routes/admin.ts',
   'packages/server/src/db/migrations.ts',
-  'packages/server/src/core/context.ts',
-  'packages/web/src/components/AdminPanel.tsx'
+  'packages/server/src/core/context.ts'
 ];
 /*
  * Ratchet baselines, in bytes. Re-measured 2026-09-05: app.ts, routes/admin.ts
@@ -32,8 +35,7 @@ const legacyBaselines = [
   ['packages/server/src/app.ts', 53919],
   ['packages/server/src/routes/admin.ts', 55300],
   ['packages/server/src/db/migrations.ts', 74324],
-  ['packages/server/src/core/context.ts', 32388],
-  ['packages/web/src/components/AdminPanel.tsx', 63224]
+  ['packages/server/src/core/context.ts', 32388]
 ];
 
 const failures = [];
@@ -45,6 +47,16 @@ for (const [relative, limit] of budgets) {
   }
   const bytes = fs.statSync(file).size;
   if (bytes > limit) failures.push(`${relative}: ${bytes} bytes > ${limit}`);
+}
+const pagesDir = path.join(root, 'packages/web/src/console/pages');
+const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
+if (fs.existsSync(pagesDir)) {
+  for (const file of walk(pagesDir).filter((name) => /\.tsx?$/.test(name) && !/\.test\./.test(name))) {
+    const bytes = fs.statSync(file).size;
+    if (bytes > CONSOLE_PAGE_LIMIT) failures.push(`:  bytes >  (console page limit)`);
+  }
+} else {
+  failures.push('packages/web/src/console/pages: missing');
 }
 for (const relative of legacyHotspots) {
   const file = path.join(root, relative);

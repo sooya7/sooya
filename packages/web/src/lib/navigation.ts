@@ -1,16 +1,8 @@
 import { useEffect, useState } from 'react';
 
-export type AppRouteKind = 'chat' | 'moments' | 'gallery' | 'admin';
 export const APP_NAVIGATION_EVENT = 'sooya:navigation';
 export interface NavigateOptions { replace?: boolean; state?: unknown; }
 
-export function classifyRoute(pathname: string): AppRouteKind {
-  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
-  if (normalized === '/moments') return 'moments';
-  if (normalized === '/gallery') return 'gallery';
-  if (normalized === '/admin' || normalized.startsWith('/admin/')) return 'admin';
-  return 'chat';
-}
 export function isAppNavigationUrl(target: URL): boolean {
   return (target.protocol === 'http:' || target.protocol === 'https:')
     && target.origin === window.location.origin;
@@ -27,10 +19,12 @@ export function navigate(href: string, options: NavigateOptions = {}): void {
   else window.history.pushState(state, '', next);
   notifyNavigation();
 }
-export function useAppRoute(): AppRouteKind {
-  const [route, setRoute] = useState(() => classifyRoute(window.location.pathname));
+
+/** The current pathname, following in-app navigation and the browser's back/forward. */
+export function usePathname(): string {
+  const [pathname, setPathname] = useState(() => window.location.pathname);
   useEffect(() => {
-    const update = () => setRoute(classifyRoute(window.location.pathname));
+    const update = () => setPathname(window.location.pathname);
     window.addEventListener('popstate', update);
     window.addEventListener(APP_NAVIGATION_EVENT, update);
     return () => {
@@ -38,5 +32,5 @@ export function useAppRoute(): AppRouteKind {
       window.removeEventListener(APP_NAVIGATION_EVENT, update);
     };
   }, []);
-  return route;
+  return pathname;
 }

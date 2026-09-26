@@ -1,284 +1,498 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-
-const ADMIN_TOKEN = 'e2e-admin-token';
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
-
-async function installAdminToken(page: Page): Promise<void> {
-  await page.addInitScript((token: string) => localStorage.setItem('sooya.admin-token', token), ADMIN_TOKEN);
-}
+import { type Page } from '@playwright/test';
+import { expect, test } from './fixtures.js';
+import {
+  ADMIN_HEADERS, ADMIN_TOKEN, PNG, fillField, installAdminToken, openConsolePage, pageTitle, section, uploadGalleryImage
+} from './helpers.js';
+import { MOCK_PORT } from './server.js';
 
 /**
- * 往图库里导入一张普通图片。QQ 单通道后只允许 Admin 媒体导入；头像上传的图片
- * 按设计不进图库，不能再拿它当图库测试数据。
+ * Feature pages of the admin console (packages/web/src/console):
+ * 形象 (avatars), 人设与声音 (voice), 存储与备份 (cleanup, backups) and
+ * 相册与表情 (album, all media, recycle bin, viewer).
  */
-async function uploadGalleryImage(request: APIRequestContext, name: string): Promise<string> {
-  const uploaded = await request.post('/api/admin/media', {
-    headers: { 'x-admin-token': ADMIN_TOKEN },
-    multipart: { image: { name, mimeType: 'image/png', buffer: PNG } }
+
+type Captured = { href: string; download: string };
+type CaptureWindow = typeof window & { __downloads: Captured[]; __revoked: string[]; __errors: string[] };
+
+/** Anchor downloads are captured instead of saved, and revoked object URLs are recorded. */
+async function captureDownloads(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as CaptureWindow;
+    w.__downloads = [];
+    w.__revoked = [];
+    w.__errors = [];
+    window.addEventListener('unhandledrejection', (event) => w.__errors.push(String(event.reason)));
+    HTMLAnchorElement.prototype.click = function captureDownload() {
+      if (this.download) w.__downloads.push({ href: this.href, download: this.download });
+    };
+    const revoke = URL.revokeObjectURL.bind(URL);
+    URL.revokeObjectURL = (url: string) => { w.__revoked.push(url); revoke(url); };
   });
-  expect(uploaded.ok()).toBeTruthy();
-  const body = await uploaded.json() as { media: Array<{ id: string }> };
-  expect(body.media).toHaveLength(1);
-  return body.media[0]!.id;
 }
 
-test.describe('SOOYA 1-9 user flows', () => {
-  test('feature center exposes avatar, voice and storage controls', async ({ page }) => {
-    await page.addInitScript(() => {
-      const original = URL.revokeObjectURL.bind(URL);
-      (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls = [];
-      URL.revokeObjectURL = (url: string) => {
-        (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls.push(url);
-        original(url);
-      };
-    });
+const downloads = (page: Page) => page.evaluate(() => (window as CaptureWindow).__downloads);
+
+/** The console's short notice at the bottom of the screen. */
+const toast = (page: Page, text: string | RegExp) => page.locator('.cs-toasts').getByText(text);
+
+test.beforeEach(async ({ page }) => {
+  await installAdminToken(page);
+});
+
+test.describe('形象：头像', () => {
+  test('上传双方头像后立即预览，媒体只带 Bearer 令牌，切页回来不重复下载', async ({ page }) => {
+    await captureDownloads(page);
     const mediaRequests: Array<{ url: string; authorization: string | undefined }> = [];
     page.context().on('request', (request) => {
       if (new URL(request.url()).pathname.startsWith('/api/media/')) {
         mediaRequests.push({ url: request.url(), authorization: request.headers().authorization });
       }
     });
-    await installAdminToken(page);
-    await page.goto('/admin/features');
-    await expect(page.getByRole('heading', { name: '双方头像' })).toBeVisible();
-    const avatarSettings = page.getByTestId('avatar-settings');
-    await expect(avatarSettings).toBeVisible();
-    await avatarSettings.locator('input[type="file"]').nth(0).setInputFiles({ name: 'assistant-e2e.png', mimeType: 'image/png', buffer: PNG });
-    await expect(avatarSettings.getByAltText('SOOYA 头像预览')).toHaveAttribute('src', /^blob:/);
-    await avatarSettings.locator('input[type="file"]').nth(1).setInputFiles({ name: 'user-e2e.png', mimeType: 'image/png', buffer: PNG });
-    await expect(avatarSettings.getByAltText('用户头像预览')).toHaveAttribute('src', /^blob:/);
-    await expect.poll(() => mediaRequests.length).toBeGreaterThan(0);
+
+    await openConsolePage(page, '/admin/look', '形象');
+    const avatars = section(page, '头像');
+    await expect(avatars.getByText('她的头像', { exact: true })).toBeVisible();
+
+    await avatars.getByLabel('上传她的头像').setInputFiles({ name: 'assistant-e2e.png', mimeType: 'image/png', buffer: PNG });
+    await expect(toast(page, '她的头像已更新')).toBeVisible();
+    await expect(avatars.getByRole('img', { name: '她的头像' })).toHaveAttribute('src', /^blob:/);
+
+    await avatars.getByLabel('上传你的头像').setInputFiles({ name: 'user-e2e.png', mimeType: 'image/png', buffer: PNG });
+    await expect(toast(page, '你的头像已更新')).toBeVisible();
+    await expect(avatars.getByRole('img', { name: '你的头像' })).toHaveAttribute('src', /^blob:/);
+    // Both slots now say they use an uploaded picture and offer to replace it.
+    await expect(avatars.getByText('已换成你上传的图片')).toHaveCount(2);
+    await expect(avatars.getByText('换一张')).toHaveCount(2);
+
+    // Media goes through the authenticated fetch: the token travels in the
+    // Authorization header, never in the URL or the DOM; thumbnails are sized.
+    await expect.poll(() => mediaRequests.length).toBeGreaterThanOrEqual(2);
     for (const request of mediaRequests) {
       expect(request.url).not.toContain(ADMIN_TOKEN);
       expect(request.authorization).toBe(`Bearer ${ADMIN_TOKEN}`);
+      expect(new URL(request.url).searchParams.has('w')).toBe(true);
     }
     expect(await page.locator('body').evaluate((body, token) => body.innerHTML.includes(token), ADMIN_TOKEN)).toBe(false);
 
-    // Voice-system convergence: the standalone「情绪语音」panel is gone —
-    // behavior knobs live in「助手配置」, provider parameters + preview in
-    //「模型配置 → 语音合成」.
-    await expect(page.getByRole('button', { name: '情绪语音' })).toHaveCount(0);
-    await page.getByRole('button', { name: '助手配置' }).click();
-    await expect(page.getByTestId('voice-behavior-settings')).toBeVisible();
-    await expect(page.getByTestId('voice-behavior-settings')).toContainText('启用语音');
-    await expect(page.getByTestId('voice-behavior-settings')).toContainText('单条语音最大长度');
+    // The server really switched both avatars.
+    const persona = await page.request.get('/api/admin/persona', { headers: ADMIN_HEADERS });
+    const saved = (await persona.json() as { persona: { avatar: string; userAvatar: string } }).persona;
+    expect(saved.avatar).toMatch(/^\/api\/media\//);
+    expect(saved.userAvatar).toMatch(/^\/api\/media\//);
 
-    await page.getByRole('button', { name: '模型配置' }).click();
-    await page.getByRole('button', { name: '语音合成模型' }).click();
-    await expect(page.getByTestId('admin-tts-preview')).toBeVisible();
-    await expect(page.getByTestId('admin-tts-preview-play')).toBeEnabled();
-    await expect(page.getByText('试听文字')).toBeVisible();
-
-    await page.getByRole('button', { name: '存储治理' }).click();
-    await expect(page.getByTestId('storage-settings')).toBeVisible();
-    await page.getByRole('button', { name: '预览清理' }).click();
-    await expect(page.getByText('清理预览已生成，尚未删除任何内容')).toBeVisible();
-
-    /*
-     * 换头像后旧的 blob URL 不再立刻撤销——它留在共享媒体缓存里等淘汰，这正是「切页
-     * 回来不重下」的前提，所以这里守的不再是「有东西被撤销」，而是真正想要的性质：
-     * 逛了一圈其他面板再回到头像，同一张媒体不能被重新请求一次。
-     */
-    const alreadyFetched = new Set(mediaRequests.map((request) => new URL(request.url).pathname));
-    expect(alreadyFetched.size).toBeGreaterThan(0);
+    // Visit two other pages through the navigation and come back: the avatars
+    // come from the shared media cache — no second download, nothing revoked.
+    const fetched = new Set(mediaRequests.map((request) => new URL(request.url).pathname + new URL(request.url).search));
     const requestsBefore = mediaRequests.length;
-    const revokedBefore = await page.evaluate(() =>
-      (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls.length);
-    await page.getByRole('button', { name: '双方头像' }).click();
-    await expect(page.getByTestId('avatar-settings')).toBeVisible();
-    await expect(avatarSettings.getByAltText('SOOYA 头像预览')).toHaveAttribute('src', /^blob:/);
-    await expect(avatarSettings.getByAltText('用户头像预览')).toHaveAttribute('src', /^blob:/);
-    expect(mediaRequests.slice(requestsBefore).map((request) => new URL(request.url).pathname)
-      .filter((pathname) => alreadyFetched.has(pathname))).toEqual([]);
-    // 撤销现在只该发生在缓存淘汰时；回到头像面板这一小段里不该撤销任何东西。
-    expect(await page.evaluate(() =>
-      (window as typeof window & { __sooyaRevokedUrls: string[] }).__sooyaRevokedUrls.length
-    )).toBe(revokedBefore);
+    const revokedBefore = await page.evaluate(() => (window as CaptureWindow).__revoked.length);
+    const nav = page.getByRole('navigation', { name: '管理栏目' });
+    await nav.getByRole('link', { name: '人设与声音' }).click();
+    await expect(pageTitle(page, '人设与声音')).toBeVisible();
+    await nav.getByRole('link', { name: '存储与备份' }).click();
+    await expect(pageTitle(page, '存储与备份')).toBeVisible();
+    await nav.getByRole('link', { name: '形象' }).click();
+    await expect(pageTitle(page, '形象')).toBeVisible();
+    await expect(avatars.getByRole('img', { name: '她的头像' })).toHaveAttribute('src', /^blob:/);
+    await expect(avatars.getByRole('img', { name: '你的头像' })).toHaveAttribute('src', /^blob:/);
+    const refetched = mediaRequests.slice(requestsBefore)
+      .map((request) => new URL(request.url).pathname + new URL(request.url).search)
+      .filter((key) => fetched.has(key));
+    expect(refetched).toEqual([]);
+    expect(await page.evaluate(() => (window as CaptureWindow).__revoked.length)).toBe(revokedBefore);
+  });
+});
+
+test.describe('人设与声音：语音', () => {
+  test('语音习惯可保存并在刷新后保留，试听真实调用语音服务并播放', async ({ page, request }) => {
+    await openConsolePage(page, '/admin/persona', '人设与声音');
+
+    const behavior = section(page, '她什么时候发语音');
+    await expect(behavior.getByRole('switch', { name: '允许她发语音' })).toBeVisible();
+    const maxSeconds = behavior.getByLabel('一条语音最长几秒');
+    await expect(maxSeconds).toBeVisible();
+    // Out of range values are refused before anything is sent.
+    await fillField(maxSeconds, '500');
+    await expect(behavior.getByText('请填 5 到 120 之间的整数')).toBeVisible();
+    await expect(behavior.getByRole('button', { name: '保存语音习惯' })).toBeDisabled();
+    await fillField(maxSeconds, '37');
+    await behavior.getByRole('button', { name: '保存语音习惯' }).click();
+    await expect(toast(page, '语音习惯已保存')).toBeVisible();
+    await page.reload();
+    await expect(section(page, '她什么时候发语音').getByLabel('一条语音最长几秒')).toHaveValue('37');
+
+    // Provider parameters and the preview live on the same page now.
+    const voice = section(page, '她的声音');
+    await expect(voice.getByRole('textbox', { name: '音色', exact: true })).toHaveValue('alloy');
+    await expect(voice.getByRole('spinbutton', { name: '语速', exact: true })).toHaveValue('1');
+    await expect(voice.getByText('语音服务可用')).toBeVisible();
+    await expect(voice.getByRole('button', { name: '去模型页面配置语音服务' })).toBeVisible();
+    await expect(page.getByRole('table', { name: '不同心情的说法' })).toBeVisible();
+
+    const preview = section(page, '试听');
+    await expect(preview.getByLabel('让她念什么')).toBeVisible();
+    await fillField(preview.getByLabel('让她念什么'), '今天也辛苦啦。');
+    const before = await (await request.get(`http://127.0.0.1:${MOCK_PORT}/__control`)).json() as { calls: { tts: number } };
+    // Paid action: the first click only explains the cost.
+    await preview.getByRole('button', { name: '试听这句（消耗语音额度）' }).click();
+    const ask = preview.getByRole('group', { name: '会调用语音服务，消耗一次语音额度。' });
+    await expect(ask).toBeVisible();
+    expect((await (await request.get(`http://127.0.0.1:${MOCK_PORT}/__control`)).json() as { calls: { tts: number } }).calls.tts)
+      .toBe(before.calls.tts);
+    await ask.getByRole('button', { name: '确认试听' }).click();
+    await expect(preview.locator('audio')).toHaveAttribute('src', /^blob:/);
+    await expect.poll(async () => ((await (await request.get(`http://127.0.0.1:${MOCK_PORT}/__control`)).json()) as { calls: { tts: number } }).calls.tts)
+      .toBeGreaterThan(before.calls.tts);
+  });
+});
+
+test.describe('存储与备份', () => {
+  test('占用、清理规则校验、实时清理预览、备份创建与校验', async ({ page }) => {
+    await openConsolePage(page, '/admin/storage', '存储与备份');
+
+    const usage = section(page, '占用');
+    await expect(usage.getByRole('meter', { name: '媒体占用' })).toBeVisible();
+    await expect(usage.getByText('磁盘剩余')).toBeVisible();
+
+    const policy = section(page, '清理规则');
+    const soft = policy.getByLabel('媒体提醒线（MB）');
+    const hard = policy.getByLabel('媒体上限（MB）');
+    await expect(soft).not.toHaveValue('');
+    const hardValue = await hard.inputValue();
+    const softValue = await soft.inputValue();
+    await fillField(soft, String(Number(hardValue) + 1));
+    await expect(policy.getByText('提醒线要比上限低')).toBeVisible();
+    await expect(policy.getByRole('button', { name: '保存清理规则' })).toBeDisabled();
+    await policy.getByRole('button', { name: '还原' }).click();
+    await expect(soft).toHaveValue(softValue);
+    await expect(policy.getByText('提醒线要比上限低')).toHaveCount(0);
+    await expect(policy.getByRole('button', { name: '保存清理规则' })).toBeEnabled();
+
+    // Preview against the live server: it never deletes anything.
+    const cleanup = section(page, '手动清理');
+    await expect(cleanup.getByText('预览不会删除任何东西。')).toBeVisible();
+    await cleanup.getByRole('button', { name: '预览可以清理的内容' }).click();
+    await expect(cleanup.getByText(/^预览生成于 .+，一共 [\d,]+ 项，最多能释放 /)).toBeVisible();
+    await expect(cleanup.getByRole('button', { name: '重新预览' })).toBeVisible();
+    await expect(cleanup.getByRole('button', { name: '下载完整清单' })).toBeVisible();
+
+    const backups = section(page, '备份');
+    await backups.getByRole('button', { name: '立即备份' }).click();
+    await expect(toast(page, /^备份已创建（/)).toBeVisible();
+    await expect(backups.getByText('有校验值').first()).toBeVisible();
+    await backups.getByRole('button', { name: '校验这份备份' }).first().click();
+    await expect(backups.getByText('校验通过，这份备份完整可用')).toBeVisible();
   });
 
-  test('storage cleanup report summarizes and paginates thousands of candidates', async ({ page }) => {
-    await page.addInitScript(() => {
-      (window as typeof window & { __cleanupDownloads: Array<{ href: string; download: string }> }).__cleanupDownloads = [];
-      HTMLAnchorElement.prototype.click = function captureCleanupDownload() {
-        (window as typeof window & { __cleanupDownloads: Array<{ href: string; download: string }> }).__cleanupDownloads.push({
-          href: this.href,
-          download: this.download
-        });
-      };
-    });
+  test('清理预览对 2000 项候选做汇总、分页、下载清单，并按勾选的类别和报告号执行', async ({ page }) => {
+    await captureDownloads(page);
     const candidates = Array.from({ length: 2_000 }, (_, index) => ({
       path: `orphan/candidate-${String(index).padStart(4, '0')}.bin`,
       bytes: index + 1,
       mtimeMs: 1_700_000_000_000 + index
     }));
+    const report = {
+      reportId: 'cleanup_large_report_123456',
+      generatedAt: new Date().toISOString(),
+      policyHash: 'policy',
+      candidateHash: 'candidates',
+      candidates: { expiredTrash: [], missingRecords: [], orphanFiles: candidates, unreferencedMedia: [], tempFiles: [], oldBackups: [] },
+      reclaimableBytes: candidates.reduce((sum, item) => sum + item.bytes, 0)
+    };
+    const applyBodies: unknown[] = [];
     await page.route('**/api/admin/storage/cleanup', async (route) => {
       if (route.request().method() !== 'POST') return route.continue();
+      const body = route.request().postDataJSON() as { apply: boolean };
+      if (body.apply) applyBodies.push(body);
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
-          applied: false,
-          report: {
-            reportId: 'cleanup_large_report_123456',
-            generatedAt: new Date().toISOString(),
-            policyHash: 'policy',
-            candidateHash: 'candidates',
-            candidates: {
-              expiredTrash: [],
-              missingRecords: [],
-              orphanFiles: candidates,
-              unreferencedMedia: [],
-              tempFiles: [],
-              oldBackups: []
-            },
-            reclaimableBytes: candidates.reduce((sum, item) => sum + item.bytes, 0)
-          },
-          deleted: {},
-          skipped: [],
-          releasedBytes: 0,
-          deletedBytes: 0,
-          skippedBytes: 0
-        })
+        body: JSON.stringify(body.apply
+          ? { applied: true, report, deleted: { orphanFiles: 2000 }, skipped: [], releasedBytes: report.reclaimableBytes, deletedBytes: report.reclaimableBytes, skippedBytes: 0 }
+          : { applied: false, report, deleted: {}, skipped: [], releasedBytes: 0, deletedBytes: 0, skippedBytes: 0 })
       });
     });
 
-    await installAdminToken(page);
-    await page.goto('/admin/features');
-    await page.getByRole('button', { name: '存储治理' }).click();
-    await page.getByRole('button', { name: '预览清理' }).click();
+    await openConsolePage(page, '/admin/storage', '存储与备份');
+    const cleanup = section(page, '手动清理');
+    await cleanup.getByRole('button', { name: '预览可以清理的内容' }).click();
 
-    const summary = page.getByTestId('cleanup-report-summary');
-    await expect(summary).toContainText('2,000 项');
-    await expect(page.getByTestId('cleanup-report-row')).toHaveCount(50);
+    // One summary line and one row per non-empty category; empty ones are named once.
+    await expect(cleanup.getByText(/一共 2,000 项，最多能释放 1\.9 MB/)).toBeVisible();
+    const orphanRow = cleanup.locator('.cs-list-item').filter({ hasText: '没有记录的文件' });
+    await expect(orphanRow.getByText('2000 项，1.9 MB')).toBeVisible();
+    await expect(orphanRow.getByRole('checkbox', { name: '没有记录的文件' })).toBeChecked();
+    await expect(cleanup.getByText(/^其余类别（.*回收站里过期的文件.*临时文件.*）没有需要清理的。$/)).toBeVisible();
+    // Nothing of the 2000 paths is rendered until the details are asked for.
+    await expect(page.locator('body')).not.toContainText('candidate-0000.bin');
+
+    const details = orphanRow.getByRole('button', { name: '看明细' });
+    await expect(details).toHaveAttribute('aria-expanded', 'false');
+    await details.click();
+    await expect(orphanRow.getByRole('button', { name: '收起明细' })).toHaveAttribute('aria-expanded', 'true');
+    const rows = cleanup.getByText(/^orphan\/candidate-\d{4}\.bin$/);
+    await expect(rows).toHaveCount(30);
+    await expect(rows.first()).toHaveText('orphan/candidate-0000.bin');
+    await expect(rows.last()).toHaveText('orphan/candidate-0029.bin');
+    await expect(cleanup.getByText('1 / 67', { exact: true })).toBeVisible();
+    await expect(cleanup.getByRole('button', { name: '上一页' })).toBeDisabled();
     await expect(page.locator('body')).not.toContainText('candidate-1999.bin');
-    await page.getByRole('button', { name: '下一页清理明细' }).click();
-    await expect(page.getByTestId('cleanup-report-row').first()).toContainText('candidate-0050.bin');
-    await page.getByRole('button', { name: '下载完整清理报告' }).click();
-    await expect.poll(() => page.evaluate(() =>
-      (window as typeof window & { __cleanupDownloads: Array<{ href: string; download: string }> }).__cleanupDownloads
-    )).toEqual([{ href: expect.stringMatching(/^blob:/), download: 'cleanup_large_report_123456.json' }]);
+
+    await cleanup.getByRole('button', { name: '下一页' }).click();
+    await expect(rows.first()).toHaveText('orphan/candidate-0030.bin');
+    await expect(rows).toHaveCount(30);
+    await expect(cleanup.getByText('2 / 67', { exact: true })).toBeVisible();
+    await cleanup.getByRole('button', { name: '上一页' }).click();
+    await expect(rows.first()).toHaveText('orphan/candidate-0000.bin');
+
+    // The full list downloads as one JSON named after the report.
+    await cleanup.getByRole('button', { name: '下载完整清单' }).click();
+    await expect.poll(() => downloads(page)).toEqual([{ href: expect.stringMatching(/^blob:/), download: 'cleanup_large_report_123456.json' }]);
+
+    // Unticking the only non-empty category disables the destructive button.
+    const applyButton = cleanup.getByRole('button', { name: '清理选中的 2000 项' });
+    await expect(applyButton).toBeEnabled();
+    await orphanRow.getByRole('checkbox', { name: '没有记录的文件' }).uncheck();
+    await expect(cleanup.getByRole('button', { name: '清理选中的 0 项' })).toBeDisabled();
+    await orphanRow.getByRole('checkbox', { name: '没有记录的文件' }).check();
+
+    // Two-step confirm; only then the report id and chosen categories are sent.
+    await applyButton.click();
+    const confirm = cleanup.getByRole('group', { name: '会永久删除约 1.9 MB，删掉就找不回来。确定清理？' });
+    await expect(confirm).toBeVisible();
+    expect(applyBodies).toEqual([]);
+    await confirm.getByRole('button', { name: '永久删除' }).click();
+    await expect(cleanup.getByText(/^清理完成，释放了 1\.9 MB：没有记录的文件 2000 项。/)).toBeVisible();
+    expect(applyBodies).toEqual([{ apply: true, categories: ['orphanFiles'], reportId: 'cleanup_large_report_123456' }]);
+    await expect(cleanup.getByRole('button', { name: '预览可以清理的内容' })).toBeVisible();
   });
+});
 
-  test('gallery supports favorite, recycle bin, restore and zoom viewer', async ({ page, request }) => {
-    await page.addInitScript(() => {
-      (window as typeof window & { __sooyaDownloads: Array<{ href: string; download: string }> }).__sooyaDownloads = [];
-      (window as typeof window & { __sooyaDownloadErrors: string[] }).__sooyaDownloadErrors = [];
-      window.addEventListener('unhandledrejection', (event) => {
-        (window as typeof window & { __sooyaDownloadErrors: string[] }).__sooyaDownloadErrors.push(String(event.reason));
-      });
-      HTMLAnchorElement.prototype.click = function captureDownload() {
-        (window as typeof window & { __sooyaDownloads: Array<{ href: string; download: string }> }).__sooyaDownloads.push({
-          href: this.href,
-          download: this.download
-        });
-      };
-      Object.defineProperty(navigator, 'share', { configurable: true, value: undefined });
-      Object.defineProperty(navigator, 'canShare', { configurable: true, value: undefined });
-    });
-    const mediaId = await uploadGalleryImage(request, 'e2e-gallery.png');
+test.describe('相册与表情', () => {
+  test('相册里收藏、打标签、查看原图、下载，移入回收站后可以恢复', async ({ page, request }) => {
+    await captureDownloads(page);
+    const name = `e2e-album-${Date.now()}.png`;
+    const mediaId = await uploadGalleryImage(request, name);
 
-    await installAdminToken(page);
-    await page.goto(`/gallery?media=${encodeURIComponent(mediaId)}`);
-    const card = page.locator(`.gallery-item[data-media-id="${mediaId}"]`);
-    await expect(card).toBeVisible();
-    await card.getByRole('button', { name: '收藏' }).click();
-    await expect(card.getByRole('button', { name: '取消收藏' })).toBeVisible();
-
-    await card.locator('.gallery-thumb').click();
-    const viewer = page.getByRole('dialog', { name: '图片查看器' });
-    await expect(viewer).toBeVisible();
-    const viewerSrc = await viewer.locator('img').getAttribute('src');
-    expect(await page.evaluate(async (src) => {
-      try {
-        const response = await fetch(src!);
-        const blob = await response.blob();
-        return { ok: response.ok, type: response.headers.get('content-type'), size: blob.size };
-      } catch (error) {
-        return { ok: false, type: error instanceof Error ? error.message : String(error) };
-      }
-    }, viewerSrc)).toEqual({ ok: true, type: 'image/png', size: PNG.length });
-    await viewer.getByRole('button', { name: '保存' }).click();
-    await page.waitForTimeout(500);
-    expect(await page.evaluate(() => ({
-      downloads: (window as typeof window & { __sooyaDownloads: Array<{ href: string; download: string }> }).__sooyaDownloads,
-      errors: (window as typeof window & { __sooyaDownloadErrors: string[] }).__sooyaDownloadErrors
-    }))).toMatchObject({ downloads: [{ href: expect.stringMatching(/^blob:/) }], errors: [] });
-    await viewer.getByRole('button', { name: '分享' }).click();
-    await expect.poll(() => page.evaluate(() =>
-      (window as typeof window & { __sooyaDownloads: Array<{ href: string; download: string }> }).__sooyaDownloads.length
-    )).toBe(2);
-    const downloads = await page.evaluate(() =>
-      (window as typeof window & { __sooyaDownloads: Array<{ href: string; download: string }> }).__sooyaDownloads
-    );
-    for (const download of downloads) {
-      expect(download.href).toMatch(/^blob:/);
-      expect(download.href).not.toContain(ADMIN_TOKEN);
-      expect(download.download).not.toContain(ADMIN_TOKEN);
-    }
-    await page.keyboard.press('+');
-    await expect(page.locator('.image-viewer-hint')).toContainText('%');
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('dialog', { name: '图片查看器' })).toBeHidden();
-
-    await card.getByRole('button', { name: '移入回收站' }).click();
-    await expect(card).toBeHidden();
-    await page.getByRole('button', { name: '打开回收站' }).click();
-    const trashCard = page.locator(`.gallery-item[data-media-id="${mediaId}"]`);
-    await expect(trashCard).toBeVisible();
-    await trashCard.getByRole('button', { name: '恢复' }).click();
-    await expect(trashCard).toBeHidden();
-    await page.getByRole('button', { name: '返回普通图库' }).click();
-    await expect(page.locator(`.gallery-item[data-media-id="${mediaId}"]`)).toBeVisible();
-  });
-
-  test('image viewer preserves existing history state without growing entries while switching', async ({ page, request }, testInfo) => {
-    const mediaIds: string[] = [];
-    for (const name of ['first-history.png', 'second-history.png']) mediaIds.push(await uploadGalleryImage(request, name));
-
-    await installAdminToken(page);
+    // The old standalone gallery address now opens this page.
     await page.goto('/gallery');
-    const firstCard = page.locator(`.gallery-item[data-media-id="${mediaIds[0]}"]`);
-    const secondCard = page.locator(`.gallery-item[data-media-id="${mediaIds[1]}"]`);
-    await expect(firstCard).toBeVisible();
-    await expect(secondCard).toBeVisible();
+    await expect(page).toHaveURL(/\/admin\/media$/);
+    await expect(pageTitle(page, '相册与表情')).toBeVisible();
+    const tabs = page.getByRole('tablist', { name: '相册与表情' });
+    await expect(tabs.getByRole('tab', { name: '相册' })).toHaveAttribute('aria-selected', 'true');
+
+    const album = section(page, '她的相册');
+    const openCard = album.getByRole('button', { name: `查看 ${name}` });
+    await expect(openCard).toBeVisible();
+    await expect(album.getByText(/^共 \d+ 张，占 /)).toBeVisible();
+
+    await openCard.click();
+    const viewer = page.getByRole('dialog', { name });
+    await expect(viewer).toBeVisible();
+    await expect(viewer.getByRole('button', { name: '关闭' })).toBeFocused();
+    await expect(viewer.getByText('上传的')).toBeVisible();
+    await expect(viewer.getByText('没有被任何消息、表情包或头像用到。')).toBeVisible();
+
+    // The full image is the original bytes, served through a blob URL.
+    const full = viewer.getByRole('img', { name });
+    await expect(full).toHaveAttribute('src', /^blob:/);
+    const src = await full.getAttribute('src');
+    expect(await page.evaluate(async (url) => {
+      const response = await fetch(url!);
+      const blob = await response.blob();
+      return { ok: response.ok, type: blob.type, size: blob.size };
+    }, src)).toEqual({ ok: true, type: 'image/png', size: PNG.length });
+
+    // Favorite.
+    await viewer.getByRole('button', { name: '收藏', exact: true }).click();
+    await expect(toast(page, '已收藏')).toBeVisible();
+    await expect(viewer.getByRole('button', { name: '取消收藏' })).toBeVisible();
+
+    // Tags: saved on Enter-free click, shown as chips, searchable from the album.
+    const tag = `海边${Date.now() % 100000}`;
+    await fillField(viewer.getByLabel('标签'), `${tag}，自拍`);
+    await viewer.getByRole('button', { name: '保存标签' }).click();
+    await expect(toast(page, '标签已保存')).toBeVisible();
+    await expect(viewer.getByText(tag, { exact: true })).toBeVisible();
+    await expect(viewer.getByText('自拍', { exact: true })).toBeVisible();
+
+    // Download fetches the original with the token and hands the browser a blob.
+    await viewer.getByRole('button', { name: '下载原文件' }).click();
+    await expect.poll(() => downloads(page)).toHaveLength(1);
+    const [saved] = await downloads(page);
+    expect(saved).toEqual({ href: expect.stringMatching(/^blob:/), download: name });
+    expect(saved!.href).not.toContain(ADMIN_TOKEN);
+    expect(await page.evaluate(() => (window as CaptureWindow).__errors)).toEqual([]);
+
+    await page.keyboard.press('Escape');
+    await expect(viewer).toBeHidden();
+    await expect(album.locator('.cs-media').filter({ has: page.getByRole('button', { name: `查看 ${name}` }) }).getByText('收藏')).toBeVisible();
+
+    // Filters: only favorites, and a tag search, both keep the card.
+    await album.getByRole('switch', { name: '只看收藏' }).check();
+    await expect(openCard).toBeVisible();
+    await album.getByRole('switch', { name: '只看收藏' }).uncheck();
+    await album.getByLabel('搜索').fill(tag);
+    await expect(album.getByText('符合条件的 1 张', { exact: false })).toBeVisible();
+    await expect(openCard).toBeVisible();
+    await album.getByRole('button', { name: '清除筛选' }).first().click();
+
+    // Recycle bin: move out of the album from the viewer (two-step confirm).
+    await openCard.click();
+    await expect(viewer).toBeVisible();
+    await viewer.getByRole('button', { name: '移到回收站' }).click();
+    await viewer.getByRole('group', { name: '移到回收站？之后还能恢复。' }).getByRole('button', { name: '移到回收站' }).click();
+    await expect(toast(page, '已移到回收站')).toBeVisible();
+    // The viewer moves on to a neighbour (or closes when there is none).
+    await expect(page.getByRole('dialog', { name })).toBeHidden();
+    if (await page.getByRole('dialog').count()) await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
+    await expect(openCard).toBeHidden();
+
+    await tabs.getByRole('tab', { name: '回收站' }).click();
+    await expect(page).toHaveURL(/\/admin\/media#trash$/);
+    const trash = section(page, '回收站');
+    const trashRow = trash.getByRole('listitem').filter({ has: page.getByRole('button', { name: `查看 ${name}` }) });
+    await expect(trashRow).toBeVisible();
+    await expect(trashRow.getByText(/移进回收站$/)).toBeVisible();
+    await trashRow.getByRole('button', { name: '恢复' }).click();
+    await trashRow.getByRole('group', { name: '放回原处？' }).getByRole('button', { name: '恢复' }).click();
+    await expect(toast(page, '已恢复')).toBeVisible();
+    await expect(trashRow).toBeHidden();
+
+    // Back in the album, still a favorite; the full list shows it too.
+    await tabs.getByRole('tab', { name: '相册' }).click();
+    await expect(page).toHaveURL(/\/admin\/media$/);
+    await expect(openCard).toBeVisible();
+    await tabs.getByRole('tab', { name: '全部媒体' }).click();
+    const allRow = section(page, '全部媒体').getByRole('listitem').filter({ has: page.getByRole('button', { name: `查看 ${name}` }) });
+    await expect(allRow.getByText('收藏', { exact: true })).toBeVisible();
+
+    const detail = await request.get(`/api/admin/media/${mediaId}`, { headers: ADMIN_HEADERS });
+    const media = (await detail.json() as { media: { favorite: boolean; deletedAt: string | null; tags: string[] } }).media;
+    expect(media).toMatchObject({ favorite: true, deletedAt: null, tags: [tag, '自拍'] });
+  });
+
+  test('回收站里彻底删除后，文件从回收站和全部媒体里都消失', async ({ page, request }) => {
+    const name = `e2e-destroy-${Date.now()}.png`;
+    const mediaId = await uploadGalleryImage(request, name);
+    const trashed = await request.post(`/api/admin/media/${mediaId}/trash`, { headers: ADMIN_HEADERS });
+    expect(trashed.ok()).toBeTruthy();
+
+    await page.goto('/admin/media#trash');
+    const tabs = page.getByRole('tablist', { name: '相册与表情' });
+    await expect(tabs.getByRole('tab', { name: '回收站' })).toHaveAttribute('aria-selected', 'true');
+    const trash = section(page, '回收站');
+    const row = trash.getByRole('listitem').filter({ has: page.getByRole('button', { name: `查看 ${name}` }) });
+    await row.getByRole('button', { name: '彻底删除' }).click();
+    await row.getByRole('group', { name: '不能找回，确定？' }).getByRole('button', { name: '彻底删除' }).click();
+    await expect(toast(page, '已彻底删除')).toBeVisible();
+    await expect(row).toBeHidden();
+
+    await tabs.getByRole('tab', { name: '全部媒体' }).click();
+    await expect(section(page, '全部媒体').getByText(/^共 \d+ 个$/)).toBeVisible();
+    await expect(page.getByRole('button', { name: `查看 ${name}` })).toHaveCount(0);
+    expect((await request.get(`/api/admin/media/${mediaId}`, { headers: ADMIN_HEADERS })).status()).toBe(404);
+  });
+
+  /*
+   * The retired gallery viewer pushed one history entry so the phone back
+   * gesture closed it. The new viewer layer (pages/Media/Layer.tsx) keeps no
+   * history at all: opening, stepping and closing must not add, remove or
+   * rewrite entries, the address stays put, and leaving the page while it is
+   * open must not leave the body scroll-locked.
+   */
+  test('查看层切换时不增加历史记录，不改地址，离开页面时解除滚动锁定', async ({ page, request }) => {
+    const stamp = Date.now();
+    const first = `history-first-${stamp}.png`;
+    const second = `history-second-${stamp}.png`;
+    await uploadGalleryImage(request, first);
+    await uploadGalleryImage(request, second);
+
+    await openConsolePage(page, '/admin/look', '形象');
+    await page.getByRole('navigation', { name: '管理栏目' }).getByRole('link', { name: '相册与表情' }).click();
+    await expect(page).toHaveURL(/\/admin\/media$/);
+    const album = section(page, '她的相册');
+    await expect(album.getByRole('button', { name: `查看 ${first}` })).toBeVisible();
+    await expect(album.getByRole('button', { name: `查看 ${second}` })).toBeVisible();
     const baseline = await page.evaluate(() => {
       history.replaceState({ existing: 'preserved' }, '');
-      return history.length;
+      return { length: history.length, url: location.href };
     });
+    const historyNow = () => page.evaluate(() => ({ length: history.length, url: location.href, state: history.state as unknown }));
 
-    await firstCard.locator('.gallery-thumb').click();
-    const viewer = page.getByRole('dialog', { name: '图片查看器' });
-    await expect(viewer).toBeVisible();
-    await expect.poll(() => page.evaluate(() => history.state)).toMatchObject({ existing: 'preserved', sooyaImageViewer: true });
-    expect(await page.evaluate(() => history.length)).toBe(baseline + 1);
+    // Newest first: the second upload sits right before the first one.
+    // Opening adds exactly one entry (same URL, existing state kept) so the back gesture can close it.
+    const layerEntry = { ...baseline, length: baseline.length + 1, state: { existing: 'preserved', csMediaLayer: true } };
+    await album.getByRole('button', { name: `查看 ${second}` }).click();
+    await expect(page.getByRole('dialog', { name: second })).toBeVisible();
+    await expect(page.getByRole('dialog').getByText(/^\d+ \/ \d+$/)).toBeVisible();
+    expect(await historyNow()).toEqual(layerEntry);
+    expect(await page.evaluate(() => document.body.style.overflow)).toBe('hidden');
 
-    if (testInfo.project.name === 'mobile') {
-      const countBefore = await viewer.locator('.image-viewer-count').textContent();
-      const client = await page.context().newCDPSession(page);
-      await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 330, y: 500, id: 51 }] });
-      await client.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 180, y: 500, id: 51 }] });
-      await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-      await client.detach();
-      await expect.poll(() => viewer.locator('.image-viewer-count').textContent()).not.toBe(countBefore);
-    } else {
-      await viewer.getByRole('button', { name: '下一张' }).click();
-    }
-    expect(await page.evaluate(() => history.length)).toBe(baseline + 1);
+    // Stepping through items never adds more.
+    await page.getByRole('dialog').getByRole('button', { name: '下一个' }).click();
+    await expect(page.getByRole('dialog', { name: first })).toBeVisible();
+    expect(await historyNow()).toEqual(layerEntry);
+    await page.keyboard.press('ArrowLeft');
+    await expect(page.getByRole('dialog', { name: second })).toBeVisible();
+    await page.keyboard.press('ArrowRight');
+    await expect(page.getByRole('dialog', { name: first })).toBeVisible();
+    expect(await historyNow()).toEqual(layerEntry);
 
-    // Same-URL SPA entries make Playwright's goBack unreliable on headless
-    // linux; drive the history API directly so the entry switch always runs.
+    // Closing from inside steps back off the layer's entry: same page, original state.
+    await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect.poll(async () => (await historyNow()).state).toEqual({ existing: 'preserved' });
+    expect((await historyNow()).url).toBe(baseline.url);
+    expect(await page.evaluate(() => document.body.style.overflow)).toBe('');
+    // Focus returns to what opened the layer.
+    await expect(album.getByRole('button', { name: `查看 ${second}` })).toBeFocused();
+
+    // Back while the layer is open closes the layer and stays on the page…
+    await album.getByRole('button', { name: `查看 ${first}` }).click();
+    await expect(page.getByRole('dialog', { name: first })).toBeVisible();
     await page.evaluate(() => window.history.back());
-    await expect(viewer).toBeHidden();
-    // SPA history: the popstate round-trip is async, so wait for the state
-    // to actually return to the baseline entry.
-    await expect.poll(() => page.evaluate(() => history.state)).toEqual({ existing: 'preserved' });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page).toHaveURL(/\/admin\/media$/);
+    expect(await page.evaluate(() => document.body.style.overflow)).toBe('');
+    expect((await historyNow()).state).toEqual({ existing: 'preserved' });
+    // …and only the next back leaves it.
+    await page.evaluate(() => window.history.back());
+    await expect(page).toHaveURL(/\/admin\/look$/);
+    await expect(pageTitle(page, '形象')).toBeVisible();
+  });
+});
 
-    await secondCard.locator('.gallery-thumb').click();
-    await expect(viewer).toBeVisible();
-    expect(await page.evaluate(() => history.length)).toBe(baseline + 1);
-    await viewer.getByRole('button', { name: '关闭图片' }).click();
-    await expect(viewer).toBeHidden();
-    await expect.poll(() => page.evaluate(() => history.state)).toEqual({ existing: 'preserved' });
+/*
+ * Regressions found while rewriting this suite, now fixed in the console:
+ * the first keystroke on a page was dropped (dirty state set in the capture
+ * phase), and a focused field's hint pushed the button below it away.
+ */
+test.describe('表单输入', () => {
+  test('页面打开后的第一次输入不会被吞掉', async ({ page }) => {
+    // ConsoleApp.tsx: <main onInputCapture> sets the shell's dirty state in the
+    // capture phase; React re-renders the controlled input with its old value
+    // before the field's onChange sees the new one. Same after every save.
+    await openConsolePage(page, '/admin/storage', '存储与备份');
+    const trash = section(page, '清理规则').getByLabel('回收站保留天数');
+    await expect(trash).not.toHaveValue('');
+    await trash.fill('13');
+    await expect(trash).toHaveValue('13');
+    await expect(page.getByRole('status').filter({ hasText: '这一页有没保存的修改' })).toBeVisible();
   });
 
+  test('在带提示的输入框里打完字，直接点下方按钮能点中', async ({ page }) => {
+    // console.css: `.cs-field-hint { display: none }` + `.cs-field:focus-within
+    // .cs-field-hint { display: block }`. Mousedown on a button below moves focus,
+    // the hint collapses, the button jumps up ~26px and the click is lost.
+    await openConsolePage(page, '/admin/storage', '存储与备份');
+    const policy = section(page, '清理规则');
+    const trash = policy.getByLabel('回收站保留天数');
+    await expect(trash).not.toHaveValue('');
+    const original = await trash.inputValue();
+    await trash.fill('13');
+    await trash.fill('14');
+    await expect(trash).toBeFocused();
+    await policy.getByRole('button', { name: '还原' }).click();
+    await expect(trash).toHaveValue(original);
+  });
 });

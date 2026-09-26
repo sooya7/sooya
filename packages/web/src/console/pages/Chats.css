@@ -1,0 +1,76 @@
+/* Chats page — every selector is scoped under .cs and prefixed chat- */
+
+.cs .chat-filters { display: grid; gap: 1rem; }
+.cs .chat-search { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; }
+.cs .chat-search .cs-field { flex: 1 1 14rem; }
+.cs .chat-filter-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1rem 1.25rem; }
+
+.cs .chat-summary { justify-content: space-between; }
+
+.cs .chat-list { margin: 0; }
+.cs .chat-item { row-gap: 0.375rem; }
+.cs .chat-item .chat-body,
+.cs .chat-item .chat-context { grid-column: 1 / -1; }
+.cs .chat-item[data-open='true'] { border-bottom-color: var(--c-rule-2); }
+
+.cs .chat-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; min-width: 0; }
+.cs .chat-who { font-weight: 600; font-size: var(--t-sm); }
+.cs [data-role='assistant'] > .chat-head .chat-who { color: var(--c-jade); font-family: var(--c-serif); }
+
+.cs .chat-body { display: grid; gap: 0.5rem; justify-items: start; min-width: 0; }
+.cs .chat-text { line-height: 1.75; overflow-wrap: anywhere; white-space: pre-wrap; }
+.cs [data-role='assistant'] > .chat-body .chat-text { font-family: var(--c-serif); font-size: var(--t-lg); line-height: 1.8; }
+.cs .chat-text mark { background: var(--c-amber-wash); color: inherit; border-radius: 2px; padding-inline: 0.0625rem; }
+
+.cs .chat-part-media { display: grid; gap: 0.375rem; justify-items: start; }
+.cs .chat-part-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.cs .chat-transcript { font-size: var(--t-sm); color: var(--c-ink-2); overflow-wrap: anywhere; }
+.cs [data-role='assistant'] .chat-transcript { font-family: var(--c-serif); }
+.cs .chat-audio { width: min(20rem, 100%); height: 2.25rem; }
+
+.cs .chat-thumb {
+  display: grid;
+  place-items: center;
+  width: 7rem;
+  height: 7rem;
+  border-radius: var(--r-media);
+  background: var(--c-sunk);
+  overflow: hidden;
+}
+.cs .chat-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cs .chat-thumb-note { display: grid; gap: 0.25rem; justify-items: center; font-size: var(--t-xs); color: var(--c-ink-3); padding: 0.5rem; text-align: center; }
+
+.cs .chat-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding-top: 0.25rem;
+}
+.cs .chat-page-size { display: inline-flex; align-items: center; gap: 0.5rem; }
+.cs .chat-page-size .cs-select { width: auto; }
+
+.cs .chat-context {
+  display: grid;
+  gap: 0.625rem;
+  justify-items: start;
+  margin-top: 0.5rem;
+  padding: 0.25rem 0 0.25rem 1rem;
+  border-left: 2px solid var(--c-rule-2);
+}
+.cs .chat-context-list { display: grid; gap: 0; width: 100%; margin: 0; }
+.cs .chat-context-item {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--r-control);
+}
+.cs .chat-context-item[data-target='true'] { background: var(--c-jade-wash); }
+.cs .chat-context-item .chat-text { font-size: var(--t-md); }
+.cs .chat-context-item[data-role='assistant'] > .chat-body .chat-text { font-size: var(--t-md); }
+
+@media (max-width: 480px) {
+  .cs .chat-context { padding-left: 0.625rem; }
+  .cs .chat-thumb { width: 5.5rem; height: 5.5rem; }
+}
