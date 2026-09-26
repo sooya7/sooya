@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export type AppRouteKind = 'chat' | 'moments' | 'gallery' | 'admin';
+export type AppRouteKind = 'chat' | 'moments' | 'gallery' | 'admin' | 'console';
 export const APP_NAVIGATION_EVENT = 'sooya:navigation';
 export interface NavigateOptions { replace?: boolean; state?: unknown; }
 
@@ -9,6 +9,7 @@ export function classifyRoute(pathname: string): AppRouteKind {
   if (normalized === '/moments') return 'moments';
   if (normalized === '/gallery') return 'gallery';
   if (normalized === '/admin' || normalized.startsWith('/admin/')) return 'admin';
+  if (normalized === '/console' || normalized.startsWith('/console/')) return 'console';
   return 'chat';
 }
 export function isAppNavigationUrl(target: URL): boolean {

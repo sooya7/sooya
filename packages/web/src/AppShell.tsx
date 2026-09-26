@@ -1,5 +1,8 @@
+import { lazy, Suspense } from 'react';
 import AdminPanel from './components/AdminPanel.js';
 import GalleryPage from './components/GalleryPage.js';
+// The new console ships as its own chunk so /admin and /gallery do not download it.
+const ConsoleApp = lazy(() => import('./console/ConsoleApp.js'));
 import { useAppRoute } from './lib/navigation.js';
 
 /**
@@ -9,5 +12,6 @@ import { useAppRoute } from './lib/navigation.js';
  */
 export default function AppShell() {
   const route = useAppRoute();
+  if (route === 'console') return <Suspense fallback={null}><ConsoleApp /></Suspense>;
   return route === 'gallery' ? <GalleryPage /> : <AdminPanel />;
 }
