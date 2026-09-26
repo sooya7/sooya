@@ -103,6 +103,13 @@ describe('System One behavior decisions', () => {
     expect(parseUserDirectives('不用视频，拍张照片给我')).toMatchObject({ noVideo: true, wantImage: true });
     expect(parseUserDirectives('别图省事').noImage).toBeUndefined();
   });
+  it.each(['之前说不要图片，现在可以发张图了', '发张图给我', '我要张图', '给我发张图', '帮我发张照片'])('reads %s as an image request', (text) => {
+    expect(parseUserDirectives(text)).toMatchObject({ wantImage: true });
+    expect(parseUserDirectives(text).noImage).toBeUndefined();
+  });
+  it.each(['我发张图给你看', '我发张照片给你看看', '刚才那张图不错'])('does not read %s as an image request', (text) => {
+    expect(parseUserDirectives(text).wantImage).toBeUndefined();
+  });
   it('does not ask the provider about a turn without text', async () => {
     expect(await new BehaviorDecisionService(() => config()).evaluate('  ', 'recent')).toEqual({ status: 'skipped', memory: 'review', media: {} });
     expect(safeFetch).not.toHaveBeenCalled();

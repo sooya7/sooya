@@ -57,6 +57,7 @@ const IMAGE_PATTERNS = [
   /拍(?:一)?(?:张|个)(?:照|相|自拍)?/,
   /(?:发|来|给|要|想)(?:一)?(?:张|个|幅)(?:照片|相片|照)/,
   /(?:发|来|给|要|想)(?:一)?(?:张|个|幅)?(?:照片|相片)/,
+  /(?:发|来|给我?|要)(?:一)?(?:张|幅)图/,
   /(?:看看|看下|看一?下).{0,6}(?:照片|相片|自拍)/,
   /(?:给我看|让我看).{0,6}(?:照片|相片|自拍)/,
   /拍(?:一)?(?:张|个)你的(?:照片|相片|照)/,
@@ -92,6 +93,8 @@ const VIDEO_PROMPT_EXTRACT = [
 const NO_IMAGE_RE = /(?:不要|别|不用|无需)再?(?:(?:生成|发|画|拍|做|配)(?:一)?(?:张|个|幅)?(?:图片?|照片|相片)|图片|照片|相片)/;
 const NO_VIDEO_RE = /(?:不要|别|不用|无需)再?(?:(?:生成|发|拍|做|录)(?:一)?(?:个|段|条)?)?视频/;
 const TEXT_ONLY_RE = /(?:只用|只发|纯)文字/;
+/** 「我发张照片给你看」: the user is the one sending, not asking for a picture. 「给我发」 is still a request. */
+const USER_SENDS_RE = /(?:^|(?<=[，,。！!？?~～\s]))我(?:再|先|也|就)?(?:发|传)(?:一)?(?:张|个|幅)?(?:图片?|照片|相片)/;
 const globalRe = (re: RegExp) => new RegExp(re.source, 'g');
 /** Words that mean the user really wants a still picture, so a video match must not swallow it. */
 const STILL_IMAGE_WORDS = /(?:照片|相片|图片?|画|自拍|插画|海报|selfie|photo|pic\b|image|draw)/i;
@@ -132,9 +135,8 @@ export function parseUserDirectives(text: string): UserDirectives {
   const textOnly = TEXT_ONLY_RE.test(t);
   const deniesImage = textOnly || NO_IMAGE_RE.test(t);
   const deniesVideo = textOnly || NO_VIDEO_RE.test(t);
-  const rest = deniesImage || deniesVideo
-    ? t.replace(globalRe(NO_IMAGE_RE), '，').replace(globalRe(NO_VIDEO_RE), '，').replace(globalRe(TEXT_ONLY_RE), '，')
-    : t;
+  const rest = [NO_IMAGE_RE, NO_VIDEO_RE, TEXT_ONLY_RE, USER_SENDS_RE]
+    .reduce((text, re) => text.replace(globalRe(re), '，'), t);
   const hasRest = (patterns: RegExp[]) => patterns.some((p) => p.test(rest));
   const imageAsked = hasRest(IMAGE_PATTERNS);
   const videoAsked = hasRest(VIDEO_PATTERNS);
