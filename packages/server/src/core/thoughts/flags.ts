@@ -22,6 +22,8 @@ export interface ThoughtsFlags {
   reasoningEffort: 'low' | 'medium' | 'high';
   /** Also send the finished thought to QQ, ahead of the reply bubbles. */
   qqDelivery: boolean;
+  /** `reasoningEffort` when thoughts are actually on, else undefined (the reply request stays as before). */
+  replyEffort?: 'low' | 'medium' | 'high';
 }
 
 export const DEFAULT_THOUGHT_FLAGS: ThoughtsFlags = {
@@ -44,13 +46,14 @@ function intish(value: string | undefined, fallback: number): number {
 }
 
 export function readThoughtsFlags(env: NodeJS.ProcessEnv): ThoughtsFlags {
-  return {
+  const flags: ThoughtsFlags = {
     visibleThoughtsEnabled: boolish(env.VISIBLE_THOUGHTS_ENABLED),
     innerMonologueEnabled: boolish(env.VISIBLE_INNER_MONOLOGUE_ENABLED),
     thoughtTimeoutMs: intish(env.VISIBLE_THOUGHTS_TIMEOUT_MS, DEFAULT_THOUGHT_FLAGS.thoughtTimeoutMs),
     reasoningEffort: effortish(env.VISIBLE_THOUGHTS_REASONING_EFFORT),
     qqDelivery: boolish(env.VISIBLE_THOUGHTS_QQ_ENABLED)
   };
+  return { ...flags, replyEffort: replyReasoningEffort(flags) };
 }
 
 function effortish(value: string | undefined): ThoughtsFlags['reasoningEffort'] {

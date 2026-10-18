@@ -67,7 +67,7 @@ import { ThoughtRepo } from './db/repos/thought.repo.js';
 import { ThoughtsService } from './core/thoughts/service.js';
 import { ThoughtPresenter } from './core/thoughts/presenter.js';
 import { ThoughtSafetyFilter } from './core/thoughts/safety.js';
-import { readThoughtsFlags, replyReasoningEffort } from './core/thoughts/flags.js';
+import { readThoughtsFlags } from './core/thoughts/flags.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { MomentRepo } from './db/repos/moment.repo.js';
@@ -599,7 +599,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     personaReferences,
     voice: voiceService,
     voiceV2Enabled: env.VOICE_V2_ENABLED,
-    replyReasoningEffort: replyReasoningEffort(thoughtFlags),
+    replyReasoningEffort: thoughtFlags.replyEffort,
     webSearch,
     worldSnapshot: () => world.snapshot(),
     toolRuntime,
