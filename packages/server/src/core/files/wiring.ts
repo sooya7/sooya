@@ -13,8 +13,13 @@ import { FileDraftService } from './drafts.js';
 import { fileTools } from './tools.js';
 import { LinkReader, readUrlTool } from '../links/reader.js';
 
-/** The knowledge vault tool a worth-keeping .md is written with (memory_commit phase only). */
-export const KNOWLEDGE_WRITE_TOOL = 'knowledge.knowledge_write';
+/**
+ * The knowledge vault tool a worth-keeping .md is written with (memory_commit
+ * phase only). Looked up by its model name: the MCP bridge normalizes the
+ * canonical name (`knowledge.knowledge.write`), the model name keeps the
+ * remote tool name intact.
+ */
+export const KNOWLEDGE_WRITE_MODEL_NAME = 'knowledge__knowledge_write';
 export const KNOWLEDGE_SAVE_JOB = 'files.knowledge_save';
 
 export interface FilesWiringInput {
@@ -37,7 +42,7 @@ export interface FilesWiring {
 
 export function setupFilesAndLinks(input: FilesWiringInput): FilesWiring {
   const knowledgeAvailable = (): boolean => {
-    const tool = input.tools.get(KNOWLEDGE_WRITE_TOOL);
+    const tool = input.tools.getByModelName(KNOWLEDGE_WRITE_MODEL_NAME);
     return Boolean(tool && input.policy.check(tool, 'memory_commit').allowed);
   };
   let files: FileDraftService | null = null;
@@ -76,7 +81,7 @@ export function registerFileJobs(worker: JobWorker, deps: {
     const name = String(payload.name ?? '');
     const mediaId = String(payload.mediaId ?? '');
     if (!name.toLowerCase().endsWith('.md') || !mediaId) return;
-    const tool = deps.tools.get(KNOWLEDGE_WRITE_TOOL);
+    const tool = deps.tools.getByModelName(KNOWLEDGE_WRITE_MODEL_NAME);
     if (!tool || !deps.policy.check(tool, 'memory_commit').allowed) return;
     const read = await deps.mediaStore.read(mediaId);
     if (!read) return; // already replaced by a newer version; that one carries its own job
