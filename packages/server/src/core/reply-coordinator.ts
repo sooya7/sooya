@@ -794,7 +794,8 @@ export class ReplyCoordinator {
         messageId: outcome.messageId,
         userMessages,
         finalReply,
-        degraded: outcome.degraded
+        degraded: outcome.degraded,
+        ...(outcome.reasoning ? { reasoning: outcome.reasoning } : {})
       });
     } catch (error) {
       this.deps.errorLog?.add('thoughts.bridge', 'begin_failed', {

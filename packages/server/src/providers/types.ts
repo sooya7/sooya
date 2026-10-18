@@ -72,6 +72,13 @@ export interface ChatRequest {
   };
   tools?: ChatToolDefinition[];
   toolChoice?: 'auto' | 'none' | { name: string };
+  /**
+   * Ask an OpenAI-compatible endpoint to think before answering
+   * (`reasoning_effort`). Only the reply path sets it, and only when visible
+   * thoughts are on: the model's reasoning text then comes back on
+   * `ChatResult.reasoning`. Providers without such a knob ignore it.
+   */
+  reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 export interface ChatChunk {
@@ -80,6 +87,8 @@ export interface ChatChunk {
 
 export interface ChatResult {
   text: string;
+  /** The model's own reasoning text, when the endpoint returned one (`reasoning_content`). */
+  reasoning?: string;
   toolCalls?: ChatToolCall[];
   finishReason?: string;
   usage?: { promptTokens?: number; completionTokens?: number };

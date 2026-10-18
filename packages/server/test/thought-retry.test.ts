@@ -63,6 +63,7 @@ const input = {
   messageId: 'm1',
   userMessage: '你在想什么？',
   finalReply: '没什么呀。',
+  reasoning: '他问我在想什么，其实我在想他今天累不累。',
   safeLifeContext: [],
   safeWorldContext: [],
   replyIntent: null,

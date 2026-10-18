@@ -581,6 +581,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     capabilities, config, assertWritable: (bytes) => storage.assertWritable(bytes),
     onLog: (level, msg, extra) => logger[level]({ ...extra }, msg)
   });
+  const thoughtFlags = readThoughtsFlags(process.env);
   const replier = new Replier({
     messages: repos.messages,
     media: mediaStore,
@@ -598,13 +599,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     personaReferences,
     voice: voiceService,
     voiceV2Enabled: env.VOICE_V2_ENABLED,
+    replyReasoningEffort: thoughtFlags.replyEffort,
     webSearch,
     worldSnapshot: () => world.snapshot(),
     toolRuntime,
     ombreMemory,
     video
   });
-  const thoughtFlags = readThoughtsFlags(process.env);
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
     repo: repos.thoughts,
@@ -748,7 +749,8 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     jobs: repos.jobs,
     errors: repos.errors,
     client: qqApi,
-    metrics
+    metrics,
+    thoughts: thoughts.qqSource()
   });
 
   const proactive = new ProactiveComposer({

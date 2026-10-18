@@ -321,6 +321,8 @@ export interface AdminChatMessage {
   seq: number;
   status: string;
   content: Array<{ id: string; type: string; text?: string | null; transcript?: string | null; media?: { id: string; kind: string; url: string; mime: string } | null }>;
+  /** Her thought before this reply: a short rewrite of the model's reasoning (assistant only). */
+  thought?: string;
 }
 
 export interface AdminError {

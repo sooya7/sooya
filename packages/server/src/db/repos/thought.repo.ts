@@ -87,6 +87,16 @@ export class ThoughtRepo {
     return row ? toThought(row) : undefined;
   }
 
+  /** Latest user-visible inner monologue for a message, whatever its status. */
+  latestUserMonologue(messageId: string): VisibleThought | undefined {
+    const row = this.db.prepare(
+      `SELECT * FROM visible_thoughts
+       WHERE message_id = ? AND kind = 'inner_monologue' AND visibility = 'user'
+       ORDER BY created_at DESC LIMIT 1`
+    ).get(messageId) as ThoughtRow | undefined;
+    return row ? toThought(row) : undefined;
+  }
+
   /** Latest thought (any kind/status) for a batch revision. */
   getByBatchRevision(batchId: string, revision: number): VisibleThought | undefined {
     const row = this.db.prepare(

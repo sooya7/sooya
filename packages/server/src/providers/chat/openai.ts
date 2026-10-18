@@ -157,6 +157,7 @@ export class OpenAIChatProvider implements ChatProvider {
       stream
     };
     if (nativeJson) body.response_format = { type: 'json_object' };
+    if (req.reasoningEffort) body.reasoning_effort = req.reasoningEffort;
     if (this.cfg.supportsTools && req.tools && req.tools.length > 0) {
       body.tools = req.tools.map(toOpenAiTool);
       if (req.toolChoice !== undefined) body.tool_choice = toOpenAiToolChoice(req.toolChoice);
@@ -201,14 +202,16 @@ export class OpenAIChatProvider implements ChatProvider {
           if (!res.ok) throw new ProviderRequestError(`chat request failed with status ${res.status}: ${await safeText(res)}`, res.status);
           const json = (await res.json()) as {
             choices?: Array<{
-              message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string | null } }> };
+              message?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string | null } }> };
               finish_reason?: string;
             }>;
             usage?: { prompt_tokens?: number; completion_tokens?: number };
           };
           const message = json.choices?.[0]?.message;
+          const reasoning = message?.reasoning_content ?? message?.reasoning ?? '';
           return {
             text: message?.content ?? '',
+            ...(reasoning ? { reasoning } : {}),
             toolCalls: parseOpenAiToolCalls(message?.tool_calls),
             finishReason: json.choices?.[0]?.finish_reason,
             usage: { promptTokens: json.usage?.prompt_tokens, completionTokens: json.usage?.completion_tokens },
@@ -251,13 +254,19 @@ export class OpenAIChatProvider implements ChatProvider {
       });
       if (!res.ok) throw new ProviderRequestError(`chat stream failed with status ${res.status}: ${await safeText(res)}`, res.status);
       let text = '';
+      let reasoning = '';
       let finishReason: string | undefined;
       await readSse(res, (data) => {
         try {
           const parsed = JSON.parse(data) as {
-            choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>;
+            choices?: Array<{
+              delta?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null };
+              finish_reason?: string | null;
+            }>;
           };
           const choice = parsed.choices?.[0];
+          const thinking = choice?.delta?.reasoning_content ?? choice?.delta?.reasoning;
+          if (thinking) reasoning += thinking;
           const delta = choice?.delta?.content;
           if (delta) {
             text += delta;
@@ -268,7 +277,7 @@ export class OpenAIChatProvider implements ChatProvider {
           /* ignore malformed keepalive chunks */
         }
       });
-      return { text, finishReason, model: this.cfg.model };
+      return { text, ...(reasoning ? { reasoning } : {}), finishReason, model: this.cfg.model };
     } catch (err) {
       throw normalizeAbort(err, this.cfg.timeoutMs);
     } finally {
