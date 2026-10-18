@@ -14,8 +14,11 @@ export interface AdminHistoryOptions {
   offset?: number;
 }
 
+/** Assistant messages carry the finished visible thought (a rewrite of the model's reasoning), when there is one. */
+export type AdminChatMessage = ChatMessage & { thought?: string };
+
 export interface AdminHistoryPage {
-  messages: ChatMessage[];
+  messages: AdminChatMessage[];
   total: number;
   limit: number;
   offset: number;
@@ -38,19 +41,42 @@ export class AdminMessageRepo {
     const rows = this.db.prepare(
       `SELECT m.* FROM messages m WHERE ${where.join(' AND ')} ORDER BY m.seq DESC LIMIT ? OFFSET ?`
     ).all(...values, limit, offset) as Array<{ id: string; conversation_id: string; role: Role; created_at: string; updated_at: string; seq: number; status: 'pending' | 'sending' | 'sent' | 'failed'; client_msg_id: string | null; reply_to: string | null; error: string | null; meta_json: string }>;
-    const messages = this.messages.hydrate(rows).filter((message) => message.role === 'user' || message.role === 'assistant');
+    const messages = this.withThoughts(this.messages.hydrate(rows).filter((message) => message.role === 'user' || message.role === 'assistant'));
     return { messages, total, limit, offset, hasMore: offset + messages.length < total };
   }
 
-  context(id: string, before = 10, after = 10): { target: ChatMessage; messages: ChatMessage[]; hasOlder: boolean; hasNewer: boolean } | undefined {
+  context(id: string, before = 10, after = 10): { target: AdminChatMessage; messages: AdminChatMessage[]; hasOlder: boolean; hasNewer: boolean } | undefined {
     const context = this.messages.context(id, before, after);
     if (!context || (context.target.role !== 'user' && context.target.role !== 'assistant')) return undefined;
+    const [target] = this.withThoughts([context.target]);
     return {
-      target: context.target,
-      messages: context.messages.filter((message) => message.role === 'user' || message.role === 'assistant'),
+      target: target!,
+      messages: this.withThoughts(context.messages.filter((message) => message.role === 'user' || message.role === 'assistant')),
       hasOlder: context.hasOlder,
       hasNewer: context.hasNewer
     };
+  }
+
+  private withThoughts(messages: ChatMessage[]): AdminChatMessage[] {
+    const ids = messages.filter((message) => message.role === 'assistant').map((message) => message.id);
+    if (ids.length === 0) return messages;
+    let rows: Array<{ message_id: string; text: string }> = [];
+    try {
+      rows = this.db.prepare(
+        `SELECT message_id, text FROM visible_thoughts
+         WHERE message_id IN (${ids.map(() => '?').join(',')})
+           AND kind = 'inner_monologue' AND visibility = 'user' AND status = 'completed'
+         ORDER BY created_at ASC`
+      ).all(...ids) as Array<{ message_id: string; text: string }>;
+    } catch {
+      return messages; // thoughts are decoration; history must load without them
+    }
+    if (rows.length === 0) return messages;
+    const byMessage = new Map(rows.map((row) => [row.message_id, row.text]));
+    return messages.map((message) => {
+      const thought = byMessage.get(message.id)?.trim();
+      return thought ? { ...message, thought } : message;
+    });
   }
 }
 

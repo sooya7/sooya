@@ -1,9 +1,9 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
 import { JobWorker } from '../src/core/jobs.js';
 import { registerDefaultJobs } from '../src/core/jobs.js';
 import { QqApiClient } from '../src/channels/qq/client.js';
-import { QqDeliveryService } from '../src/channels/qq/outbound.js';
+import { QqDeliveryService, THOUGHT_BUBBLE_PREFIX } from '../src/channels/qq/outbound.js';
 import { qqBotConfigFromEnv } from '../src/channels/qq/config.js';
 import { QQ_CHANNEL_NAME } from '../src/channels/qq/types.js';
 
@@ -46,7 +46,10 @@ function config() {
   });
 }
 
-async function buildDelivery(script: Array<ScriptedResponse | 'timeout' | 'network'> = []) {
+async function buildDelivery(
+  script: Array<ScriptedResponse | 'timeout' | 'network'> = [],
+  thoughts: ConstructorParameters<typeof QqDeliveryService>[0]['thoughts'] = null
+) {
   h = await createHarness({ startWorkers: false });
   const { fetchImpl, calls, tokenCalls } = mockFetch(script);
   const client = new QqApiClient(config(), { fetchImpl });
@@ -61,7 +64,8 @@ async function buildDelivery(script: Array<ScriptedResponse | 'timeout' | 'netwo
     jobs: h.app.repos.jobs,
     errors: h.app.repos.errors,
     client,
-    pause: async () => {}
+    pause: async () => {},
+    thoughts
   });
   // 绑定授权 owner（相当于 QQ 用户首次发消息后）。
   h.app.repos.channelIdentities.bindOwner({
@@ -297,5 +301,73 @@ describe('QQ delivery: via durable job', () => {
     expect(calls.filter((c) => c.url.includes('/v2/users/owner-uuid/messages'))).toHaveLength(1);
     expect(h.app.repos.channelDeliveries.find('qq', message.id, 'owner-uuid')?.status).toBe('sent');
     await worker.stop();
+  });
+});
+
+describe('QQ delivery: visible thought bubble', () => {
+  function passiveReply(text: string) {
+    const user = h!.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '在吗' }] }).message;
+    h!.app.repos.channelEvents.markReceived({ channel: 'qq', eventId: 'evt-user', remoteMessageId: 'qq-msg-1', eventType: 'C2C_MESSAGE_CREATE', conversationKey: 'owner-uuid' });
+    h!.app.repos.channelEvents.markProcessed('qq', 'evt-user', user.id);
+    const admission = h!.app.repos.replyBatches.appendOrCreateMessage(user.id, new Date().toISOString(), new Date().toISOString());
+    return assistantMessage(text).then((message) => {
+      h!.app.db.prepare("UPDATE reply_batches SET status = 'completed', assistant_message_id = ? WHERE id = ?").run(message.id, admission.batch.id);
+      return message;
+    });
+  }
+  const sends = (calls: Array<{ url: string; init?: RequestInit }>) =>
+    calls
+      .filter((c) => c.url.includes('/v2/users/owner-uuid/messages'))
+      .map((c) => JSON.parse(String(c.init!.body)) as { content: string; msg_seq?: number });
+
+  it('sends the thought first, then the reply bubbles with following msg_seq', async () => {
+    const settled = vi.fn(async () => '他今天好像很累，先陪他说说话吧。');
+    const { delivery, calls } = await buildDelivery([], { waitMs: 1000, settledUserThought: settled });
+    const message = await passiveReply('在的\n怎么啦');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    expect(settled).toHaveBeenCalledWith(message.id, 1000, undefined);
+    expect(sends(calls)).toEqual([
+      expect.objectContaining({ content: `${THOUGHT_BUBBLE_PREFIX}他今天好像很累，先陪他说说话吧。`, msg_seq: 1 }),
+      expect.objectContaining({ content: '在的', msg_seq: 2 }),
+      expect.objectContaining({ content: '怎么啦', msg_seq: 3 })
+    ]);
+  });
+
+  it('sends only the reply when there is no thought, and does not ask again on retry', async () => {
+    const settled = vi.fn(async () => null);
+    const { delivery, calls } = await buildDelivery([{ status: 500, body: { message: 'boom' } }], { waitMs: 1000, settledUserThought: settled });
+    const message = await passiveReply('在的');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('retry');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(sends(calls).map((b) => b.content)).toEqual(['在的', '在的']);
+    expect(sends(calls).every((b) => b.msg_seq === 1)).toBe(true);
+  });
+
+  it('a retry after the thought went out does not resend it and keeps msg_seq aligned', async () => {
+    const settled = vi.fn(async () => '想让他安心。');
+    // thought ok, first bubble fails, retry sends the bubbles only
+    const { delivery, calls } = await buildDelivery(
+      [{ status: 200, body: { id: 'ROBOT_t' } }, { status: 500, body: { message: 'boom' } }],
+      { waitMs: 1000, settledUserThought: settled }
+    );
+    const message = await passiveReply('好\n我在');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('retry');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    const all = sends(calls);
+    expect(all.filter((b) => b.content.startsWith(THOUGHT_BUBBLE_PREFIX))).toHaveLength(1);
+    expect(all.slice(-2)).toEqual([
+      expect.objectContaining({ content: '好', msg_seq: 2 }),
+      expect.objectContaining({ content: '我在', msg_seq: 3 })
+    ]);
+  });
+
+  it('never spends a proactive send on a thought', async () => {
+    const settled = vi.fn(async () => '想他了。');
+    const { delivery, calls } = await buildDelivery([], { waitMs: 1000, settledUserThought: settled });
+    const message = await assistantMessage('在干嘛呢');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    expect(settled).not.toHaveBeenCalled();
+    expect(sends(calls).map((b) => b.content)).toEqual(['在干嘛呢']);
   });
 });

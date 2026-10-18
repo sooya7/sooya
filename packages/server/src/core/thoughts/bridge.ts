@@ -21,6 +21,8 @@ export interface ThoughtsBridge {
     userMessages: ChatMessage[];
     finalReply: string;
     degraded: string[];
+    /** The chat model's own reasoning for this reply; the thought summarises it. */
+    reasoning?: string;
   }): void;
 
   /**

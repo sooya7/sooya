@@ -37,6 +37,11 @@ export interface ThoughtPrepareInput {
   userMessage: string;
   /** The final canonical reply text. */
   finalReply: string;
+  /**
+   * The chat model's own reasoning for this reply. The thought is a short,
+   * natural rewrite of it; the raw text itself is never shown.
+   */
+  reasoning: string;
   /** Safe Life-context summary lines, e.g. ['location: cafe']. */
   safeLifeContext: string[];
   /** Safe World-context summary lines, e.g. ['now: 2026-08-07 14:00']. */
@@ -74,13 +79,17 @@ export interface ThoughtPrepareResult {
 
 /** Fixed instruction for the thought model — NEVER the persona's system prompt. */
 const THOUGHT_SYSTEM = [
-  '你是一个 AI 陪伴机器人的“可见想法”生成器。',
-  '根据提供的“我的消息、我的回复、背景、意图”写一句到三句简短的第一人称中文内心想法（像角色自己在想，不超过 60 字）。',
-  '要求：只使用提供的信息；不要解释你的输出；不要提“系统”“上下文”“模型”“根据”“指令”这类字眼；不要复述消息原文；不要输出引号、标题或编号。'
+  '下面给你一段聊天角色在回消息之前的原始思考草稿（可能夹着英文、分析腔和对自己设定的自言自语）。',
+  '请把它改写成她当时心里闪过的一到两句话：第一人称、中文口语、自然，像真人心里的念头，不超过 80 字。',
+  '只保留她对对方、对这件事的感受和打算；草稿里关于设定、规则、身份、格式、“作为……我应该”之类的内容全部丢掉，不要改写进去。',
+  '草稿怎么称呼对方就怎么称呼（比如“他”），不要说“用户”；不要出现“系统”“模型”“草稿”“思考”“设定”“人设”“扮演”“回复”这些词；',
+  '不要照抄她最后说出口的话；不要输出引号、标题、编号、括号动作或解释。'
 ].join('');
 
-const THOUGHT_RETRY_SUFFIX = '上一版输出不完整。请重新输出一句完整、自然的中文内心想法，不要输出残片、英文占位、标题或未闭合括号。';
-const MAX_MONOLOGUE_CHARS = 60;
+const THOUGHT_RETRY_SUFFIX = '上一版输出不完整。请重新输出一到两句完整、自然的中文心里话，不要输出残片、英文、标题或未闭合括号。';
+const MAX_MONOLOGUE_CHARS = 80;
+/** How much of the raw reasoning the rewrite sees. Reasoning can run long; the gist is near the start. */
+const MAX_REASONING_CHARS = 1500;
 
 export class ThoughtPresenter {
   private readonly safety: ThoughtSafetyFilter;
@@ -155,7 +164,7 @@ export class ThoughtPresenter {
         const result = await provider.complete({
           system: attempt === 0 ? THOUGHT_SYSTEM : `${THOUGHT_SYSTEM}${THOUGHT_RETRY_SUFFIX}`,
           messages: [{ role: 'user', content: [{ type: 'text', text: userTurn }] }],
-          maxTokens: 100,
+          maxTokens: 200,
           temperature: 0.9,
           signal
         });
@@ -251,14 +260,11 @@ export class ThoughtPresenter {
   }
 
   private composeUserTurn(input: ThoughtPrepareInput): string {
-    const lines: string[] = [];
-    if (input.safeWorldContext.length > 0) lines.push(`背景（时间地点天气）：${input.safeWorldContext.join('；')}`);
-    if (input.safeLifeContext.length > 0) lines.push(`状态：${input.safeLifeContext.join('；')}`);
-    if (input.replyIntent) lines.push(`意图：${input.replyIntent}`);
-    if (input.voiceMode) lines.push(`语音：${input.voiceMode}`);
-    lines.push(`我的消息：${truncate(input.userMessage, 400)}`);
-    lines.push(`我的回复：${truncate(input.finalReply, 400)}`);
-    return lines.join('\n');
+    return [
+      `对方刚说：${truncate(input.userMessage, 300)}`,
+      `她最后说出口的话：${truncate(input.finalReply, 300)}`,
+      `她回消息前的思考草稿：\n${truncate(input.reasoning, MAX_REASONING_CHARS)}`
+    ].join('\n');
   }
 
   private composeDecisionSummary(input: ThoughtPrepareInput): string {

@@ -42,11 +42,16 @@ export class ThoughtsService implements ThoughtsBridge {
 
   // ---- ThoughtsBridge (called by the coordinator) ----
 
-  beginForReply(input: { batchId: string; revision: number; messageId: string; userMessages: ChatMessage[]; finalReply: string; degraded: string[] }): void {
+  beginForReply(input: { batchId: string; revision: number; messageId: string; userMessages: ChatMessage[]; finalReply: string; degraded: string[]; reasoning?: string }): void {
     if (!this.deps.flags.visibleThoughtsEnabled) return;
     const key = `${input.batchId}:${input.revision}`;
     try {
       if (!this.deps.flags.innerMonologueEnabled) return;
+      // The thought is a rewrite of what the model actually thought. With no
+      // reasoning there is nothing true to show, so no thought at all — never
+      // an invented one.
+      const reasoning = input.reasoning?.trim() ?? '';
+      if (!reasoning) return;
       const controller = new AbortController();
       this.active.set(key, controller);
       const prepared: ThoughtPrepareInput = {
@@ -55,6 +60,7 @@ export class ThoughtsService implements ThoughtsBridge {
         messageId: input.messageId,
         userMessage: latestUserText(input.userMessages),
         finalReply: input.finalReply,
+        reasoning,
         safeLifeContext: this.safeLifeContext(),
         safeWorldContext: this.safeWorldContext(),
         replyIntent: classifyReplyIntent(latestUserText(input.userMessages)) ?? null,
@@ -104,6 +110,22 @@ export class ThoughtsService implements ThoughtsBridge {
 
   getUserThought(messageId: string): VisibleThought | null {
     return this.deps.repo.getUserThought(messageId) ?? null;
+  }
+
+  /**
+   * QQ delivery: the finished user-visible thought for a message, waiting up
+   * to `waitMs` while it is still being written. Null when there is none, it
+   * failed/was cancelled, or it did not finish in time.
+   */
+  async settledUserThought(messageId: string, waitMs: number, signal?: AbortSignal): Promise<string | null> {
+    const deadline = Date.now() + Math.max(0, waitMs);
+    for (;;) {
+      const row = this.deps.repo.latestUserMonologue(messageId);
+      if (!row) return null;
+      if (row.status === 'completed') return row.text.trim() || null;
+      if (row.status !== 'generating' || Date.now() >= deadline || signal?.aborted) return null;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
 
   getThoughtsForMessage(messageId: string): VisibleThought[] {

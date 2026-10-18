@@ -73,6 +73,8 @@ export interface ReplyOutcome {
   parts: string[];
   degraded: string[];
   error?: PublicFailure;
+  /** The chat model's own reasoning for this reply, when the endpoint returned it. */
+  reasoning?: string;
 }
 
 export interface GenerationOptions extends ReplyOptions {
@@ -127,6 +129,8 @@ export interface TextGenerationResult {
   worldSnapshot: Readonly<WorldSnapshot> | null;
   /** Set when the provider died AFTER something became visible. */
   interrupted?: Error;
+  /** The chat model's own reasoning text (only when `replyReasoningEffort` asked for it). */
+  reasoning?: string;
   /**
    * C5: the user asked for a voice reply ("用语音回我"/"只发语音") and voice
    * is available, so phase 1 kept the whole reply hidden — no text was ever
@@ -177,6 +181,8 @@ export class Replier {
       /** Independent voice system (Part 4); null when VOICE_V2_ENABLED=false. */
       voice?: VoiceService | null;
       voiceV2Enabled?: boolean;
+      /** Visible thoughts: ask the reply model to reason, so its reasoning can be summarised. */
+      replyReasoningEffort?: 'low' | 'medium' | 'high';
       webSearch?: WebSearchResolver | null;
       worldSnapshot?: () => WorldSnapshot;
       toolRuntime?: ToolCallRuntime;
@@ -352,6 +358,7 @@ export class Replier {
       let shell: ChatMessage | null = null;
       let firstTokenAt: number | null = null;
       let interrupted: Error | undefined;
+      let modelReasoning = '';
       const publishDeadline = Date.now() + options.publishGraceMs;
 
       const openBarrier = async (): Promise<ChatMessage | null> => {
@@ -454,16 +461,18 @@ export class Replier {
       }
 
       const streamTurns = async (turns: ModelTurn[]): Promise<void> => {
-        await provider.stream(
+        const result = await provider.stream(
           {
             system: requestSystem,
             messages: turns,
             maxTokens: requestMaxTokens,
             temperature: undefined,
-            signal
+            signal,
+            ...(this.deps.replyReasoningEffort ? { reasoningEffort: this.deps.replyReasoningEffort } : {})
           },
           (chunk) => pushDelta(chunk.delta)
         );
+        modelReasoning = result?.reasoning?.trim() ?? '';
       };
 
       let noModel = false;
@@ -580,6 +589,7 @@ export class Replier {
         mediaPlan,
         worldSnapshot: world,
         interrupted,
+        ...(modelReasoning ? { reasoning: modelReasoning } : {}),
         hiddenDraft,
         hiddenStickerOnly,
         webSearch: webSearchResult
@@ -1145,7 +1155,14 @@ export class Replier {
       { type: 'reply.content.done', payload: { messageId: shell.id, parts: producedParts } }
     ]);
     if (generated.behaviorDecision?.status !== 'disabled') this.deps.messages.updateMeta(shell.id, { behaviorDecision: generated.behaviorDecision });
-    return { messageId: shell.id, ok: true, parts: producedParts, degraded, behaviorDecision: generated.behaviorDecision };
+    return {
+      messageId: shell.id,
+      ok: true,
+      parts: producedParts,
+      degraded,
+      behaviorDecision: generated.behaviorDecision,
+      ...(generated.reasoning ? { reasoning: generated.reasoning } : {})
+    };
   }
 
   /** Legacy one-shot reply used when REPLY_INTERRUPTIBLE_GENERATION=false. */

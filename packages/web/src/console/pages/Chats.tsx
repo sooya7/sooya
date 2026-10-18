@@ -105,9 +105,10 @@ function AudioPart({ part }: { part: Part }) {
 
 function MessageBody({ message, term }: { message: AdminChatMessage; term: string }) {
   const parts = (message.content as Part[]).filter((part) => part.type !== 'system');
-  if (parts.length === 0) return <p className="chat-text cs-muted">（空消息）</p>;
+  if (parts.length === 0 && !message.thought) return <p className="chat-text cs-muted">（空消息）</p>;
   return (
     <div className="chat-body">
+      {message.thought && <p className="chat-thought" title="她回这条消息前在想的">💭 {message.thought}</p>}
       {parts.map((part) => {
         if (part.type === 'text') {
           return part.text ? <p key={part.id} className="chat-text"><Highlight text={part.text} term={term} /></p> : null;

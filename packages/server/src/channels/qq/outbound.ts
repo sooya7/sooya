@@ -45,7 +45,18 @@ export interface QqDeliveryDeps {
   metrics?: import('../../core/metrics.js').MetricsService;
   /** 气泡之间的停顿；测试里换成立即返回。 */
   pause?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /**
+   * 可见想法：回复的思考改写成一两句心里话，作为第一个气泡先发。
+   * 想法是回复发布后异步生成的，这里最多等 waitMs；等不到就不发，不拖住回复。
+   */
+  thoughts?: {
+    waitMs: number;
+    settledUserThought: (messageId: string, waitMs: number, signal?: AbortSignal) => Promise<string | null>;
+  } | null;
 }
+
+/** 想法气泡的前缀，跟她说出口的话区分开。 */
+export const THOUGHT_BUBBLE_PREFIX = '💭 ';
 
 export class QqDeliveryService {
   constructor(private readonly deps: QqDeliveryDeps) {}
@@ -91,16 +102,40 @@ export class QqDeliveryService {
     const openid = owner.external_user_id;
     const msgId = this.passiveReplyMsgId(claimedRow);
     const completed = new Set(parseChannelDeliveryProgress(claimedRow.progress_json).completed);
+    // 想法只跟着被动回复走（主动消息配额太紧，不为它多花一条）。决定只做一次：
+    // 发了记 'thought'，没有/没等到记 'thought:none'，重试时气泡拆分和 msg_seq 都对得上。
+    let thoughtText: string | null = null;
+    const roomForThought = mediaParts.length + (text ? 1 : 0) + 1 <= MAX_PASSIVE_SENDS;
+    if (msgId && roomForThought && this.deps.thoughts && !completed.has('thought') && !completed.has('thought:none')) {
+      try {
+        thoughtText = await this.deps.thoughts.settledUserThought(input.messageId, this.deps.thoughts.waitMs, input.signal);
+      } catch {
+        thoughtText = null;
+      }
+      if (!thoughtText) {
+        this.deps.deliveries.markStepCompleted(row.id, 'thought:none', null);
+        completed.add('thought:none');
+      }
+    }
+    const thoughtSlot = completed.has('thought') || thoughtText ? 1 : 0;
     // 被动回复拆成几个气泡一句一句发；主动消息配额很紧，仍然整条发。
     // 旧进度里的 'text' 表示整段文字已经发过。
     const bubbles = completed.has('text')
       ? []
-      : splitIntoBubbles(text, msgId ? MAX_PASSIVE_SENDS - mediaParts.length : 1);
+      : splitIntoBubbles(text, msgId ? Math.max(1, MAX_PASSIVE_SENDS - mediaParts.length - thoughtSlot) : 1);
     let msgSeq = 1;
     let lastRemoteMessageId = claimedRow.remote_message_id ?? '';
     let sentThisAttempt = false;
     const startedAt = Date.now();
     try {
+      if (thoughtText) {
+        const sent = await this.deps.client.sendC2cTextMessage({ openid, content: `${THOUGHT_BUBBLE_PREFIX}${thoughtText}`, msgId, msgSeq, signal: input.signal });
+        lastRemoteMessageId = sent.messageId || lastRemoteMessageId;
+        this.deps.deliveries.markStepCompleted(row.id, 'thought', sent.messageId || null);
+        completed.add('thought');
+        sentThisAttempt = true;
+      }
+      if (completed.has('thought') && msgId) msgSeq += 1;
       if (text && completed.has('text')) {
         if (msgId) msgSeq += 1;
       }

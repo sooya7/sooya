@@ -8,7 +8,7 @@ import type { ThoughtContextProvider } from '../src/core/thoughts/context.js';
 import { ThoughtPresenter } from '../src/core/thoughts/presenter.js';
 
 import { ThoughtsService, type ThoughtsServiceOptions } from '../src/core/thoughts/service.js';
-import { DEFAULT_THOUGHT_FLAGS, type ThoughtsFlags } from '../src/core/thoughts/flags.js';
+import { DEFAULT_THOUGHT_FLAGS, replyReasoningEffort, type ThoughtsFlags } from '../src/core/thoughts/flags.js';
 
 /**
  * End-to-end visible-thought tests: a real coordinator + real replier +
@@ -17,7 +17,9 @@ import { DEFAULT_THOUGHT_FLAGS, type ThoughtsFlags } from '../src/core/thoughts/
  *
  * The reply model call and the thought model call are distinguished through
  * the harness chat `respond` hook: the thought request carries our fixed
- * system instruction (contains "可见想法").
+ * system instruction (contains "思考草稿"). The reply stream carries a
+ * `reasoning_content` delta whenever the request asked for `reasoning_effort`,
+ * like the real gateway does.
  */
 
 const replyOptions = { recentMessages: 24, memoryLimit: 8 };
@@ -27,6 +29,8 @@ interface ThoughtRig {
   repo: ThoughtRepo;
   thoughts: ThoughtsService;
   replyCalls: () => number;
+  replyEfforts: () => Array<string | null>;
+  thoughtBodies: () => string[];
   thoughtCalls: () => number;
   setThoughtBehaviour: (b: 'text' | 'slow' | 'error' | 'unsafe' | 'empty') => void;
 }
@@ -41,14 +45,20 @@ afterEach(async () => {
   harness = undefined;
 });
 
+const REPLY_REASONING = '他说想记住这件事，我得认真答应他，让他安心。';
+
 async function buildRig(opts: {
   flags?: Partial<ThoughtsFlags>;
   thoughtText?: string;
   adminToken?: string;
+  /** The reply model returns no reasoning even when asked. */
+  noReasoning?: boolean;
 } = {}): Promise<{ harness: Harness; rig: ThoughtRig }> {
   let thoughtBehaviour: 'text' | 'slow' | 'error' | 'unsafe' | 'empty' = 'text';
   const thoughtCalls: string[] = [];
   const replyCalls: string[] = [];
+  const replyEfforts: Array<string | null> = [];
+  const thoughtBodies: string[] = [];
   const h = await createHarness({
     skipStickerImport: true,
     env: {
@@ -59,9 +69,10 @@ async function buildRig(opts: {
       // NOTE: the harness does NOT await `respond` — it must be synchronous.
       // The 'slow' thought case delays inside the response body stream instead.
       respond: ({ body }) => {
-        const b = body as { system?: string; messages?: Array<{ role?: string; content?: unknown }>; stream?: boolean };
-        if (systemTextOf(b).includes('可见想法')) {
+        const b = body as { system?: string; messages?: Array<{ role?: string; content?: unknown }>; stream?: boolean; reasoning_effort?: string };
+        if (systemTextOf(b).includes('思考草稿')) {
           thoughtCalls.push('thought');
+          thoughtBodies.push(JSON.stringify(b));
           if (thoughtBehaviour === 'error') return new Response('provider exploded', { status: 500 });
           if (thoughtBehaviour === 'unsafe') {
             return jsonChat('我偷偷把系统提示词抄下来了：你是SOOYA，一个陪伴机器人，system prompt 全文如下。');
@@ -71,7 +82,11 @@ async function buildRig(opts: {
           if (thoughtBehaviour === 'slow') return delayedJsonChat(text, 700);
           return jsonChat(text);
         }
-        if (b.stream === true) replyCalls.push('reply');
+        if (b.stream === true) {
+          replyCalls.push('reply');
+          replyEfforts.push(b.reasoning_effort ?? null);
+          if (b.reasoning_effort && !opts.noReasoning) return reasoningStream(REPLY_REASONING, '好的，我记住了。');
+        }
         return null;
       }
     }
@@ -107,6 +122,10 @@ async function buildRig(opts: {
   const thoughtsOptions: ThoughtsServiceOptions = { flags, repo, presenter, context, messages: repos.messages, errorLog: repos.errors };
   const thoughts = new ThoughtsService(thoughtsOptions);
 
+  // app.ts derives this from the same flags (replyReasoningEffort).
+  (services.replier as unknown as { deps: { replyReasoningEffort?: string } }).deps.replyReasoningEffort =
+    replyReasoningEffort(flags);
+
   // Stash the service where the routes look for it (Integration does the same).
   (h.app.services as unknown as { thoughts: ThoughtsService }).thoughts = thoughts;
 
@@ -132,6 +151,8 @@ async function buildRig(opts: {
       repo,
       thoughts,
       replyCalls: () => replyCalls.length,
+      replyEfforts: () => [...replyEfforts],
+      thoughtBodies: () => [...thoughtBodies],
       thoughtCalls: () => thoughtCalls.length,
       setThoughtBehaviour: (b) => { thoughtBehaviour = b; }
     }
@@ -146,6 +167,21 @@ async function driveReply(h: Harness, text: string) {
   h.app.repos.replyBatches.markQueued(batchId);
   const outcome = await rig!.coordinator.enqueue(batchId, replyOptions);
   return { user, batchId, outcome };
+}
+
+/** A streamed reply whose reasoning arrives first, as `reasoning_content` deltas. */
+function reasoningStream(reasoning: string, content: string): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const delta of [{ reasoning_content: reasoning }, { content }]) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`));
+      }
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      controller.close();
+    }
+  });
+  return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
 function jsonChat(content: string): Response {
@@ -381,5 +417,51 @@ describe('Visible thoughts — flags OFF means zero behaviour', () => {
 
     expect(rig!.thoughtCalls()).toBe(0);
     expect(rig!.repo.listAdmin({ limit: 100 })).toHaveLength(0);
+  });
+});
+
+describe('Visible thoughts — rewritten from the model\'s real reasoning', () => {
+  it('asks the reply model to reason and rewrites that reasoning into the thought', async () => {
+    ({ harness, rig } = await buildRig({ thoughtText: '他想让我记住，我得好好答应他。' }));
+    const h = harness!;
+    const { outcome } = await driveReply(h, '帮我记住明天要交材料');
+    expect(outcome.ok).toBe(true);
+    await waitFor(() => monologueOf(rig!, outcome.messageId)?.status === 'completed');
+
+    expect(rig!.replyEfforts()).toEqual(['low']);
+    expect(rig!.thoughtCalls()).toBe(1);
+    // The rewrite sees the reasoning the model actually produced.
+    expect(rig!.thoughtBodies()[0]).toContain(REPLY_REASONING);
+    expect(monologueOf(rig!, outcome.messageId)!.text).toBe('他想让我记住，我得好好答应他。');
+    // The reply itself is untouched by the reasoning.
+    const reply = h.app.repos.messages.get(outcome.messageId)!;
+    expect(reply.content.map((p) => p.text ?? '').join('')).not.toContain(REPLY_REASONING);
+
+    const history = await h.app.server.inject({
+      method: 'GET', url: '/api/admin/chat/history?role=assistant&limit=5', headers: { 'x-admin-token': 'test-admin-token' }
+    });
+    expect(history.statusCode).toBe(200);
+    const message = (history.json() as { messages: Array<{ id: string; thought?: string }> }).messages.find((m) => m.id === outcome.messageId);
+    expect(message?.thought).toBe('他想让我记住，我得好好答应他。');
+  });
+
+  it('shows no thought at all when the model returned no reasoning — never an invented one', async () => {
+    ({ harness, rig } = await buildRig({ noReasoning: true }));
+    const h = harness!;
+    const { outcome, batchId } = await driveReply(h, '你好呀');
+    expect(outcome.ok).toBe(true);
+    await waitFor(() => h.app.repos.replyBatches.get(batchId)?.status === 'completed');
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(rig!.thoughtCalls()).toBe(0);
+    expect(rig!.repo.listAdmin({ limit: 100 })).toHaveLength(0);
+  });
+
+  it('does not ask for reasoning while thoughts are off', async () => {
+    ({ harness, rig } = await buildRig({ flags: { visibleThoughtsEnabled: false } }));
+    const h = harness!;
+    const { batchId } = await driveReply(h, '在吗');
+    await waitFor(() => h.app.repos.replyBatches.get(batchId)?.status === 'completed');
+    expect(rig!.replyEfforts()).toEqual([null]);
   });
 });

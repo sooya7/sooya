@@ -67,7 +67,7 @@ import { ThoughtRepo } from './db/repos/thought.repo.js';
 import { ThoughtsService } from './core/thoughts/service.js';
 import { ThoughtPresenter } from './core/thoughts/presenter.js';
 import { ThoughtSafetyFilter } from './core/thoughts/safety.js';
-import { readThoughtsFlags } from './core/thoughts/flags.js';
+import { readThoughtsFlags, replyReasoningEffort } from './core/thoughts/flags.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { MomentRepo } from './db/repos/moment.repo.js';
@@ -581,6 +581,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     capabilities, config, assertWritable: (bytes) => storage.assertWritable(bytes),
     onLog: (level, msg, extra) => logger[level]({ ...extra }, msg)
   });
+  const thoughtFlags = readThoughtsFlags(process.env);
   const replier = new Replier({
     messages: repos.messages,
     media: mediaStore,
@@ -598,13 +599,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     personaReferences,
     voice: voiceService,
     voiceV2Enabled: env.VOICE_V2_ENABLED,
+    replyReasoningEffort: replyReasoningEffort(thoughtFlags),
     webSearch,
     worldSnapshot: () => world.snapshot(),
     toolRuntime,
     ombreMemory,
     video
   });
-  const thoughtFlags = readThoughtsFlags(process.env);
   const thoughts = new ThoughtsService({
     flags: thoughtFlags,
     repo: repos.thoughts,
@@ -748,7 +749,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     jobs: repos.jobs,
     errors: repos.errors,
     client: qqApi,
-    metrics
+    metrics,
+    thoughts: thoughtFlags.visibleThoughtsEnabled && thoughtFlags.innerMonologueEnabled && thoughtFlags.qqDelivery
+      ? { waitMs: thoughtFlags.thoughtTimeoutMs, settledUserThought: (messageId, waitMs, signal) => thoughts.settledUserThought(messageId, waitMs, signal) }
+      : null
   });
 
   const proactive = new ProactiveComposer({
