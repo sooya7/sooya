@@ -58,6 +58,14 @@ export interface ToolDescriptor<I = unknown, O = unknown> {
   phases: ToolPhase[];
   /** Optional finer-grained authorization for a dynamically discovered tool. */
   authorize?: (phase: ToolPhase) => boolean;
+  /**
+   * Local tools only: a write whose effect is staged for the reply being
+   * generated and lands only if that reply publishes (a superseded
+   * generation leaves nothing behind). Such a tool may run in the reply phase.
+   */
+  deferredEffects?: boolean;
+  /** Raise the 16 KiB argument cap for a tool that legitimately carries a document. */
+  maxArgumentBytes?: number;
   handler: (input: I, context?: ToolExecutionContext) => Promise<O>;
 }
 

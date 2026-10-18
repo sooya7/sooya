@@ -141,7 +141,7 @@ export class ToolCallRuntime {
     const decision = this.options.policy.check(tool, context.phase);
     if (!decision.allowed) return executionError(call, `tool denied: ${decision.reason ?? 'policy'}`);
     if (call.argumentsError) return executionError(call, call.argumentsError);
-    const validation = validateArguments(call.arguments, tool.inputSchema);
+    const validation = validateArguments(call.arguments, tool.inputSchema, tool.maxArgumentBytes);
     if (validation) return executionError(call, validation);
     if (context.signal?.aborted) throw context.signal.reason ?? new Error('tool runtime aborted');
 
@@ -198,9 +198,9 @@ async function runSequential<T>(items: T[], run: (item: T) => Promise<ExecutionR
   return results;
 }
 
-export function validateArguments(value: unknown, schema: Record<string, unknown>): string | null {
+export function validateArguments(value: unknown, schema: Record<string, unknown>, maxBytes = 16 * 1024): string | null {
   if (!isRecord(value)) return 'tool arguments must be an object';
-  if (byteLength(JSON.stringify(value)) > 16 * 1024) return 'tool arguments exceed 16 KiB';
+  if (byteLength(JSON.stringify(value)) > maxBytes) return `tool arguments exceed ${Math.round(maxBytes / 1024)} KiB`;
   if (containsUnsafeKey(value, 0)) return 'tool arguments contain a forbidden key';
   const required = Array.isArray(schema.required) ? schema.required.filter((key): key is string => typeof key === 'string') : [];
   for (const key of required) if (!(key in value)) return `missing required argument: ${key}`;

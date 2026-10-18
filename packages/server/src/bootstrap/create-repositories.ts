@@ -27,6 +27,7 @@ import { ChannelIdentityRepo } from '../db/repos/channel-identity.repo.js';
 import { ChannelDeliveryRepo } from '../db/repos/channel-delivery.repo.js';
 import { FlowTraceRepo } from '../db/repos/flow-trace.repo.js';
 import { VideoTaskRepo } from '../db/repos/video-task.repo.js';
+import { FileDraftRepo } from '../db/repos/file-draft.repo.js';
 
 export function createRepositories(db: DbHandle) {
   const mediaText = new MediaTextRepo(db);
@@ -63,7 +64,8 @@ export function createRepositories(db: DbHandle) {
     channelIdentities: new ChannelIdentityRepo(db),
     channelDeliveries: new ChannelDeliveryRepo(db),
     flowTraces: new FlowTraceRepo(db),
-    videoTasks: new VideoTaskRepo(db)
+    videoTasks: new VideoTaskRepo(db),
+    fileDrafts: new FileDraftRepo(db)
   };
 }
 

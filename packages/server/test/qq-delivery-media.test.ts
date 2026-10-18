@@ -234,3 +234,31 @@ describe('QQ delivery: partial retry checkpoints', () => {
     expect(calls.filter((c) => c.url.includes('/files'))).toHaveLength(3);
   });
 });
+
+describe('QQ delivery: documents she wrote', () => {
+  it('uploads a written .md as a QQ file under its own name', async () => {
+    const { delivery, calls } = await buildDelivery();
+    const media = await h!.app.services.mediaStore.save({ kind: 'file', origin: 'generated', data: Buffer.from('# 清单\n- 牛奶\n'), declaredMime: 'text/markdown', filename: '购物清单.md' });
+    const message = await assistantWithParts([
+      { type: 'text', text: '写好啦' },
+      { type: 'file', mediaId: media.id, status: 'sent', meta: { fileName: '购物清单.md', draft: true } }
+    ]);
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    const upload = parseJson(calls.find((c) => c.url.includes('/files'))!);
+    expect(upload).toMatchObject({ file_type: 4, file_name: '购物清单.md', srv_send_msg: false });
+    expect(upload.filename).toBeUndefined();
+    expect(Buffer.from(String(upload.file_data), 'base64').toString('utf8')).toBe('# 清单\n- 牛奶\n');
+  });
+
+  it('tells him by text when the file could not be sent', async () => {
+    const { delivery, calls } = await buildDelivery({ files: () => ({ status: 400, body: { err_code: 40034001, message: 'bad file' } }) });
+    const media = await h!.app.services.mediaStore.save({ kind: 'file', origin: 'generated', data: Buffer.from('echo hi\n'), declaredMime: 'text/plain', filename: 'run.sh' });
+    const message = await assistantWithParts([
+      { type: 'text', text: '脚本在这' },
+      { type: 'file', mediaId: media.id, status: 'sent', meta: { fileName: 'run.sh', draft: true } }
+    ]);
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    const texts = calls.filter((c) => c.url.includes('/messages')).map((c) => parseJson(c)).filter((b) => b.msg_type === 0).map((b) => b.content);
+    expect(texts).toContain('📎 文件「run.sh」没发出去');
+  });
+});

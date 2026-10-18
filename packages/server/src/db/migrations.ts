@@ -1763,6 +1763,26 @@ export const MIGRATIONS: Migration[] = [
       `);
     }
   },
+  {
+    version: 49,
+    name: 'file_drafts',
+    up: (db) => {
+      // Text files she writes, and files the user sends her, by name. Only the
+      // latest version is kept (an ordinary media row) and only until the
+      // retention window passes without a change; then the media is removed.
+      db.exec(`
+        CREATE TABLE file_drafts (
+          name        TEXT PRIMARY KEY,
+          media_id    TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+          origin      TEXT NOT NULL CHECK (origin IN ('written','received')),
+          editable    INTEGER NOT NULL DEFAULT 1,
+          version     INTEGER NOT NULL DEFAULT 1,
+          updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX idx_file_drafts_updated ON file_drafts(updated_at);
+      `);
+    }
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

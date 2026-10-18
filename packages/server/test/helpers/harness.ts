@@ -429,6 +429,10 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       ALLOW_PRIVATE_NETWORK_FETCH: 'true',
       ADMIN_API_TOKEN: 'test-admin-token',
       SOOYA_REFERENCES_DIR: REFERENCES_DIR,
+      // Local reply tools add a tool-decision round to every reply; tests that
+      // exercise them opt in, the rest keep the plain one-request flow.
+      FILE_TOOLS_ENABLED: 'false',
+      READ_URL_ENABLED: 'false',
       ...(opts.env ?? {})
     },
     logger: pino({ level: 'silent' }),

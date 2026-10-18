@@ -17,7 +17,7 @@ import {
 import { isSignableValidationInput, signValidationResponse, verifyEventSignature } from './verify.js';
 import { resolveQqIdentity } from './mapping.js';
 import { c2cMessageToIngress, resolveQuoteReplyTo } from './inbound.js';
-import { downloadQqImageAttachment } from './inbound-media.js';
+import { downloadQqFileAttachment, downloadQqImageAttachment } from './inbound-media.js';
 import type { FlowTraceService } from '../../core/flow-trace.js';
 
 /*
@@ -41,6 +41,8 @@ export interface QqChannelDeps {
   errors: ErrorLogRepo;
   metrics?: import('../../core/metrics.js').MetricsService;
   flowTrace?: FlowTraceService;
+  /** Named-file registry; a received file becomes readable/editable by name. */
+  files?: { registerReceived(mediaId: string, filename: string | undefined): Promise<string | null> } | null;
 }
 
 export interface QqDispatchOutcome {
@@ -129,14 +131,21 @@ export class QqChannel {
           return { ack: { op: QQ_OP_ACK }, eventStatus: 'rejected' };
         }
         const mediaParts: InputPart[] = [];
+        const receivedFiles: Array<{ mediaId: string; filename?: string }> = [];
         for (const attachment of d?.attachments ?? []) {
           try {
-            const part = await downloadQqImageAttachment(attachment, {
+            const mediaDeps = {
               mediaStore: this.deps.mediaStore,
               fetchImpl: this.deps.fetchImpl,
               maxBytes: this.deps.maxAttachmentBytes
-            });
+            };
+            const part = await downloadQqImageAttachment(attachment, mediaDeps);
             if (part) mediaParts.push(part);
+            const file = part ? null : await downloadQqFileAttachment(attachment, mediaDeps);
+            if (file) {
+              mediaParts.push({ type: 'file', mediaId: file.mediaId });
+              receivedFiles.push(file);
+            }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.deps.errors.add('qq.inbound', message, { eventId, code: 'attachment_download_failed' });
@@ -157,6 +166,16 @@ export class QqChannel {
           replyTo,
           metadata: { ...inbound.ingress.metadata, ...(flowTraceId ? { flowTraceId } : {}) }
         });
+        for (const file of receivedFiles) {
+          // Text extraction makes the content visible to her; the named entry
+          // lets her read/edit it and puts it under the file retention window.
+          this.deps.jobs.enqueue('media.extract_text', { mediaId: file.mediaId }, { maxAttempts: 2 });
+          try {
+            await this.deps.files?.registerReceived(file.mediaId, file.filename);
+          } catch (error) {
+            this.deps.errors.add('qq.inbound', error instanceof Error ? error.message : String(error), { eventId, code: 'file_register_failed' });
+          }
+        }
         for (const part of mediaParts) {
           if (part.type !== 'image') continue;
           this.deps.jobs.enqueue('sticker.auto-collect', { mediaId: part.mediaId, messageId: result.messageId }, {
