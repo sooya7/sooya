@@ -15,17 +15,21 @@ import type { MessagePart } from '../../core/types.js';
 import { QQ_CHANNEL_NAME } from './types.js';
 import { QqApiClient, QqApiError } from './client.js';
 import { prepareQqMedia } from './media.js';
+import { MAX_PASSIVE_SENDS, bubblePauseMs, splitIntoBubbles } from './bubbles.js';
 
 /*
  * 出站投递（docs/QQ-BOT-SINGLE-CHANNEL-PLAN.md §8-9、§11）。
  * ReplyCoordinator 不直接调 QQ API：回复完成后只入队 qq.deliver job，
  * 由这里读写 channel_delivery outbox、条件领取、调 QQ、记录/重试。
- * 文本先发，随后逐个媒体（图片/语音/贴纸/文件）；媒体失败走降级
+ * 文本先发（被动回复会拆成几个气泡、中间停顿一下），随后逐个媒体（图片/语音/贴纸/文件）；媒体失败走降级
  * （贴纸→文案、语音→文字稿、图片→跳过），不让整条回复失败。
  */
 export type QqDeliveryStatus = 'sent' | 'skipped' | 'retry' | 'failed';
 
 export const MAX_DELIVERY_ATTEMPTS = 5;
+
+/** 文字发完再发表情/图片前的停顿。 */
+const MEDIA_PAUSE_MS = 700;
 
 export interface QqDeliveryDeps {
   deliveries: ChannelDeliveryRepo;
@@ -39,6 +43,8 @@ export interface QqDeliveryDeps {
   errors: ErrorLogRepo;
   client: QqApiClient;
   metrics?: import('../../core/metrics.js').MetricsService;
+  /** 气泡之间的停顿；测试里换成立即返回。 */
+  pause?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 export class QqDeliveryService {
@@ -85,23 +91,37 @@ export class QqDeliveryService {
     const openid = owner.external_user_id;
     const msgId = this.passiveReplyMsgId(claimedRow);
     const completed = new Set(parseChannelDeliveryProgress(claimedRow.progress_json).completed);
+    // 被动回复拆成几个气泡一句一句发；主动消息配额很紧，仍然整条发。
+    // 旧进度里的 'text' 表示整段文字已经发过。
+    const bubbles = completed.has('text')
+      ? []
+      : splitIntoBubbles(text, msgId ? MAX_PASSIVE_SENDS - mediaParts.length : 1);
     let msgSeq = 1;
     let lastRemoteMessageId = claimedRow.remote_message_id ?? '';
+    let sentThisAttempt = false;
     const startedAt = Date.now();
     try {
-      if (text) {
-        if (!completed.has('text')) {
-          const sent = await this.deps.client.sendC2cTextMessage({ openid, content: text, msgId, msgSeq: msgId ? msgSeq : undefined, signal: input.signal });
+      if (text && completed.has('text')) {
+        if (msgId) msgSeq += 1;
+      }
+      for (const [index, bubble] of bubbles.entries()) {
+        const stepKey = bubbles.length === 1 ? 'text' : `text:${index}`;
+        if (!completed.has(stepKey)) {
+          if (sentThisAttempt) await this.pause(bubblePauseMs(bubble), input.signal);
+          const sent = await this.deps.client.sendC2cTextMessage({ openid, content: bubble, msgId, msgSeq: msgId ? msgSeq : undefined, signal: input.signal });
           lastRemoteMessageId = sent.messageId || lastRemoteMessageId;
-          this.deps.deliveries.markStepCompleted(row.id, 'text', sent.messageId || null);
-          completed.add('text');
+          this.deps.deliveries.markStepCompleted(row.id, stepKey, sent.messageId || null);
+          completed.add(stepKey);
+          sentThisAttempt = true;
         }
         if (msgId) msgSeq += 1;
       }
       for (const part of mediaParts) {
         const stepKey = `part:${part.id}`;
         if (!completed.has(stepKey)) {
+          if (sentThisAttempt) await this.pause(MEDIA_PAUSE_MS, input.signal);
           const remoteId = await this.deliverMediaPart(part, openid, msgId ? msgId : null, msgSeq, input.signal);
+          sentThisAttempt = true;
           if (remoteId) lastRemoteMessageId = remoteId;
           this.deps.deliveries.markStepCompleted(row.id, stepKey, remoteId);
           completed.add(stepKey);
@@ -115,6 +135,22 @@ export class QqDeliveryService {
     } catch (error) {
       return this.classifyFailure(error, claimedRow, input.messageId, input.traceId);
     }
+  }
+
+  private pause(ms: number, signal?: AbortSignal): Promise<void> {
+    if (this.deps.pause) return this.deps.pause(ms, signal);
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason);
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal!.reason);
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
   }
 
   /** 单个媒体段投递；失败/不支持时降级，返回 null 表示未发出。 */

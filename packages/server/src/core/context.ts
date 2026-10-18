@@ -1,5 +1,6 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
 import { videoMarkerInstructions } from './video/instructions.js';
+import { CHAT_RHYTHM_INSTRUCTIONS } from './chat-rhythm.js';
 import type { SummaryRepo } from '../db/repos/misc.repo.js';
 import type { MemoryService, RecallMatch, RecallResult } from './memory.js';
 import type { Persona } from '../config/schema.js';
@@ -296,6 +297,7 @@ export class ContextBuilder {
       lifeLines = systemParts.length > before ? lifeLinesList.length : 0;
     }
 
+    tryAddSystemPart(systemParts, turns, CHAT_RHYTHM_INSTRUCTIONS, inputBudget);
     tryAddSystemPart(systemParts, turns, buildMultimediaInstructions(persona, opts), inputBudget);
     if (opts.capabilityNotes.length > 0) {
       tryAddSystemPart(systemParts, turns, `当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`, inputBudget);
