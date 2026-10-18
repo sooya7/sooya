@@ -750,9 +750,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     errors: repos.errors,
     client: qqApi,
     metrics,
-    thoughts: thoughtFlags.visibleThoughtsEnabled && thoughtFlags.innerMonologueEnabled && thoughtFlags.qqDelivery
-      ? { waitMs: thoughtFlags.thoughtTimeoutMs, settledUserThought: (messageId, waitMs, signal) => thoughts.settledUserThought(messageId, waitMs, signal) }
-      : null
+    thoughts: thoughts.qqSource()
   });
 
   const proactive = new ProactiveComposer({

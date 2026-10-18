@@ -112,6 +112,13 @@ export class ThoughtsService implements ThoughtsBridge {
     return this.deps.repo.getUserThought(messageId) ?? null;
   }
 
+  /** What QQ delivery needs to send the thought first; null unless thoughts and QQ sending are on. */
+  qqSource(): { waitMs: number; settledUserThought: ThoughtsService['settledUserThought'] } | null {
+    const flags = this.deps.flags;
+    if (!flags.visibleThoughtsEnabled || !flags.innerMonologueEnabled || !flags.qqDelivery) return null;
+    return { waitMs: flags.thoughtTimeoutMs, settledUserThought: (messageId, waitMs, signal) => this.settledUserThought(messageId, waitMs, signal) };
+  }
+
   /**
    * QQ delivery: the finished user-visible thought for a message, waiting up
    * to `waitMs` while it is still being written. Null when there is none, it
