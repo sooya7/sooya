@@ -541,7 +541,7 @@ export class ProactiveComposer {
           '【你们最近的聊天，从旧到新】',
           relation.conversation.length ? relation.conversation.join('\n') : '（最近没有聊天记录）',
           relationStatusLine(relation),
-          '你想在合适的时机自然地提起用户接下来的一件事，就像恋人随口关心一句。',
+          '你想在合适的时机自然地提起用户接下来的一件事，就像身边熟悉的人随口关心一句。',
           JSON.stringify({ event: info.title, kind: info.kind, distance_minutes: info.distanceMinutes }),
           '写一条 40 字以内的消息：自然、带一点你自己的语气，可以顺带加油或好奇。',
           '禁止使用“提醒：”“备忘：”这类系统式开头；禁止暴露 JSON 或字段名；只输出这句话本身。'
