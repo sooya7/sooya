@@ -266,7 +266,7 @@ export class QqDeliveryService {
   private passiveReplyMsgId(row: ChannelDeliveryRow): string | null {
     // 回复类消息：找产出这条 assistant 消息的 batch 的触发用户消息，
     // 再经 channel_event 反查该用户消息的 QQ 平台消息 id，作为被动回复 msg_id。
-    const batch = this.deps.replyBatches.findByMessage(row.message_id);
+    const batch = this.deps.replyBatches.findByAssistantMessage(row.message_id) ?? this.deps.replyBatches.findByMessage(row.message_id);
     const triggerId = batch?.trigger_message_id;
     if (!triggerId) return null;
     if (triggerId === row.message_id) return null; // 主动 message（无用户触发）
