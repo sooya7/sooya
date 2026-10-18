@@ -131,6 +131,29 @@ describe('QQ webhook callback', () => {
     expect(user?.content.some((part) => part.type === 'image')).toBe(true);
   });
 
+  it('receives a text file: saved under its name, queued for reading, editable by her', async () => {
+    const url = 'https://qq.example/notes.md';
+    h = await qqHarness({ FILE_TOOLS_ENABLED: 'true' }, { httpFixtures: { [url]: { body: Buffer.from('# 待办\n- 交材料\n'), contentType: 'application/octet-stream' } } });
+    await postCallback(c2cPayload({ d: { id: 'msg-doc', author: { user_openid: OWNER }, content: '帮我看看', attachments: [{ content_type: 'file', filename: 'notes.md', url }] } }));
+    const user = h.app.repos.messages.page(20).messages.find((m) => m.role === 'user');
+    const file = user?.content.find((part) => part.type === 'file');
+    expect(file?.mediaId).toBeTruthy();
+    expect(file?.media?.mime).toBe('text/markdown');
+    expect(file?.media?.name).toBe('notes.md');
+    expect(user?.content.some((part) => part.type === 'image')).toBe(false);
+    const extract = h.app.repos.jobs.list(30).find((job) => job.type === 'media.extract_text');
+    expect(JSON.parse(extract!.payload_json)).toMatchObject({ mediaId: file?.mediaId });
+    expect(h.app.repos.fileDrafts.get('notes.md')).toMatchObject({ origin: 'received', editable: 1, media_id: file?.mediaId });
+  });
+
+  it('does not treat voice attachments as files', async () => {
+    const url = 'https://qq.example/voice.silk';
+    h = await qqHarness({ FILE_TOOLS_ENABLED: 'true' }, { httpFixtures: { [url]: { body: Buffer.from('silk'), contentType: 'voice' } } });
+    await postCallback(c2cPayload({ d: { id: 'msg-voice', author: { user_openid: OWNER }, content: '听', attachments: [{ content_type: 'voice', filename: 'a.silk', url }] } }));
+    const user = h.app.repos.messages.page(20).messages.find((m) => m.role === 'user');
+    expect(user?.content.some((part) => part.type === 'file')).toBe(false);
+  });
+
   it('keeps text when a QQ attachment download fails', async () => {
     const url = 'https://qq.example/fail.png';
     h = await qqHarness({}, { httpFixtures: { [url]: { body: 'nope', status: 503 } } });

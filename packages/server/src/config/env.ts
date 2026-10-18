@@ -145,6 +145,12 @@ const EnvSchema = z.object({
   OMBRE_DREAM_INTERVAL_MS: intish(24 * 60 * 60 * 1000),
   OMBRE_BREATH_IDLE_MINUTES: intish(30),
   TOOL_MAX_ROUNDS: intish(6),
+  /* file_write / file_edit / file_read: text files she writes for the user, and files the user sends. */
+  FILE_TOOLS_ENABLED: boolish(true),
+  /* Only the latest version of each named file is kept, until this long passes without a change. */
+  FILE_RETENTION_MS: intish(3 * 24 * 60 * 60 * 1000),
+  /* read_url: open a link the user shared and read its main text (no browser). */
+  READ_URL_ENABLED: boolish(true),
   TOOL_MAX_CALLS_PER_ROUND: intish(4),
   TOOL_CALL_TIMEOUT_MS: intish(15_000),
   TOOL_RESULT_MAX_BYTES: intish(32 * 1024),

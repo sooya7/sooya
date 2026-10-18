@@ -154,7 +154,8 @@ export class QqApiClient {
         // 上传和发送是两步：这里不能让 QQ 在上传阶段自动发消息，否则后续 msg_type=7 会重复发送。
         srv_send_msg: false,
         file_data: input.bytes.toString('base64'),
-        ...(input.filename ? { filename: input.filename } : {})
+        // Documents (file_type 4) are shown under file_name in the chat.
+        ...(input.filename ? (input.fileType === 4 ? { file_name: input.filename } : { filename: input.filename }) : {})
       },
       { authorization: `QQBot ${await this.getAccessToken(input.signal)}` },
       input.signal

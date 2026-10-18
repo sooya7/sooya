@@ -388,9 +388,15 @@ export class ContextBuilder {
           {
             const mime = p.media?.mime ?? (p.mediaId ? this.mediaRepo.get(p.mediaId)?.mime : undefined) ?? '';
             if (mime.startsWith('video/')) { textBits.push(`[${msg.role === 'user' ? '用户' : 'SOOYA'}发送了视频]`); break; }
-            const name = p.media?.name ?? p.mediaId ?? '';
+            const name = p.media?.name ?? (typeof p.meta?.fileName === 'string' ? p.meta.fileName : '') ?? p.mediaId ?? '';
+            if (p.meta?.draft === true) {
+              // Her own file: the text lives behind file_read, not in every prompt.
+              textBits.push(p.mediaId ? `[文件:${name}；最新版可用 file_read 查看、file_edit 修改]` : `[文件:${name}；这一版已不在服务器上]`);
+              break;
+            }
+            if (!p.mediaId && !p.media) { textBits.push('[文件；已过期删除]'); break; }
             const extracted = p.mediaId ? this.mediaText.get(p.mediaId) : undefined;
-            if (extracted?.status === 'ready') textBits.push(`[文件:${name}]\n${extracted.text ?? ''}`);
+            if (extracted?.status === 'ready') textBits.push(`[文件:${name}${/^text\/|json/.test(mime) ? '；可用 file_read / file_edit' : ''}]\n${extracted.text ?? ''}`);
             else if (extracted?.status === 'pending') textBits.push(`[文件:${name}；正文正在解析]`);
             else textBits.push(`[文件:${name}；当前无法读取正文]`);
           }

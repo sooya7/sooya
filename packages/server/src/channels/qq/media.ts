@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import type { MediaRow } from '../../db/repos/media.repo.js';
+import { mediaMeta, type MediaRow } from '../../db/repos/media.repo.js';
 import type { MediaStore } from '../../media/store.js';
 
 /*
@@ -106,6 +106,11 @@ export async function prepareQqMedia(mediaStore: MediaStore, row: MediaRow): Pro
 }
 
 function safeFilename(row: MediaRow): string {
+  // Named documents (files she wrote, files sent to her) keep their real name.
+  if (row.kind === 'file' && !row.mime.startsWith('video/')) {
+    const named = mediaMeta(row).meta.name;
+    if (typeof named === 'string' && /^[\p{L}\p{N}][\p{L}\p{N} ._()（）-]{0,79}$/u.test(named)) return named;
+  }
   const base = `sooya-${row.id.slice(-8)}`;
   const ext = row.mime === 'image/png' ? 'png' : row.mime === 'image/jpeg' ? 'jpg' : row.mime === 'image/gif' ? 'gif' : row.mime.startsWith('audio/mpeg') ? 'mp3' : row.mime === 'audio/wav' || row.mime === 'audio/x-wav' ? 'wav' : row.mime === 'video/mp4' ? 'mp4' : 'bin';
   return `${base}.${ext}`;

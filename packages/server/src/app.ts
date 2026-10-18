@@ -68,6 +68,7 @@ import { ThoughtsService } from './core/thoughts/service.js';
 import { ThoughtPresenter } from './core/thoughts/presenter.js';
 import { ThoughtSafetyFilter } from './core/thoughts/safety.js';
 import { readThoughtsFlags } from './core/thoughts/flags.js';
+import { KNOWLEDGE_SAVE_JOB, registerFileJobs, setupFilesAndLinks } from './core/files/wiring.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { MomentRepo } from './db/repos/moment.repo.js';
@@ -160,6 +161,7 @@ export interface SooyaApp {
     presence: WorldPresenceCoordinator;
     metrics: MetricsService;
     thoughts: ThoughtsService;
+    files: import('./core/files/drafts.js').FileDraftService | null;
     voice: VoiceService;
     storage: StorageService;
     context: ContextBuilder;
@@ -340,6 +342,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
         maintenanceEnabled: env.OMBRE_DREAM_ENABLED
       }
     }
+  });
+  const filesWiring = setupFilesAndLinks({
+    tools,
+    policy: toolPolicy,
+    repos,
+    mediaStore,
+    flags: { filesEnabled: env.FILE_TOOLS_ENABLED, readUrlEnabled: env.READ_URL_ENABLED, retentionMs: env.FILE_RETENTION_MS },
+    directFetchImpl,
+    fetchImpl,
+    tavily: () => config.getModels().webSearch.tavily
   });
   const toolRuntime = new ToolCallRuntime({
     registry: tools,
@@ -600,6 +612,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     voice: voiceService,
     voiceV2Enabled: env.VOICE_V2_ENABLED,
     replyReasoningEffort: thoughtFlags.replyEffort,
+    files: filesWiring.files && {
+      publish: (batchId, revision) => filesWiring.files!.publish(batchId, revision),
+      onKnowledgeSave: (file) => { repos.jobs.enqueue(KNOWLEDGE_SAVE_JOB, { name: file.name, mediaId: file.mediaId }); }
+    },
     webSearch,
     worldSnapshot: () => world.snapshot(),
     toolRuntime,
@@ -735,6 +751,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     errors: repos.errors,
     metrics
     ,flowTrace
+    ,files: filesWiring.files
   });
 
   const qqApi = new QqApiClient(qqConfig, { fetchImpl });
@@ -838,6 +855,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   });
 
   video.registerJobs(worker);
+  registerFileJobs(worker, { tools, policy: toolPolicy, mediaStore, errors: repos.errors });
 
   const agents = new AgentRegistry();
   const agentCapabilities = new CapabilityRegistryStub();
@@ -998,7 +1016,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, video, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, voice: voiceService, storage, context, future, futureContext, relationship, relationshipContext, timeline, feedback, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery, flowTrace, capabilityPolicy },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, video, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, files: filesWiring.files, voice: voiceService, storage, context, future, futureContext, relationship, relationshipContext, timeline, feedback, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery, flowTrace, capabilityPolicy },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -1112,11 +1130,13 @@ function scheduleRecurring(app: SooyaApp): void {
   };
   // 启动即兜底扫描一次：恢复重启前已在 outbox 里的待发消息。
   enqueueDueQqDeliveries();
+  void services.files?.sweep().catch(() => undefined);
   const maintenance = setInterval(() => {
     try {
       repos.jobs.enqueue('maintenance', {});
       services.bus.prune(env.EVENTS_KEEP);
       enqueueDueQqDeliveries();
+      void services.files?.sweep().catch(() => undefined);
       // 周期性兜底：入队后因进程内异常或计时器丢失而滞留的批次，靠重启之外的另一条
       // 路径重新拉起，避免「消息发出去了但永远等不到回复」。recover 只碰开放批次，幂等。
       services.replyCoordinator.recover({ recentMessages: env.CONTEXT_RECENT_MESSAGES, memoryLimit: env.CONTEXT_MEMORY_LIMIT });

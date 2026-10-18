@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { InputPart } from '../../core/types.js';
 import type { MediaStore } from '../../media/store.js';
 import type { QqAttachment } from './types.js';
+import { draftMime, textExtension } from '../../core/files/drafts.js';
 
 const IMAGE_EXTS = new Set(['.png','.jpg','.jpeg','.gif','.webp','.bmp','.avif']);
 
@@ -44,6 +45,40 @@ async function readCapped(response: Response, maxBytes: number): Promise<Buffer>
     chunks.push(Buffer.from(value));
   }
   return Buffer.concat(chunks);
+}
+
+function isVoiceOrVideo(att: QqAttachment): boolean {
+  const type = att.content_type?.toLowerCase().trim() ?? '';
+  return type === 'voice' || type.startsWith('audio/') || type === 'video' || type.startsWith('video/') || Boolean(att.voice_wav_url);
+}
+
+/**
+ * A file the user sent (document, script, text…). Saved as a `file` media row
+ * under its own name; the caller queues text extraction and registers it as
+ * a named file so she can read and edit it.
+ */
+export async function downloadQqFileAttachment(att: QqAttachment, deps: QqInboundMediaDeps): Promise<(InputPart & { type: 'file' }) & { filename?: string } | null> {
+  if (isImage(att) || isVoiceOrVideo(att)) return null;
+  const url = normalizeUrl(att.url);
+  if (!url) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('qq attachment download timeout')), 20_000);
+  try {
+    const response = await deps.fetchImpl(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`qq attachment download status ${response.status}`);
+    const data = await readCapped(response, deps.maxBytes);
+    const filename = att.filename?.trim() || undefined;
+    const declared = att.content_type && att.content_type.includes('/') ? att.content_type : undefined;
+    const media = await deps.mediaStore.save({
+      kind: 'file', origin: 'remote', data,
+      declaredMime: filename && textExtension(filename) ? draftMime(filename) : declared,
+      filename, maxBytes: deps.maxBytes,
+      meta: { source: 'qq', remoteUrlHost: new URL(url).hostname }
+    });
+    return { type: 'file', mediaId: media.id, ...(filename ? { filename } : {}) };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function downloadQqImageAttachment(att: QqAttachment, deps: QqInboundMediaDeps): Promise<InputPart | null> {

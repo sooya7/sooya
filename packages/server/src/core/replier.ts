@@ -189,6 +189,11 @@ export class Replier {
       ombreMemory?: OmbreMemoryBridge;
       /** Text-to-video / image-to-video tasks; absent means the marker is ignored. */
       video?: VideoGenerationService | null;
+      /** Files staged by file_write / file_edit during this reply's tool round. */
+      files?: {
+        publish(batchId: string, revision: number): Promise<Array<{ name: string; mediaId: string; saveToKnowledge: boolean }>>;
+        onKnowledgeSave?(file: { name: string; mediaId: string }): void;
+      } | null;
     }
   ) {}
 
@@ -1126,6 +1131,21 @@ export class Replier {
     // Every path above (hidden-draft voice, text fallback, legacy voice) ends
     // with a shell; a missing one means the publish barrier was lost.
     if (!shell) throw new StaleGenerationError('reply shell missing after voice publication');
+
+    // 3e. Files she wrote or edited in this reply's tool round.
+    if (this.deps.files) {
+      try {
+        for (const file of await this.deps.files.publish(batch.id, batch.revision)) {
+          const partId = this.deps.messages.appendPart(shell.id, { type: 'file', mediaId: file.mediaId, status: 'sent', meta: { fileName: file.name, draft: true } });
+          producedParts.push('file');
+          this.deps.bus.publish('reply.media.saved', { messageId: shell.id, partId, kind: 'file', mediaId: file.mediaId });
+          if (file.saveToKnowledge) this.deps.files.onKnowledgeSave?.(file);
+        }
+      } catch (error) {
+        degraded.push('file:publish_failed');
+        this.deps.errorLog.add('reply.files', 'publish_failed', { diagnostic: redactDiagnostic(error) });
+      }
+    }
 
     // sticker-only: drop the text part if the model asked for it and we do have a sticker.
     if (plan.stickerOnly && textPartId && producedParts.includes('sticker')) {

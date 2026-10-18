@@ -48,7 +48,12 @@ export class ToolPolicy {
     const maintenanceEnabled = this.enabledFor(tool, 'maintenanceEnabled', this.maintenanceEnabled);
     if (phase === 'reply' || phase === 'proactive') {
       if (!readEnabled) return { allowed: false, reason: 'read-disabled' };
-      return tool.risk === 'read' ? { allowed: true } : { allowed: false, reason: 'non-read-tool-in-visible-phase' };
+      if (tool.risk === 'read') return { allowed: true };
+      // A local write staged for the reply itself has no effect unless the reply publishes.
+      if (phase === 'reply' && tool.risk === 'write' && tool.source === 'local' && tool.deferredEffects === true) {
+        return writeEnabled ? { allowed: true } : { allowed: false, reason: 'write-disabled' };
+      }
+      return { allowed: false, reason: 'non-read-tool-in-visible-phase' };
     }
     if (phase === 'memory_commit') {
       if (tool.risk === 'read' && !readEnabled) return { allowed: false, reason: 'read-disabled' };

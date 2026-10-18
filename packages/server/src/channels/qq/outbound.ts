@@ -228,7 +228,9 @@ export class QqDeliveryService {
     signal?: AbortSignal
   ): Promise<string | null> {
     const fallbackText =
-      part.type === 'sticker' ? String(part.meta?.stickerMeaning ?? '') : media.transcript?.trim() ?? '';
+      part.type === 'sticker' ? String(part.meta?.stickerMeaning ?? '')
+        : part.type === 'file' && typeof part.meta?.fileName === 'string' ? `📎 文件「${part.meta.fileName}」没发出去`
+          : media.transcript?.trim() ?? '';
     if (!fallbackText) return null;
     const sent = await this.deps.client.sendC2cTextMessage({ openid, content: fallbackText, msgId, msgSeq: msgId ? msgSeq : undefined, signal });
     return sent.messageId;
