@@ -195,3 +195,33 @@ describe('file_write end to end through a reply', () => {
     expect(assistant!.content.find((p) => p.type === 'text')?.text).toContain('写好啦');
   });
 });
+
+describe('saving a worth-keeping file to the knowledge vault', () => {
+  it('finds the vault write tool the MCP bridge registered and writes under sooya/files', async () => {
+    const { bridgeMcpTools } = await import('../src/mcp/tool-bridge.js');
+    const { registerFileJobs, setupFilesAndLinks } = await import('../src/core/files/wiring.js');
+    h = await createHarness({ skipStickerImport: true, startWorkers: false });
+    const registry = new ToolRegistry();
+    const writes: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const tools = bridgeMcpTools(
+      { id: 'knowledge', toolPolicy: { knowledge_write: { risk: 'write', phases: ['memory_commit'], authorized: true } } } as never,
+      {} as never,
+      [{ name: 'knowledge_write', inputSchema: { type: 'object' } }],
+      async (name, args) => { writes.push({ name, args }); return { content: [{ type: 'text', text: 'ok' }] }; }
+    );
+    for (const tool of tools) registry.register(tool);
+    const policy = new ToolPolicy(registry);
+    const wiring = setupFilesAndLinks({
+      tools: registry, policy, repos: h.app.repos, mediaStore: h.app.services.mediaStore,
+      flags: { filesEnabled: false, readUrlEnabled: false, retentionMs: DAY },
+      directFetchImpl: fetch, fetchImpl: fetch, tavily: () => null
+    });
+    expect(wiring.knowledgeAvailable()).toBe(true);
+
+    const handlers = new Map<string, (payload: Record<string, unknown>) => Promise<void>>();
+    registerFileJobs({ register: (type: string, fn: never) => handlers.set(type, fn) } as never, { tools: registry, policy, mediaStore: h.app.services.mediaStore, errors: h.app.repos.errors });
+    const media = await h.app.services.mediaStore.save({ kind: 'file', origin: 'generated', data: Buffer.from('# 方案\n'), declaredMime: 'text/markdown', filename: '方案.md' });
+    await handlers.get('files.knowledge_save')!({ name: '方案.md', mediaId: media.id });
+    expect(writes).toEqual([{ name: 'knowledge_write', args: { path: 'sooya/files/方案.md', content: '# 方案\n', overwrite: true } }]);
+  });
+});
