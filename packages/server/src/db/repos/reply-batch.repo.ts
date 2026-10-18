@@ -186,6 +186,11 @@ export class ReplyBatchRepo {
     ).get(messageId) as ReplyBatchRow | undefined;
   }
 
+  /** The batch whose reply is this assistant message (reply_batch_messages only holds user messages). */
+  findByAssistantMessage(messageId: string): ReplyBatchRow | undefined {
+    return this.db.prepare('SELECT * FROM reply_batches WHERE assistant_message_id = ?').get(messageId) as ReplyBatchRow | undefined;
+  }
+
   messageIds(batchId: string): string[] {
     return (this.db.prepare(
       'SELECT message_id FROM reply_batch_messages WHERE batch_id = ? ORDER BY position'

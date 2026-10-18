@@ -108,12 +108,10 @@ describe('QQ delivery: sends', () => {
     const user = h!.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '在吗' }] }).message;
     h!.app.repos.channelEvents.markReceived({ channel: 'qq', eventId: 'evt-user', remoteMessageId: 'qq-msg-1', eventType: 'C2C_MESSAGE_CREATE', conversationKey: 'owner-uuid' });
     h!.app.repos.channelEvents.markProcessed('qq', 'evt-user', user.id);
-    // assistant 回复挂在同一个 reply batch 上（触发消息 = 该 QQ 用户消息）。
+    // 真实链路里 reply_batch_messages 只放用户消息，assistant 回复记在 batch 的 assistant_message_id 上。
     const admission = h!.app.repos.replyBatches.appendOrCreateMessage(user.id, new Date().toISOString(), new Date().toISOString());
     const message = await assistantMessage('在的');
-    h!.app.db
-      .prepare('INSERT INTO reply_batch_messages(batch_id, message_id, position, created_at) VALUES (?, ?, ?, ?)')
-      .run(admission.batch.id, message.id, 1, new Date().toISOString());
+    h!.app.db.prepare("UPDATE reply_batches SET status = 'completed', assistant_message_id = ? WHERE id = ?").run(message.id, admission.batch.id);
 
     const status = await delivery.deliver({ messageId: message.id });
     expect(status).toBe('sent');
@@ -130,9 +128,7 @@ describe('QQ delivery: bubbles', () => {
     h!.app.repos.channelEvents.markProcessed('qq', 'evt-user', user.id);
     const admission = h!.app.repos.replyBatches.appendOrCreateMessage(user.id, new Date().toISOString(), new Date().toISOString());
     return assistantMessage(text).then((message) => {
-      h!.app.db
-        .prepare('INSERT INTO reply_batch_messages(batch_id, message_id, position, created_at) VALUES (?, ?, ?, ?)')
-        .run(admission.batch.id, message.id, 1, new Date().toISOString());
+      h!.app.db.prepare("UPDATE reply_batches SET status = 'completed', assistant_message_id = ? WHERE id = ?").run(message.id, admission.batch.id);
       return message;
     });
   }
