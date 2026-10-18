@@ -296,6 +296,7 @@ export class ContextBuilder {
       lifeLines = systemParts.length > before ? lifeLinesList.length : 0;
     }
 
+    tryAddSystemPart(systemParts, turns, CHAT_RHYTHM_INSTRUCTIONS, inputBudget);
     tryAddSystemPart(systemParts, turns, buildMultimediaInstructions(persona, opts), inputBudget);
     if (opts.capabilityNotes.length > 0) {
       tryAddSystemPart(systemParts, turns, `当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`, inputBudget);
@@ -598,6 +599,18 @@ function mergeContextMessages(primary: ChatMessage[], additional: ChatMessage[])
   for (const message of additional) byId.set(message.id, message);
   return [...byId.values()].sort((a, b) => a.seq - b.seq);
 }
+
+/*
+ * QQ 投递会把每一行拆成单独的气泡（channels/qq/bubbles.ts）。这里让她按
+ * 这个节奏说话：像真人发消息一样短句、分行，而不是一整段客服式回答。
+ */
+const CHAT_RHYTHM_INSTRUCTIONS = [
+  '你们在 QQ 上私聊，请像真人发消息那样回复：',
+  '· 一个意思一行，每一行会作为一条单独的消息气泡发出去。日常聊天一次一般 1~3 行，每行通常不超过二十来个字。',
+  '· 对方随口一句，你也随口接，不用把话说全说满；不要每次都总结、给建议或连着反问好几个问题。',
+  '· 可以只回一两个字、一个语气词，或者只发一个表情包。',
+  '· 日常聊天不要用列表、标题、加粗这类排版。对方需要你认真讲清楚的事（步骤、分析、代码）才完整地写，这时同一个要点放在同一段，要点之间空一行。'
+].join('\n');
 
 function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): string {
   const lines: string[] = [];

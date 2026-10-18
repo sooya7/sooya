@@ -60,7 +60,8 @@ async function buildDelivery(script: Array<ScriptedResponse | 'timeout' | 'netwo
     replyBatches: h.app.repos.replyBatches,
     jobs: h.app.repos.jobs,
     errors: h.app.repos.errors,
-    client
+    client,
+    pause: async () => {}
   });
   // 绑定授权 owner（相当于 QQ 用户首次发消息后）。
   h.app.repos.channelIdentities.bindOwner({
@@ -119,6 +120,55 @@ describe('QQ delivery: sends', () => {
     const send = calls.find((c) => c.url.includes('/v2/users/owner-uuid/messages'));
     const body = JSON.parse(String(send!.init!.body)) as { msg_id?: string; msg_seq?: number };
     expect(body).toMatchObject({ msg_id: 'qq-msg-1', msg_seq: 1 });
+  });
+});
+
+describe('QQ delivery: bubbles', () => {
+  function passiveReply(text: string) {
+    const user = h!.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '在吗' }] }).message;
+    h!.app.repos.channelEvents.markReceived({ channel: 'qq', eventId: 'evt-user', remoteMessageId: 'qq-msg-1', eventType: 'C2C_MESSAGE_CREATE', conversationKey: 'owner-uuid' });
+    h!.app.repos.channelEvents.markProcessed('qq', 'evt-user', user.id);
+    const admission = h!.app.repos.replyBatches.appendOrCreateMessage(user.id, new Date().toISOString(), new Date().toISOString());
+    return assistantMessage(text).then((message) => {
+      h!.app.db
+        .prepare('INSERT INTO reply_batch_messages(batch_id, message_id, position, created_at) VALUES (?, ?, ?, ?)')
+        .run(admission.batch.id, message.id, 1, new Date().toISOString());
+      return message;
+    });
+  }
+  const sends = (calls: Array<{ url: string; init?: RequestInit }>) =>
+    calls
+      .filter((c) => c.url.includes('/v2/users/owner-uuid/messages'))
+      .map((c) => JSON.parse(String(c.init!.body)) as { content: string; msg_seq?: number });
+
+  it('sends each line of a passive reply as its own bubble with increasing msg_seq', async () => {
+    const { delivery, calls } = await buildDelivery();
+    const message = await passiveReply('在呢\n刚泡完咖啡\n你今天怎么样呀');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    expect(sends(calls).map((b) => [b.content, b.msg_seq])).toEqual([
+      ['在呢', 1],
+      ['刚泡完咖啡', 2],
+      ['你今天怎么样呀', 3]
+    ]);
+  });
+
+  it('resumes a half-sent reply without resending earlier bubbles', async () => {
+    const { delivery, calls } = await buildDelivery([
+      { status: 200, body: { id: 'b1' } },
+      { status: 500, body: { message: 'boom' } }
+    ]);
+    const message = await passiveReply('第一句\n第二句');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('retry');
+    calls.length = 0;
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    expect(sends(calls).map((b) => [b.content, b.msg_seq])).toEqual([['第二句', 2]]);
+  });
+
+  it('keeps proactive messages in one piece', async () => {
+    const { delivery, calls } = await buildDelivery();
+    const message = await assistantMessage('想你了\n在干嘛呀');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    expect(sends(calls).map((b) => b.content)).toEqual(['想你了\n在干嘛呀']);
   });
 });
 
