@@ -25,6 +25,7 @@ export function bridgeMcpTools(
       risk: policy.risk,
       phases: policy.phases,
       authorized: policy.authorized,
+      ...(policy.allowInReply === true ? { allowInReply: true } : {}),
       handler: async (input: unknown, context) => wrapMcpResult(await callTool(remote.name, asObject(input), context?.signal))
     };
   });

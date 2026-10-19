@@ -9,6 +9,12 @@ export interface McpToolPolicy {
   risk: 'read' | 'write' | 'external_side_effect' | 'destructive' | 'maintenance';
   phases: Array<'reply' | 'memory_commit' | 'proactive' | 'maintenance' | 'admin'>;
   authorized: boolean;
+  /**
+   * Opt-in for a non-read tool to run while she is replying. Without it the
+   * reply phase only ever gets read tools. Takes effect only together with
+   * `authorized` and `'reply'` in `phases`.
+   */
+  allowInReply?: boolean;
 }
 
 export interface McpServerConfig {

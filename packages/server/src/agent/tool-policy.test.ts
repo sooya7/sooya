@@ -85,4 +85,22 @@ describe('ToolPolicy', () => {
       reason: 'phase-not-authorized'
     });
   });
+
+  it('lets an MCP tool the host opened with allowInReply write while replying, and nothing else', () => {
+    const registry = new ToolRegistry();
+    const write = tool({ name: 'knowledge.knowledge.write', modelName: 'knowledge__knowledge_write', serverId: 'knowledge', risk: 'write', phases: ['reply', 'memory_commit'], allowInReply: true });
+    const store = tool({ name: 'knowledge.secret.store', modelName: 'knowledge__secret_store', serverId: 'knowledge', risk: 'maintenance', phases: ['reply'], allowInReply: true });
+    const closed = tool({ name: 'knowledge.knowledge.append', modelName: 'knowledge__knowledge_append', serverId: 'knowledge', risk: 'write', phases: ['reply', 'memory_commit'] });
+    for (const item of [write, store, closed]) registry.register(item);
+    const policy = new ToolPolicy(registry);
+    expect(policy.check(write, 'reply').allowed).toBe(true);
+    expect(policy.check(store, 'reply').allowed).toBe(true);
+    expect(policy.check(closed, 'reply')).toMatchObject({ allowed: false, reason: 'non-read-tool-in-visible-phase' });
+    // proactive messages never get write tools
+    expect(policy.check({ ...write, phases: ['proactive'] }, 'proactive').allowed).toBe(false);
+    // still needs authorization and the master switches
+    expect(policy.check({ ...write, authorized: false }, 'reply')).toMatchObject({ allowed: false, reason: 'tool-not-authorized' });
+    expect(new ToolPolicy(registry, { writeEnabled: false }).check(write, 'reply')).toMatchObject({ allowed: false, reason: 'write-disabled' });
+    expect(new ToolPolicy(registry, { maintenanceEnabled: false }).check(store, 'reply')).toMatchObject({ allowed: false, reason: 'maintenance-disabled' });
+  });
 });

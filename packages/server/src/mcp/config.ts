@@ -68,7 +68,12 @@ function normalizeToolPolicy(value: unknown): Record<string, McpToolPolicy> | un
     const phases: McpToolPolicy['phases'] = Array.isArray(item.phases)
       ? item.phases.filter((phase): phase is McpToolPolicy['phases'][number] => ['reply', 'memory_commit', 'proactive', 'maintenance', 'admin'].includes(String(phase)))
       : defaultPhases;
-    out[name] = { risk, phases: phases.length > 0 ? phases : ['maintenance'], authorized: item.authorized === true };
+    out[name] = {
+      risk,
+      phases: phases.length > 0 ? phases : ['maintenance'],
+      authorized: item.authorized === true,
+      ...(item.allowInReply === true ? { allowInReply: true } : {})
+    };
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
