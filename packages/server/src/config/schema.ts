@@ -299,19 +299,6 @@ export const WebSearchConfigSchema = z.object({
 });
 export type WebSearchConfig = z.infer<typeof WebSearchConfigSchema>;
 
-export const DecisionModelSchema = z.object({
-  enabled: z.boolean().default(false),
-  provider: z.enum(['aliyun-beijing', 'aliyun-singapore', 'typesafe', 'custom']).default('aliyun-beijing'),
-  baseUrl: z.string().default(''),
-  apiKey: z.string().default(''),
-  model: z.string().min(1).default('decision-model-preview'),
-  timeoutMs: z.number().int().min(250).max(15000).default(2000),
-  memorySaveThreshold: z.number().min(0.5).max(1).default(0.85),
-  memoryReviewThreshold: z.number().min(0).max(0.85).default(0.55),
-  mediaThreshold: z.number().min(0.51).max(1).default(0.85)
-}).refine((value) => value.memoryReviewThreshold <= value.memorySaveThreshold, { message: '记忆复核阈值不能高于保存阈值' });
-export type DecisionModelConfig = z.infer<typeof DecisionModelSchema>;
-
 export const ModelsConfigSchema = z.object({
   storageVersion: z.literal(2).default(2),
   chat: ChatModelSchema.default({}),
@@ -327,7 +314,6 @@ export const ModelsConfigSchema = z.object({
   tts: TtsModelSchema.default({}),
   rerank: RerankModelSchema.default({}),
   webSearch: WebSearchConfigSchema.default({}),
-  decision: DecisionModelSchema.default({})
 });
 export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
 

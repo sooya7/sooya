@@ -2,19 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { adminApi, type AdminModels, type AdminWebSearchConfig } from '../../lib/admin.js';
 import type { ModelPreset, ModelSlot } from '../../lib/modelPresets.js';
 import { Button, Callout, Loadable, Page, Status, Tag, errorMessage, useConsole, useLoad } from '../ui.js';
-import { DecisionEditor, type DecisionDraft } from './models/DecisionEditor.js';
 import { Library } from './models/Library.js';
 import { SlotEditor, type SlotDraft } from './models/SlotEditor.js';
 import { WebSearchEditor, type WebSearchDraft } from './models/WebSearchEditor.js';
 import {
-  SELECTIONS, SLOT_NAMES, SLOT_ORDER, decisionStatus, rec, slotStatus, webSearchStatus, type Selection, type SlotStatus
+  SELECTIONS, SLOT_NAMES, SLOT_ORDER, slotStatus, webSearchStatus, type Selection, type SlotStatus
 } from './models/shared.js';
 import './models.css';
 
 interface Drafts {
   slots: Partial<Record<ModelSlot, SlotDraft>>;
   webSearch?: WebSearchDraft;
-  decision?: DecisionDraft;
 }
 
 function initialSelection(): Selection {
@@ -23,7 +21,7 @@ function initialSelection(): Selection {
 }
 
 function pending(drafts: Drafts): boolean {
-  return Object.keys(drafts.slots).length > 0 || drafts.webSearch !== undefined || drafts.decision !== undefined;
+  return Object.keys(drafts.slots).length > 0 || drafts.webSearch !== undefined;
 }
 
 function CapButton({ name, status, active, dirty, onSelect }: {
@@ -101,8 +99,6 @@ export default function Models() {
                 <div className="mdl-cap-group">
                   <CapButton name="联网搜索" status={webSearchStatus(data.webSearch as AdminWebSearchConfig | undefined)} active={selected === 'webSearch'}
                     dirty={drafts.webSearch !== undefined} onSelect={() => select('webSearch')} />
-                  <CapButton name="行为决策" status={decisionStatus(rec(data.decision))} active={selected === 'decision'}
-                    dirty={drafts.decision !== undefined} onSelect={() => select('decision')} />
                 </div>
                 <div className="mdl-cap-group">
                   <CapButton name="模型库"
@@ -117,9 +113,6 @@ export default function Models() {
                     <WebSearchEditor models={data} draft={drafts.webSearch} onSaved={onSaved}
                       setDraft={(next) => setDrafts((old) => ({ ...old, webSearch: next }))} />
                   ) : <Callout tone="warn">服务器没有返回联网搜索的配置，可能是后端版本太旧。</Callout>
-                ) : selected === 'decision' ? (
-                  <DecisionEditor models={data} draft={drafts.decision} onSaved={onSaved}
-                    setDraft={(next) => setDrafts((old) => ({ ...old, decision: next }))} />
                 ) : selected === 'library' ? (
                   presets.data ? (
                     <Library presets={presets.data} setPresets={setPresetList} dirtySlots={dirtySlots} settle={settle}

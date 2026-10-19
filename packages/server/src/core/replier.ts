@@ -34,7 +34,6 @@ import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
 import type { MediaDirector } from './mediaDirector.js';
 import { mergeStagedMediaIntent, type StagedMediaIntent } from './media-tools/stage.js';
-import { BehaviorDecisionService, applyBehaviorDecision, decisionPrompt, type BehaviorDecision } from './behavior-decision.js';
 import type {
   ImageContinuityService,
   PreparedImageContinuity,
@@ -68,7 +67,6 @@ export interface ReplyOptions {
 }
 
 export interface ReplyOutcome {
-  behaviorDecision?: BehaviorDecision;
   messageId: string;
   ok: boolean;
   parts: string[];
@@ -111,7 +109,6 @@ export interface ReplyMediaPlan {
 }
 
 export interface TextGenerationResult {
-  behaviorDecision?: BehaviorDecision;
   /** Fully stripped, speaker-prefix-free visible text. */
   text: string;
   /** Raw model output before directive stripping. */
@@ -258,10 +255,6 @@ export class Replier {
         && caps.has('tts') && persona.voicePolicy.enabled
         && (userVoiceIntent === 'voice_only' || userVoiceIntent === 'voice_reply');
       const hiddenStickerOnly = userDirectives.stickerOnly === true;
-      // Runs alongside context building; it is only needed once the system prompt is assembled.
-      const pendingDecision = new BehaviorDecisionService(() => this.deps.config.getModels().decision)
-        .evaluate(userText, this.recentPlainContext(6), signal);
-      pendingDecision.catch(() => { /* awaited below; avoids an unhandled rejection if context building fails first */ });
       let holdDraft = hiddenDraft || hiddenStickerOnly || visualTime.mode === 'retrospective';
       // Filled in once the reply's tool round is done: a send_voice call asking
       // for voice-only hides the draft exactly like the user asking for it. The
@@ -291,18 +284,10 @@ export class Replier {
         visualTime,
         worldSnapshot: world
       });
-      const behaviorDecision = await pendingDecision;
-      if (behaviorDecision.status === 'ok') {
-        if (!userDirectives.wantImage && (!caps.has('image') || !persona.imagePolicy.enabled || persona.imagePolicy.frequency === 'never')) behaviorDecision.media.image = false;
-        if (!userDirectives.wantVideo && (!caps.has('video') || !persona.videoPolicy.enabled || persona.videoPolicy.frequency === 'never')) behaviorDecision.media.video = false;
-        const voice = this.deps.voice;
-        if (!userDirectives.wantVoice && voice && (voice.preferences.autoVoiceFrequency === 'never' || voice.autoCountToday() >= voice.dailyAutoCap)) behaviorDecision.media.voice = false;
-      }
-      if (behaviorDecision.status === 'unavailable' || behaviorDecision.status === 'unconfigured') degraded.push('behavior_decision_unavailable');
       const provider = allowVision && built.visionUsed ? caps.visionProvider()! : caps.chatProvider();
       const selectedModel = built.visionUsed ? visionModel : chatModel;
       const requestMaxTokens = Math.min(selectedModel.maxTokens, maxOutputTokens);
-      let requestSystem = built.system + decisionPrompt(behaviorDecision);
+      let requestSystem = built.system;
       let webSearchResult: WebSearchResult | undefined;
       let nativeSearchAnswer: string | undefined;
       const searchDecision = decideWebSearch(userText);
@@ -566,11 +551,7 @@ export class Replier {
       // The tool's staged intent wins; a legacy [[image:...]] the model also wrote
       // stays the compatibility fallback (see mergeStagedMediaIntent).
       const stagedMedia = this.deps.mediaIntents?.take({ batchId, revision }) ?? null;
-      const modelDirectives = applyBehaviorDecision(
-        mergeStagedMediaIntent(stripped.directives, stagedMedia),
-        userDirectives,
-        behaviorDecision
-      );
+      const modelDirectives = mergeStagedMediaIntent(stripped.directives, stagedMedia);
       const rawFinalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
       const mediaPlan = this.planMedia(persona, userDirectives, modelDirectives, rawFinalText);
       const hasImageDirective = Boolean(mediaPlan.selfImagePrompt ?? mediaPlan.imagePrompt);
@@ -612,7 +593,6 @@ export class Replier {
 
       return {
         text: finalText,
-        behaviorDecision,
         rawText,
         directives: modelDirectives,
         degraded,
@@ -1013,8 +993,14 @@ export class Replier {
     // A media tool asking for voice counts as an explicit request: the voice policy
     // means "don't volunteer it", not "ignore a call she just made for the user".
     const toolAskedVoice = generated.toolVoice !== undefined;
+    // The auto-voice limits used to arrive through the behaviour decision. They
+    // live here now: with auto frequency 'never' (or the daily cap reached) a
+    // marker she wrote on her own is not enough - the user or a media tool has
+    // to ask for it.
+    const voiceAutoBlocked = this.deps.voice != null
+      && (this.deps.voice.preferences.autoVoiceFrequency === 'never' || this.deps.voice.autoCountToday() >= this.deps.voice.dailyAutoCap);
     if (this.deps.voice && this.deps.voiceV2Enabled !== false &&
-      (toolAskedVoice || generated.behaviorDecision?.media.voice !== false || userDirectives.wantVoice === true || ['voice_only', 'voice_reply', 'read_aloud'].includes(parseVoiceIntent(userText)))) {
+      (toolAskedVoice || userDirectives.wantVoice === true || !voiceAutoBlocked || ['voice_only', 'voice_reply', 'read_aloud'].includes(parseVoiceIntent(userText)))) {
       const userIntent = parseVoiceIntent(userText);
       // P0-3: replace/voice-only is reserved for EXPLICIT user intent. A model
       // that emits [[voice-only]] on its own is downgraded to complement — the
@@ -1208,13 +1194,11 @@ export class Replier {
     }, 'reply.content.done', (message) => ({ message, degraded }), () => [
       { type: 'reply.content.done', payload: { messageId: shell.id, parts: producedParts } }
     ]);
-    if (generated.behaviorDecision?.status !== 'disabled') this.deps.messages.updateMeta(shell.id, { behaviorDecision: generated.behaviorDecision });
     return {
       messageId: shell.id,
       ok: true,
       parts: producedParts,
       degraded,
-      behaviorDecision: generated.behaviorDecision,
       ...(generated.reasoning ? { reasoning: generated.reasoning } : {})
     };
   }

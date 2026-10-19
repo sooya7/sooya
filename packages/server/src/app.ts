@@ -675,7 +675,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
         .find((value): value is string => typeof value === 'string' && value.length > 0);
       // The coordinator completed this revision; enqueue downstream jobs atomically.
       const tx = dbHandle.transaction(() => {
-        if (capabilityPolicy.memory.write && outcome.behaviorDecision?.memory !== 'skip') {
+        if (capabilityPolicy.memory.write) {
           repos.jobs.enqueue(
             env.MEMORY_BACKEND === 'ombre' ? 'ombre.memory_commit' : 'memory.extract',
             { batchId, revision, userMessageIds: userMessages.map((message) => message.id), assistantMessageId: outcome.messageId }
