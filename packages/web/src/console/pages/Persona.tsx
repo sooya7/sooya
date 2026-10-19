@@ -64,14 +64,6 @@ const LANGUAGE_OPTIONS = [
   { value: 'ja-JP', label: '日本語' }
 ];
 
-const MODE_LABELS: Record<ProactiveMode, string> = {
-  auto: '她自己决定',
-  text: '只发文字',
-  text_sticker: '文字加表情',
-  voice: '发语音',
-  image: '发照片'
-};
-
 const PROVIDER_LABELS: Record<string, string> = {
   none: '没有配置',
   'openai-tts': 'OpenAI 语音',
@@ -252,7 +244,7 @@ function PersonaEditor({ persona, lifeDefaults, onSaved, registry }: {
           label="记住你发的表情是什么意思，之后她也会这样用" />
       </Section>
 
-      <Section title="发照片" desc="她给你发自己照片或画面的习惯。每张照片都会调用生图服务。">
+      <Section title="发照片" desc="她给你发图片的习惯。每张图片都会调用生图服务。">
         <Switch checked={draft.imagePolicy.enabled} onChange={(v) => setImage({ enabled: v })} label="允许她发照片" />
         <Fields>
           <Field label="主动发照片的频率" hint="选“不主动”时，你开口要她还是会发。">
@@ -275,16 +267,11 @@ function PersonaEditor({ persona, lifeDefaults, onSaved, registry }: {
         </Fields>
       </Section>
 
-      <Section title="她主动找你" desc="她会不会在你没说话时来找你、多久一次、用什么方式。留空的项跟随默认设置；生活页面里改的也是这几项。">
+      <Section title="她主动找你" desc="她会不会在你没说话时来找你、多久一次。主动消息只发文字。留空的项跟随默认设置；生活页面里改的也是这几项。">
         <Fields>
           <Field label="会不会主动找你" hint={lifeDefaults ? `默认：${lifeDefaults.reachOut ? '会' : '不会'}` : undefined}>
             <Select value={reachOutValue} options={[{ value: '', label: '跟随默认' }, { value: 'on', label: '会' }, { value: 'off', label: '不会' }]}
               onChange={(e) => setLife({ reachOut: e.target.value === '' ? undefined : e.target.value === 'on' })} />
-          </Field>
-          <Field label="主动找你时用什么方式" hint={lifeDefaults?.proactiveMode ? `默认：${MODE_LABELS[lifeDefaults.proactiveMode]}` : undefined}>
-            <Select value={life.proactiveMode ?? ''}
-              options={[{ value: '', label: '跟随默认' }, ...(Object.keys(MODE_LABELS) as ProactiveMode[]).map((value) => ({ value, label: MODE_LABELS[value] }))]}
-              onChange={(e) => setLife({ proactiveMode: e.target.value === '' ? undefined : e.target.value as ProactiveMode })} />
           </Field>
           <OptionalNumberField label="你不说话后，她至少等几分钟" min={5} max={1440} value={life.quietGapMinutes}
             placeholder={lifeDefaults ? String(lifeDefaults.quietGapMinutes) : undefined}

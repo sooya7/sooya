@@ -116,144 +116,44 @@ describe('ProactiveComposer -> Moments', () => {
     expect(harness.app.repos.moments.get(result.momentId!)?.image_media_id).toBeNull();
   });
 
-  it('plans a grounded lifestyle photo with SOOYA in frame and stores it as a Moment media reference', async () => {
+  it('posts a text Moment and ignores a picture the model still plans out of habit', async () => {
     harness = await withMoments({ image: 'ok' });
     stageCandidate(harness);
     const park = harness.app.repos.locations.create({ name: '社区公园', kind: 'park', city: '宁波', source: 'admin' });
     harness.app.repos.locations.recordVisit({ locationId: park.id, enteredAt: localTime('2026-07-31T14:00').toISOString(), leftAt: localTime('2026-07-31T17:00').toISOString() });
 
+    // Even the legacy "image" run mode only ever produces text now.
     const result = await harness.app.services.proactive.run({ mode: 'image' });
     expect(result.status).toBe('sent');
-    expect(result.finalMode).toBe('image');
-    const moment = harness.app.repos.moments.get(result.momentId!)!;
-    expect(moment.location_name).toBe('社区公园');
-    expect(moment.city).toBe('宁波');
-    expect(moment.image_kind).toBe('lifestyle');
-    expect(moment.image_media_id).toBeTruthy();
-    expect(harness.app.repos.media.references(moment.image_media_id!)).toMatchObject({ moments: 1, total: 1 });
-    const body = JSON.stringify(harness.state.imageRequests[0]!.body);
-    expect(body).toContain('社区公园');
-    expect(body).toContain('橘猫');
-    expect(body).toContain('LIFESTYLE COMPOSITION');
-    expect(body).toContain('SOOYA herself must be visibly present');
-    expect(body).toContain('Do not use first-person POV');
-    expect(body).not.toContain('Keep the photographer completely out of frame');
-    expect(harness.state.imageRequests[0]!.form?.image).toMatch(/^file:/);
-    expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({ photoKind: 'lifestyle', referenceUsed: true, destination: 'moments' });
-  });
-
-  it.each(['selfie', 'lifestyle'] as const)('uses persona references for every on-camera proactive Moment (%s)', async (kind) => {
-    harness = await withMoments({
-      image: 'ok',
-      chat: {
-        script: [[sharePlan(
-          '窗边这杯咖啡意外地好喝，今天的光也很舒服。',
-          { kind, scene: kind === 'selfie' ? '咖啡店窗边的 SOOYA 举着咖啡杯看向手机' : 'SOOYA 坐在咖啡店窗边捧着咖啡杯看窗外' }
-        )]]
-      }
-    });
-    stageCandidate(harness);
-    const result = await harness.app.services.proactive.run({ mode: 'image' });
-    expect(result.status).toBe('sent');
-    expect(harness.state.imageRequests[0]!.form?.image).toMatch(/^file:/);
-    expect(JSON.stringify(harness.state.imageRequests[0]!.body)).not.toContain('POV identity constraint');
-    expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({ photoKind: kind, referenceUsed: true, destination: 'moments' });
-  });
-
-  it('normalizes a legacy pov plan into an on-camera lifestyle photo before it reaches the image provider', async () => {
-    harness = await withMoments({
-      image: 'ok',
-      chat: { script: [[JSON.stringify({ text: '蹲下来的时候它居然没有跑开。', image: { kind: 'pov', scene: '雨后公园步道旁的橘猫' } })]] }
-    });
-    stageCandidate(harness);
-
-    const result = await harness.app.services.proactive.run({ mode: 'image' });
-    expect(result.status).toBe('sent');
-    expect(result.finalMode).toBe('image');
-    const body = JSON.stringify(harness.state.imageRequests[0]!.body);
-    expect(body).toContain('橘猫');
-    expect(body).toContain('SOOYA 本人必须入镜');
-    expect(body).toContain('LIFESTYLE COMPOSITION');
-    expect(body).toContain('SOOYA herself must be visibly present');
-    expect(body).toContain('Do not use first-person POV');
-    expect(body).not.toContain('Keep the photographer completely out of frame');
-    expect(body).toContain('去公园看猫');
-    expect(harness.state.imageRequests[0]!.form?.image).toMatch(/^file:/);
-    const moment = harness.app.repos.moments.get(result.momentId!)!;
-    expect(moment.image_kind).toBe('lifestyle');
-    expect(harness.app.repos.proactive.list(1)[0]!.detail).toMatchObject({
-      photoKind: 'lifestyle',
-      legacyPovNormalized: true,
-      referenceUsed: true,
-      destination: 'moments'
-    });
-  });
-
-  it('falls back to a text Moment when persona references are unavailable for an on-camera photo', async () => {
-    harness = await withMoments({ image: 'ok', env: { SOOYA_REFERENCES_DIR: '/nonexistent-sooya-refs' } });
-    stageCandidate(harness);
-
-    const result = await harness.app.services.proactive.run({ mode: 'image' });
-    expect(result.status).toBe('sent');
+    expect(result.requestedMode).toBe('text');
     expect(result.finalMode).toBe('text');
-    expect(result.fallbackReason).toBe('reference_missing');
-    // Nothing reached the image provider: no wrong-person photo, no scenery drift.
     expect(harness.state.imageRequests).toHaveLength(0);
     const moment = harness.app.repos.moments.get(result.momentId!)!;
+    expect(moment.location_name).toBe('社区公园');
     expect(moment.image_media_id).toBeNull();
-    expect(harness.app.services.imageContinuity.current()).toBeNull();
+    expect(moment.image_kind).toBeNull();
+    const prompt = JSON.stringify(harness.state.chatCalls[0]!.body);
+    expect(prompt).not.toMatch(/selfie|lifestyle/);
   });
 
-  it('publishes an afternoon event at 18:30 as retrospective and stores the same two clocks everywhere', async () => {
+  it('tells an afternoon event at 18:30 as something that already happened', async () => {
     harness = await withMoments({
-      image: 'ok',
       clock: () => localTime('2026-07-31T18:30'),
-      chat: {
-        script: [[sharePlan('下午在公园蹲着看猫时，那只橘猫踩着我的鞋不肯走。')]]
-      }
+      chat: { script: [[sharePlan('下午在公园蹲着看猫时，那只橘猫踩着我的鞋不肯走。')]] }
     });
     stageCandidate(harness);
     const snapshotSpy = vi.spyOn(harness.app.services.world, 'snapshot');
     snapshotSpy.mockClear();
 
-    const result = await harness.app.services.proactive.run({ mode: 'image' });
+    const result = await harness.app.services.proactive.run();
 
     expect(result.status).toBe('sent');
-    expect(result.finalMode).toBe('image');
     expect(snapshotSpy).toHaveBeenCalledTimes(1);
-    const moment = harness.app.repos.moments.get(result.momentId!)!;
-    expect(moment.text).toContain('下午');
-    const media = harness.app.repos.media.get(moment.image_media_id!)!;
-    const mediaContinuity = JSON.parse(media.meta_json).continuity;
-    const attemptContinuity = harness.app.repos.proactive.list(1)[0]!.detail.continuity;
+    expect(harness.app.repos.moments.get(result.momentId!)!.text).toContain('下午');
     const allChatRequests = JSON.stringify(harness.state.chatCalls.map((request) => request.body));
-    const providerPrompt = JSON.stringify(harness.state.imageRequests[0]!.body);
-
     expect(allChatRequests).toContain('2026-07-31 18:30:00（evening）');
     expect(allChatRequests).toContain('那件小事发生在 2026-07-31 afternoon');
     expect(allChatRequests).toContain('要当成已经过去的事');
-    expect(providerPrompt).toContain('Time mode: retrospective');
-    expect(providerPrompt).toContain('Depicted local date: 2026-07-31');
-    expect(providerPrompt).toContain('Depicted day period: afternoon');
-    expect(providerPrompt).toContain('warm afternoon sunlight');
-    expect(mediaContinuity).toMatchObject({
-      dateKey: '2026-07-31',
-      timeMode: 'retrospective',
-      timeZone: 'Asia/Shanghai',
-      currentInstant: '2026-07-31T10:30:00.000Z',
-      currentDayPeriod: 'evening',
-      depictedLocalDate: '2026-07-31',
-      depictedDayPeriod: 'afternoon',
-      requestedDayPeriod: null,
-      commitState: 'skipped',
-      commitReason: 'retrospective_scene'
-    });
-    expect(mediaContinuity).not.toHaveProperty('outfitRevision');
-    expect(mediaContinuity).not.toHaveProperty('activity');
-    expect(mediaContinuity).not.toHaveProperty('activityKind');
-    expect(mediaContinuity).not.toHaveProperty('location');
-    expect(attemptContinuity).toEqual(mediaContinuity);
-    expect(harness.app.services.imageContinuity.current()).toBeNull();
   });
 
   it('asks once more when the model does not return the share-plan JSON shape', async () => {

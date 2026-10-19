@@ -37,12 +37,10 @@ import { StickerAutoCollector } from './core/stickers/auto-collector.js';
 import { StickerRetriever } from './core/stickers/retriever.js';
 import { StickerPicker } from './core/stickers/picker.js';
 import { StickerUserMeaningLearner } from './core/stickers/user-meaning.js';
-import { PersonaReferenceLoader } from './media/persona-references.js';
 import { ImageVariantService } from './media/variants.js';
 import { CapabilityRegistry } from './core/capabilities.js';
 import { DirectorClient } from './core/director/client.js';
 import { MediaDirector } from './core/mediaDirector.js';
-import { ImageContinuityService } from './core/image-continuity.js';
 import { VideoGenerationService } from './core/video/service.js';
 import { createVideoFollowUp } from './core/video/follow-up.js';
 import { MemoryService } from './core/memory.js';
@@ -145,7 +143,6 @@ export interface SooyaApp {
     capabilities: CapabilityRegistry;
     directorClient: DirectorClient;
     mediaDirector: MediaDirector;
-    imageContinuity: ImageContinuityService;
     video: VideoGenerationService;
     webSearch: WebSearchRegistry;
     memory: MemoryService;
@@ -529,11 +526,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   const life = env.ENABLE_LIFE_V2
     ? new LifeSimEngine(repos.life, repos.lifeV2, lifeSettings, opts.clock, location, weather, metrics)
     : new LifeEngine(repos.life, lifeSettings, opts.clock);
-  const imageContinuity = new ImageContinuityService(repos.settings, {
-    clock: opts.clock,
-    timeZone: env.LIFE_TIME_ZONE,
-    onEvent: (event, data) => logger.info({ ...data }, `image.continuity.${event}`)
-  });
   const voiceService = new VoiceService({
     messages: repos.messages,
     media: mediaStore,
@@ -583,7 +575,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     chunkMessages: env.SUMMARY_CHUNK_MESSAGES,
     keepRecent: env.CONTEXT_RECENT_MESSAGES
   });
-  const personaReferences = new PersonaReferenceLoader(resolveReferencesDir(env), () => config.getPersona().referenceImages, (level, msg, extra) => logger[level]({ ...extra }, msg));
 
   const video = new VideoGenerationService({
     tasks: repos.videoTasks, media: repos.media, mediaStore, jobs: repos.jobs, errors: repos.errors, audit: repos.audit,
@@ -599,14 +590,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     stickerPicker,
     capabilities,
     mediaDirector,
-    imageContinuity,
-    lifeSnapshot: () => life.snapshot(),
     context,
     bus,
     config,
     errorLog: repos.errors,
     settings: repos.settings,
-    personaReferences,
     voice: voiceService,
     voiceV2Enabled: env.VOICE_V2_ENABLED,
     replyReasoningEffort: thoughtFlags.replyEffort,
@@ -781,9 +769,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     bus,
     coordinator: replyCoordinator,
     metrics,
-    mediaDirector,
-    imageContinuity,
-    personaReferences,
     locations: repos.locations,
     worldSnapshot: () => world.snapshot(),
     toolRuntime,
@@ -1015,7 +1000,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     db: dbHandle,
     config,
     repos,
-    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, imageContinuity, video, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, files: filesWiring.files, voice: voiceService, storage, context, future, futureContext, relationship, relationshipContext, timeline, feedback, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery, flowTrace, capabilityPolicy },
+    services: { mediaStore, mediaVariants, stickerLibrary, stickerAnalyzer, stickerRetriever, stickerPicker, stickerUserMeaning, capabilities, directorClient, mediaDirector, video, webSearch, memory, ombreMemory, ombreAdmin, mcpManager, toolPolicy, toolRuntime, life, proactive, location, weather, world, presence, metrics, thoughts, files: filesWiring.files, voice: voiceService, storage, context, future, futureContext, relationship, relationshipContext, timeline, feedback, summarizer, replier, replyCoordinator, bus, worker, backups, agents, tools, agentCapabilities, ingress, qq, qqDelivery, flowTrace, capabilityPolicy },
     state,
     fetchImpl,
     recurringTimers: [],
@@ -1221,18 +1206,6 @@ function resolveAssetsDir(): string | null {
   ].filter(Boolean) as string[];
   for (const candidate of candidates) if (fs.existsSync(candidate)) return candidate;
   return null;
-}
-
-export function resolveReferencesDir(env?: { SOOYA_REFERENCES_DIR?: string }): string | null {
-  // 显式配置优先：生产可以把参考图放在代码目录之外的持久化位置，
-  // 管理面板上传的图才不会随代码升级被覆盖。目录不存在也返回，
-  // 上传路由会负责创建；加载器读不到文件时自己会降级并报警。
-  const explicit = (env?.SOOYA_REFERENCES_DIR ?? process.env.SOOYA_REFERENCES_DIR)?.trim();
-  if (explicit) return path.resolve(explicit);
-  const stickersDir = resolveAssetsDir();
-  if (!stickersDir) return null;
-  const refsDir = path.join(path.dirname(stickersDir), 'references');
-  return fs.existsSync(refsDir) ? refsDir : null;
 }
 
 function resolveWebDir(): string | null {

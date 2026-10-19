@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_MEDIA_PROMPT_SPEC } from '../src/config/media-spec.js';
 import { MediaDirector, composeImagePrompt, composeVideoPrompt, sanitizeFishText } from '../src/core/mediaDirector.js';
-import { resolveVisualTime } from '../src/core/visual-time.js';
-
-const visualTime = resolveVisualTime({ now: new Date('2026-10-19T01:20:00.000Z'), timeZone: 'Asia/Shanghai' });
 
 describe('media prompt composition', () => {
   it('keeps what she asked for and adds the operator vocabulary', () => {
@@ -20,22 +17,10 @@ describe('media prompt composition', () => {
     expect(prompt).not.toContain('candid daily-life moment');
   });
 
-  it('carries the identity wording only for a picture of her', () => {
-    expect(composeImagePrompt({ scene: '窗边的猫' })).not.toContain('identity reference');
-    expect(composeImagePrompt({ scene: '窗边的她', self: true })).toContain('identity reference');
-  });
-
-  it('keeps the reality constraints when they are supplied', () => {
-    const prompt = composeImagePrompt({ scene: '在厨房煮面' }, DEFAULT_MEDIA_PROMPT_SPEC, {
-      dateKey: '2026-10-19',
-      currentActivity: '煮一碗面',
-      currentLocation: '家',
-      previousOutfit: null,
-      outfitMode: 'new_day',
-      visualTime
-    });
-    expect(prompt).toContain('Real current activity: 煮一碗面.');
-    expect(prompt).toContain('Required lighting:');
+  it('draws only what was asked for: no identity or reality wording', () => {
+    const prompt = composeImagePrompt({ scene: '窗边的猫' });
+    expect(prompt).not.toContain('identity reference');
+    expect(prompt).not.toMatch(/Real current|outfit/);
   });
 
   it('composes clips with the same rules', () => {

@@ -38,17 +38,16 @@ describe('single-bracket directive markers', () => {
     expect(directives.imagePrompt).toBe('窗台上睡着的猫');
   });
 
-  it('reads a selfie intent from [[image-self:...]] and leaves the prose clean', () => {
+  it('strips a retired [[image-self:...]] marker without acting on it', () => {
     const { text, directives } = stripModelDirectives('给你看看[[image-self:晚上窝在卧室床上看手机，有点困，穿着宽松的家居服]]');
     expect(text).toBe('给你看看');
-    expect(directives.selfImagePrompt).toBe('晚上窝在卧室床上看手机，有点困，穿着宽松的家居服');
     expect(directives.imagePrompt).toBeUndefined();
+    expect(directives.videoPrompt).toBeUndefined();
   });
 
-  it('keeps [[image:...]] as a regular image intent, not a selfie', () => {
+  it('keeps [[image:...]] as a regular image intent', () => {
     const { directives } = stripModelDirectives('[[image:咖啡店窗边下雨]]');
     expect(directives.imagePrompt).toBe('咖啡店窗边下雨');
-    expect(directives.selfImagePrompt).toBeUndefined();
   });
 
   it('reads emotion and intensity from a voice marker', () => {
@@ -98,7 +97,7 @@ describe('single-bracket directive markers', () => {
 describe('flattened pseudo tool calls', () => {
   const prompt = 'A young East Asian woman with long dark hair, wearing a loose cream/beige oversized sweater, lying comfortably on a beige sofa at night';
 
-  it('turns the leaked image_generation_tool selfie call into the existing self-image directive', () => {
+  it('drops a leaked image_generation_tool selfie call', () => {
     const raw = `对不起对不起 忘了这就补！ <tool_call>
 <function=image_generation_tool>
 <parameter=prompt>${prompt}</parameter>
@@ -108,7 +107,6 @@ describe('flattened pseudo tool calls', () => {
 </tool_call>`;
     const { text, directives } = stripModelDirectives(raw);
     expect(text).toBe('对不起对不起 忘了这就补！');
-    expect(directives.selfImagePrompt).toBe(prompt);
     expect(directives.imagePrompt).toBeUndefined();
   });
 
@@ -117,7 +115,6 @@ describe('flattened pseudo tool calls', () => {
     const { text, directives } = stripModelDirectives(raw);
     expect(text).toBe('');
     expect(directives.imagePrompt).toBe('雨夜的东京街口');
-    expect(directives.selfImagePrompt).toBeUndefined();
   });
 
   it('strips unknown pseudo tools without executing them', () => {

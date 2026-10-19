@@ -2,7 +2,6 @@ import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { MediaStore } from '../media/store.js';
 import type { StickerLibrary } from '../media/stickers.js';
 import type { StickerPicker } from './stickers/picker.js';
-import type { PersonaReferenceLoader } from '../media/persona-references.js';
 import type { CapabilityRegistry } from './capabilities.js';
 import type { ContextBuilder } from './context.js';
 import type { EventBus } from '../events/bus.js';
@@ -34,11 +33,6 @@ import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
 import type { MediaDirector } from './mediaDirector.js';
 import { mergeStagedMediaIntent, type StagedMediaIntent } from './media-tools/stage.js';
-import type {
-  ImageContinuityService,
-  PreparedImageContinuity,
-  VisualLifeSnapshot
-} from './image-continuity.js';
 import { publicFailure, redactDiagnostic, type PublicFailure } from './public-error.js';
 import { decideWebSearch } from './web-search/policy.js';
 import { formatWebSearchContext } from './web-search/service.js';
@@ -48,13 +42,11 @@ import type { WorldSnapshot } from './world-context.js';
 import type { ToolCallRuntime } from '../agent/tool-runtime.js';
 import type { OmbreMemoryBridge } from './ombre-memory.js';
 import { VideoRequestError, type VideoGenerationService } from './video/service.js';
-import { applyVideoContinuity, prepareVideoContinuity, videoContinuityMetadata } from './video/continuity.js';
 import type { Persona } from '../config/schema.js';
 import {
   applyVisualTimeToPrompt,
   ensureVisualTimeReplyText,
   resolveVisualTime,
-  visualDayPeriodLighting,
   visualTimeMetadata,
   type VisualTimeContext
 } from './visual-time.js';
@@ -100,10 +92,8 @@ export interface ReplyMediaPlan {
   readonly stickerOnly: boolean;
   readonly forceDifferent: boolean;
   readonly imagePrompt: string | null;
-  readonly selfImagePrompt: string | null;
   /** `[[video]]` intent; generated asynchronously after the text is published. */
   readonly videoPrompt: string | null;
-  readonly selfVideoPrompt: string | null;
   readonly voice: boolean;
   readonly voiceOnly: boolean;
 }
@@ -175,14 +165,11 @@ export class Replier {
       stickerPicker: StickerPicker;
       capabilities: CapabilityRegistry;
       mediaDirector: MediaDirector;
-      imageContinuity?: ImageContinuityService;
-      lifeSnapshot?: () => VisualLifeSnapshot;
       context: ContextBuilder;
       bus: EventBus;
       config: ConfigStore;
       errorLog: ErrorLogRepo;
       settings: SettingsRepo;
-      personaReferences: PersonaReferenceLoader;
       /** Independent voice system (Part 4); null when VOICE_V2_ENABLED=false. */
       voice?: VoiceService | null;
       voiceV2Enabled?: boolean;
@@ -556,7 +543,7 @@ export class Replier {
       const modelDirectives = mergeStagedMediaIntent(stripped.directives, stagedMedia);
       const rawFinalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
       const mediaPlan = this.planMedia(persona, userDirectives, modelDirectives, rawFinalText);
-      const hasImageDirective = Boolean(mediaPlan.selfImagePrompt ?? mediaPlan.imagePrompt);
+      const hasImageDirective = Boolean(mediaPlan.imagePrompt);
       const finalText = ensureVisualTimeReplyText(
         rawFinalText,
         visualTime,
@@ -747,7 +734,7 @@ export class Replier {
     }
 
     // 3b. Image (deferred for hidden-draft replace, same reason).
-    const imagePrompt = plan.selfImagePrompt ?? plan.imagePrompt;
+    const imagePrompt = plan.imagePrompt;
     if (imagePrompt && !shell) degraded.push('image:deferred');
     if (shell && imagePrompt) {
       const imageShell = shell;
@@ -756,239 +743,134 @@ export class Replier {
       );
       const editingUserImage = referenceMediaIds.length === 1;
       const generatingNewImage = referenceMediaIds.length === 0;
-      const continuityService = plan.selfImagePrompt && generatingNewImage
-        ? this.deps.imageContinuity
-        : undefined;
       const baseImageMeta: Record<string, unknown> = {
         prompt: imagePrompt.slice(0, 500),
-        selfie: !!plan.selfImagePrompt,
         ...(referenceMediaIds.length === 1 ? { referenceMediaId: referenceMediaIds[0] } : {})
       };
+      // A new picture records which time of day it depicts; an edit of the
+      // user's picture keeps that picture's own time.
+      const timeMeta = generatingNewImage ? visualTimeMetadata(generated.visualTime) : null;
 
-      const generateImage = async (): Promise<void> => {
-        if (signal.aborted) throw signal.reason ?? new Error('image generation aborted');
-        this.deps.bus.publish('reply.image.generating', { messageId: imageShell.id, intentChars: imagePrompt.length });
-        const partId = this.deps.messages.appendPart(imageShell.id, {
-          type: 'image',
-          status: 'pending',
-          meta: baseImageMeta
-        });
-        const imageStartedAt = Date.now();
-        let finalImagePrompt = imagePrompt;
-        let continuity: PreparedImageContinuity | null = null;
-        let resolvedOutfit: string | null = null;
-        let continuityMeta: Record<string, unknown> | null = generatingNewImage
-          ? generated.visualTime.mode === 'current'
-            ? { ...visualTimeMetadata(generated.visualTime) }
-            : {
-                commitState: 'skipped',
-                commitReason: 'retrospective_scene',
-                ...visualTimeMetadata(generated.visualTime)
-              }
-          : null;
-        try {
-          if (referenceMediaIds.length > 1) {
+      if (signal.aborted) throw signal.reason ?? new Error('image generation aborted');
+      this.deps.bus.publish('reply.image.generating', { messageId: imageShell.id, intentChars: imagePrompt.length });
+      const partId = this.deps.messages.appendPart(imageShell.id, {
+        type: 'image',
+        status: 'pending',
+        meta: baseImageMeta
+      });
+      const imageStartedAt = Date.now();
+      let finalImagePrompt = imagePrompt;
+      try {
+        if (referenceMediaIds.length > 1) {
+          throw new ImageReferenceError(
+            'too_many_reference_images',
+            '一次图生图只能使用一张参考图',
+            `received ${referenceMediaIds.length} reference images`
+          );
+        }
+
+        if (!editingUserImage) {
+          const expanded = this.deps.mediaDirector.image({
+            scene: imagePrompt.slice(0, 400),
+            intent: 'private snapshot'
+          });
+          if (expanded.prompt && expanded.prompt.trim()) finalImagePrompt = expanded.prompt.trim();
+        }
+        if (generatingNewImage) finalImagePrompt = applyVisualTimeToPrompt(finalImagePrompt, generated.visualTime);
+
+        const promptMeta = {
+          ...baseImageMeta,
+          directorPrompt: finalImagePrompt.slice(0, 1000),
+          ...(timeMeta ? { visualTime: timeMeta } : {})
+        };
+        this.deps.messages.updatePart(partId, { meta: promptMeta });
+        const provider = this.deps.capabilities.imageProvider();
+        let img: GeneratedImage;
+        if (referenceMediaIds.length === 1) {
+          const reference = await this.deps.media.read(referenceMediaIds[0]!);
+          if (!reference) {
             throw new ImageReferenceError(
-              'too_many_reference_images',
-              '一次图生图只能使用一张参考图',
-              `received ${referenceMediaIds.length} reference images`
+              'reference_generation_failed',
+              '参考图不可用，请重新上传后再试',
+              `reference media not found: ${referenceMediaIds[0]}`
             );
           }
-
-          if (continuityService) {
-            const life = this.deps.lifeSnapshot?.();
-            const world = generated.worldSnapshot;
-            continuity = continuityService.prepare({
-              scene: imagePrompt,
-              userText,
-              activity: life?.activity ?? null,
-              activityKind: life?.kind ?? null,
-              activityStartedAt: life?.startedAt ?? null,
-              location: world?.location?.name ?? world?.city?.name ?? null,
-              now: world?.now,
-              localDate: world?.localDate,
-              timeZone: world?.timeZone,
-              visualTime: generated.visualTime
-            });
-          }
-
-          if (!editingUserImage) {
-            const expanded = this.deps.mediaDirector.image({
-              scene: imagePrompt.slice(0, 400),
-              self: Boolean(plan.selfImagePrompt),
-              intent: plan.selfImagePrompt ? 'selfie' : 'private snapshot'
-            }, {
-              signal,
-              ...(continuity
-                ? {
-                    continuity: {
-                      dateKey: continuity.dateKey,
-                      currentActivity: continuity.visualTime.mode === 'current' ? continuity.currentActivity : null,
-                      currentLocation: continuity.visualTime.mode === 'current' ? continuity.currentLocation : null,
-                      previousOutfit: continuity.previousOutfit,
-                      outfitMode: continuity.outfitMode,
-                      changeReason: continuity.changeReason,
-                      explicitOutfitRequest: continuity.explicitOutfitRequest,
-                      visualTime: continuity.visualTime
-                    }
-                  }
-                : {})
-            });
-            if (expanded.prompt && expanded.prompt.trim()) finalImagePrompt = expanded.prompt.trim();
-            if (continuity) resolvedOutfit = continuityService!.resolveOutfit(expanded.outfit, continuity);
-          }
-
-          if (continuity) {
-            resolvedOutfit ??= continuityService!.resolveOutfit(null, continuity);
-            finalImagePrompt = continuityService!.applyToPrompt(finalImagePrompt, continuity, resolvedOutfit);
-            continuityMeta = continuity.visualTime.mode === 'current'
-              ? {
-                  dateKey: continuity.dateKey,
-                  outfit: resolvedOutfit,
-                  outfitMode: continuity.outfitMode,
-                  outfitRevision: continuity.outfitRevision,
-                  changeReason: continuity.changeReason,
-                  activity: continuity.currentActivity,
-                  activityKind: continuity.currentActivityKind,
-                  location: continuity.currentLocation,
-                  ...visualTimeMetadata(continuity.visualTime)
-                }
-              : {
-                  dateKey: continuity.dateKey,
-                  outfit: resolvedOutfit,
-                  outfitMode: continuity.outfitMode,
-                  changeReason: continuity.changeReason,
-                  commitState: 'skipped',
-                  commitReason: 'retrospective_scene',
-                  ...visualTimeMetadata(continuity.visualTime)
-                };
-          } else if (generatingNewImage) {
-            finalImagePrompt = applyVisualTimeToPrompt(finalImagePrompt, generated.visualTime);
-          }
-
-          this.deps.messages.updatePart(partId, {
-            meta: {
-              ...baseImageMeta,
-              directorPrompt: finalImagePrompt.slice(0, 1000),
-              ...(continuityMeta ? { continuity: continuityMeta } : {})
-            }
-          });
-          const provider = this.deps.capabilities.imageProvider();
-          let img: GeneratedImage;
-          if (referenceMediaIds.length === 1) {
-            const reference = await this.deps.media.read(referenceMediaIds[0]!);
-            if (!reference) {
-              throw new ImageReferenceError(
-                'reference_generation_failed',
-                '参考图不可用，请重新上传后再试',
-                `reference media not found: ${referenceMediaIds[0]}`
-              );
-            }
-            try {
-              img = await provider.edit(finalImagePrompt, reference.data, { mime: reference.row.mime, signal });
-            } catch (err) {
-              if (!(err instanceof ImageEditUnsupportedError)) throw err;
-              img = await provider.generate(finalImagePrompt, { signal });
-            }
-          } else if (plan.selfImagePrompt) {
-            const refs = await this.deps.personaReferences.load(finalImagePrompt);
-            img = refs.length > 0
-              ? await provider.generate(finalImagePrompt, { referenceImages: refs, signal })
-              : await provider.generate(finalImagePrompt, { signal });
-          } else {
+          try {
+            img = await provider.edit(finalImagePrompt, reference.data, { mime: reference.row.mime, signal });
+          } catch (err) {
+            if (!(err instanceof ImageEditUnsupportedError)) throw err;
             img = await provider.generate(finalImagePrompt, { signal });
           }
-          const media = await this.deps.media.save({
-            kind: 'image',
-            origin: 'generated',
-            data: img.data,
-            declaredMime: img.mime,
-            filename: 'generated.png',
-            meta: {
-              prompt: imagePrompt.slice(0, 500),
-              directorPrompt: finalImagePrompt.slice(0, 1000),
-              selfie: !!plan.selfImagePrompt,
-              ...(continuityMeta ? { continuity: continuityMeta } : {})
-            }
-          });
-
-          if (continuity && resolvedOutfit && continuityService) {
-            const committed = continuityService.commit(continuity, {
-              outfit: resolvedOutfit,
-              scene: imagePrompt,
-              mediaId: media.id
-            });
-            if (continuity.visualTime.mode === 'current' && committed) {
-              continuityMeta = {
-                ...continuityMeta,
-                outfit: committed.outfit.fullDescription,
-                outfitRevision: committed.outfitRevision
-              };
-            }
-          }
-
-          this.deps.messages.updatePart(partId, {
-            mediaId: media.id,
-            status: 'sent',
-            duration: Math.round((Date.now() - imageStartedAt) / 1000),
-            meta: {
-              ...baseImageMeta,
-              directorPrompt: finalImagePrompt.slice(0, 1000),
-              ...(continuityMeta ? { continuity: continuityMeta } : {})
-            }
-          });
-          producedParts.push('image');
-          this.deps.bus.publish('reply.media.saved', { messageId: imageShell.id, partId, kind: 'image', mediaId: media.id });
-        } catch (err) {
-          if (signal.aborted) throw signal.reason;
-          const e = err as Error;
-          const failure = publicFailure('provider_unavailable');
-          const reason = e instanceof ImageReferenceError
-            ? e.publicMessage
-            : e instanceof ProviderNotConfiguredError
-              ? '图片生成服务没有配置。'
-              : e instanceof HttpTimeoutError
-                ? '图片生成超时，本次没有自动重试，以免重复生成。'
-                : failure.message;
-          this.deps.messages.updatePart(partId, {
-            status: 'failed',
-            error: reason,
-            duration: Math.round((Date.now() - imageStartedAt) / 1000),
-            meta: {
-              ...baseImageMeta,
-              ...(finalImagePrompt !== imagePrompt ? { directorPrompt: finalImagePrompt.slice(0, 1000) } : {}),
-              ...(continuityMeta ? { continuity: continuityMeta } : {}),
-              failure: { ...failure, message: reason }
-            }
-          });
-          this.deps.errorLog.add('reply.image', failure.code, {
-            incidentId: failure.incidentId,
-            diagnostic: redactDiagnostic(e)
-          });
-          degraded.push(e instanceof ImageReferenceError ? `image:${e.code}` : 'image:provider_unavailable');
-          if (!finalText) {
-            this.deps.messages.appendPart(imageShell.id, {
-              type: 'text',
-              text: `（本来想给你画一张图，但${reason}。）`,
-              status: 'sent'
-            });
-            producedParts.push('text');
-          }
-          this.deps.bus.publish('reply.media.saved', { messageId: imageShell.id, partId, kind: 'image', failed: true, reason });
+        } else {
+          img = await provider.generate(finalImagePrompt, { signal });
         }
-      };
+        const media = await this.deps.media.save({
+          kind: 'image',
+          origin: 'generated',
+          data: img.data,
+          declaredMime: img.mime,
+          filename: 'generated.png',
+          meta: {
+            prompt: imagePrompt.slice(0, 500),
+            directorPrompt: finalImagePrompt.slice(0, 1000),
+            ...(timeMeta ? { visualTime: timeMeta } : {})
+          }
+        });
 
-      if (continuityService) await continuityService.runExclusive(generateImage);
-      else await generateImage();
+        this.deps.messages.updatePart(partId, {
+          mediaId: media.id,
+          status: 'sent',
+          duration: Math.round((Date.now() - imageStartedAt) / 1000),
+          meta: promptMeta
+        });
+        producedParts.push('image');
+        this.deps.bus.publish('reply.media.saved', { messageId: imageShell.id, partId, kind: 'image', mediaId: media.id });
+      } catch (err) {
+        if (signal.aborted) throw signal.reason;
+        const e = err as Error;
+        const failure = publicFailure('provider_unavailable');
+        const reason = e instanceof ImageReferenceError
+          ? e.publicMessage
+          : e instanceof ProviderNotConfiguredError
+            ? '图片生成服务没有配置。'
+            : e instanceof HttpTimeoutError
+              ? '图片生成超时，本次没有自动重试，以免重复生成。'
+              : failure.message;
+        this.deps.messages.updatePart(partId, {
+          status: 'failed',
+          error: reason,
+          duration: Math.round((Date.now() - imageStartedAt) / 1000),
+          meta: {
+            ...baseImageMeta,
+            ...(finalImagePrompt !== imagePrompt ? { directorPrompt: finalImagePrompt.slice(0, 1000) } : {}),
+            ...(timeMeta ? { visualTime: timeMeta } : {}),
+            failure: { ...failure, message: reason }
+          }
+        });
+        this.deps.errorLog.add('reply.image', failure.code, {
+          incidentId: failure.incidentId,
+          diagnostic: redactDiagnostic(e)
+        });
+        degraded.push(e instanceof ImageReferenceError ? `image:${e.code}` : 'image:provider_unavailable');
+        if (!finalText) {
+          this.deps.messages.appendPart(imageShell.id, {
+            type: 'text',
+            text: `（本来想给你画一张图，但${reason}。）`,
+            status: 'sent'
+          });
+          producedParts.push('text');
+        }
+        this.deps.bus.publish('reply.media.saved', { messageId: imageShell.id, partId, kind: 'image', failed: true, reason });
+      }
     }
 
     // 3b'. Video. A clip is billed and takes minutes, so nothing here waits on
     // the vendor: the text goes out now, a task is queued, and the file follows
     // as its own message when it is ready (core/video/follow-up.ts).
-    const videoIntent = plan.selfVideoPrompt ?? plan.videoPrompt;
+    const videoIntent = plan.videoPrompt;
     if (videoIntent && !shell) degraded.push('video:deferred');
     if (shell && videoIntent && this.deps.video) {
-      await this.queueVideo({ shell, intent: videoIntent, selfie: Boolean(plan.selfVideoPrompt), persona, signal, degraded, finalText, producedParts, userText, generated });
+      await this.queueVideo({ shell, intent: videoIntent, persona, signal, degraded, finalText, producedParts, generated });
     }
 
     // 3c. Voice — independent expression system (Part 4): intent → mode →
@@ -1231,16 +1113,14 @@ export class Replier {
   private async queueVideo(input: {
     shell: ChatMessage;
     intent: string;
-    selfie: boolean;
     persona: Persona;
     signal: AbortSignal;
     degraded: string[];
     finalText: string;
     producedParts: string[];
-    userText: string;
     generated: TextGenerationResult;
   }): Promise<void> {
-    const { shell, intent, selfie, persona, signal, degraded, finalText, producedParts, userText, generated } = input;
+    const { shell, intent, persona, signal, degraded, finalText, producedParts, generated } = input;
     const video = this.deps.video!;
     /**
      * A clip that will not happen has to be said out loud. When the model stayed
@@ -1267,98 +1147,27 @@ export class Replier {
     let aspectRatio: string | null = null;
     let durationSec: number | undefined;
     try {
-      // A clip of her has to agree with the photo she may have sent minutes
-      // ago: same outfit, same place, right time of day. Read-only — the clip
-      // follows the day's outfit and never redefines it (video/continuity.ts).
-      const continuity = selfie && this.deps.imageContinuity
-        ? prepareVideoContinuity(this.deps.imageContinuity, {
-            scene: intent,
-            userText,
-            activity: this.deps.lifeSnapshot?.().activity ?? null,
-            activityKind: this.deps.lifeSnapshot?.().kind ?? null,
-            activityStartedAt: this.deps.lifeSnapshot?.().startedAt ?? null,
-            location: generated.worldSnapshot?.location?.name ?? generated.worldSnapshot?.city?.name ?? null,
-            now: generated.worldSnapshot?.now,
-            localDate: generated.worldSnapshot?.localDate,
-            timeZone: generated.worldSnapshot?.timeZone,
-            visualTime: generated.visualTime
-          })
-        : null;
-      {
-        const expanded = this.deps.mediaDirector.video(
-          { scene: intent.slice(0, 400), self: selfie, intent: selfie ? 'a short clip of Sooya herself' : 'a short private clip for the user' },
-          {
-            signal,
-            ...(continuity
-              ? {
-                  continuity: {
-                    dateKey: continuity.dateKey,
-                    outfit: continuity.outfit,
-                    activity: continuity.activity,
-                    location: continuity.location,
-                    lighting: visualDayPeriodLighting(continuity.visualTime.depictedDayPeriod),
-                    depictedDayPeriod: continuity.visualTime.depictedDayPeriod,
-                    timeMode: continuity.visualTime.mode
-                  }
-                }
-              : {})
-          }
-        );
-        if (expanded.prompt.trim()) prompt = expanded.prompt.trim();
-        aspectRatio = expanded.aspectRatio?.trim() || null;
-        durationSec = expanded.durationSec;
-      }
-      // The hard constraints are appended after expansion so a director that
-      // ignored them in prose still cannot produce a conflicting clip.
-      if (continuity) prompt = applyVideoContinuity(prompt, continuity, selfie);
-      else prompt = applyVisualTimeToPrompt(prompt, generated.visualTime);
-      let sourceImage: { data: Buffer; mime: string; name?: string } | undefined;
-      let dynamicKeyframe = false;
-      if (selfie) {
-        const refs = await this.deps.personaReferences.load(intent);
-        if (this.deps.capabilities.has('image') && refs.length > 0) {
-          try {
-            const imageProvider = this.deps.capabilities.imageProvider();
-            const keyframePrompt = `${prompt}, cinematic opening frame snapshot, candid realistic photograph`;
-            const keyframe = await imageProvider.generate(keyframePrompt, {
-              referenceImages: refs,
-              signal
-            });
-            sourceImage = { data: keyframe.data, mime: keyframe.mime, name: 'scene_keyframe.png' };
-            dynamicKeyframe = true;
-          } catch (err) {
-            if (signal.aborted) throw signal.reason;
-            this.deps.errorLog.add('reply.video', 'keyframe_generation_fallback', {
-              diagnostic: redactDiagnostic(err)
-            });
-            if (refs[0]) sourceImage = { data: refs[0].data, mime: refs[0].mime, name: refs[0].name };
-          }
-        } else if (refs[0]) {
-          sourceImage = { data: refs[0].data, mime: refs[0].mime, name: refs[0].name };
-        }
-      }
-      const continuityMeta = continuity ? videoContinuityMetadata(continuity, selfie) : null;
+      const expanded = this.deps.mediaDirector.video({ scene: intent.slice(0, 400), intent: 'a short private clip for the user' });
+      if (expanded.prompt.trim()) prompt = expanded.prompt.trim();
+      aspectRatio = expanded.aspectRatio?.trim() || null;
+      durationSec = expanded.durationSec;
+      prompt = applyVisualTimeToPrompt(prompt, generated.visualTime);
       const task = await video.create({
         prompt,
-        sourceImage,
         aspectRatio,
         durationSec,
-        ...(continuityMeta ? { continuity: continuityMeta } : {}),
         origin: { kind: 'reply', messageId: shell.id, deliver: true, intent: intent.slice(0, 500) }
       });
       this.deps.messages.updateMeta(shell.id, {
         video: {
           taskId: task.id,
           status: 'queued',
-          selfie,
-          dynamicKeyframe,
           intent: intent.slice(0, 300),
           directorPrompt: prompt.slice(0, 1000),
-          ...(aspectRatio ? { aspectRatio } : {}),
-          ...(continuityMeta ? { continuity: continuityMeta } : {})
+          ...(aspectRatio ? { aspectRatio } : {})
         }
       });
-      this.deps.bus.publish('reply.video.queued', { messageId: shell.id, taskId: task.id, selfie });
+      this.deps.bus.publish('reply.video.queued', { messageId: shell.id, taskId: task.id });
       if (!finalText) {
         this.deps.messages.appendPart(shell.id, { type: 'text', text: VIDEO_QUEUED_PLACEHOLDER_TEXT, status: 'sent' });
         if (!producedParts.includes('text')) producedParts.push('text');
@@ -1472,35 +1281,18 @@ export class Replier {
     const imageBlocked = user.noImage === true && user.wantImage !== true;
     const videoBlocked = user.noVideo === true && user.wantVideo !== true;
     let imagePrompt: string | null = null;
-    let selfImagePrompt: string | null = null;
-    if (persona.imagePolicy.enabled && !imageBlocked && persona.referenceImages.length > 0) {
-      if (model.selfImagePrompt) selfImagePrompt = model.selfImagePrompt;
-    }
     if (persona.imagePolicy.enabled && !imageBlocked) {
       if (model.imagePrompt) imagePrompt = model.imagePrompt;
-      else if (user.wantImage && user.imagePrompt) {
-        if (user.selfieIntent && persona.referenceImages.length > 0) selfImagePrompt = user.imagePrompt;
-        else imagePrompt = user.imagePrompt;
-      }
+      else if (user.wantImage && user.imagePrompt) imagePrompt = user.imagePrompt;
     }
-    if (selfImagePrompt && !caps.has('image')) selfImagePrompt = null;
     if (imagePrompt && !caps.has('image') && !user.wantImage && !model.imagePrompt) imagePrompt = null;
 
     // Video. Only when a video model exists: without one the marker would just
-    // promise a clip nobody can make. Self clips need a reference first frame;
-    // without references they fall back to a plain clip of the described scene.
+    // promise a clip nobody can make.
     let videoPrompt: string | null = null;
-    let selfVideoPrompt: string | null = null;
     if (persona.videoPolicy.enabled && !videoBlocked && caps.has('video') && this.deps.video) {
-      const hasReferences = persona.referenceImages.length > 0;
-      if (model.selfVideoPrompt) {
-        if (hasReferences) selfVideoPrompt = model.selfVideoPrompt;
-        else videoPrompt = model.selfVideoPrompt;
-      } else if (model.videoPrompt) videoPrompt = model.videoPrompt;
-      else if (user.wantVideo && user.videoPrompt) {
-        if (user.selfVideoIntent && hasReferences) selfVideoPrompt = user.videoPrompt;
-        else videoPrompt = user.videoPrompt;
-      }
+      if (model.videoPrompt) videoPrompt = model.videoPrompt;
+      else if (user.wantVideo && user.videoPrompt) videoPrompt = user.videoPrompt;
     }
 
     // Voice
@@ -1510,7 +1302,7 @@ export class Replier {
     }
     const voiceOnly = voice && (user.voiceOnly === true || model.voiceOnly === true);
 
-    return { sticker, stickers: stickerIntents, stickerRequired, stickerOnly, forceDifferent, imagePrompt, selfImagePrompt, videoPrompt, selfVideoPrompt, voice, voiceOnly };
+    return { sticker, stickers: stickerIntents, stickerRequired, stickerOnly, forceDifferent, imagePrompt, videoPrompt, voice, voiceOnly };
   }
 
   private recentPlainContext(limit: number): string {

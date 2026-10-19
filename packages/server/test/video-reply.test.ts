@@ -37,9 +37,8 @@ describe('[[video]] in a reply', () => {
     const text = reply.content.find((part) => part.type === 'text');
     expect(text?.text).toBe('好，等我几分钟拍一段给你');
     expect(reply.content.some((part) => part.type === 'file')).toBe(false);
-    const queued = reply.meta?.video as { taskId: string; status: string; selfie: boolean };
+    const queued = reply.meta?.video as { taskId: string; status: string };
     expect(queued.status).toBe('queued');
-    expect(queued.selfie).toBe(false);
 
     const task = h.app.services.video.get(queued.taskId)!;
     expect(task.mode).toBe('text');
@@ -67,16 +66,13 @@ describe('[[video]] in a reply', () => {
     expect(h.app.repos.jobs.list(50).filter((job) => job.type === 'qq.deliver')).toHaveLength(0);
   });
 
-  it('seeds a video-self clip with her reference image as the first frame', async () => {
+  it('queues no clip for a retired [[video-self]] marker', async () => {
     h = await boot('等一下哈[[video-self:我在窗边对你挥手，正面半身]]');
     const reply = await say('录一段你自己的视频');
-    const queued = reply.meta?.video as { taskId: string; selfie: boolean };
-    expect(queued.selfie).toBe(true);
-    const task = h.app.services.video.get(queued.taskId)!;
-    expect(task.mode).toBe('image');
-    expect(task.sourceMedia).toMatchObject({ kind: 'image', mime: 'image/png' });
+    expect(reply.meta?.video).toBeUndefined();
+    expect(reply.content.find((part) => part.type === 'text')?.text).toBe('等一下哈');
     await h.app.services.worker.drain();
-    expect(h.state.videoRequests[0]!.form).toMatchObject({ model: 'fake-video', input_reference: expect.stringContaining('file:reference.png') });
+    expect(h.state.videoRequests).toHaveLength(0);
   });
 
   it('honours the user asking for a clip even when the model forgot the marker', async () => {
@@ -145,22 +141,5 @@ describe('[[video]] in a reply', () => {
     const text = reply.content.find((part) => part.type === 'text');
     expect(text?.text).toBe(VIDEO_QUEUED_PLACEHOLDER_TEXT);
     expect(reply.note ?? '').not.toContain('empty-reply-guard');
-  });
-
-  it('generates a scene keyframe using the image provider when image capability is available', async () => {
-    h = await createHarness({
-      video: 'ok',
-      image: 'ok',
-      chat: { script: [['等一下哈[[video-self:我在窗边对你挥手，正面半身]]']] }
-    });
-    const reply = await say('录一段你自己的视频');
-    const queued = reply.meta?.video as { taskId: string; selfie: boolean; dynamicKeyframe?: boolean };
-    expect(queued.selfie).toBe(true);
-    expect(queued.dynamicKeyframe).toBe(true);
-    const task = h.app.services.video.get(queued.taskId)!;
-    expect(task.mode).toBe('image');
-    expect(h.state.imageCalls).toBe(1);
-    await h.app.services.worker.drain();
-    expect(h.state.videoRequests[0]!.form).toMatchObject({ model: 'fake-video' });
   });
 });

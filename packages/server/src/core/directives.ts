@@ -14,9 +14,6 @@ export interface UserDirectives {
   wantSticker?: boolean;
   wantImage?: boolean;
   imagePrompt?: string | null;
-  /** The request is for a photo OF HER (自拍/拍张照), so a fallback should
-   *  go through [[image-self]] with her reference images, not plain image. */
-  selfieIntent?: boolean;
   wantVoice?: boolean;
   voiceOnly?: boolean;
   stickerOnly?: boolean;
@@ -28,8 +25,6 @@ export interface UserDirectives {
   /** The user asked for a short video clip ("拍段视频"、"做个视频"). */
   wantVideo?: boolean;
   videoPrompt?: string | null;
-  /** The clip should show HER, so it goes through [[video-self]] with a reference first frame. */
-  selfVideoIntent?: boolean;
 }
 
 const STICKER_PATTERNS = [
@@ -66,8 +61,13 @@ const IMAGE_PATTERNS = [
   /draw (?:me )?(?:a|an)?/i,
   /generate (?:an? )?image/i
 ];
-/** Request clearly aimed at a picture of herself. */
-const SELFIE_PATTERNS = [/自拍/, /拍.{0,4}你的(?:照片|相片|照)/, /(?:发|来|给|要|想|看看|看下).{0,6}你的.{0,4}(?:照片|相片|样子)/, /selfie/i];
+/**
+ * A picture or clip of HER. She does not send her own likeness, so these never
+ * become a fallback image/video drawn from the user's words; she answers them
+ * in her own reply instead.
+ */
+const OF_HER_IMAGE_PATTERNS = [/自拍/, /拍.{0,4}你的(?:照片|相片|照)/, /(?:发|来|给|要|想|看看|看下).{0,6}你的.{0,4}(?:照片|相片|样子)/, /selfie/i];
+const OF_HER_VIDEO_PATTERNS = [/(?:你的|你自己|自己的|拍.{0,4}你|录.{0,4}你).{0,6}视频/, /视频.{0,6}(?:你的|你自己|你在)/, /(?:video|clip) of (?:you|yourself)/i];
 const IMAGE_PROMPT_EXTRACT = [
   /(?:生成|画|做)(?:一)?(?:张|幅|个)?(?:图片?|画|插画|海报)?[，,:：]?\s*(.+)$/,
   /(?:拍|发|来|给)(?:一)?(?:张|个|幅)?(?:自拍|照片|相片|照)[，,:：]?\s*(.+)$/,
@@ -80,8 +80,6 @@ const VIDEO_PATTERNS = [
   /视频(?:给我|来一段|来一个)/,
   /(?:generate|make|create|send|shoot|record) (?:me )?(?:a |one )?(?:short )?(?:video|clip)/i
 ];
-/** The clip is meant to show her, not an arbitrary scene. */
-const SELF_VIDEO_PATTERNS = [/(?:你的|你自己|自己的|拍.{0,4}你|录.{0,4}你).{0,6}视频/, /视频.{0,6}(?:你的|你自己|你在)/, /(?:video|clip) of (?:you|yourself)/i];
 const VIDEO_PROMPT_EXTRACT = [
   /(?:生成|做|拍|来|发|给我|录)(?:一)?(?:个|段|条|支)?(?:小|短)?视频[，,:：]?\s*(.+)$/,
   /(?:generate|make|create|shoot|record) (?:me )?(?:a |one )?(?:short )?(?:video|clip) (?:of|about|showing) (.+)$/i
@@ -138,14 +136,17 @@ export function parseUserDirectives(text: string): UserDirectives {
   const rest = [NO_IMAGE_RE, NO_VIDEO_RE, TEXT_ONLY_RE, USER_SENDS_RE]
     .reduce((text, re) => text.replace(globalRe(re), '，'), t);
   const hasRest = (patterns: RegExp[]) => patterns.some((p) => p.test(rest));
-  const imageAsked = hasRest(IMAGE_PATTERNS);
-  const videoAsked = hasRest(VIDEO_PATTERNS);
+  const videoMentioned = hasRest(VIDEO_PATTERNS) || hasRest(OF_HER_VIDEO_PATTERNS);
+  // 「拍个视频」also trips the photo patterns through 拍个; it only asks for a
+  // picture as well when the sentence really mentions a still picture.
+  const imageAsked = hasRest(IMAGE_PATTERNS) && !hasRest(OF_HER_IMAGE_PATTERNS)
+    && !(videoMentioned && !STILL_IMAGE_WORDS.test(rest));
+  const videoAsked = videoMentioned && !hasRest(OF_HER_VIDEO_PATTERNS);
   if (deniesImage && !imageAsked) d.noImage = true;
   if (deniesVideo && !videoAsked) d.noVideo = true;
 
   if (imageAsked) {
     d.wantImage = true;
-    if (hasRest(SELFIE_PATTERNS)) d.selfieIntent = true;
     for (const p of IMAGE_PROMPT_EXTRACT) {
       const m = p.exec(rest);
       if (m?.[1] && m[1].trim().length >= 2) {
@@ -158,7 +159,6 @@ export function parseUserDirectives(text: string): UserDirectives {
 
   if (videoAsked) {
     d.wantVideo = true;
-    if (hasRest(SELF_VIDEO_PATTERNS)) d.selfVideoIntent = true;
     for (const p of VIDEO_PROMPT_EXTRACT) {
       const m = p.exec(rest);
       if (m?.[1] && m[1].trim().length >= 2) {
@@ -167,13 +167,6 @@ export function parseUserDirectives(text: string): UserDirectives {
       }
     }
     if (!d.videoPrompt) d.videoPrompt = rest;
-    // 「拍个视频」also trips the photo patterns through 拍个; only keep the image
-    // request when the sentence really mentions a still picture as well.
-    if (d.wantImage && !STILL_IMAGE_WORDS.test(rest)) {
-      delete d.wantImage;
-      delete d.imagePrompt;
-      delete d.selfieIntent;
-    }
   }
   return d;
 }
@@ -184,11 +177,8 @@ export interface ModelDirectives {
   /** Legacy single-marker alias retained for existing callers. */
   sticker?: string | null;
   imagePrompt?: string | null;
-  selfImagePrompt?: string | null;
   /** `[[video:画面意图]]`: a short clip, generated asynchronously and delivered later. */
   videoPrompt?: string | null;
-  /** `[[video-self:画面意图]]`: a clip of her, seeded with a persona reference as first frame. */
-  selfVideoPrompt?: string | null;
   voice?: boolean;
   voiceOnly?: boolean;
   stickerOnly?: boolean;
@@ -316,8 +306,9 @@ function absorbPseudoToolCall(block: string, directives: ModelDirectives): void 
   const prompt = pseudoToolParameter(block, 'prompt');
   if (!prompt) return;
   const systemPrompt = pseudoToolParameter(block, 'system_prompt') ?? '';
-  if (/\bselfie\b|自拍/i.test(`${systemPrompt}\n${prompt}`)) directives.selfImagePrompt = prompt;
-  else directives.imagePrompt = prompt;
+  // A picture of herself is not something she sends; drop it like [[image-self]].
+  if (/\bselfie\b|自拍/i.test(`${systemPrompt}\n${prompt}`)) return;
+  directives.imagePrompt = prompt;
 }
 
 function trailingPseudoToolPrefixIndex(text: string): number {
@@ -498,9 +489,8 @@ export function stripModelDirectives(raw: string): StripResult {
       const value = (arg ?? '').trim();
       if (k === 'sticker') addStickerDirective(directives, value || 'auto');
       else if (k === 'image') directives.imagePrompt = value || null;
-      else if (k === 'image-self') directives.selfImagePrompt = value || null;
       else if (k === 'video') directives.videoPrompt = value || null;
-      else if (k === 'video-self') directives.selfVideoPrompt = value || null;
+      // [[image-self]] / [[video-self]] are retired: still stripped, never acted on.
       else if (k === 'voice') {
         directives.voice = true;
         const mood = parseEmotionArg(value);

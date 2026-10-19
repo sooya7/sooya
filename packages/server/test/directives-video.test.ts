@@ -5,16 +5,14 @@ describe('video model directives', () => {
   it('parses [[video:...]] into videoPrompt and strips it from the visible text', () => {
     const r = stripModelDirectives('好，等我几分钟拍一段给你[[video:海边日落，海浪缓缓涌上沙滩]]');
     expect(r.directives.videoPrompt).toBe('海边日落，海浪缓缓涌上沙滩');
-    expect(r.directives.selfVideoPrompt).toBeUndefined();
     expect(r.directives.imagePrompt).toBeUndefined();
     expect(r.text).toBe('好，等我几分钟拍一段给你');
   });
 
-  it('keeps video-self separate from video and from image-self', () => {
+  it('strips a retired [[video-self:...]] marker without asking for a clip', () => {
     const r = stripModelDirectives('[[video-self:我在窗边对你挥手]]');
-    expect(r.directives.selfVideoPrompt).toBe('我在窗边对你挥手');
     expect(r.directives.videoPrompt).toBeUndefined();
-    expect(r.directives.selfImagePrompt).toBeUndefined();
+    expect(r.directives.imagePrompt).toBeUndefined();
     expect(r.text).toBe('');
   });
 
@@ -40,10 +38,10 @@ describe('video user directives', () => {
     expect(d.imagePrompt).toBeUndefined();
   });
 
-  it('flags a clip of her as a self video', () => {
+  it('leaves a clip of her to her own reply instead of a fallback clip', () => {
     const d = parseUserDirectives('录一段你自己的视频给我');
-    expect(d.wantVideo).toBe(true);
-    expect(d.selfVideoIntent).toBe(true);
+    expect(d.wantVideo).toBeUndefined();
+    expect(d.wantImage).toBeUndefined();
   });
 
   it('keeps an explicit photo request alongside a video request', () => {

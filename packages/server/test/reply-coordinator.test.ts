@@ -37,7 +37,6 @@ function textResult(overrides: Partial<TextGenerationResult> = {}): TextGenerati
       stickerOnly: false,
       forceDifferent: false,
       imagePrompt: null,
-      selfImagePrompt: null,
       voice: false,
       voiceOnly: false
     },
