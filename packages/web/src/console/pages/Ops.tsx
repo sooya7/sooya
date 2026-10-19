@@ -14,7 +14,6 @@ import './Ops.css';
 
 const CAPABILITIES: Record<string, string> = {
   chat: '聊天', vision: '看图', summary: '对话总结', director: '媒体导演（表情、语音、出图提示）', embedding: '记忆向量',
-  rerank: '记忆重排', image: '生图', video: '生成视频', tts: '语音合成', webSearch: '联网搜索', decision: '行为决策',
   weather: '天气', mcp: '工具', qq: 'QQ'
 };
 

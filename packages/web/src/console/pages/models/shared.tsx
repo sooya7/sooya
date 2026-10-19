@@ -4,9 +4,9 @@ import { MODEL_SLOTS, type ModelSlot } from '../../../lib/modelPresets.js';
 import { Input, type Tone } from '../../ui.js';
 
 export type Rec = Record<string, unknown>;
-export type Selection = ModelSlot | 'webSearch' | 'decision' | 'library';
+export type Selection = ModelSlot | 'webSearch' | 'library';
 
-export const SELECTIONS: Selection[] = [...MODEL_SLOTS, 'webSearch', 'decision', 'library'];
+export const SELECTIONS: Selection[] = [...MODEL_SLOTS, 'webSearch', 'library'];
 
 /** Names used everywhere on this page, so the list, the editor and the library agree. */
 export const SLOT_NAMES: Record<ModelSlot, string> = {
@@ -86,12 +86,6 @@ export function webSearchStatus(config: AdminWebSearchConfig | undefined): SlotS
   const names = config.providers.map((p) => WEB_SEARCH_NAMES[p] ?? p).join('、');
   if (missing.length === config.providers.length) return { tone: 'warn', text: `${names}，都缺少密钥` };
   return { tone: missing.length ? 'warn' : 'ok', text: missing.length ? `${names}，部分缺少密钥` : names };
-}
-
-export function decisionStatus(config: Rec | undefined): SlotStatus {
-  if (!config?.enabled) return { tone: 'off', text: '已关闭' };
-  if (config.apiKeyConfigured !== true) return { tone: 'warn', text: '已开启，缺少密钥' };
-  return { tone: 'ok', text: str(config.model) || '已开启' };
 }
 
 /** Drops server-only status fields before a config goes back to the server. */
