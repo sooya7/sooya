@@ -69,6 +69,7 @@ import { ThoughtPresenter } from './core/thoughts/presenter.js';
 import { ThoughtSafetyFilter } from './core/thoughts/safety.js';
 import { readThoughtsFlags } from './core/thoughts/flags.js';
 import { KNOWLEDGE_SAVE_JOB, registerFileJobs, setupFilesAndLinks } from './core/files/wiring.js';
+import { mediaWiring } from './core/media-tools/wiring.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
 import { MomentRepo } from './db/repos/moment.repo.js';
@@ -97,7 +98,7 @@ import { FutureService } from './core/future/service.js';
 import { FutureContextService } from './core/future/context.js';
 import { BackupService } from './backup/service.js';
 import { AgentRegistry, CapabilityRegistryStub, ToolRegistry } from './agent/registry.js';
-import { ToolCallRuntime } from './agent/tool-runtime.js';
+import { ToolCallRuntime, toolRuntimeFromEnv } from './agent/tool-runtime.js';
 import { ToolPolicy } from './agent/tool-policy.js';
 import { loadMcpConfig } from './mcp/config.js';
 import { McpManager } from './mcp/manager.js';
@@ -353,14 +354,11 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     fetchImpl,
     tavily: () => config.getModels().webSearch.tavily
   });
-  const toolRuntime = new ToolCallRuntime({
+  const toolRuntime = toolRuntimeFromEnv({
     registry: tools,
     policy: toolPolicy,
-    maxRounds: env.TOOL_MAX_ROUNDS,
-    maxCallsPerRound: env.TOOL_MAX_CALLS_PER_ROUND,
-    timeoutMs: env.TOOL_CALL_TIMEOUT_MS,
-    resultMaxBytes: env.TOOL_RESULT_MAX_BYTES,
-    totalResultMaxBytes: env.TOOL_TOTAL_RESULT_MAX_BYTES
+    env,
+    onFlattenedToolCall: mediaWiring.flattenedReport(repos.errors)
   });
   const memory = new MemoryService(repos.memories, capabilities, repos.errors, { disabled: env.DISABLE_MEMORY_PIPELINE, config });
   /*
@@ -594,6 +592,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     onLog: (level, msg, extra) => logger[level]({ ...extra }, msg)
   });
   const thoughtFlags = readThoughtsFlags(process.env);
+  const mediaTools = mediaWiring.setup({ tools, policy: toolPolicy, env, config, capabilities, video, voice: voiceService });
   const replier = new Replier({
     messages: repos.messages,
     media: mediaStore,
@@ -612,6 +611,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     voice: voiceService,
     voiceV2Enabled: env.VOICE_V2_ENABLED,
     replyReasoningEffort: thoughtFlags.replyEffort,
+    mediaIntents: mediaTools.stage,
     files: filesWiring.files && {
       publish: (batchId, revision) => filesWiring.files!.publish(batchId, revision),
       onKnowledgeSave: (file) => { repos.jobs.enqueue(KNOWLEDGE_SAVE_JOB, { name: file.name, mediaId: file.mediaId }); }
