@@ -52,11 +52,26 @@ export interface QqDeliveryDeps {
   thoughts?: {
     waitMs: number;
     settledUserThought: (messageId: string, waitMs: number, signal?: AbortSignal) => Promise<string | null>;
+    /** 'markdown'：引用块 + 斜体，一眼和她说出口的话分开；发不出时退回纯文字。 */
+    style?: 'markdown' | 'text';
   } | null;
 }
 
 /** 想法气泡的前缀，跟她说出口的话区分开。 */
 export const THOUGHT_BUBBLE_PREFIX = '💭 ';
+
+const FULL_WIDTH: Record<string, string> = { '\\': '＼', '`': '｀', '*': '＊', '_': '＿', '~': '～', '#': '＃', '>': '＞', '[': '［', ']': '］', '|': '｜' };
+
+/** 想法的 markdown 样式：引用块里的斜体（不加 💭，格式本身就和她说出口的话分开了）。正文里的 markdown 符号换成全角，免得打乱格式（QQ 不一定认反斜杠转义）。 */
+export function thoughtMarkdown(text: string): string {
+  const lines = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trim().replace(/[\\`*_~#>[\]|]/g, (ch) => FULL_WIDTH[ch] ?? ch))
+    .filter(Boolean);
+  if (lines.length === 0) return '';
+  return lines.map((line) => `> *${line}*`).join('\n>\n');
+}
 
 export class QqDeliveryService {
   constructor(private readonly deps: QqDeliveryDeps) {}
@@ -129,7 +144,7 @@ export class QqDeliveryService {
     const startedAt = Date.now();
     try {
       if (thoughtText) {
-        const sent = await this.deps.client.sendC2cTextMessage({ openid, content: `${THOUGHT_BUBBLE_PREFIX}${thoughtText}`, msgId, msgSeq, signal: input.signal });
+        const sent = await this.sendThought(thoughtText, openid, msgId, msgSeq, input.signal);
         lastRemoteMessageId = sent.messageId || lastRemoteMessageId;
         this.deps.deliveries.markStepCompleted(row.id, 'thought', sent.messageId || null);
         completed.add('thought');
@@ -169,6 +184,23 @@ export class QqDeliveryService {
       return 'sent';
     } catch (error) {
       return this.classifyFailure(error, claimedRow, input.messageId, input.traceId);
+    }
+  }
+
+  private async sendThought(text: string, openid: string, msgId: string | null, msgSeq: number, signal?: AbortSignal): Promise<{ messageId: string }> {
+    const plain = () => this.deps.client.sendC2cTextMessage({ openid, content: `${THOUGHT_BUBBLE_PREFIX}${text}`, msgId, msgSeq, signal });
+    if (this.deps.thoughts?.style !== 'markdown') return plain();
+    try {
+      return await this.deps.client.sendC2cMarkdownMessage({ openid, content: thoughtMarkdown(text), msgId, msgSeq, signal });
+    } catch (error) {
+      // 没有 markdown 权限、格式被拒之类的永久错误：这条改用纯文字，不让想法丢掉。
+      // 可重试的错误（网络、限流）照常交给外层重试。
+      if (!(error instanceof QqApiError) || error.retryable) throw error;
+      this.deps.errors.add('qq.thought', 'markdown_rejected', {
+        code: `err_${error.errCode ?? `http_${error.httpStatus}`}`,
+        summary: error.message.slice(0, 200)
+      });
+      return plain();
     }
   }
 

@@ -22,6 +22,8 @@ export interface ThoughtsFlags {
   reasoningEffort: 'low' | 'medium' | 'high';
   /** Also send the finished thought to QQ, ahead of the reply bubbles. */
   qqDelivery: boolean;
+  /** How the thought looks on QQ: a markdown quote (falls back to text) or plain text. */
+  qqStyle: 'markdown' | 'text';
   /** `reasoningEffort` when thoughts are actually on, else undefined (the reply request stays as before). */
   replyEffort?: 'low' | 'medium' | 'high';
 }
@@ -31,7 +33,8 @@ export const DEFAULT_THOUGHT_FLAGS: ThoughtsFlags = {
   innerMonologueEnabled: false,
   thoughtTimeoutMs: 8_000,
   reasoningEffort: 'low',
-  qqDelivery: false
+  qqDelivery: false,
+  qqStyle: 'markdown'
 };
 
 function boolish(value: string | undefined): boolean {
@@ -51,7 +54,8 @@ export function readThoughtsFlags(env: NodeJS.ProcessEnv): ThoughtsFlags {
     innerMonologueEnabled: boolish(env.VISIBLE_INNER_MONOLOGUE_ENABLED),
     thoughtTimeoutMs: intish(env.VISIBLE_THOUGHTS_TIMEOUT_MS, DEFAULT_THOUGHT_FLAGS.thoughtTimeoutMs),
     reasoningEffort: effortish(env.VISIBLE_THOUGHTS_REASONING_EFFORT),
-    qqDelivery: boolish(env.VISIBLE_THOUGHTS_QQ_ENABLED)
+    qqDelivery: boolish(env.VISIBLE_THOUGHTS_QQ_ENABLED),
+    qqStyle: env.VISIBLE_THOUGHTS_QQ_STYLE?.trim().toLowerCase() === 'text' ? 'text' : 'markdown'
   };
   return { ...flags, replyEffort: replyReasoningEffort(flags) };
 }

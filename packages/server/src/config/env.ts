@@ -264,7 +264,9 @@ const EnvSchema = z.object({
   /* reasoning_effort sent with the reply so the model's reasoning can be summarised. */
   VISIBLE_THOUGHTS_REASONING_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
   /* Also send the finished thought to QQ as the first bubble of the reply. */
-  VISIBLE_THOUGHTS_QQ_ENABLED: boolish(false)
+  VISIBLE_THOUGHTS_QQ_ENABLED: boolish(false),
+  /* How the thought looks on QQ: markdown (quote + italics, falls back to text) or text. */
+  VISIBLE_THOUGHTS_QQ_STYLE: z.enum(['markdown', 'text']).default('markdown')
 });
 
 export type RawEnv = z.infer<typeof EnvSchema>;
