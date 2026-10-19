@@ -1,6 +1,7 @@
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 
-export type McpTransport = 'streamable-http' | 'sse';
+/** `post-jsonrpc`: a bridge that answers one POSTed JSON-RPC message with one JSON reply (see post-client.ts). */
+export type McpTransport = 'streamable-http' | 'sse' | 'post-jsonrpc';
 export type McpAuth =
   | { type: 'none' }
   | { type: 'bearer-env'; env: string };
@@ -15,6 +16,8 @@ export interface McpToolPolicy {
    * `authorized` and `'reply'` in `phases`.
    */
   allowInReply?: boolean;
+  /** Longer call budget for this one tool (a restart, a shell command); capped like toolTimeoutMs. */
+  timeoutMs?: number;
 }
 
 export interface McpServerConfig {

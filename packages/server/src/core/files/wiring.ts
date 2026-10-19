@@ -1,5 +1,5 @@
 /**
- * Wires the file tools (file_write / file_edit / file_read), read_url and the
+ * Wires the file tools (file_write / file_edit / file_read), read_url, http_request and the
  * "save to knowledge" job into the app. Kept out of app.ts on purpose.
  */
 import type { ToolRegistry } from '../../agent/registry.js';
@@ -12,6 +12,7 @@ import type { JobWorker } from '../jobs.js';
 import { FileDraftService } from './drafts.js';
 import { fileTools } from './tools.js';
 import { LinkReader, readUrlTool } from '../links/reader.js';
+import { httpRequestTool, vaultSecretReader, type HttpRequestDeps } from '../links/http-request.js';
 
 /**
  * The knowledge vault tool a worth-keeping .md is written with (memory_commit
@@ -21,17 +22,20 @@ import { LinkReader, readUrlTool } from '../links/reader.js';
  */
 export const KNOWLEDGE_WRITE_MODEL_NAME = 'knowledge__knowledge_write';
 export const KNOWLEDGE_SAVE_JOB = 'files.knowledge_save';
+/** The vault tool http_request reads a key with; called by the host, never offered for the value. */
+export const SECRET_READ_MODEL_NAME = 'knowledge__secret_read';
 
 export interface FilesWiringInput {
   tools: ToolRegistry;
   policy: ToolPolicy;
   repos: { fileDrafts: FileDraftRepo; media: MediaRepo; errors: ErrorLogRepo; jobs: JobRepo };
   mediaStore: MediaStore;
-  flags: { filesEnabled: boolean; readUrlEnabled: boolean; retentionMs: number };
+  flags: { filesEnabled: boolean; readUrlEnabled: boolean; httpRequestEnabled?: boolean; retentionMs: number };
   directFetchImpl: typeof fetch;
   /** Proxy-aware fetch for third-party APIs (Tavily). */
   fetchImpl: typeof fetch;
   tavily: () => { baseUrl: string; apiKey: string } | null;
+  onHttpRequest?: HttpRequestDeps['onAudit'];
 }
 
 export interface FilesWiring {
@@ -62,6 +66,14 @@ export function setupFilesAndLinks(input: FilesWiringInput): FilesWiring {
       tavilyFetchImpl: input.fetchImpl,
       tavily: input.tavily
     })) as never);
+  }
+  if (input.flags.httpRequestEnabled) {
+    input.tools.register(httpRequestTool({
+      directFetchImpl: input.directFetchImpl,
+      proxyFetchImpl: input.fetchImpl,
+      readSecret: vaultSecretReader(() => input.tools.getByModelName(SECRET_READ_MODEL_NAME)),
+      ...(input.onHttpRequest ? { onAudit: input.onHttpRequest } : {})
+    }) as never);
   }
   return { files, knowledgeAvailable };
 }

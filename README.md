@@ -155,6 +155,8 @@ MCP Server 定义放在 `config/mcp.json`：
 
 **不要把 Token 写进 `mcp.json`。** `bearer-env` 只保存环境变量名，真实密钥放在 `.env` / systemd 环境中。
 
+`transport` 还可以是 `post-jsonrpc`：给「POST 一条 JSON-RPC、回一条 JSON」的简易桥（如 srv-mcp-bridge）用，只发请求、从不发通知。`toolPolicy` 里单个工具可以写 `timeoutMs`（上限 120000）放宽这一个工具的超时，比如重启和命令执行。名为 `srv` 的 server 会在宿主侧套一层保护：不能重启 / 结束 sooya 自己和她用的通道，日志最多 200 行，每条 `run_command` 记到 `logs/ops-commands.log`。
+
 运行时可以用 `MCP_CONFIG_PATH` 指向运维管理的配置文件；生产 release 布局会优先使用 `shared/config` 中的持久化配置。
 
 ### 🛠️ 管理中心

@@ -1,7 +1,7 @@
 import { McpConnection, type McpConnectionOptions } from './connection.js';
 import { bridgeMcpTools } from './tool-bridge.js';
 import { resolveMcpAuth } from './auth.js';
-import type { ToolRegistry } from '../agent/registry.js';
+import type { ToolDescriptor, ToolRegistry } from '../agent/registry.js';
 import type { McpClientFactory, McpConnectionSnapshot, McpServerConfig, McpToolCallResult } from './types.js';
 
 export interface McpManagerOptions extends McpConnectionOptions {
@@ -9,6 +9,8 @@ export interface McpManagerOptions extends McpConnectionOptions {
   registry: ToolRegistry;
   clientFactory?: McpClientFactory;
   onEvent?: (event: { serverId: string; event: string; detail?: string }) => void;
+  /** Host-side wrapping of a server's bridged tools (guards, audit, descriptions) before they are registered. */
+  decorate?: (serverId: string, tools: ToolDescriptor[]) => ToolDescriptor[];
 }
 
 export class McpManager {
@@ -125,7 +127,8 @@ export class McpManager {
       connection.tools(),
       (remoteName, args, signal) => this.callTool(connection.config.id, remoteName, args, signal)
     );
-    this.options.registry.replaceSource(connection.config.id, descriptors);
+    const decorated = this.options.decorate ? this.options.decorate(connection.config.id, descriptors) : descriptors;
+    this.options.registry.replaceSource(connection.config.id, decorated);
   }
 
   private async reconnect(serverId: string): Promise<void> {

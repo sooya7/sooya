@@ -209,7 +209,8 @@ export class ToolCallRuntime {
     const controller = new AbortController();
     const onAbort = () => controller.abort(context.signal?.reason);
     context.signal?.addEventListener('abort', onAbort, { once: true });
-    const timer = setTimeout(() => controller.abort(new ToolTimeoutError(`tool timed out after ${this.timeoutMs}ms`)), this.timeoutMs);
+    const timeoutMs = tool.timeoutMs ?? this.timeoutMs;
+    const timer = setTimeout(() => controller.abort(new ToolTimeoutError(`tool timed out after ${timeoutMs}ms`)), timeoutMs);
     try {
       const value = await tool.handler(call.arguments, { ...context, signal: controller.signal });
       const remaining = Math.max(256, this.totalResultMaxBytes - totalBytes);

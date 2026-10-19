@@ -26,6 +26,7 @@ export function bridgeMcpTools(
       phases: policy.phases,
       authorized: policy.authorized,
       ...(policy.allowInReply === true ? { allowInReply: true } : {}),
+      ...(policy.timeoutMs ? { timeoutMs: policy.timeoutMs } : {}),
       handler: async (input: unknown, context) => wrapMcpResult(await callTool(remote.name, asObject(input), context?.signal))
     };
   });
