@@ -810,9 +810,10 @@ export class Replier {
             });
           }
 
-          if (!editingUserImage && this.deps.capabilities.has('director')) {
-            const expanded = await this.deps.mediaDirector.image({
+          if (!editingUserImage) {
+            const expanded = this.deps.mediaDirector.image({
               scene: imagePrompt.slice(0, 400),
+              self: Boolean(plan.selfImagePrompt),
               intent: plan.selfImagePrompt ? 'selfie' : 'private snapshot'
             }, {
               signal,
@@ -1282,8 +1283,8 @@ export class Replier {
             visualTime: generated.visualTime
           })
         : null;
-      if (this.deps.capabilities.has('director')) {
-        const expanded = await this.deps.mediaDirector.video(
+      {
+        const expanded = this.deps.mediaDirector.video(
           { scene: intent.slice(0, 400), self: selfie, intent: selfie ? 'a short clip of Sooya herself' : 'a short private clip for the user' },
           {
             signal,

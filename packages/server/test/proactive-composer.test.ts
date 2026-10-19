@@ -227,29 +227,11 @@ describe('ProactiveComposer -> Moments', () => {
     const mediaContinuity = JSON.parse(media.meta_json).continuity;
     const attemptContinuity = harness.app.repos.proactive.list(1)[0]!.detail.continuity;
     const allChatRequests = JSON.stringify(harness.state.chatCalls.map((request) => request.body));
-    const directorRequest = harness.state.chatCalls[1]!.body as {
-      messages: Array<{ role: string; content: string }>;
-    };
-    const directorInput = directorRequest.messages.find((message) => message.role === 'user')!.content;
-    const directorContinuity = JSON.parse(directorInput.slice(directorInput.indexOf('{'))).continuity;
     const providerPrompt = JSON.stringify(harness.state.imageRequests[0]!.body);
 
     expect(allChatRequests).toContain('2026-07-31 18:30:00（evening）');
     expect(allChatRequests).toContain('那件小事发生在 2026-07-31 afternoon');
     expect(allChatRequests).toContain('要当成已经过去的事');
-    expect(directorContinuity).toMatchObject({
-      currentActivity: null,
-      currentLocation: null,
-      visualTime: {
-        mode: 'retrospective',
-        currentLocalDate: '2026-07-31',
-        currentLocalTime: '18:30:00',
-        currentDayPeriod: 'evening',
-        depictedLocalDate: '2026-07-31',
-        depictedDayPeriod: 'afternoon',
-        requestedDayPeriod: null
-      }
-    });
     expect(providerPrompt).toContain('Time mode: retrospective');
     expect(providerPrompt).toContain('Depicted local date: 2026-07-31');
     expect(providerPrompt).toContain('Depicted day period: afternoon');

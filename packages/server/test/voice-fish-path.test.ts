@@ -29,16 +29,14 @@ function cues(text: string): string[] {
 }
 
 describe('converged Fish path — one cue source, no double cue', () => {
-  it('ships director text with at most one whitelist cue and the director speed', async () => {
+  it('ships her text with at most one whitelist cue and the mood speed', async () => {
     harness = await createHarness({
       tts: 'ok',
       env: { ADMIN_API_TOKEN: 'admin-test-token' },
       chat: { script: [
         // Explicit user voice request → replace mode; the model marker carries
         // the real emotion + intensity from the main model.
-        ['我刚刚有点想你。[[voice:emotion=shy|intensity=0.6]]'],
-        ['{"text":"我刚刚有点想你。","speed":0.96}'],
-        ['我刚刚有点想你。']
+        ['我刚刚有点想你。[[voice:emotion=shy|intensity=0.6]]']
       ] }
     });
     const calls: Array<{ text: string; options: TTSOptions | undefined }> = [];
@@ -50,8 +48,8 @@ describe('converged Fish path — one cue source, no double cue', () => {
     // Exactly one cue — the FishCueRenderer's, never a second one on top.
     expect(cues(calls[0]!.text)).toEqual(['[slightly shy]']);
     expect(calls[0]!.text).toBe('[slightly shy] 我刚刚有点想你。');
-    // The Voice Director's speed wins the priority chain.
-    expect(calls[0]!.options?.speed).toBe(0.96);
+    // No rewrite any more: the pace comes from the mood table for the same cue.
+    expect(calls[0]!.options?.speed).toBe(0.99);
   });
 
   it('strips a stray cue from the director so the request still carries exactly one', async () => {
