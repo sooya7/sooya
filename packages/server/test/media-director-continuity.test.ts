@@ -1,95 +1,58 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatProvider, ChatRequest } from '../src/providers/types.js';
-import { DirectorClient } from '../src/core/director/client.js';
 import { MediaDirector } from '../src/core/mediaDirector.js';
-import { visualDayPeriodLighting } from '../src/core/visual-time.js';
+import { visualDayPeriodLighting, type VisualTimeContext } from '../src/core/visual-time.js';
 
-function directorWith(reply: string, requests: ChatRequest[] = []): MediaDirector {
-  const provider: ChatProvider = {
-    name: 'fake',
-    configured: true,
-    async complete(request) {
-      requests.push(request);
-      return { text: reply, usage: undefined };
-    },
-    async stream(_request, _onChunk) {
-      return { text: reply, usage: undefined };
-    },
-    async inspectHealth() {
-      return { capability: 'chat', configured: true, ok: true, provider: 'fake', checkedAt: new Date().toISOString() };
-    }
-  };
-  return new MediaDirector(new DirectorClient(() => provider));
-}
+const visualTime: VisualTimeContext = {
+  timeZone: 'Asia/Shanghai',
+  currentInstant: '2026-08-22T04:00:00.000Z',
+  currentLocalDate: '2026-08-22',
+  currentLocalTime: '12:00:00',
+  currentDayPeriod: 'midday',
+  mode: 'current',
+  depictedLocalDate: '2026-08-22',
+  depictedDayPeriod: 'midday',
+  requestedDayPeriod: null
+};
 
-describe('MediaDirector image continuity protocol', () => {
-  it('passes continuity as data and returns a canonical outfit', async () => {
-    const requests: ChatRequest[] = [];
-    const director = directorWith(JSON.stringify({
-      prompt: 'A natural phone selfie beside the library window with realistic light.',
-      aspectRatio: '3:4',
-      outfit: '黑色轻便休闲外套、浅色内搭、深色长裤和白色休闲鞋'
-    }), requests);
-
-    const result = await director.image({ scene: '图书馆窗边自拍', intent: 'selfie' }, {
+describe('image continuity constraints', () => {
+  it('carries the reality facts and keeps a locked outfit for a picture of her', () => {
+    const outfit = '黑色轻便休闲外套、浅色内搭、深色长裤和白色休闲鞋';
+    const result = new MediaDirector().image({ scene: '图书馆窗边自拍', intent: 'selfie', self: true }, {
       continuity: {
         dateKey: '2026-08-22',
         currentActivity: '在图书馆看小说',
         currentLocation: '市图书馆',
-        previousOutfit: '黑色轻便休闲外套、浅色内搭、深色长裤和白色休闲鞋',
+        previousOutfit: outfit,
         outfitMode: 'locked',
         changeReason: null,
-        visualTime: {
-          timeZone: 'Asia/Shanghai',
-          currentInstant: '2026-08-22T04:00:00.000Z',
-          currentLocalDate: '2026-08-22',
-          currentLocalTime: '12:00:00',
-          currentDayPeriod: 'midday',
-          mode: 'current',
-          depictedLocalDate: '2026-08-22',
-          depictedDayPeriod: 'midday',
-          requestedDayPeriod: null
-        }
+        visualTime
       }
     });
 
-    expect(result.outfit).toBe('黑色轻便休闲外套、浅色内搭、深色长裤和白色休闲鞋');
-    const input = requests[0]!.messages[0]!.content[0];
-    expect(input.type).toBe('text');
-    expect(input.type === 'text' ? input.text : '').toContain('"outfitMode": "locked"');
-    expect(input.type === 'text' ? input.text : '').toContain('在图书馆看小说');
-    expect(input.type === 'text' ? input.text : '').toContain('"currentDayPeriod": "midday"');
+    expect(result.outfit).toBe(outfit);
+    expect(result.prompt).toContain('图书馆窗边自拍');
+    expect(result.prompt).toContain('Real current activity: 在图书馆看小说');
+    expect(result.prompt).toContain('Real current location: 市图书馆');
+    expect(result.prompt).toContain(`Same-day outfit: ${outfit}`);
+    expect(result.prompt).toContain('Keep every garment, color, material, and layer exactly unchanged');
+    expect(result.prompt).toContain('Real current local time: 2026-08-22 12:00:00');
+    expect(result.prompt).toContain(visualDayPeriodLighting('midday'));
   });
 
-  it('keeps the previous outfit in the fallback when the director returns invalid output', async () => {
-    const previousOutfit = '黑色外套、白色上衣、深色长裤和白色休闲鞋';
-    const director = directorWith('not valid director json');
-    const result = await director.image({ scene: '咖啡店自拍', action: '喝咖啡' }, {
+  it('leaves the outfit out of a plain scene picture', () => {
+    const result = new MediaDirector().image({ scene: '图书馆窗边', action: '喝咖啡' }, {
       continuity: {
         currentActivity: '喝咖啡',
         currentLocation: '街角咖啡店',
-        previousOutfit,
+        previousOutfit: '黑色外套、白色上衣、深色长裤和白色休闲鞋',
         outfitMode: 'locked',
-        visualTime: {
-          timeZone: 'Asia/Shanghai',
-          currentInstant: '2026-08-22T04:00:00.000Z',
-          currentLocalDate: '2026-08-22',
-          currentLocalTime: '12:00:00',
-          currentDayPeriod: 'midday',
-          mode: 'current',
-          depictedLocalDate: '2026-08-22',
-          depictedDayPeriod: 'midday',
-          requestedDayPeriod: null
-        }
+        visualTime
       }
     });
 
-    expect(result.outfit).toBe(previousOutfit);
-    expect(result.prompt).toContain(previousOutfit);
-    expect(result.prompt).toContain('Keep every garment, color, material, and layer exactly unchanged');
+    expect(result.outfit).toBeUndefined();
+    expect(result.prompt).not.toContain('Same-day outfit');
+    expect(result.prompt).toContain('Action: 喝咖啡.');
     expect(result.prompt).toContain('Real current activity: 喝咖啡');
-    expect(result.prompt).toContain('Real current location: 街角咖啡店');
-    expect(result.prompt).toContain('Real current local time: 2026-08-22 12:00:00');
-    expect(result.prompt).toContain(visualDayPeriodLighting('midday'));
   });
 });

@@ -22,10 +22,6 @@ async function sendSelfie(h: Harness, clientMsgId: string, text: string) {
   return response.json();
 }
 
-function directorReply(prompt: string, outfit: string): string {
-  return JSON.stringify({ prompt, aspectRatio: '3:4', outfit });
-}
-
 function stageCandidate(h: Harness): void {
   const oldUser = h.app.repos.messages.create({
     role: 'user',
@@ -66,9 +62,7 @@ describe('daily visual continuity integration', () => {
       chat: {
         script: [
           ['给你看[[image-self:我在图书馆窗边看小说的自然自拍]]'],
-          [directorReply('Natural library-window phone selfie, wearing a black casual jacket and dark trousers.', baselineOutfit)],
           ['再来一张[[image-self:我换个角度坐在咖啡店窗边的自拍]]'],
-          [directorReply('A cafe selfie in a bright blue dress and red heels.', '亮蓝色连衣裙和红色高跟鞋')]
         ]
       }
     });
@@ -115,7 +109,6 @@ describe('daily visual continuity integration', () => {
       chat: {
         script: [
           ['试试看[[image-self:我在窗边的自拍]]'],
-          [directorReply('Natural window selfie in soft daylight.', baselineOutfit)]
         ]
       }
     });
@@ -134,7 +127,6 @@ describe('daily visual continuity integration', () => {
       chat: {
         script: [
           ['再给你一张[[image-self:晚上在家，借着落地灯暖光看书]]'],
-          [directorReply('At night at home, reading under a warm floor lamp.', baselineOutfit)]
         ]
       }
     });
@@ -174,7 +166,6 @@ describe('daily visual continuity integration', () => {
       chat: {
         script: [
           ['好呀，现在拍给你。[[image-self:晚上在家穿着家居服准备睡觉]]'],
-          [directorReply('At night at home, getting ready to sleep.', '宽松浅色家居上衣、深色柔软家居长裤和室内拖鞋')]
         ]
       }
     });
@@ -193,18 +184,12 @@ describe('daily visual continuity integration', () => {
     const text = body.reply.content.find((part: any) => part.type === 'text')?.text;
     const image = body.reply.content.find((part: any) => part.type === 'image');
     const media = harness.app.repos.media.get(image.mediaId)!;
-    const directorBody = harness.state.chatCalls[1]!.body as {
-      messages: Array<{ role: string; content: string }>;
-    };
-    const directorInput = directorBody.messages.find((message) => message.role === 'user')!.content;
-    const directorContinuity = JSON.parse(directorInput.slice(directorInput.indexOf('{'))).continuity;
     const providerPrompt = JSON.stringify(harness.state.imageRequests[0]!.body);
     const messageContinuity = image.meta.continuity;
     const mediaContinuity = JSON.parse(media.meta_json).continuity;
 
     expect(text).toBe('现在还是中午，不过昨天倒是有一张这种。');
-    expect(directorContinuity).toMatchObject({ currentActivity: null, currentLocation: null });
-    expect(JSON.stringify(directorContinuity)).not.toContain('午睡一会儿');
+    expect(JSON.stringify(messageContinuity)).not.toContain('午睡一会儿');
     expect(providerPrompt).toContain('newly generated retrospective depiction');
     expect(providerPrompt).toContain('Depicted local date: 2026-08-25');
     expect(providerPrompt).toContain('Depicted day period: evening');
@@ -236,7 +221,6 @@ describe('daily visual continuity integration', () => {
       chat: {
         script: [
           ['换一张普通场景图[[image:晚上客厅里只亮着一盏落地灯]]'],
-          [directorReply('An empty living room at night under one warm floor lamp.', baselineOutfit)]
         ]
       }
     });
@@ -277,7 +261,6 @@ describe('daily visual continuity integration', () => {
       chat: {
         script: [
           ['好呀，现在做给你。[[image:晚上准备睡觉的安静卧室]]'],
-          [directorReply('A quiet bedroom at night, ready for sleep.', '宽松浅色家居服')]
         ]
       }
     });
@@ -329,12 +312,10 @@ describe('daily visual continuity integration', () => {
       chat: {
         script: [
           ['好呀[[image-self:我在琴房窗边的生活自拍]]'],
-          [directorReply('Natural selfie beside a piano-room window.', baselineOutfit)],
           [JSON.stringify({
             text: '公园那只橘猫今天格外黏人，踩着我的鞋不肯走。',
             image: { kind: 'lifestyle', scene: 'SOOYA 蹲在社区公园步道旁和橘猫玩' }
           })],
-          [directorReply('SOOYA crouching beside a park path playing with an orange cat, wearing a white dress.', '白色连衣裙和棕色短靴')]
         ]
       }
     });

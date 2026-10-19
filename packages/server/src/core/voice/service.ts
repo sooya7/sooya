@@ -10,6 +10,7 @@ import type { ChatMessage, StreamEventType } from '../types.js';
 import { HttpTimeoutError } from '../../util/http.js';
 import { abortableDelay, StaleGenerationError } from '../../util/abort.js';
 import { redactDiagnostic } from '../public-error.js';
+import { sanitizeFishText } from '../mediaDirector.js';
 import { DEFAULT_VOICE_EMOTIONS, resolveVoiceDelivery, type VoiceEmotionMap } from '../voice.js';
 import { planDelivery, deliveryToTTSOptions } from './delivery.js';
 import { fishCueForMood } from './fishCue.js';
@@ -19,7 +20,6 @@ import { normalizeVoiceText, ruleBasedColloquial } from './normalize.js';
 import { semanticRiskReport } from './semantic.js';
 import { decideVoiceMode } from './planner.js';
 import type { VoiceDecision } from './planner.js';
-import type { MediaDirector } from '../mediaDirector.js';
 import { DEFAULT_SPEECH_STYLE, stylePromptHints } from './style.js';
 import type { PersonaSpeechStyle } from './style.js';
 import type { UserVoicePreferences, VoiceMode, VoiceRequestedBy, VoiceScript, VoicePartMeta, VoiceDeliveryPlan } from './types.js';
@@ -36,13 +36,6 @@ export type { VoiceDeliveryPlan, UserVoicePreferences, VoiceMode, VoiceScript, V
 export { DEFAULT_VOICE_PREFERENCES } from './types.js';
 export { DEFAULT_SPEECH_STYLE, stylePromptHints } from './style.js';
 export type { PersonaSpeechStyle } from './style.js';
-
-const MODE_PROMPT: Record<VoiceMode, string> = {
-  replace: '语音承担完整回答，文字将不显示；要让对方只听语音就能完全明白。',
-  complement: '文字已经提供了主要信息，语音只补充更适合用声音表达的关心、态度或温度；不要复述文字内容。',
-  summary: '文字较长，语音用自然口语概括重点；保留主结论，不逐条念列表，不要省略关键提醒。',
-  read_aloud: '按原文朗读，不改语义。'
-};
 
 /** Feature switches resolved from env at wiring time (D4). */
 export interface VoiceFlags {
@@ -113,7 +106,6 @@ export class VoiceService {
       voice: VoiceGenerationRepo;
       batches: ReplyBatchRepo;
       capabilities: CapabilityRegistry;
-      mediaDirector: MediaDirector;
       config: ConfigStore;
       settings: SettingsRepo;
       bus: EventBus;
@@ -618,44 +610,23 @@ export class VoiceService {
     };
   }
 
+  /**
+   * The spoken script is the reply text itself. A small director model used to
+   * rewrite it (shorter, more spoken); that rewrote what she said, cost a
+   * request per voice message and needed three separate failure paths to keep
+   * the facts intact. FishCueRenderer below still adds the pacing cues.
+   */
   private async generateScript(
     text: string,
     mode: VoiceMode,
-    userText: string,
-    maxSeconds: number,
-    signal: AbortSignal,
-    attempt: number,
-    reportReasons?: string[],
-    intent?: { emotion?: string | null; intensity?: number | null }
+    _userText: string,
+    _maxSeconds: number,
+    _signal: AbortSignal,
+    _attempt = 0,
+    _reportReasons?: string[],
+    _intent?: { emotion?: string | null; intensity?: number | null }
   ): Promise<VoiceScript | null> {
-    const caps = this.deps.capabilities;
-    if (!caps.has('director')) return null;
-    if (attempt > 0) this.deps.metrics?.record('voice', 'script_rewrite');
-    const spokenBase = text.trim();
-    if (mode === 'read_aloud') {
-      return {
-        spokenText: spokenBase,
-        mode,
-        purpose: 'full_answer',
-        estimatedSeconds: estimateSpeechSeconds(spokenBase),
-        semanticClaims: [],
-        styleTags: ['read-aloud']
-      };
-    }
-
-    const result = await this.deps.mediaDirector.voice({
-      content: spokenBase,
-      emotion: intent?.emotion ?? undefined,
-      intensity: intent?.intensity ?? undefined
-    }, {
-      signal,
-      mode: MODE_PROMPT[mode],
-      userText,
-      maxSeconds,
-      styleHints: stylePromptHints(this.speechStyle),
-      reportReasons: attempt > 0 ? reportReasons : undefined
-    });
-    const spoken = result.text.trim();
+    const spoken = sanitizeFishText(text);
     if (!spoken) return null;
     return {
       spokenText: spoken,
@@ -663,8 +634,7 @@ export class VoiceService {
       purpose: mode === 'replace' ? 'full_answer' : mode === 'summary' ? 'short_summary' : 'emotional_support',
       estimatedSeconds: estimateSpeechSeconds(spoken),
       semanticClaims: [],
-      styleTags: [],
-      directorSpeed: result.speed !== 1 ? result.speed : undefined
+      styleTags: mode === 'read_aloud' ? ['read-aloud'] : ['verbatim']
     };
   }
 

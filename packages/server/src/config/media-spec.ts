@@ -30,10 +30,8 @@ export const MediaPromptSpecSchema = z.object({
   version: z.literal(1).default(1),
   image: z.object({
     style: StringList(24).default([
-      'realistic smartphone photography',
-      'candid daily-life moment',
       'soft natural lighting, warm tones',
-      'natural phone photography composition'
+      'natural composition, eye-level framing'
     ]),
     avoid: StringList(24).default([
       'plastic skin',
@@ -52,8 +50,6 @@ export const MediaPromptSpecSchema = z.object({
   }).default({}),
   video: z.object({
     style: StringList(24).default([
-      'realistic smartphone video',
-      'candid daily-life moment',
       'single continuous shot',
       'physically plausible motion and lighting'
     ]),

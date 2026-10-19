@@ -283,7 +283,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
   );
   // Expansion vocabulary is operator-editable (CONFIG_DIR/media-prompt-spec.json);
   // the director's hard rules stay in core/director/prompts.ts.
-  const mediaDirector = new MediaDirector(directorClient, () => mediaSpec.get());
+  const mediaDirector = new MediaDirector(() => mediaSpec.get());
   const stickerAnalyzer = new StickerAnalyzer(
     repos.stickers,
     mediaStore,
@@ -540,7 +540,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     voice: repos.voice,
     batches: repos.replyBatches,
     capabilities,
-    mediaDirector,
     config,
     settings: repos.settings,
     bus,

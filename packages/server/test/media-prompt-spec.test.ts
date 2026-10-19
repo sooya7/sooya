@@ -85,7 +85,7 @@ describe('media prompt spec store', () => {
 });
 
 describe('spec reaches the expansions', () => {
-  it('sends the edited vocabulary to the video director and uses it in the fallback', async () => {
+  it('uses the edited vocabulary in the composed clip prompt', () => {
     const dir = tmpConfig();
     const store = new MediaPromptSpecStore({ configDir: dir });
     fs.writeFileSync(path.join(dir, MEDIA_PROMPT_SPEC_FILE), JSON.stringify({
@@ -94,29 +94,18 @@ describe('spec reaches the expansions', () => {
     }));
     store.reload();
 
-    const seen: string[] = [];
-    const director = new MediaDirector(
-      new DirectorClient(() => recordingProvider(JSON.stringify({ prompt: 'a clip of the sea at dusk, static tripod', aspectRatio: '9:16', durationSec: 5 }), seen)),
-      () => store.get()
-    );
-    const result = await director.video({ scene: '海边黄昏' });
-    expect(seen[0]).toContain('grainy 8mm home video');
-    expect(seen[0]).toContain('slow motion');
-    expect(result.aspectRatio).toBe('9:16');
-
-    expect(fallbackVideoPrompt({ scene: '海边黄昏' }, store.get())).toContain('grainy 8mm home video');
-    expect(fallbackVideoPrompt({ scene: '海边黄昏' }, store.get())).toContain('static tripod');
-    expect(fallbackVideoPrompt({ scene: '海边黄昏' }, store.get())).toContain('Avoid: slow motion');
+    const result = new MediaDirector(() => store.get()).video({ scene: '海边黄昏' });
+    expect(result.prompt).toContain('海边黄昏');
+    expect(result.prompt).toContain('grainy 8mm home video');
+    expect(result.prompt).toContain('static tripod');
+    expect(result.prompt).toContain('Avoid: slow motion');
   });
 
-  it('sends the scene suffix and negative list to the image director', async () => {
-    const seen: string[] = [];
-    const director = new MediaDirector(
-      new DirectorClient(() => recordingProvider(JSON.stringify({ prompt: 'a realistic candid photo of her by the window' }), seen))
-    );
-    await director.image({ scene: '窗边' }, { sceneKey: 'selfie' });
-    expect(seen[0]).toContain('selfie angle, close-up');
-    expect(seen[0]).toContain('over-smoothed retouching');
+  it('uses the scene suffix and the negative list in the composed image prompt', async () => {
+    const prompt = new MediaDirector().image({ scene: '窗边' }, { sceneKey: 'selfie' }).prompt;
+    expect(prompt).toContain('窗边');
+    expect(prompt).toContain('selfie angle, close-up');
+    expect(prompt).toContain('over-smoothed retouching');
   });
 });
 
