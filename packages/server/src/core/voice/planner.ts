@@ -2,10 +2,8 @@ import type { VoiceIntent, VoiceMode, VoiceRequestedBy } from './types.js';
 
 /**
  * Voice decision for an inline reply: whether it gets voice at all, and in
- * which mode. User intent always wins; otherwise her [[voice]] marker (or a
- * send_voice call, folded into the same marker) decides. Whether a marker she
- * wrote on her own is allowed through at all - auto frequency, daily cap - is
- * checked by the replier before this runs.
+ * which mode. User intent always wins; otherwise a send_voice call (folded
+ * into `modelVoice`) decides. Nothing else starts voice.
  */
 
 export interface VoiceDecision {
@@ -17,7 +15,7 @@ export interface VoiceDecision {
 
 export interface VoiceDecisionInput {
   userIntent: VoiceIntent;
-  /** The model's [[voice]]-family marker, already normalized. */
+  /** The send_voice mode, already normalized. */
   modelVoice?: 'replace' | 'complement' | 'summary' | 'read_aloud' | boolean | string | null;
   persona: {
     name: string;
@@ -25,7 +23,7 @@ export interface VoiceDecisionInput {
   };
   preferences: { enabled: boolean; autoVoiceFrequency: 'never' | 'rare' | 'sometimes'; preferredModes: VoiceMode[]; maxVoiceSeconds: number };
   ttsConfigured: boolean;
-  /** VOICE_READ_ALOUD_ENABLED: when false read-aloud intents/markers are ignored. */
+  /** VOICE_READ_ALOUD_ENABLED: when false read-aloud intents/calls are ignored. */
   readAloudEnabled?: boolean;
 }
 
@@ -44,7 +42,7 @@ export function decideVoiceMode(input: VoiceDecisionInput): VoiceDecision {
     return { mode: 'read_aloud', requestedBy: 'user', emotion: null, reason: 'read_aloud' };
   }
 
-  // Model marker.
+  // send_voice.
   const mv = input.modelVoice;
   if (mv === 'replace') return { mode: 'replace', requestedBy: 'model', emotion: null, reason: 'model:replace' };
   if (mv === 'summary') return { mode: 'summary', requestedBy: 'model', emotion: null, reason: 'model:summary' };
@@ -57,7 +55,6 @@ export function decideVoiceMode(input: VoiceDecisionInput): VoiceDecision {
     return { mode: 'complement', requestedBy: 'model', emotion: null, reason: `model:${mv}` };
   }
 
-  // Nothing is volunteered beyond the marker: no user intent and no marker
-  // means no voice.
+  // No user intent and no send_voice call means no voice.
   return { mode: null, requestedBy: 'auto', emotion: null, reason: 'not_requested' };
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHarness, sendText, TEST_PNG, type Harness } from './helpers/harness.js';
 import type { ChatMessage } from '../src/core/types.js';
+import { image as imageCall, voice, withMediaTools } from './helpers/media-tools.js';
 
 let h: Harness;
 
@@ -317,7 +318,7 @@ describe('stickers', () => {
 
 describe('image replies', () => {
   it('generates and stores a real image file', async () => {
-    h = await createHarness({ image: 'ok', chat: { script: [['给你画好了[[image:一只戴帽子的猫]]']] } });
+    h = await createHarness(withMediaTools('给你画好了', [imageCall('一只戴帽子的猫')], { image: 'ok' }));
     const { body } = await sendText(h.app, '画只猫');
     const image = body.reply.content.find((p: any) => p.type === 'image');
     expect(image).toBeTruthy();
@@ -329,7 +330,7 @@ describe('image replies', () => {
   });
 
   it('degrades gracefully when image generation fails, keeping the text', async () => {
-    h = await createHarness({ image: 'fail', chat: { script: [['这就给你画[[image:小猫]]']] } });
+    h = await createHarness(withMediaTools('这就给你画', [imageCall('小猫')], { image: 'fail' }));
     const { body } = await sendText(h.app, '画只猫');
     const text = body.reply.content.find((p: any) => p.type === 'text');
     const image = body.reply.content.find((p: any) => p.type === 'image');
@@ -342,7 +343,7 @@ describe('image replies', () => {
   });
 
   it('explains itself when image generation is not configured', async () => {
-    h = await createHarness({ image: 'off', chat: { script: [['[[image:小猫]]']] } });
+    h = await createHarness({ image: 'off', chat: { script: [['好呀']] } });
     const { body } = await sendText(h.app, '生成一张图片：小猫');
     const image = body.reply.content.find((p: any) => p.type === 'image');
     expect(image.status).toBe('failed');
@@ -354,7 +355,7 @@ describe('image replies', () => {
 
 describe('voice replies', () => {
   it('produces a real audio file with a measured duration', async () => {
-    h = await createHarness({ tts: 'ok', chat: { script: [['晚安，好好休息[[voice]]']] } });
+    h = await createHarness(withMediaTools('晚安，好好休息', [voice()], { tts: 'ok' }));
     const { body } = await sendText(h.app, '用语音说晚安');
     const audio = body.reply.content.find((p: any) => p.type === 'audio');
     expect(audio.status).toBe('sent');
@@ -370,7 +371,7 @@ describe('voice replies', () => {
   });
 
   it('voice-only hides the text bubble but keeps the transcript', async () => {
-    h = await createHarness({ tts: 'ok', chat: { script: [['我很好，你呢[[voice-only]]']] } });
+    h = await createHarness(withMediaTools('我很好，你呢', [voice('voice_only')], { tts: 'ok' }));
     const { body } = await sendText(h.app, '只发语音');
     expect(partTypes(body.reply)).toEqual(['audio']);
     expect(body.reply.content[0].transcript).toContain('我很好');
@@ -381,7 +382,7 @@ describe('voice replies', () => {
     // mode the transcript is the user's only copy, so clipping it would delete
     // content permanently.
     const long = '这是一段很重要的长回复内容。'.repeat(40); // 560 chars > default 300
-    h = await createHarness({ tts: 'ok', chat: { script: [[`${long}[[voice-only]]`]] } });
+    h = await createHarness(withMediaTools(long, [voice('voice_only')], { tts: 'ok' }));
     const { body } = await sendText(h.app, '只发语音');
     // P0-2: replace never ships truncated audio. A script that cannot fit the
     // clip budget (after one compact rewrite) falls back to the FULL text.
@@ -393,7 +394,7 @@ describe('voice replies', () => {
 
   it('voice-only still hides the text bubble when the whole text fits in one clip', async () => {
     const short = '短短一句话。';
-    h = await createHarness({ tts: 'ok', chat: { script: [[`${short}[[voice-only]]`]] } });
+    h = await createHarness(withMediaTools(short, [voice('voice_only')], { tts: 'ok' }));
     const { body } = await sendText(h.app, '只发语音');
     expect(partTypes(body.reply)).toEqual(['audio']);
     const audio = body.reply.content[0];
@@ -403,14 +404,14 @@ describe('voice replies', () => {
 
   it('restores the full text, not the clip, when TTS fails in voice-only mode', async () => {
     const long = '必须完整保留的内容。'.repeat(40); // 400 chars > default 300
-    h = await createHarness({ tts: 'fail', chat: { script: [[`${long}[[voice-only]]`]] } });
+    h = await createHarness(withMediaTools(long, [voice('voice_only')], { tts: 'fail' }));
     const { body } = await sendText(h.app, '只发语音');
     const text = body.reply.content.find((p: any) => p.type === 'text' && p.status === 'sent');
     expect(text.text).toHaveLength(long.length);
   });
 
   it('falls back to text when TTS fails', async () => {
-    h = await createHarness({ tts: 'fail', chat: { script: [['这是要读出来的内容[[voice]]']] } });
+    h = await createHarness(withMediaTools('这是要读出来的内容', [voice()], { tts: 'fail' }));
     const { body } = await sendText(h.app, '用语音说');
     expect(partTypes(body.reply)).toEqual(['text']);
     const text = body.reply.content[0];
@@ -420,7 +421,7 @@ describe('voice replies', () => {
   });
 
   it('voice-only keeps the text when TTS fails (never a silent empty message)', async () => {
-    h = await createHarness({ tts: 'fail', chat: { script: [['重要内容[[voice-only]]']] } });
+    h = await createHarness(withMediaTools('重要内容', [voice('voice_only')], { tts: 'fail' }));
     const { body } = await sendText(h.app, '只发语音');
     const text = body.reply.content.find((p: any) => p.type === 'text' && p.status === 'sent');
     expect(text).toBeTruthy();
@@ -428,7 +429,7 @@ describe('voice replies', () => {
   });
 
   it('does not send voice when the user forbids it', async () => {
-    h = await createHarness({ tts: 'ok', chat: { script: [['好的[[voice]]']] } });
+    h = await createHarness(withMediaTools('好的', [voice()], { tts: 'ok' }));
     const { body } = await sendText(h.app, '不要发语音');
     expect(partTypes(body.reply)).not.toContain('audio');
     expect(h.state.ttsCalls).toBe(0);
@@ -437,11 +438,7 @@ describe('voice replies', () => {
 
 describe('combined multimedia replies', () => {
   it('sends text + sticker + image + audio in one message', async () => {
-    h = await createHarness({
-      image: 'ok',
-      tts: 'ok',
-      chat: { script: [['当然可以，都给你安排上[[sticker:开心]][[image:一片星空]][[voice]]']] }
-    });
+    h = await createHarness(withMediaTools('当然可以，都给你安排上[[sticker:开心]]', [imageCall('一片星空'), voice()], { image: 'ok', tts: 'ok' }));
     const { body } = await sendText(h.app, '给我发文字表情图片和语音');
     const types = partTypes(body.reply);
     expect(types).toContain('text');
@@ -602,11 +599,7 @@ describe('model failures', () => {
     const sensitive = 'sk-media-name https://media.example.test /opt/private/provider.ts';
     const providerError = new Error(`message ${sensitive}`);
     providerError.name = `MediaFailure ${sensitive}`;
-    h = await createHarness({
-      image: 'ok',
-      tts: 'ok',
-      chat: { script: [['安全回复[[image:cat]][[voice]]']] }
-    });
+    h = await createHarness(withMediaTools('安全回复', [imageCall('cat'), voice()], { image: 'ok', tts: 'ok' }));
     (h.app.services.capabilities.imageProvider() as any).generate = async () => {
       throw providerError;
     };

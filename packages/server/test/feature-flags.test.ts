@@ -36,7 +36,7 @@ describe('feature flag rollback (P1-1)', () => {
   });
 
   it('VOICE_V2_ENABLED=false keeps the legacy read-back voice path working', async () => {
-    harness = await createHarness({ tts: 'ok', env: { VOICE_V2_ENABLED: 'false' }, chat: { script: [['晚安[[voice]]']] } });
+    harness = await createHarness({ tts: 'ok', env: { VOICE_V2_ENABLED: 'false' }, chat: { script: [['晚安']] } });
     const { res, body } = await sendText(harness.app, '用语音说');
     expect(res.statusCode).toBe(200);
     const audio = body.reply?.content.find((p: { type: string }) => p.type === 'audio');

@@ -102,16 +102,16 @@ describe('user directive parsing', () => {
 });
 
 describe('model directive markers', () => {
-  it('strips markers and reports them', () => {
+  it('strips markers, reports stickers and ignores a retired media marker', () => {
     const r = stripModelDirectives('我在呢。[[sticker:开心]] 要不要聊聊？[[voice]]');
     expect(r.text).not.toContain('[[');
     expect(r.text).toContain('我在呢');
     expect(r.directives.sticker).toBe('开心');
-    expect(r.directives.voice).toBe(true);
+    expect(r.directives.voice).toBeUndefined();
   });
 
-  it('handles voice-only and sticker-only', () => {
-    expect(stripModelDirectives('晚安[[voice-only]]').directives.voiceOnly).toBe(true);
+  it('handles sticker-only', () => {
+    expect(stripModelDirectives('晚安[[voice-only]]').directives.voiceOnly).toBeUndefined();
     expect(stripModelDirectives('[[sticker-only:难过]]').directives.stickerOnly).toBe(true);
     expect(stripModelDirectives('[[sticker-only:难过]]').text).toBe('');
   });

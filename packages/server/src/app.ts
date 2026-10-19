@@ -546,7 +546,6 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     },
     metrics
   });
-  voiceService.dailyAutoCap = env.VOICE_DAILY_AUTO_CAP;
 
   const contextPipeline = createContextSourcePipeline({
     life: capabilityPolicy.proactive.lifeCandidates ? life : undefined,

@@ -122,7 +122,7 @@ curl http://127.0.0.1:8788/api/admin/video/generations/<taskId> -H "X-Admin-Toke
 
 创建请求的错误码：`400` 参数错误或参考图不合法；`404` `imageMediaId` 不存在；`429` 排队/生成中的任务已达上限（`maxActiveTasks`）；`503` 视频模型未配置。
 
-**聊天里的视频。** 配好视频模型后，主模型会被告知两个标记：`[[video:画面意图]]`（文生视频）与 `[[video-self:画面意图]]`（用形象参考图作首帧的图生视频）；用户明确说「拍个视频」时即使模型漏写标记也会兜底触发。回复文字先照常发出，视频任务在后台完成后会作为**一条新的 assistant 消息**发布（`meta.videoFollowUp = true`，`file` 类型分段，MIME `video/*`），并走同一条 `qq.deliver` 出站队列以 QQ 视频消息（file_type 2）投递；失败时改发一句说明文字。策略在人设的 `videoPolicy` 里：
+**聊天里的视频。** 配好视频模型后，回复可以调用 `send_video` 工具（参数只写画面意图，文生视频）；用户明确说「拍个视频」时即使模型没调用也会兜底触发。回复文字先照常发出，视频任务在后台完成后会作为**一条新的 assistant 消息**发布（`meta.videoFollowUp = true`，`file` 类型分段，MIME `video/*`），并走同一条 `qq.deliver` 出站队列以 QQ 视频消息（file_type 2）投递；失败时改发一句说明文字。策略在人设的 `videoPolicy` 里：
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |

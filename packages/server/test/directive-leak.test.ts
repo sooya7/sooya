@@ -7,82 +7,47 @@ import { stripModelDirectives, StreamingDirectiveFilter } from '../src/core/dire
  * Those used to reach the user as literal text.
  */
 describe('single-bracket directive markers', () => {
-  it('strips [voice] and requests voice', () => {
-    const { text, directives } = stripModelDirectives('晚安啦[voice]');
-    expect(text).toBe('晚安啦');
-    expect(directives.voice).toBe(true);
-  });
-
-  it('strips [voice:emotion=gentle] and ignores the unknown attribute', () => {
-    const { text, directives } = stripModelDirectives('我在呢[voice:emotion=gentle]');
-    expect(text).toBe('我在呢');
-    expect(directives.voice).toBe(true);
-  });
-
-  it('strips [voice-only] and marks the reply voice-only', () => {
-    const { text, directives } = stripModelDirectives('[voice-only]听我说');
-    expect(text).toBe('听我说');
-    expect(directives.voice).toBe(true);
-    expect(directives.voiceOnly).toBe(true);
-  });
-
   it('reads a sticker name from the single-bracket form', () => {
     const { text, directives } = stripModelDirectives('哈哈哈[sticker:开心]');
     expect(text).toBe('哈哈哈');
     expect(directives.sticker).toBe('开心');
   });
 
-  it('reads an image prompt from the single-bracket form', () => {
-    const { text, directives } = stripModelDirectives('看这个[image:窗台上睡着的猫]');
-    expect(text).toBe('看这个');
-    expect(directives.imagePrompt).toBe('窗台上睡着的猫');
-  });
-
-  it('strips a retired [[image-self:...]] marker without acting on it', () => {
-    const { text, directives } = stripModelDirectives('给你看看[[image-self:晚上窝在卧室床上看手机，有点困，穿着宽松的家居服]]');
-    expect(text).toBe('给你看看');
-    expect(directives.imagePrompt).toBeUndefined();
-    expect(directives.videoPrompt).toBeUndefined();
-  });
-
-  it('keeps [[image:...]] as a regular image intent', () => {
-    const { directives } = stripModelDirectives('[[image:咖啡店窗边下雨]]');
-    expect(directives.imagePrompt).toBe('咖啡店窗边下雨');
-  });
-
-  it('reads emotion and intensity from a voice marker', () => {
-    const { directives } = stripModelDirectives('[[voice:emotion=shy_warm|intensity=0.3]]');
-    expect(directives.voice).toBe(true);
-    expect(directives.voiceEmotion).toBe('shy_warm');
-    expect(directives.voiceIntensity).toBe(0.3);
-  });
-
-  it('clamps a voice intensity outside 0–1 and ignores malformed values', () => {
-    const high = stripModelDirectives('[[voice:emotion=happy|intensity=1.7]]');
-    expect(high.directives.voiceIntensity).toBe(1);
-    // Negative or malformed intensities are not parsed at all (undefined).
-    const negative = stripModelDirectives('[[voice:emotion=happy|intensity=-0.2]]');
-    expect(negative.directives.voiceIntensity).toBeUndefined();
-    const none = stripModelDirectives('[[voice:emotion=happy]]');
-    expect(none.directives.voiceIntensity).toBeUndefined();
-  });
-
-  it('strips Chinese aliases emitted by the model', () => {
+  it('strips Chinese sticker aliases emitted by the model', () => {
     const sticker = stripModelDirectives('\u5148\u966a\u4f60\u804a\u804a[\u8868\u60c5\u5305:\u59d4\u5c48\u5df4\u5df4]');
     expect(sticker.text).toBe('\u5148\u966a\u4f60\u804a\u804a');
     expect(sticker.directives.sticker).toBe('\u59d4\u5c48\u5df4\u5df4');
-
-    const image = stripModelDirectives('[\u56fe\u7247:\u4e00\u53ea\u5728\u7a97\u8fb9\u7761\u89c9\u7684\u67ef\u57fa]');
-    expect(image.text).toBe('');
-    expect(image.directives.imagePrompt).toBe('\u4e00\u53ea\u5728\u7a97\u8fb9\u7761\u89c9\u7684\u67ef\u57fa');
   });
+});
 
-  it('still handles a mismatched bracket count', () => {
-    const { text, directives } = stripModelDirectives('好的[[voice]');
-    expect(text).toBe('好的');
-    expect(directives.voice).toBe(true);
+/**
+ * Pictures, clips and voice go through the media tools. A media marker the
+ * model still writes out of habit, in any bracket count, alias or attribute
+ * form, is stripped from the visible text and does nothing.
+ */
+describe('retired media markers', () => {
+  it.each([
+    ['晚安啦[voice]', '晚安啦'],
+    ['我在呢[voice:emotion=gentle]', '我在呢'],
+    ['[voice-only]听我说', '听我说'],
+    ['好的[[voice]', '好的'],
+    ['[[voice:emotion=shy_warm|intensity=0.3]]', ''],
+    ['看这个[image:窗台上睡着的猫]', '看这个'],
+    ['[[image:咖啡店窗边下雨]]', ''],
+    ['[\u56fe\u7247:\u4e00\u53ea\u5728\u7a97\u8fb9\u7761\u89c9\u7684\u67ef\u57fa]', ''],
+    ['稍等[[video:海边日落]]', '稍等'],
+    ['稍等[视频:猫在追激光点]', '稍等'],
+    ['晚安[语音]', '晚安'],
+    ['给你看看[[image-self:晚上窝在卧室床上看手机]]', '给你看看'],
+    ['[[video-self:我在窗边对你挥手]]', '']
+  ])('strips %s and asks for nothing', (raw, visible) => {
+    const { text, directives } = stripModelDirectives(raw);
+    expect(text).toBe(visible);
+    expect(directives).toEqual({});
   });
+});
 
+describe('marker edge cases', () => {
   it('leaves ordinary bracketed text alone', () => {
     for (const raw of ['[笑]', '看注释[1]', '[备注: 明天再说]', '数组是 [a, b]']) {
       expect(stripModelDirectives(raw).text).toBe(raw);
@@ -97,7 +62,7 @@ describe('single-bracket directive markers', () => {
 describe('flattened pseudo tool calls', () => {
   const prompt = 'A young East Asian woman with long dark hair, wearing a loose cream/beige oversized sweater, lying comfortably on a beige sofa at night';
 
-  it('drops a leaked image_generation_tool selfie call', () => {
+  it('drops a leaked image_generation_tool call', () => {
     const raw = `对不起对不起 忘了这就补！ <tool_call>
 <function=image_generation_tool>
 <parameter=prompt>${prompt}</parameter>
@@ -110,11 +75,11 @@ describe('flattened pseudo tool calls', () => {
     expect(directives.imagePrompt).toBeUndefined();
   });
 
-  it('maps a generic image tool call to a normal image directive', () => {
+  it('drops a generic leaked image tool call too', () => {
     const raw = `<tool_call><function=image_generation_tool><parameter=prompt>雨夜的东京街口</parameter></function></tool_call>`;
     const { text, directives } = stripModelDirectives(raw);
     expect(text).toBe('');
-    expect(directives.imagePrompt).toBe('雨夜的东京街口');
+    expect(directives.imagePrompt).toBeUndefined();
   });
 
   it('strips unknown pseudo tools without executing them', () => {

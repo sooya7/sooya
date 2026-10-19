@@ -259,7 +259,7 @@ describe('FishCueRenderer whitelist', () => {
     expect(fishCueForMood('dramatic', { intensity: 0, fallbackSpeed: 1.03 }).speed).toBe(1.03);
   });
 
-  it('the alias cue is reachable with a raw emotion string ([[voice:emotion=shy]])', () => {
+  it('the alias cue is reachable with a raw emotion string (send_voice emotion=shy)', () => {
     expect(fishSpeedForMood('shy', { intensity: 1, moodAlias: 'shy' })).toBe(0.98);
     expect(renderFishSynthesisTextForMood('我其实有点想你', 'shy', { intensity: 0.6, moodAlias: 'shy' })).toBe('[slightly shy] 我其实有点想你');
     expect(renderFishSynthesisTextForMood('我其实有点想你', 'shy', { intensity: 0.2, moodAlias: 'shy' })).toBe('我其实有点想你');

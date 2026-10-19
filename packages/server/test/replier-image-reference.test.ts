@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, TEST_PNG, type Harness } from './helpers/harness.js';
+import { image as imageCall, withMediaTools } from './helpers/media-tools.js';
 
 let h: Harness;
 
@@ -17,7 +18,7 @@ async function uploadImage(filename: string): Promise<string> {
 
 describe('image reference reply orchestration', () => {
   it('uses edit for one reference image and persists its media id in generated metadata', async () => {
-    h = await createHarness({ image: 'ok', chat: { script: [['我来改一下[[image:保持主体，换成夜景]]']] } });
+    h = await createHarness(withMediaTools('我来改一下', [imageCall('保持主体，换成夜景')], { image: 'ok' }));
     const referenceId = await uploadImage('reference.png');
     const response = await h.app.server.inject({
       method: 'POST',
@@ -37,7 +38,7 @@ describe('image reference reply orchestration', () => {
   });
 
   it('rejects multiple reference images before calling the provider and keeps text', async () => {
-    h = await createHarness({ image: 'ok', chat: { script: [['我看到了，暂时不能同时处理[[image:合成]]']] } });
+    h = await createHarness(withMediaTools('我看到了，暂时不能同时处理', [imageCall('合成')], { image: 'ok' }));
     const first = await uploadImage('first.png');
     const second = await uploadImage('second.png');
     const response = await h.app.server.inject({

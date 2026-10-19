@@ -3,6 +3,7 @@ import { createHarness, TEST_MP4, type Harness, type HarnessOptions } from './he
 import { VIDEO_FAILED_TEXT } from '../src/core/video/follow-up.js';
 import { VIDEO_QUEUED_PLACEHOLDER_TEXT } from '../src/core/replier.js';
 import type { ChatMessage } from '../src/core/types.js';
+import { video, withMediaTools } from './helpers/media-tools.js';
 
 let h: Harness | null = null;
 afterEach(async () => {
@@ -12,6 +13,10 @@ afterEach(async () => {
 
 const boot = (script: string, opts: HarnessOptions = {}) =>
   createHarness({ video: 'ok', chat: { script: [[script]] }, ...opts });
+
+/** The reply says `text` and calls send_video with `intent`. */
+const bootClip = (text: string, intent: string, opts: HarnessOptions = {}) =>
+  createHarness(withMediaTools(text, [video(intent)], { video: 'ok', ...opts }));
 
 async function say(text: string, clientMsgId = `m-${Math.random().toString(36).slice(2, 8)}`) {
   const response = await h!.app.server.inject({
@@ -28,12 +33,12 @@ function followUps(): ChatMessage[] {
   return h!.app.repos.messages.recent(10).filter((message) => message.role === 'assistant' && message.meta?.videoFollowUp === true);
 }
 
-describe('[[video]] in a reply', () => {
+describe('send_video in a reply', () => {
   it('publishes the text now, queues the clip, and delivers it later as its own message', async () => {
-    h = await boot('好，等我几分钟拍一段给你[[video:海边日落，海浪缓缓涌上沙滩]]');
+    h = await bootClip('好，等我几分钟拍一段给你', '海边日落，海浪缓缓涌上沙滩');
     const reply = await say('给我拍段海边的视频');
 
-    // The marker is private protocol; the user sees only the promise.
+    // The user sees only the promise; the clip follows later.
     const text = reply.content.find((part) => part.type === 'text');
     expect(text?.text).toBe('好，等我几分钟拍一段给你');
     expect(reply.content.some((part) => part.type === 'file')).toBe(false);
@@ -66,13 +71,20 @@ describe('[[video]] in a reply', () => {
     expect(h.app.repos.jobs.list(50).filter((job) => job.type === 'qq.deliver')).toHaveLength(0);
   });
 
-  it('queues no clip for a retired [[video-self]] marker', async () => {
+  it('queues no clip for a retired [[video]] / [[video-self]] marker', async () => {
     h = await boot('等一下哈[[video-self:我在窗边对你挥手，正面半身]]');
     const reply = await say('录一段你自己的视频');
     expect(reply.meta?.video).toBeUndefined();
     expect(reply.content.find((part) => part.type === 'text')?.text).toBe('等一下哈');
     await h.app.services.worker.drain();
     expect(h.state.videoRequests).toHaveLength(0);
+    await h.cleanup();
+
+    h = await boot('看海呀[[video:海边日落]]');
+    const plain = await say('在干嘛');
+    expect(plain.meta?.video).toBeUndefined();
+    expect(plain.content.find((part) => part.type === 'text')?.text).toBe('看海呀');
+    expect(h.app.services.video.list().total).toBe(0);
   });
 
   it('honours the user asking for a clip even when the model forgot the marker', async () => {
@@ -84,7 +96,7 @@ describe('[[video]] in a reply', () => {
   });
 
   it('tells the user when the clip fails instead of going silent', async () => {
-    h = await boot('等我几分钟[[video:一只猫追激光点]]', { video: 'reject' });
+    h = await bootClip('等我几分钟', '一只猫追激光点', { video: 'reject' });
     await say('拍段猫的视频');
     await h.app.services.worker.drain();
     const [follow] = followUps();
@@ -93,7 +105,7 @@ describe('[[video]] in a reply', () => {
   });
 
   it('respects the rolling daily cap and the policy switch', async () => {
-    h = await boot('等我几分钟[[video:海边]]');
+    h = await bootClip('等我几分钟', '海边');
     h.app.config.setPersona({ videoPolicy: { enabled: true, frequency: 'never', maxPerDay: 0 } });
     const capped = await say('拍段海边视频', 'cap-1');
     expect((capped.meta?.video as { status: string; reason: string })).toMatchObject({ status: 'skipped', reason: 'daily_cap' });
@@ -105,11 +117,11 @@ describe('[[video]] in a reply', () => {
     expect(h.app.services.video.list().total).toBe(0);
   });
 
-  // The model answers "做好了会发过来" on its own (instructions.ts tells it to),
+  // The model answers "做好了会发过来" on its own (the tool description tells it to),
   // and the cap check runs after that text already exists. Skipping the notice
   // whenever the model spoke would leave the promise standing with no clip.
   it('says the cap out loud even when the model already promised a clip', async () => {
-    h = await boot('好～拍了一段，做好了会发过来，等一下哦[[video:海边]]');
+    h = await bootClip('好～拍了一段，做好了会发过来，等一下哦', '海边');
     h.app.config.setPersona({ videoPolicy: { enabled: true, frequency: 'never', maxPerDay: 0 } });
     const capped = await say('拍段海边视频', 'cap-promise');
     expect(capped.meta?.video).toMatchObject({ status: 'skipped', reason: 'daily_cap' });
@@ -136,7 +148,7 @@ describe('[[video]] in a reply', () => {
   });
 
   it('supplies a placeholder note when the model generated video without accompanying text', async () => {
-    h = await boot('[[video:海浪冲刷沙滩]]');
+    h = await bootClip('', '海浪冲刷沙滩');
     const reply = await say('发个海浪视频');
     const text = reply.content.find((part) => part.type === 'text');
     expect(text?.text).toBe(VIDEO_QUEUED_PLACEHOLDER_TEXT);

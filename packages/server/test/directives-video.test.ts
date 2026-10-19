@@ -2,22 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { parseUserDirectives, StreamingDirectiveFilter, stripModelDirectives } from '../src/core/directives.js';
 
 describe('video model directives', () => {
-  it('parses [[video:...]] into videoPrompt and strips it from the visible text', () => {
+  it('strips a retired [[video:...]] marker without asking for a clip', () => {
     const r = stripModelDirectives('好，等我几分钟拍一段给你[[video:海边日落，海浪缓缓涌上沙滩]]');
-    expect(r.directives.videoPrompt).toBe('海边日落，海浪缓缓涌上沙滩');
-    expect(r.directives.imagePrompt).toBeUndefined();
-    expect(r.text).toBe('好，等我几分钟拍一段给你');
-  });
-
-  it('strips a retired [[video-self:...]] marker without asking for a clip', () => {
-    const r = stripModelDirectives('[[video-self:我在窗边对你挥手]]');
     expect(r.directives.videoPrompt).toBeUndefined();
-    expect(r.directives.imagePrompt).toBeUndefined();
-    expect(r.text).toBe('');
-  });
-
-  it('accepts the Chinese alias and single brackets', () => {
-    expect(stripModelDirectives('稍等[视频:猫在追激光点]').directives.videoPrompt).toBe('猫在追激光点');
+    expect(r.text).toBe('好，等我几分钟拍一段给你');
+    expect(stripModelDirectives('[[video-self:我在窗边对你挥手]]').text).toBe('');
+    expect(stripModelDirectives('稍等[视频:猫在追激光点]').directives.videoPrompt).toBeUndefined();
     expect(stripModelDirectives('稍等[[视频:猫在追激光点]]').text).toBe('稍等');
   });
 

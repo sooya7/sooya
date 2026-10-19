@@ -184,7 +184,7 @@ export class Replier {
         peek(ctx: { batchId?: string; revision?: number }): StagedMediaIntent | null;
         take(ctx: { batchId?: string; revision?: number }): StagedMediaIntent | null;
       } | null;
-      /** Text-to-video / image-to-video tasks; absent means the marker is ignored. */
+      /** Text-to-video / image-to-video tasks; absent means send_video is not offered. */
       video?: VideoGenerationService | null;
       /** Files staged by file_write / file_edit during this reply's tool round. */
       files?: {
@@ -537,8 +537,7 @@ export class Replier {
       }
 
       const stripped = stripModelDirectives(rawText);
-      // The tool's staged intent wins; a legacy [[image:...]] the model also wrote
-      // stays the compatibility fallback (see mergeStagedMediaIntent).
+      // Pictures, clips and voice come from the media tools' staged intent.
       const stagedMedia = this.deps.mediaIntents?.take({ batchId, revision }) ?? null;
       const modelDirectives = mergeStagedMediaIntent(stripped.directives, stagedMedia);
       const rawFinalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
@@ -875,32 +874,15 @@ export class Replier {
 
     // 3c. Voice — independent expression system (Part 4): intent → mode →
     // spoken script → naturalness guard → delivery → TTS → publication.
-    // A media tool asking for voice counts as an explicit request: the voice policy
-    // means "don't volunteer it", not "ignore a call she just made for the user".
-    const toolAskedVoice = generated.toolVoice !== undefined;
-    // The auto-voice limits used to arrive through the behaviour decision. They
-    // live here now: with auto frequency 'never' (or the daily cap reached) a
-    // marker she wrote on her own is not enough - the user or a media tool has
-    // to ask for it. The check lives inside the V2 branch, because skipping the
-    // branch falls through to the legacy read-back path, which voices any marker.
+    // Voice comes from the user asking for it or from a send_voice call; the
+    // tool's mode is folded into the directives (voiceOnly → replace).
     if (this.deps.voice && this.deps.voiceV2Enabled !== false) {
       const userIntent = parseVoiceIntent(userText);
-      const askedForVoice = toolAskedVoice || userDirectives.wantVoice === true
-        || userIntent === 'voice_only' || userIntent === 'voice_reply' || userIntent === 'read_aloud';
-      const voiceAutoBlocked = !askedForVoice
-        && (this.deps.voice.preferences.autoVoiceFrequency === 'never' || this.deps.voice.autoCountToday() >= this.deps.voice.dailyAutoCap);
-      // P0-3: replace/voice-only is reserved for EXPLICIT user intent. A model
-      // that emits [[voice-only]] on its own is downgraded to complement — the
-      // user never asked for the text to be replaced, and a visible text that
-      // suddenly vanishes is a broken experience.
-      const userWantsReplace = userIntent === 'voice_only' || userIntent === 'voice_reply' || generated.toolVoice?.voiceOnly === true;
-      const modelMarker = voiceAutoBlocked
-        ? null
-        : generated.directives.voiceOnly
-          ? (userWantsReplace ? 'replace' : 'complement')
-          : generated.directives.voice
-            ? 'complement'
-            : null;
+      const modelMarker = generated.directives.voiceOnly
+        ? 'replace'
+        : generated.directives.voice
+          ? 'complement'
+          : null;
       const decision = decideVoiceMode({
         userIntent,
         modelVoice: modelMarker,
@@ -922,7 +904,6 @@ export class Replier {
           userText,
           decision,
           modelEmotion: generated.directives.voiceEmotion ?? null,
-          modelIntensity: generated.directives.voiceIntensity ?? null,
           signal,
           persona,
           ...(voiceDraft
@@ -1287,7 +1268,7 @@ export class Replier {
     }
     if (imagePrompt && !caps.has('image') && !user.wantImage && !model.imagePrompt) imagePrompt = null;
 
-    // Video. Only when a video model exists: without one the marker would just
+    // Video. Only when a video model exists: without one the request would just
     // promise a clip nobody can make.
     let videoPrompt: string | null = null;
     if (persona.videoPolicy.enabled && !videoBlocked && caps.has('video') && this.deps.video) {

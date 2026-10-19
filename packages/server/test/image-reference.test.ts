@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, sendText, type Harness } from './helpers/harness.js';
 import { ImageEditUnsupportedError } from '../src/providers/types.js';
+import { image as imageCall, withMediaTools } from './helpers/media-tools.js';
 
 /** Smallest valid PNG, so the media store's sniffing accepts it. */
 const PNG = Buffer.from(
@@ -55,7 +56,7 @@ afterEach(async () => {
 
 describe('reference image', () => {
   it('edits the image the user just sent instead of generating from scratch', async () => {
-    h = await createHarness({ image: 'ok', chat: { script: [['改好啦[[image:把猫换成橘色]]']] } });
+    h = await createHarness(withMediaTools('改好啦', [imageCall('把猫换成橘色')], { image: 'ok' }));
     const stub = stubProvider(h);
     const saved = await h.app.services.mediaStore.save({
       kind: 'image',
@@ -84,7 +85,7 @@ describe('reference image', () => {
   });
 
   it('generates from the prompt alone when the user sent no image', async () => {
-    h = await createHarness({ image: 'ok', chat: { script: [['看这个[[image:窗台上的猫]]']] } });
+    h = await createHarness(withMediaTools('看这个', [imageCall('窗台上的猫')], { image: 'ok' }));
     const stub = stubProvider(h);
 
     const { body } = await sendText(h.app, '画只猫', 'no-ref');
@@ -97,7 +98,7 @@ describe('reference image', () => {
   });
 
   it('still produces an image when the provider rejects the edits endpoint', async () => {
-    h = await createHarness({ image: 'ok', chat: { script: [['试试看[[image:换个颜色]]']] } });
+    h = await createHarness(withMediaTools('试试看', [imageCall('换个颜色')], { image: 'ok' }));
     const stub = stubProvider(h);
     const provider = h.app.services.capabilities.imageProvider() as unknown as {
       edit: () => Promise<never>;
@@ -122,7 +123,7 @@ describe('reference image', () => {
   });
 
   it('does not hide a real edit failure by generating an unrelated image', async () => {
-    h = await createHarness({ image: 'ok', chat: { script: [['我没能改好[image:换个颜色]']] } });
+    h = await createHarness(withMediaTools('我没能改好', [imageCall('换个颜色')], { image: 'ok' }));
     const stub = stubProvider(h);
     const provider = h.app.services.capabilities.imageProvider() as unknown as { edit: () => Promise<never> };
     provider.edit = async () => {

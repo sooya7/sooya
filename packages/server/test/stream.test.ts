@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
+import { image as imageCall, toolRoundOnce, voice } from './helpers/media-tools.js';
 
 let h: Harness;
 
@@ -81,7 +82,13 @@ async function listen(h: Harness): Promise<string> {
 
 describe('SSE streaming', () => {
   it('emits the full event lifecycle for a reply', async () => {
-    h = await createHarness({ tts: 'ok', image: 'ok', chat: { script: [['你好', '呀[[sticker:开心]][[image:星空]][[voice]]']] } });
+    h = await createHarness({
+      tts: 'ok',
+      image: 'ok',
+      chatSupportsTools: true,
+      env: { MEDIA_TOOLS_ENABLED: 'true' },
+      chat: { script: [['你好', '呀[[sticker:开心]]']], respond: toolRoundOnce([imageCall('星空'), voice()]) }
+    });
     const base = await listen(h);
     const stream = await openStream(base);
     await stream.waitFor('stream.ready');
@@ -130,7 +137,7 @@ describe('SSE streaming', () => {
     await stream.close();
   });
 
-  it('never streams a long image directive as visible assistant text', async () => {
+  it('never streams a long retired image marker as visible assistant text', async () => {
     const prompt = 'A young woman sleeping peacefully in bed, hugging a soft white blanket, dim warm nightlight on bedside table, a cute corgi plushie tucked beside her, realistic photography, soft warm tones';
     const marker = `[[image:${prompt}]]`;
     h = await createHarness({ image: 'ok', chat: { script: [[marker.slice(0, 49), marker.slice(49)]] } });
