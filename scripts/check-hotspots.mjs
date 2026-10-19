@@ -32,7 +32,7 @@ const legacyHotspots = [
  * ratchet. Do not raise one without saying why in the commit message.
  */
 const legacyBaselines = [
-  ['packages/server/src/app.ts', 54570],
+  ['packages/server/src/app.ts', 54514],
   ['packages/server/src/routes/admin.ts', 54459],
   ['packages/server/src/db/migrations.ts', 74324],
   ['packages/server/src/core/context.ts', 30710]

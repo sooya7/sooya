@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHarness, type Harness } from './helpers/harness.js';
+import { image as imageCall, toolRoundOnce } from './helpers/media-tools.js';
 
 /**
  * A new picture is drawn at the real time of day; a scene asked for at another
  * time of day becomes yesterday's. Pictures of her are not something she sends:
- * an [[image-self]] marker is stripped and produces nothing.
+ * a retired [[image-self]] marker is stripped and produces nothing.
  */
 
 let harness: Harness | null = null;
@@ -34,8 +35,9 @@ describe('image visual time', () => {
       image: 'ok',
       startWorkers: false,
       clock: () => localTime('2026-08-26T13:17'),
-      env: { ENABLE_BACKGROUND_JOBS: 'false', LIFE_TIME_ZONE: 'Asia/Shanghai' },
-      chat: { script: [['换一张普通场景图[[image:晚上客厅里只亮着一盏落地灯]]']] }
+      env: { ENABLE_BACKGROUND_JOBS: 'false', LIFE_TIME_ZONE: 'Asia/Shanghai', MEDIA_TOOLS_ENABLED: 'true' },
+      chatSupportsTools: true,
+      chat: { script: [['换一张普通场景图']], respond: toolRoundOnce([imageCall('晚上客厅里只亮着一盏落地灯')]) }
     });
 
     const body = await send(harness, 'visual-time-current-1', '再来一张普通场景图');
@@ -63,8 +65,9 @@ describe('image visual time', () => {
       image: 'ok',
       startWorkers: false,
       clock: () => localTime('2026-08-26T13:17'),
-      env: { ENABLE_BACKGROUND_JOBS: 'false', LIFE_TIME_ZONE: 'Asia/Shanghai' },
-      chat: { script: [['好呀，现在做给你。[[image:晚上准备睡觉的安静卧室]]']] }
+      env: { ENABLE_BACKGROUND_JOBS: 'false', LIFE_TIME_ZONE: 'Asia/Shanghai', MEDIA_TOOLS_ENABLED: 'true' },
+      chatSupportsTools: true,
+      chat: { script: [['好呀，现在做给你。']], respond: toolRoundOnce([imageCall('晚上准备睡觉的安静卧室')]) }
     });
 
     const body = await send(harness, 'visual-time-retro-1', '发张晚上睡觉的房间图');

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TTSOptions, TTSProvider } from '../src/providers/types.js';
 import { resolveVoiceDelivery, type VoiceEmotionMap } from '../src/core/voice.js';
 import { createHarness, makeFakeMp3, sendText, type Harness } from './helpers/harness.js';
+import { toolRoundOnce, voice } from './helpers/media-tools.js';
 
 let harness: Harness | null = null;
 afterEach(async () => {
@@ -39,8 +40,9 @@ describe('saved voice emotion mappings', () => {
   it('uses the same saved mapping for preview and formal assistant speech', async () => {
     harness = await createHarness({
       tts: 'ok',
-      env: { ADMIN_API_TOKEN: 'admin-test-token' },
-      chat: { script: [['哈哈，太好了！[[voice]]']] }
+      chatSupportsTools: true,
+      env: { ADMIN_API_TOKEN: 'admin-test-token', MEDIA_TOOLS_ENABLED: 'true' },
+      chat: { script: [['哈哈，太好了！']], respond: toolRoundOnce([voice()]) }
     });
     const calls: Array<{ text: string; options: TTSOptions | undefined }> = [];
     const provider: TTSProvider = {

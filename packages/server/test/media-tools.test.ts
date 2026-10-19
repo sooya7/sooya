@@ -184,16 +184,19 @@ describe('media tools in the real reply pipeline', () => {
     expect(logged!.scope).toBe('reply.tool_round');
   });
 
-  it('still honors a legacy [[image:...]] marker while the tools are live', async () => {
+  it('ignores a retired media marker: only the tools send media', async () => {
     h = await createHarness({
       chatSupportsTools: true,
       image: 'ok',
+      tts: 'ok',
       env: { MEDIA_TOOLS_ENABLED: 'true' },
-      chat: { script: [['好呀。[[image:一只小猫]]']] }
+      chat: { script: [['好呀。[[image:一只小猫]][[voice]][[video:海边]]']] }
     });
-    const { body } = await sendText(h.app, '画一张小猫');
-    expect(h.state.imageCalls).toBe(1);
-    expect(partTypes(body.reply)).toContain('image');
+    const { body } = await sendText(h.app, '在干嘛呀');
+    expect(h.state.imageCalls).toBe(0);
+    expect(h.state.ttsCalls).toBe(0);
+    expect(partTypes(body.reply)).toEqual(['text']);
+    expect(body.reply.content[0].text).toBe('好呀。');
   });
 
   it('leaves the media tools out of the request unless MEDIA_TOOLS_ENABLED is on', async () => {

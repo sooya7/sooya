@@ -96,9 +96,6 @@ export interface InlineVoiceResult {
 export class VoiceService {
   private readonly active = new Map<string, AbortController>();
 
-  /** Daily cap for AUTO voice messages (set from env at wiring time). */
-  dailyAutoCap = 20;
-
   constructor(
     private readonly deps: {
       messages: MessageRepo;
@@ -126,13 +123,6 @@ export class VoiceService {
 
   get speechStyle(): PersonaSpeechStyle {
     return this.deps.settings.get<PersonaSpeechStyle>('voice.speechStyle', DEFAULT_SPEECH_STYLE);
-  }
-
-  /** How many auto voices today (for the daily cap). */
-  autoCountToday(): number {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    return this.deps.voice.countAutoSince(start.toISOString());
   }
 
   /**

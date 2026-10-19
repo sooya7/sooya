@@ -79,8 +79,8 @@ export class MediaIntentStage {
 }
 
 /**
- * The tool's intent wins over anything the model also wrote as a legacy marker;
- * the markers stay supported (and keep working) as the compatibility fallback.
+ * Folds the tool's intent into the directives. The retired media markers no
+ * longer set anything there, so the tool is the only source of these fields.
  */
 export function mergeStagedMediaIntent(directives: ModelDirectives, staged: StagedMediaIntent | null): ModelDirectives {
   if (!staged) return directives;

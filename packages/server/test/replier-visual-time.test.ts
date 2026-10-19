@@ -3,6 +3,7 @@ import type { ChatMessage, MessagePart, StreamEventType } from '../src/core/type
 import type { GenerationOptions } from '../src/core/replier.js';
 import { resolveVisualTime } from '../src/core/visual-time.js';
 import { createHarness, type Harness } from './helpers/harness.js';
+import { image as imageCall, toolRoundOnce } from './helpers/media-tools.js';
 
 const NOW = new Date('2026-08-26T05:17:23.000Z');
 
@@ -46,7 +47,7 @@ describe('Replier visual-time planning', () => {
   it('pins the real 13:17 clock and turns a conflicting night image into the previous local day', async () => {
     harness = await createHarness({
       clock: () => new Date(NOW),
-      chat: { script: [['现在是晚上，准备睡了[[image:晚上睡觉]]']] }
+      chat: { script: [['现在是晚上，准备睡了']] }
     });
     const publish = vi.fn(async () => true);
 
@@ -76,7 +77,10 @@ describe('Replier visual-time planning', () => {
   it('holds a retrospective image draft until directives are known and fixes its final wording', async () => {
     harness = await createHarness({
       clock: () => new Date(NOW),
-      chat: { script: [['现在就是晚上', '，该睡觉了', '[[image:卧室夜景]]']] }
+      image: 'ok',
+      chatSupportsTools: true,
+      env: { MEDIA_TOOLS_ENABLED: 'true' },
+      chat: { script: [['现在就是晚上', '，该睡觉了']], respond: toolRoundOnce([imageCall('卧室夜景')]) }
     });
     const publish = vi.fn(async () => true);
     const publishedEvents: StreamEventType[] = [];
@@ -118,7 +122,7 @@ describe('Replier visual-time planning', () => {
     expect(retrospectiveWithoutImage.text).toBe('现在挺安静的。');
   });
 
-  it('does not claim a past image when a retrospective image directive has no prompt', async () => {
+  it('does not claim a past image for a retired, empty image marker', async () => {
     harness = await createHarness({
       clock: () => new Date(NOW),
       chat: { script: [['现在就是晚上。[[image:]]']] }
@@ -130,7 +134,7 @@ describe('Replier visual-time planning', () => {
     );
 
     expect(generated.visualTime.mode).toBe('retrospective');
-    expect(generated.directives.imagePrompt).toBeNull();
+    expect(generated.directives.imagePrompt).toBeUndefined();
     expect(generated.text).toBe('现在就是晚上。');
   });
 

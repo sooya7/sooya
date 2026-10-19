@@ -2,12 +2,13 @@
  * Two-way directive protocol.
  *
  * 1. User directives are parsed from the user's own text ("发个表情"、"用语音说").
- * 2. Model directives are inline markers the model may emit while streaming,
- *    e.g. [[sticker:开心]] / [[image:一只在窗台睡觉的猫]] / [[voice]] / [[voice-only]].
- *    They are stripped from the visible text.
- *
- * This keeps multimedia decisions model-driven without requiring tool-calling
- * support from the provider.
+ * 2. Model directives are inline [[sticker:...]] / [[sticker-only:...]] markers
+ *    the model may emit while streaming; they are stripped from the visible text.
+ *    Pictures, clips and voice go through the media tools (core/media-tools),
+ *    whose staged intent is folded into the same ModelDirectives. The retired
+ *    media markers ([[image]], [[video]], [[voice]], [[voice-only]], the -self
+ *    forms and their Chinese aliases) are still stripped so old habits never
+ *    leak into the chat, but they no longer do anything.
  */
 
 export interface UserDirectives {
@@ -176,41 +177,16 @@ export interface ModelDirectives {
   stickers?: string[];
   /** Legacy single-marker alias retained for existing callers. */
   sticker?: string | null;
+  /** From send_image. */
   imagePrompt?: string | null;
-  /** `[[video:画面意图]]`: a short clip, generated asynchronously and delivered later. */
+  /** From send_video: a short clip, generated asynchronously and delivered later. */
   videoPrompt?: string | null;
+  /** From send_voice. */
   voice?: boolean;
   voiceOnly?: boolean;
   stickerOnly?: boolean;
-  /** The mood she asked for, e.g. `[[voice:emotion=happy]]`. */
+  /** The mood send_voice asked for. */
   voiceEmotion?: string;
-  /** The emotion intensity (0–1) she asked for, e.g. `[[voice:emotion=shy|intensity=0.3]]`. */
-  voiceIntensity?: number;
-}
-
-/**
- * Reads the mood out of a voice marker argument. Kept lenient about spacing and
- * case because the model writes these by hand, but the word itself is bounded so
- * a stray sentence cannot ride along into a provider request.
- */
-export function parseEmotionArg(arg: string | null | undefined): string | null {
-  // The lookahead makes an over-long run fail outright: silently truncating a
-  // 40-character blob to 24 would hand a provider a word nobody wrote.
-  const m = /emotion\s*=\s*([A-Za-z_-]{1,24})(?![A-Za-z_-])/i.exec(arg ?? '');
-  return m ? m[1]!.toLowerCase() : null;
-}
-
-/**
- * Reads the intensity (0–1) out of a voice marker, e.g.
- * `[[voice:emotion=shy|intensity=0.3]]`. Absent or unparseable values yield
- * undefined — the director then decides its own intensity.
- */
-export function parseIntensityArg(arg: string | null | undefined): number | undefined {
-  const m = /intensity\s*=\s*([0-9]*\.?[0-9]+)/i.exec(arg ?? '');
-  if (!m) return undefined;
-  const value = Number(m[1]);
-  if (!Number.isFinite(value)) return undefined;
-  return Math.min(1, Math.max(0, value));
 }
 
 const MARKER_KINDS = ['sticker', 'image', 'image-self', 'video', 'video-self', 'voice', 'voice-only', 'sticker-only', '表情包', '图片', '视频', '语音'] as const;
@@ -284,32 +260,14 @@ const OPEN_THINK_RE = /<think(?:_[0-9a-z_]{8,})?>[\s\S]*$/i;
 /**
  * Some OpenAI-compatible gateways flatten a model tool attempt into text
  * instead of structured tool_calls. SOOYA does not expose that XML-ish
- * protocol to users. Only the known image_generation_tool is translated into
- * the existing image directive path; unknown pseudo tools are stripped but
- * never executed.
+ * protocol to users: every pseudo tool call is stripped and none is executed
+ * (the reply tool round records it as flattened_tool_call).
  */
 const PSEUDO_TOOL_CALL_BLOCK_RE = /<tool_call(?:\s[^>]*)?>[\s\S]*?<\/tool_call\s*>/gi;
 const OPEN_PSEUDO_TOOL_CALL_RE = /<tool_call(?:\s[^>]*)?>[\s\S]*$/i;
 const PSEUDO_TOOL_OPEN_RE = /<tool_call(?:\s[^>]*)?>/i;
 const PSEUDO_TOOL_CLOSE_RE = /<\/tool_call\s*>/i;
-const IMAGE_GENERATION_FUNCTION_RE = /<function\s*=\s*["']?image_generation_tool["']?\s*>/i;
 const PSEUDO_TOOL_CLOSE_TAIL = '</tool_call>'.length - 1;
-
-function pseudoToolParameter(block: string, name: 'prompt' | 'system_prompt'): string | null {
-  const re = new RegExp(`<parameter\\s*=\\s*["']?${name}["']?\\s*>([\\s\\S]*?)<\\/parameter\\s*>`, 'i');
-  const value = re.exec(block)?.[1]?.trim();
-  return value ? value.slice(0, MAX_MARKER_BUFFER) : null;
-}
-
-function absorbPseudoToolCall(block: string, directives: ModelDirectives): void {
-  if (!IMAGE_GENERATION_FUNCTION_RE.test(block)) return;
-  const prompt = pseudoToolParameter(block, 'prompt');
-  if (!prompt) return;
-  const systemPrompt = pseudoToolParameter(block, 'system_prompt') ?? '';
-  // A picture of herself is not something she sends; drop it like [[image-self]].
-  if (/\bselfie\b|自拍/i.test(`${systemPrompt}\n${prompt}`)) return;
-  directives.imagePrompt = prompt;
-}
 
 function trailingPseudoToolPrefixIndex(text: string): number {
   const lower = text.toLowerCase();
@@ -476,38 +434,19 @@ export function stripModelDirectives(raw: string): StripResult {
   const singlePartial = TRAILING_SINGLE_PARTIAL_RE.exec(cleaned);
   if (singlePartial && isPartialMarker(singlePartial[0])) cleaned = cleaned.slice(0, singlePartial.index);
   let protocolCleaned = stripPrivateContextEcho(stripThinking(cleaned));
-  protocolCleaned = protocolCleaned.replace(PSEUDO_TOOL_CALL_BLOCK_RE, (block) => {
-    absorbPseudoToolCall(block, directives);
-    return '';
-  });
-  // A truncated pseudo call is private protocol too, but incomplete calls are
-  // never executed because their parameter boundary cannot be trusted.
+  protocolCleaned = protocolCleaned.replace(PSEUDO_TOOL_CALL_BLOCK_RE, '');
+  // A truncated pseudo call is private protocol too.
   protocolCleaned = protocolCleaned.replace(OPEN_PSEUDO_TOOL_CALL_RE, '');
   const text = protocolCleaned
     .replace(MARKER_RE, (_m, kind: string, arg?: string) => {
       const k = canonicalMarkerKind(kind);
       const value = (arg ?? '').trim();
       if (k === 'sticker') addStickerDirective(directives, value || 'auto');
-      else if (k === 'image') directives.imagePrompt = value || null;
-      else if (k === 'video') directives.videoPrompt = value || null;
-      // [[image-self]] / [[video-self]] are retired: still stripped, never acted on.
-      else if (k === 'voice') {
-        directives.voice = true;
-        const mood = parseEmotionArg(value);
-        if (mood) directives.voiceEmotion = mood;
-        const intensity = parseIntensityArg(value);
-        if (intensity !== undefined) directives.voiceIntensity = intensity;
-      } else if (k === 'voice-only') {
-        directives.voice = true;
-        directives.voiceOnly = true;
-        const mood = parseEmotionArg(value);
-        if (mood) directives.voiceEmotion = mood;
-        const intensity = parseIntensityArg(value);
-        if (intensity !== undefined) directives.voiceIntensity = intensity;
-      } else if (k === 'sticker-only') {
+      else if (k === 'sticker-only') {
         addStickerDirective(directives, value || 'auto');
         directives.stickerOnly = true;
       }
+      // Every other kind is a retired media marker: stripped, never acted on.
       return '';
     })
     .replace(/[ \t]{2,}/g, ' ')

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TTSOptions, TTSProvider } from '../src/providers/types.js';
 import { createHarness, makeFakeMp3, sendText, type Harness } from './helpers/harness.js';
+import { toolRoundOnce, voice } from './helpers/media-tools.js';
 
 let harness: Harness | null = null;
 afterEach(async () => {
@@ -32,12 +33,14 @@ describe('converged Fish path — one cue source, no double cue', () => {
   it('ships her text with at most one whitelist cue and the mood speed', async () => {
     harness = await createHarness({
       tts: 'ok',
-      env: { ADMIN_API_TOKEN: 'admin-test-token' },
-      chat: { script: [
-        // Explicit user voice request → replace mode; the model marker carries
-        // the real emotion + intensity from the main model.
-        ['我刚刚有点想你。[[voice:emotion=shy|intensity=0.6]]']
-      ] }
+      chatSupportsTools: true,
+      env: { ADMIN_API_TOKEN: 'admin-test-token', MEDIA_TOOLS_ENABLED: 'true' },
+      chat: {
+        // Explicit user voice request → replace mode; send_voice carries the
+        // mood the main model picked.
+        script: [['我刚刚有点想你。']],
+        respond: toolRoundOnce([voice('with_text', 'shy')])
+      }
     });
     const calls: Array<{ text: string; options: TTSOptions | undefined }> = [];
     vi.spyOn(harness.app.services.capabilities, 'ttsProvider').mockReturnValue(captureProvider(calls));
@@ -48,21 +51,22 @@ describe('converged Fish path — one cue source, no double cue', () => {
     // Exactly one cue — the FishCueRenderer's, never a second one on top.
     expect(cues(calls[0]!.text)).toEqual(['[slightly shy]']);
     expect(calls[0]!.text).toBe('[slightly shy] 我刚刚有点想你。');
-    // No rewrite any more: the pace comes from the mood table for the same cue.
-    expect(calls[0]!.options?.speed).toBe(0.99);
+    // No rewrite any more: the pace comes from the mood table for the same cue
+    // (send_voice carries no intensity, so the full-strength pace applies).
+    expect(calls[0]!.options?.speed).toBe(0.98);
   });
 
   it('strips a stray cue from the director so the request still carries exactly one', async () => {
     harness = await createHarness({
       tts: 'ok',
-      env: { ADMIN_API_TOKEN: 'admin-test-token' },
-      chat: { script: [
-        ['我刚刚有点想你。[[voice:emotion=shy|intensity=0.9]]'],
-        // The model drifted and emitted its own cue; sanitizeFishText removes
-        // it wholesale, then FishCueRenderer adds exactly one.
-        ['{"text":"[small chuckle] 我刚刚有点想你。","speed":0.96}'],
-        ['我刚刚有点想你。']
-      ] }
+      chatSupportsTools: true,
+      env: { ADMIN_API_TOKEN: 'admin-test-token', MEDIA_TOOLS_ENABLED: 'true' },
+      chat: {
+        // The model drifted and wrote its own cue into the text;
+        // sanitizeFishText removes it, then FishCueRenderer adds exactly one.
+        script: [['[small chuckle] 我刚刚有点想你。']],
+        respond: toolRoundOnce([voice('with_text', 'shy')])
+      }
     });
     const calls: Array<{ text: string; options: TTSOptions | undefined }> = [];
     vi.spyOn(harness.app.services.capabilities, 'ttsProvider').mockReturnValue(captureProvider(calls));
@@ -76,12 +80,9 @@ describe('converged Fish path — one cue source, no double cue', () => {
   it('sends plain neutral statements with no cue at all', async () => {
     harness = await createHarness({
       tts: 'ok',
-      env: { ADMIN_API_TOKEN: 'admin-test-token' },
-      chat: { script: [
-        ['今天天气不错。[[voice]]'],
-        ['{"text":"今天天气不错。","speed":1}'],
-        ['今天天气不错。']
-      ] }
+      chatSupportsTools: true,
+      env: { ADMIN_API_TOKEN: 'admin-test-token', MEDIA_TOOLS_ENABLED: 'true' },
+      chat: { script: [['今天天气不错。']], respond: toolRoundOnce([voice()]) }
     });
     const calls: Array<{ text: string; options: TTSOptions | undefined }> = [];
     vi.spyOn(harness.app.services.capabilities, 'ttsProvider').mockReturnValue(captureProvider(calls));
@@ -96,12 +97,9 @@ describe('converged Fish path — one cue source, no double cue', () => {
   it('ignores saved voice.emotions presets on the Fish path (mood table wins)', async () => {
     harness = await createHarness({
       tts: 'ok',
-      env: { ADMIN_API_TOKEN: 'admin-test-token' },
-      chat: { script: [
-        ['哈哈，太好了！[[voice:emotion=happy]]'],
-        ['{"text":"哈哈，太好了！","speed":1}'],
-        ['哈哈，太好了！']
-      ] }
+      chatSupportsTools: true,
+      env: { ADMIN_API_TOKEN: 'admin-test-token', MEDIA_TOOLS_ENABLED: 'true' },
+      chat: { script: [['哈哈，太好了！']], respond: toolRoundOnce([voice('with_text', 'happy')]) }
     });
     const saved = await harness.app.server.inject({
       method: 'PUT',
