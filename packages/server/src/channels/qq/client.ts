@@ -105,11 +105,28 @@ export class QqApiClient {
     msgSeq?: number;
     signal?: AbortSignal;
   }): Promise<{ messageId: string }> {
+    return this.sendC2cMessage(input, { msg_type: 0, content: input.content });
+  }
+
+  /** Native markdown (msg_type 2); the bot needs QQ's markdown permission. */
+  async sendC2cMarkdownMessage(input: {
+    openid: string;
+    content: string;
+    msgId?: string | null;
+    msgSeq?: number;
+    signal?: AbortSignal;
+  }): Promise<{ messageId: string }> {
+    return this.sendC2cMessage(input, { msg_type: 2, markdown: { content: input.content } });
+  }
+
+  private async sendC2cMessage(
+    input: { openid: string; msgId?: string | null; msgSeq?: number; signal?: AbortSignal },
+    body: Record<string, unknown>
+  ): Promise<{ messageId: string }> {
     const response = await this.post(
       `${this.baseUrl}/v2/users/${encodeURIComponent(input.openid)}/messages`,
       {
-        msg_type: 0,
-        content: input.content,
+        ...body,
         ...(input.msgId ? { msg_id: input.msgId, msg_seq: input.msgSeq ?? 1 } : {})
       },
       { authorization: `QQBot ${await this.getAccessToken(input.signal)}` },

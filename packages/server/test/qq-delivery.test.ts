@@ -3,7 +3,7 @@ import { createHarness, type Harness } from './helpers/harness.js';
 import { JobWorker } from '../src/core/jobs.js';
 import { registerDefaultJobs } from '../src/core/jobs.js';
 import { QqApiClient } from '../src/channels/qq/client.js';
-import { QqDeliveryService, THOUGHT_BUBBLE_PREFIX } from '../src/channels/qq/outbound.js';
+import { QqDeliveryService, THOUGHT_BUBBLE_PREFIX, thoughtMarkdown } from '../src/channels/qq/outbound.js';
 import { qqBotConfigFromEnv } from '../src/channels/qq/config.js';
 import { QQ_CHANNEL_NAME } from '../src/channels/qq/types.js';
 
@@ -369,5 +369,54 @@ describe('QQ delivery: visible thought bubble', () => {
     expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
     expect(settled).not.toHaveBeenCalled();
     expect(sends(calls).map((b) => b.content)).toEqual(['在干嘛呢']);
+  });
+});
+
+
+describe('QQ delivery: thought as markdown', () => {
+  function passiveReply(text: string) {
+    const user = h!.app.repos.messages.create({ role: 'user', status: 'sent', parts: [{ type: 'text', text: '在吗' }] }).message;
+    h!.app.repos.channelEvents.markReceived({ channel: 'qq', eventId: 'evt-user', remoteMessageId: 'qq-msg-1', eventType: 'C2C_MESSAGE_CREATE', conversationKey: 'owner-uuid' });
+    h!.app.repos.channelEvents.markProcessed('qq', 'evt-user', user.id);
+    const admission = h!.app.repos.replyBatches.appendOrCreateMessage(user.id, new Date().toISOString(), new Date().toISOString());
+    return assistantMessage(text).then((message) => {
+      h!.app.db.prepare("UPDATE reply_batches SET status = 'completed', assistant_message_id = ? WHERE id = ?").run(message.id, admission.batch.id);
+      return message;
+    });
+  }
+  const bodies = (calls: Array<{ url: string; init?: RequestInit }>) =>
+    calls
+      .filter((c) => c.url.includes('/v2/users/owner-uuid/messages'))
+      .map((c) => JSON.parse(String(c.init!.body)) as { msg_type: number; content?: string; markdown?: { content: string }; msg_seq?: number });
+
+  it('formats the thought as an italic quote without the emoji', () => {
+    expect(thoughtMarkdown('他今天好累。\n先陪他说说话吧')).toBe('> *他今天好累。*\n>\n> *先陪他说说话吧*');
+    expect(thoughtMarkdown('用 *星号* 和 _下划线_ 也不乱')).toBe('> *用 ＊星号＊ 和 ＿下划线＿ 也不乱*');
+  });
+
+  it('sends the thought as markdown, then the reply as text', async () => {
+    const settled = vi.fn(async () => '他今天好累，先陪他说说话吧。');
+    const { delivery, calls } = await buildDelivery([], { waitMs: 1000, style: 'markdown', settledUserThought: settled });
+    const message = await passiveReply('在的');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    expect(bodies(calls)).toEqual([
+      expect.objectContaining({ msg_type: 2, markdown: { content: '> *他今天好累，先陪他说说话吧。*' }, msg_seq: 1 }),
+      expect.objectContaining({ msg_type: 0, content: '在的', msg_seq: 2 })
+    ]);
+  });
+
+  it('falls back to a plain text thought when QQ refuses markdown', async () => {
+    const settled = vi.fn(async () => '想让他安心。');
+    const { delivery, calls } = await buildDelivery(
+      [{ status: 400, body: { code: 304003, message: 'markdown not allowed' } }],
+      { waitMs: 1000, style: 'markdown', settledUserThought: settled }
+    );
+    const message = await passiveReply('好');
+    expect(await delivery.deliver({ messageId: message.id })).toBe('sent');
+    const sent = bodies(calls);
+    expect(sent[0]).toMatchObject({ msg_type: 2 });
+    expect(sent[1]).toMatchObject({ msg_type: 0, content: `${THOUGHT_BUBBLE_PREFIX}想让他安心。`, msg_seq: 1 });
+    expect(sent[2]).toMatchObject({ msg_type: 0, content: '好', msg_seq: 2 });
+    expect(h!.app.repos.errors.list(20).some((e) => e.scope === 'qq.thought' && e.message === 'markdown_rejected')).toBe(true);
   });
 });
