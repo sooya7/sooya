@@ -55,17 +55,22 @@ describe('user directive parsing', () => {
     expect(d.imagePrompt).toContain('猫');
   });
 
-  it('detects photo/selfie phrasings so the fallback covers them too', () => {
-    for (const t of ['来张自拍', '自拍一张', '拍一张', '拍一张给我看看', '发张照片', '给我看你的照片', '拍一张你的照片']) {
+  it('detects photo phrasings so the fallback covers them too', () => {
+    for (const t of ['拍一张', '拍一张给我看看', '发张照片']) {
       const d = parseUserDirectives(t);
       expect(d.wantImage, t).toBe(true);
     }
-    // 自拍类措辞要能识别出是要她本人的照片
-    expect(parseUserDirectives('来张自拍').selfieIntent).toBe(true);
-    expect(parseUserDirectives('拍一张你的照片').selfieIntent).toBe(true);
-    // 普通要图不算自拍
-    expect(parseUserDirectives('画一张猫').selfieIntent).toBeUndefined();
+    expect(parseUserDirectives('画一张猫').wantImage).toBe(true);
   });
+
+  it('never turns a request for her own picture or clip into a fallback drawn from the user’s words', () => {
+    for (const t of ['来张自拍', '自拍一张', '给我看你的照片', '拍一张你的照片', '录一段你自己的视频给我', '拍个你的视频']) {
+      const d = parseUserDirectives(t);
+      expect(d.wantImage, t).toBeUndefined();
+      expect(d.wantVideo, t).toBeUndefined();
+    }
+  });
+
 
   it('does not treat ordinary chat about photos as an image command', () => {
     expect(parseUserDirectives('我今天去拍照了，好累').wantImage).toBeUndefined();

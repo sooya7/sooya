@@ -157,7 +157,7 @@ describe('Replier visual-time planning', () => {
       .toBe('现在还是中午，不过昨天倒是有一张这种。');
   });
 
-  it('does not claim an image when a model selfie marker cannot enter the final media plan', async () => {
+  it('does not claim an image for a retired self-picture marker', async () => {
     harness = await createHarness({
       clock: () => new Date(NOW),
       image: 'off',
@@ -170,7 +170,7 @@ describe('Replier visual-time planning', () => {
     );
 
     expect(generated.visualTime.mode).toBe('retrospective');
-    expect(generated.directives.selfImagePrompt).toBe('卧室里的夜间自拍');
+    expect(generated.directives.imagePrompt).toBeUndefined();
     expect(generated.text).toBe('现在就是晚上。');
   });
 
@@ -303,7 +303,7 @@ describe('Replier visual-time planning', () => {
       url: '/api/messages/sync',
       payload: {
         clientMsgId: 'visual-time-one-world-snapshot',
-        content: [{ type: 'text', text: '发一张自拍：晚上睡觉' }]
+        content: [{ type: 'text', text: '发一张图：晚上的卧室' }]
       }
     });
 

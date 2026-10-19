@@ -52,14 +52,6 @@ function ReachStatus({ panel }: { panel: LifePanelData }) {
 
 const HOURS = Array.from({ length: 24 }, (_, h) => ({ value: String(h), label: `${String(h).padStart(2, '0')}:00` }));
 
-type VisibleMode = 'auto' | 'text' | 'image';
-
-function visibleMode(value: LifeSettings['proactiveMode']): VisibleMode {
-  if (value === 'image') return 'image';
-  if (value === 'auto' || value === undefined) return 'auto';
-  return 'text';
-}
-
 function ReachSettings({ panel }: { panel: LifePanelData }) {
   const { refresh, touch, settle } = useLife();
   const { run, busy } = useAction();
@@ -67,7 +59,6 @@ function ReachSettings({ panel }: { panel: LifePanelData }) {
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
-  const legacyMode = panel.settings.proactiveMode === 'voice' || panel.settings.proactiveMode === 'text_sticker';
 
   // Background refreshes must not overwrite what you are typing.
   useEffect(() => {
@@ -120,16 +111,8 @@ function ReachSettings({ panel }: { panel: LifePanelData }) {
         <Field label="到">
           <Select value={String(draft.silentTo)} options={HOURS} disabled={!draft.reachOut} onChange={(e) => change({ silentTo: Number(e.target.value) })} />
         </Field>
-        <Field label="用什么方式" hint="图片动态需要生图服务，没配置时会自动改发文字。" full>
-          <Select value={visibleMode(draft.proactiveMode)} disabled={!draft.reachOut} options={[
-            { value: 'auto', label: '她自己决定' }, { value: 'text', label: '文字动态' }, { value: 'image', label: '带图的动态' }
-          ]} onChange={(e) => change({ proactiveMode: e.target.value as VisibleMode })} />
-        </Field>
       </Fields>
       <p className="cs-muted life-hint">{silentText}</p>
-      {legacyMode && !dirty && (
-        <p className="cs-muted life-hint">现在存的是旧的“{shareModeText(panel.settings.proactiveMode)}”方式，会按文字动态发；保存一次就会换成新的写法。</p>
-      )}
       <div className="cs-actions">
         <Button busy={busy === 'save'} disabled={!dirty || !!gapError || !!capError} onClick={() => void save()}>保存主动找你的设置</Button>
         {dirty && <Button kind="text" onClick={discard}>放弃修改</Button>}

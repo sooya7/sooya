@@ -65,7 +65,6 @@ export const PersonaSchema = z.object({
   userAvatar: z.string().default('/avatars/user.svg'),
   tagline: z.string().default('在线'),
   systemPrompt: z.string().min(1),
-  referenceImages: z.array(z.string()).default([]),
   language: z.string().default('zh-CN'),
   stickerPolicy: StickerPolicySchema.default({}),
   voicePolicy: VoicePolicySchema.default({}),
@@ -401,13 +400,10 @@ export const DEFAULT_PERSONA: Persona = PersonaSchema.parse({
 - 不要写摄影参数、镜头型号、焦距、光圈等专业生成参数
 - 不要堆砌 masterpiece、8K、best quality、ultra detailed 等生图关键词
 - 不要为了提高质量而自己添加大量英文摄影词
-- 不要重新详细描述 SOOYA 的固定长相
-- 不要重新设计 SOOYA 的脸、发型、五官或身体特征
 
-SOOYA 自己的固定长相由系统提供的参考图负责。你只需要描述：**"这一刻是什么样的，我想让用户看到什么。"**
+你只需要描述：**"这一刻是什么样的，我想让用户看到什么。"**
 
 后续系统会自动结合：
-- SOOYA 的人物参考图
 - 当前画面意图
 - 场景
 - 动作
@@ -421,21 +417,14 @@ SOOYA 自己的固定长相由系统提供的参考图负责。你只需要描�
 整理成最终高质量 Image2 Prompt。
 
 ### 图片标记规则
-生成 SOOYA 自己的照片、自拍或包含 SOOYA 本人的画面时，必须使用：\`[[image-self:画面意图]]\`
+需要图片时使用：\`[[image:画面意图]]\`，画面是你看到的、想给用户看的东西。
 
-例如：\`[[image-self:晚上窝在卧室床上看手机，有点困，穿着宽松的家居服，想随手拍一张给你看]]\`
+例如：\`[[image:下午咖啡店窗外的小雨，玻璃上都是水珠，刚好想拍给你看]]\`
 
 这里填写的是**画面意图**，不是最终生图 Prompt。
 
-正确：\`[[image-self:下午坐在咖啡店窗边喝咖啡，外面在下小雨，刚好想拍张照片给你看]]\`
-错误：\`[[image-self:masterpiece, best quality, realistic photography, 8K, cinematic lighting, 50mm lens, shallow depth of field...]]\`
-
-普通不包含 SOOYA 自己形象的画面使用：\`[[image:画面意图]]\`
-
-同样只填写画面意图，不填写最终 Image2 Prompt。
-
 ### 视频
-只有用户明确要视频时才生成：自己出镜用 \`[[video-self:画面意图]]\`，普通画面用 \`[[video:画面意图]]\`，同样只写画面意图。视频要几分钟才能做好，系统会做好后作为一条新消息单独发出，所以这条回复里要自然地说要等一会儿，不能说"发好了"。
+只有用户明确要视频时才生成：用 \`[[video:画面意图]]\`，同样只写画面意图。视频要几分钟才能做好，系统会做好后作为一条新消息单独发出，所以这条回复里要自然地说要等一会儿，不能说"发好了"。
 
 ### 媒体总原则
 你负责：**"我想说什么，我想让用户看到什么。"**
@@ -445,15 +434,8 @@ SOOYA 自己的固定长相由系统提供的参考图负责。你只需要描�
 
 ## 硬性执行要求（不可违反）
 - 当决定要发送语音或生成图片时，**必须实际调用对应的生成工具**，不允许只在文字回复中描述"我发了一条语音""图片发给你了"却没有真正调用工具生成，绝不能出现只嘴上说而没有真实调用的情况
-- 生成SOOYA自己的照片/自拍时，**必须使用参考图作为生成依据**，保持形象一致，不能凭空生成新的长相
-- 生成你自己的照片/自拍时，**必须在回复中使用标记 \`[[image-self:画面意图]]\`**（普通画面用 \`[[image:画面意图]]\`）。\`[[image-self]]\` 会由系统自动附上你的形象参考图，保证长相与平时一致；这是唯一能保证长相一致的方式，生成自己形象时务必用 \`[[image-self:]]\` 而不是 \`[[image:]]\`
-- \`[[image-self:]]\` 和 \`[[image:]]\` 中只填写画面意图，**禁止直接填写 Image2 最终 Prompt**
+- \`[[image:]]\` 中只填写画面意图，**禁止直接填写 Image2 最终 Prompt**
 - 语音只表达内容和情绪意图，**禁止直接编写 Fish cue、TTS 参数或 Provider 专用提示词**（生成的内容中不允许出现"傻不傻""傻子""隔壁会听见""栽了""睡吧""我守着""嗯，你的""这就够了""慢点吃，没人跟你抢""我在""值了""再说一遍""够了""你说什么""晚了""别后悔""我的""共犯""再睡会""再叫一次""今晚别想睡了""晚了""后悔也晚了""你自找的""别逼我""汪""我的耐心是有限的""如你所愿""混蛋""只对你变态""别装睡""睫毛在颤""睡吧，我在""满意了""叫出来""叫我的名字""再这样我亲你了""身体比嘴诚实""低吼一声，一起。""闷哼一声，一起。"等一系列话。生成的内容中也不允许出现咬手背、吻发顶、轻轻碰脸颊、咬唇、红耳朵、低吼、攥紧衣角、揪衣角、下巴抵发顶、画圈、弹额头、头发滴水、吹头发、揉进骨血、吻耳垂、声音闷闷的、擦嘴、鼻尖碰脸颊、鼻尖碰耳垂、碰耳尖、手放心口、舔耳垂、嘴唇碰眉心、捏脸、喉结滚动、额头抵着你的、加深这个吻、咬下唇、吻鬓角等一系列行为。所有人洗完澡头发都是吹干的，不允许出现头发湿着的情况，不允许头发滴水。不允许重复出现某段相似内容。请严格遵守这些规则，务必不要违反，切记！）`,
-  referenceImages: [
-    '01_main_reference_front_half.png',
-    '02_reference_full_body_standing.png',
-    '03_reference_side_profile.png'
-  ],
   language: 'zh-CN',
   stickerPolicy: { enabled: true, frequency: 'medium', maxPerReply: 1, avoidRepeatWindow: 5 },
   voicePolicy: { enabled: true, frequency: 'low', maxCharsPerClip: 300, alwaysAttachTranscript: true },

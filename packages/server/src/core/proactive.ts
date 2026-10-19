@@ -1,8 +1,8 @@
-import type { MessageRepo, CreatePartInput } from '../db/repos/message.repo.js';
+import type { MessageRepo } from '../db/repos/message.repo.js';
 import type { ProactiveAttemptRepo, ProactiveMode } from '../db/repos/proactive.repo.js';
 import type { ReplyBatchRepo } from '../db/repos/reply-batch.repo.js';
 import type { LifeLogRow } from '../db/repos/life.repo.js';
-import type { MomentRepo, MomentImageKind } from '../db/repos/moment.repo.js';
+import type { MomentRepo } from '../db/repos/moment.repo.js';
 import type { JobRepo, SummaryRepo } from '../db/repos/misc.repo.js';
 import type { ChannelDeliveryRepo } from '../db/repos/channel-delivery.repo.js';
 import { QQ_CHANNEL_NAME } from '../channels/qq/types.js';
@@ -13,9 +13,6 @@ import type { MediaStore } from '../media/store.js';
 import type { EventBus } from '../events/bus.js';
 import type { ChatMessage } from './types.js';
 import type { ReplyCoordinator, ProactiveDeliveryTask } from './reply-coordinator.js';
-import type { MediaDirector } from './mediaDirector.js';
-import type { ImageContinuityService, PreparedImageContinuity } from './image-continuity.js';
-import type { PersonaReferenceLoader } from '../media/persona-references.js';
 import type { LifeLocationRepo, LifeLocationRow } from '../db/repos/location.repo.js';
 import type { WorldSnapshot } from './world-context.js';
 import type { ToolCallRuntime } from '../agent/tool-runtime.js';
@@ -24,7 +21,7 @@ import type { CommitmentRepo } from '../db/repos/commitment.repo.js';
 import { arbitrate, commitmentCandidates, type ProactiveCandidate } from './proactive-candidates.js';
 import { z } from 'zod';
 import { extractJsonObject } from '../util/json-extract.js';
-import { resolveVisualTime, visualTimeMetadata, type VisualTimeContext } from './visual-time.js';
+import { resolveVisualTime, type VisualTimeContext } from './visual-time.js';
 import type { FlowTraceService } from './flow-trace.js';
 import type { FutureContextService } from './future/context.js';
 import type { RelationshipContextService } from './relationship/service.js';
@@ -32,7 +29,7 @@ import type { RelationshipContextService } from './relationship/service.js';
 export type { ProactiveMode } from '../db/repos/proactive.repo.js';
 
 export interface ProactiveRunOptions {
-  /** Test/admin seam; legacy voice/sticker choices are normalized to a text Moment. */
+  /** Legacy seam: every proactive message is text now, so the mode is ignored. */
   mode?: ProactiveMode;
 }
 
@@ -61,47 +58,14 @@ export interface ProactiveRunResult {
   sendSuccess: boolean;
 }
 
-interface PreparedMedia {
-  imageMediaId: string | null;
-  imageKind: MomentImageKind | null;
-  finalMode: ProactiveMode;
-  fallbackReason: string | null;
-  detail?: Record<string, unknown>;
-}
-
-// Raw model output. 'pov' is accepted only as a legacy value and is normalized
-// to a lifestyle plan before anything reaches the image chain.
+// Raw model output. A proactive message is text: every picture it used to
+// carry put her in frame, and she does not send pictures of herself. Older
+// prompt habits may still add an "image" field; it is dropped by the parse.
 const RawMomentSharePlanSchema = z.object({
-  text: z.string().trim().min(1).max(120),
-  image: z.object({
-    kind: z.enum(['pov', 'selfie', 'lifestyle']),
-    scene: z.string().trim().min(4).max(300),
-    action: z.string().trim().max(160).optional(),
-    mood: z.string().trim().max(80).optional(),
-    framing: z.enum(['front', 'side', 'full-body', 'environment']).optional()
-  }).nullable()
+  text: z.string().trim().min(1).max(120)
 });
 
-type RawMomentSharePlan = z.infer<typeof RawMomentSharePlanSchema>;
-
-/** The only image kinds new proactive generation may plan and persist. */
-type ActiveMomentImageKind = 'selfie' | 'lifestyle';
-
-type ActiveMomentImagePlan = Omit<NonNullable<RawMomentSharePlan['image']>, 'kind'> & {
-  kind: ActiveMomentImageKind;
-};
-
-interface MomentSharePlan {
-  text: string;
-  image: ActiveMomentImagePlan | null;
-  /** True when the model returned legacy kind=pov and it was normalized to lifestyle. */
-  legacyPovNormalized: boolean;
-}
-
-/** Every proactive image kind puts SOOYA herself in frame. */
-function isSooyaOnCamera(kind: ActiveMomentImageKind): boolean {
-  return kind === 'selfie' || kind === 'lifestyle';
-}
+type MomentSharePlan = z.infer<typeof RawMomentSharePlanSchema>;
 
 interface ProactiveEventContext {
   activity: string;
@@ -169,9 +133,6 @@ export class ProactiveComposer {
       bus: EventBus;
       coordinator: ReplyCoordinator;
       metrics?: import('./metrics.js').MetricsService;
-      mediaDirector: MediaDirector;
-      imageContinuity?: ImageContinuityService;
-      personaReferences: PersonaReferenceLoader;
       locations: LifeLocationRepo;
       worldSnapshot: () => WorldSnapshot;
       toolRuntime?: ToolCallRuntime;
@@ -292,10 +253,10 @@ export class ProactiveComposer {
     return { reach: true, reason: 'ok', candidate: selected.lifeCandidate ?? null, selected, ...base };
   }
 
-  async run(options: ProactiveRunOptions = {}): Promise<ProactiveRunResult> {
+  async run(_options: ProactiveRunOptions = {}): Promise<ProactiveRunResult> {
     const evaluation = this.evaluate();
     const selected = evaluation.selected;
-    const requestedMode = selected ? this.resolveMode(options.mode) : null;
+    const requestedMode: ProactiveMode | null = selected ? 'text' : null;
     const attempt = this.deps.attempts.create({
       candidateId: selected?.key ?? null,
       candidateKind: selected?.source === 'commitment' ? selected.commitment!.kind : selected?.lifeCandidate?.kind ?? null,
@@ -322,7 +283,7 @@ export class ProactiveComposer {
     if (!candidate) return this.blocked('no_candidate', null, requestedMode, flowTraceId);
 
     let finalMode: ProactiveMode | null = null;
-    let fallbackReason: string | null = null;
+    const fallbackReason: string | null = null;
     let deliveryQueued = false;
     const task: ProactiveDeliveryTask = {
       candidateId: candidate.id,
@@ -350,7 +311,6 @@ export class ProactiveComposer {
             lifeLines,
             eventContext,
             visualTime,
-            requestedMode ?? 'text',
             signal,
             await this.relationContext(evaluation, world, signal),
             this.deps.toolRuntime
@@ -364,19 +324,7 @@ export class ProactiveComposer {
           throw new Error(reason);
         }
 
-        let prepared: PreparedMedia;
-        try {
-          this.deps.flowTrace?.stage(flowTraceId, 'proactive.media.started', 'running');
-          prepared = await this.prepareMedia(requestedMode ?? 'text', sharePlan, eventContext, visualTime, candidate, signal);
-          this.deps.flowTrace?.stage(flowTraceId, 'proactive.media.completed', 'ok', { mode: prepared.finalMode, fallback: prepared.fallbackReason });
-        } catch (error) {
-          if (signal.aborted) return { kind: 'discarded' };
-          this.deps.attempts.update(attempt.id, { status: 'failed', blockedReason: 'media_failed', detail: { error: safeError(error) } });
-          this.deps.flowTrace?.fail(flowTraceId, 'proactive.media.failed', 'media_failed');
-          throw new Error('media_failed');
-        }
-        finalMode = prepared.finalMode;
-        fallbackReason = prepared.fallbackReason;
+        finalMode = 'text';
         if (signal.aborted) return { kind: 'discarded' };
 
         try {
@@ -384,8 +332,8 @@ export class ProactiveComposer {
             const moment = this.deps.moments.create({
               candidateId: candidate.id,
               text: sharePlan.text,
-              imageMediaId: prepared.imageMediaId,
-              imageKind: prepared.imageKind,
+              imageMediaId: null,
+              imageKind: null,
               activity: candidate.activity,
               locationId: eventContext.location?.id ?? null,
               locationName: eventContext.location?.name ?? null,
@@ -397,20 +345,15 @@ export class ProactiveComposer {
             const updated = this.deps.attempts.update(attempt.id, {
               status: 'sent',
               blockedReason: null,
-              finalMode: prepared.finalMode,
-              fallbackReason: prepared.fallbackReason,
+              finalMode: 'text',
+              fallbackReason: null,
               messageId: null,
               momentId: moment.id,
               sendSuccess: true,
               detail: {
                 destination: 'moments',
-                sharePlanVersion: 4,
-                photoKind: sharePlan.image?.kind ?? null,
-                ...(sharePlan.legacyPovNormalized ? { legacyPovNormalized: true } : {}),
-                eventLocationId: eventContext.location?.id ?? null,
-                imageDirectorUsed: Boolean(prepared.detail?.imageDirectorUsed),
-                referenceUsed: Boolean(prepared.detail?.referenceUsed),
-                mediaPersisted: Boolean(prepared.imageMediaId)
+                sharePlanVersion: 5,
+                eventLocationId: eventContext.location?.id ?? null
               }
             });
             if (!updated) throw new Error('proactive attempt disappeared');
@@ -426,7 +369,7 @@ export class ProactiveComposer {
             // assistant 消息并走 durable qq.deliver outbox。发布失败不影响 Moment
             // 已持久化（best-effort，Admin 仍可观察）。
             const published = this.deps.coordinator.publishProactiveMessage({
-              parts: this.proactiveParts(sharePlan.text, prepared.imageMediaId),
+              parts: [{ type: 'text', text: sharePlan.text, status: 'sent' }],
               meta: {
                 proactive: true,
                 ...(flowTraceId ? { flowTraceId } : {}),
@@ -446,7 +389,7 @@ export class ProactiveComposer {
           }
           this.deps.attempts.update(attempt.id, {
             messageId: proactiveMessageId,
-            detail: { ...prepared.detail, destination: 'moments', proactiveMessageId }
+            detail: { destination: 'moments', proactiveMessageId }
           });
           return { kind: 'sent', messageId: persisted.moment.id };
         } catch (error) {
@@ -459,8 +402,8 @@ export class ProactiveComposer {
           this.deps.attempts.update(attempt.id, {
             status: 'failed',
             blockedReason: reason,
-            finalMode: prepared.finalMode,
-            fallbackReason: prepared.fallbackReason,
+            finalMode: 'text',
+            fallbackReason: null,
             detail: { error: safeError(error) }
           });
           this.deps.flowTrace?.fail(flowTraceId, 'proactive.persist_failed', reason);
@@ -606,191 +549,6 @@ export class ProactiveComposer {
     }
   }
 
-  /** 主动消息内容段：文本（+ 可选图片）。走 coordinator.publishProactiveMessage 落库。 */
-  private proactiveParts(text: string, imageMediaId: string | null): CreatePartInput[] {
-    const parts: CreatePartInput[] = [{ type: 'text', text, status: 'sent' }];
-    if (imageMediaId) parts.push({ type: 'image', mediaId: imageMediaId, status: 'sent' });
-    return parts;
-  }
-
-  private resolveMode(requested?: ProactiveMode): ProactiveMode {
-    const normalize = (mode: ProactiveMode): ProactiveMode => mode === 'image' ? 'image' : 'text';
-    if (requested) return normalize(requested);
-    const configured = this.deps.life.settings.proactiveMode ?? 'auto';
-    if (configured !== 'auto') return normalize(configured);
-    const persona = this.deps.config.getPersona();
-    if (persona.imagePolicy.enabled && persona.imagePolicy.frequency === 'high' && this.deps.capabilities.has('image')) return 'image';
-    return 'text';
-  }
-
-  private async prepareMedia(
-    mode: ProactiveMode,
-    sharePlan: MomentSharePlan,
-    eventContext: ProactiveEventContext,
-    visualTime: VisualTimeContext,
-    candidate: LifeLogRow,
-    signal: AbortSignal
-  ): Promise<PreparedMedia> {
-    if (mode !== 'image') return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: null };
-    if (!this.deps.capabilities.has('image')) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_unavailable' };
-    if (signal.aborted) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'aborted' };
-    const imagePlan = sharePlan.image;
-    // Photos are optional: she only attaches one when she wants to show it.
-    if (!imagePlan) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'no_photo_chosen' };
-
-    // Every proactive image kind is on-camera, so both share the persona
-    // reference chain and the same daily visual continuity state.
-    const onCamera = isSooyaOnCamera(imagePlan.kind);
-    const continuityService = onCamera ? this.deps.imageContinuity : undefined;
-    const generate = async (): Promise<PreparedMedia> => {
-      if (signal.aborted) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'aborted' };
-      const groundedScene = buildGroundedScene(imagePlan, eventContext);
-      let continuity: PreparedImageContinuity | null = null;
-      if (continuityService) {
-        continuity = continuityService.prepare({
-          scene: groundedScene,
-          activity: eventContext.activity,
-          activityKind: eventContext.kind,
-          activityStartedAt: eventContext.startedAt,
-          location: eventContext.location?.name ?? null,
-          visualTime
-        });
-      }
-
-      const directed = await this.deps.mediaDirector.image({
-        scene: groundedScene,
-        action: imagePlan.action,
-        mood: imagePlan.mood ?? candidate.mood,
-        intent: imagePlan.kind === 'selfie'
-          ? 'casual Moments-feed selfie from the same real lived event'
-          : 'candid daily-life photo of SOOYA visibly present and naturally performing the same real lived event'
-      }, {
-        signal,
-        ...(continuity
-          ? {
-              continuity: {
-                dateKey: continuity.dateKey,
-                // Retrospective depictions must not borrow current Life facts
-                // as if they were happening now; the event scene stands alone.
-                currentActivity: continuity.visualTime.mode === 'current' ? continuity.currentActivity : null,
-                currentLocation: continuity.visualTime.mode === 'current' ? continuity.currentLocation : null,
-                previousOutfit: continuity.previousOutfit,
-                outfitMode: continuity.outfitMode,
-                changeReason: continuity.changeReason,
-                explicitOutfitRequest: continuity.explicitOutfitRequest,
-                visualTime: continuity.visualTime
-              }
-            }
-          : {})
-      });
-      const directedPrompt = directed.prompt.trim();
-      if (!directedPrompt) return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_director_failed' };
-
-      let finalImagePrompt = applyMomentCompositionConstraints(directedPrompt, imagePlan);
-      let resolvedOutfit: string | null = null;
-      let continuityMeta: Record<string, unknown> | null = null;
-      if (continuity && continuityService) {
-        resolvedOutfit = continuityService.resolveOutfit(directed.outfit, continuity);
-        // Must remain the final prompt layer so no later director/framing pass
-        // can weaken the authoritative activity, location, or outfit.
-        finalImagePrompt = continuityService.applyToPrompt(finalImagePrompt, continuity, resolvedOutfit);
-        const timeFacts = visualTimeMetadata(continuity.visualTime);
-        continuityMeta = continuity.visualTime.mode === 'retrospective'
-          ? {
-              dateKey: continuity.dateKey,
-              outfit: resolvedOutfit,
-              outfitMode: continuity.outfitMode,
-              changeReason: continuity.changeReason,
-              ...timeFacts,
-              // The commit below never touches same-day state for a
-              // retrospective image; record that so the metadata explains the
-              // absent outfit revision.
-              commitState: 'skipped',
-              commitReason: continuity.changeReason
-            }
-          : {
-              dateKey: continuity.dateKey,
-              outfit: resolvedOutfit,
-              outfitMode: continuity.outfitMode,
-              outfitRevision: continuity.outfitRevision,
-              changeReason: continuity.changeReason,
-              activity: continuity.currentActivity,
-              activityKind: continuity.currentActivityKind,
-              location: continuity.currentLocation,
-              ...timeFacts
-            };
-      }
-
-      const referenceImages = onCamera ? await this.deps.personaReferences.load(finalImagePrompt) : [];
-      const referenceUsed = referenceImages.length > 0;
-      if (onCamera && !referenceUsed) {
-        // An on-camera Moment generated without her identity reference risks
-        // "a person, but not her". Degrade to text rather than generate — and
-        // never drift back toward a scenery photo to dodge the missing face.
-        return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'reference_missing' };
-      }
-      const image = await this.deps.capabilities.imageProvider().generate(finalImagePrompt, {
-        signal,
-        ...(referenceUsed ? { referenceImages } : {})
-      });
-      const media = await this.deps.media.save({
-        kind: 'image',
-        origin: 'generated',
-        data: image.data,
-        declaredMime: image.mime,
-        filename: 'moment.png',
-        meta: {
-          moment: true,
-          proactive: true,
-          candidateId: candidate.id,
-          sharePlanVersion: 4,
-          photoKind: imagePlan.kind,
-          sourceActivity: candidate.activity,
-          sourceText: sharePlan.text.slice(0, 200),
-          eventLocationId: eventContext.location?.id ?? null,
-          directorPrompt: finalImagePrompt.slice(0, 1000),
-          ...(continuityMeta ? { continuity: continuityMeta } : {})
-        }
-      });
-
-      if (continuity && resolvedOutfit && continuityService) {
-        const committed = continuityService.commit(continuity, {
-          outfit: resolvedOutfit,
-          scene: groundedScene,
-          mediaId: media.id
-        });
-        if (committed) {
-          continuityMeta = {
-            ...continuityMeta,
-            outfit: committed.outfit.fullDescription,
-            outfitRevision: committed.outfitRevision
-          };
-        }
-      }
-
-      return {
-        imageMediaId: media.id,
-        imageKind: imagePlan.kind,
-        finalMode: 'image',
-        fallbackReason: null,
-        detail: {
-          imageDirectorUsed: true,
-          referenceUsed,
-          ...(sharePlan.legacyPovNormalized ? { legacyPovNormalized: true } : {}),
-          ...(continuityMeta ? { continuity: continuityMeta } : {})
-        }
-      };
-    };
-
-    try {
-      return continuityService
-        ? await continuityService.runExclusive(generate)
-        : await generate();
-    } catch {
-      return { imageMediaId: null, imageKind: null, finalMode: 'text', fallbackReason: 'image_failed' };
-    }
-  }
-
   private async relationContext(evaluation: ProactiveEvaluation, world: WorldSnapshot, signal: AbortSignal): Promise<RelationContext> {
     const lastUserMs = evaluation.lastUserAt ? Date.parse(evaluation.lastUserAt) : NaN;
     const nowMs = Date.parse(world.now);
@@ -892,12 +650,10 @@ async function composeMomentSharePlan(
   lifeLines: string[],
   eventContext: ProactiveEventContext,
   visualTime: VisualTimeContext,
-  requestedMode: ProactiveMode,
   signal: AbortSignal,
   relation: RelationContext,
   toolRuntime?: ToolCallRuntime
 ): Promise<MomentSharePlan> {
-  const imageMode = requestedMode === 'image';
   const request = async (repairReason?: string): Promise<MomentSharePlan> => {
     const request: ChatRequest = {
       system: [
@@ -922,15 +678,8 @@ async function composeMomentSharePlan(
         '对方好久没来，就先在意对方本身；你上一条对方还没回，就别再自顾自分享，轻轻问一句或撒个娇就好。',
         'text 就是你要发出去的那句话：短、口语、直接对着对方说，通常一两句、不超过 50 字，可以用换行分成两小句。',
         '禁止日记体和旁白式开头（如“昨天下午……”“折腾了一晚上……”），禁止写成朋友圈文案；不要标题、标签、冒号前缀、系统/Life/模型内容；不要编造没发生过的事。',
-        imageMode
-          ? '可以配一张照片，但只有这件事你真的想拍给对方看时才配；多数时候 image 为 null。'
-          : 'image 必须为 null。',
-        '如果有图片，必须与 text 是同一件具体小事，只能选择 lifestyle 或 selfie。',
-        'lifestyle：SOOYA 本人清晰出现在画面中，自然进行这件真实生活事件对应的动作（吃饭、喝东西、看书、走路、摸猫等）。默认优先 lifestyle。不要把食物、风景、桌面或物件单独拍成主体；如果事件涉及吃东西，就拍 SOOYA 正在吃；如果事件涉及某个地点，就拍 SOOYA 在该地点进行当前活动。',
-        'selfie：只有当这件事自然适合直接面对镜头分享自己时才选择。允许自然半身、侧脸、镜前或带环境的自拍。',
-        '禁止第一视角 POV、纯风景、纯食物、纯桌面、纯物件和摄影者完全不出现的场景图。只选普通现实生活场景。',
         repairReason ? `上一版未通过检查：${repairReason}。请只重新返回完整 JSON。` : '',
-        '只输出 JSON：{"text":"...","image":null 或 {"kind":"selfie|lifestyle","scene":"...","action":"...","mood":"...","framing":"front|side|full-body|environment"}}。'
+        '只输出 JSON：{"text":"..."}。'
       ].filter(Boolean).join('\n'),
       messages: [{ role: 'user', content: [{ type: 'text', text: '（对方没有说话，你主动开口）' }] }],
       temperature: 0.8,
@@ -946,9 +695,7 @@ async function composeMomentSharePlan(
     const result = await provider.complete(finalRequest);
     const parsed = RawMomentSharePlanSchema.safeParse(extractJsonObject(result.text));
     if (!parsed.success) throw new Error(`invalid_share_plan: ${parsed.error.issues.map((issue) => issue.path.join('.') + ' ' + issue.message).join('; ')}`);
-    return imageMode
-      ? normalizeActiveImagePlan(parsed.data, eventContext)
-      : { ...parsed.data, image: null, legacyPovNormalized: false };
+    return parsed.data;
   };
 
   let first: MomentSharePlan;
@@ -958,7 +705,7 @@ async function composeMomentSharePlan(
     // A reply that is not the JSON shape (null, prose, missing fields) is the
     // most common non-network failure; one repair turn usually fixes it.
     if (!(error instanceof Error && error.message.startsWith('invalid_share_plan'))) throw error;
-    first = await request('没有返回合法的 JSON，或缺少 text / image 字段');
+    first = await request('没有返回合法的 JSON，或缺少 text 字段');
   }
   const firstValidation = validateMomentText(first.text);
   if (firstValidation.ok) return first;
@@ -975,70 +722,6 @@ function validateMomentText(text: string): { ok: boolean; reason?: string } {
   if (/^(在吗|睡了吗|干嘛呢)[？?。.]?$/u.test(normalized)) return { ok: false, reason: '只有一句空洞的呼叫，没有想说的内容' };
   if (/(因为|所以|然后|但是|不过|顺道|本来想|正准备|刚准备)$/u.test(normalized)) return { ok: false, reason: '句子以悬空连接词结尾' };
   return { ok: true };
-}
-
-/**
- * Legacy kind=pov must never reach the image provider. The model sometimes
- * still returns it out of old prompt habits, so rewrite it into the equivalent
- * lifestyle plan: SOOYA herself performing the event's real activity in the
- * same scene.
- */
-function normalizeActiveImagePlan(raw: RawMomentSharePlan, context: ProactiveEventContext): MomentSharePlan {
-  if (!raw.image) return { text: raw.text, image: null, legacyPovNormalized: false };
-  const { kind, ...image } = raw.image;
-  if (kind !== 'pov') return { text: raw.text, image: { ...image, kind }, legacyPovNormalized: false };
-  return {
-    text: raw.text,
-    legacyPovNormalized: true,
-    image: {
-      ...image,
-      kind: 'lifestyle',
-      action: image.action?.trim() || context.activity,
-      scene: `${image.scene}；SOOYA 本人在同一场景中自然进行“${context.activity}”`
-    }
-  };
-}
-
-function buildGroundedScene(image: ActiveMomentImagePlan, context: ProactiveEventContext): string {
-  const location = context.location
-    ? `${context.location.city ?? ''}${context.location.region ?? ''}的${context.location.name}（${context.location.kind}）`
-    : '事件地点未知的普通现实生活环境';
-  const weather = context.recentWeatherHint
-    ? `附近最近天气参考：${context.recentWeatherHint.condition}${context.recentWeatherHint.temperatureC == null ? '' : `，${context.recentWeatherHint.temperatureC}°C`}，仅作氛围参考，不是历史事实。`
-    : '';
-  const photoType = image.kind === 'selfie'
-    ? 'SOOYA 在同一真实事件中的自然生活自拍，SOOYA 本人入镜'
-    : 'SOOYA 本人在同一真实生活场景中自然进行当前活动的生活照片，SOOYA 本人必须入镜，场景和物件作为生活环境';
-  return [
-    `真实生活事件：${context.activity}。`,
-    `实际地点：${location}。`,
-    `这张照片要拍：${image.scene}。`,
-    image.action ? `动作：${image.action}。` : '',
-    `照片类型：${photoType}。`,
-    weather,
-    '禁止第一视角 POV；禁止只拍风景、食物、桌面或物件而没有 SOOYA。',
-    '必须是现实世界普通生活环境、自然手机照片；禁止幻想建筑、漂浮建筑、旅游海报、概念艺术、动漫世界和不可能的地理关系。'
-  ].filter(Boolean).join('\n');
-}
-
-function applyMomentCompositionConstraints(prompt: string, image: ActiveMomentImagePlan): string {
-  if (image.kind === 'selfie') {
-    return [
-      prompt,
-      'SOOYA must be visibly present as the same person from the provided identity reference.',
-      'Keep the image casual and naturally self-shot, not studio portraiture.'
-    ].join('\n');
-  }
-  return [
-    prompt,
-    'LIFESTYLE COMPOSITION — HARD CONSTRAINTS:',
-    'SOOYA herself must be visibly present in the frame.',
-    'Show SOOYA naturally performing the real current activity described above.',
-    'The environment, food, scenery, or objects are supporting context, not a replacement for SOOYA.',
-    'Do not use first-person POV.',
-    'Do not produce a scenery-only, food-only, tabletop-only, or object-only image.',
-    'Use candid daily-life body language; do not turn the moment into a fashion pose, studio portrait, tourism poster, or commercial shoot.'
-  ].join('\n');
 }
 
 function isUniqueConstraint(error: unknown): boolean {
