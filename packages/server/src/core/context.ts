@@ -1,5 +1,4 @@
 import type { MessageRepo } from '../db/repos/message.repo.js';
-import { videoMarkerInstructions } from './video/instructions.js';
 import { CHAT_RHYTHM_INSTRUCTIONS } from './chat-rhythm.js';
 import type { SummaryRepo } from '../db/repos/misc.repo.js';
 import type { MemoryService, RecallMatch, RecallResult } from './memory.js';
@@ -87,8 +86,6 @@ export interface ContextOptions {
   worldSnapshot?: Readonly<WorldSnapshot> | null;
   /** Combine a rapid-message batch into one user turn for the model. */
   batchMessageIds?: string[];
-  /** A video model is configured, so the [[video]] markers may be taught. */
-  videoAvailable?: boolean;
 }
 
 export class ContextBuilder {
@@ -298,7 +295,7 @@ export class ContextBuilder {
     }
 
     tryAddSystemPart(systemParts, turns, CHAT_RHYTHM_INSTRUCTIONS, inputBudget);
-    tryAddSystemPart(systemParts, turns, buildMultimediaInstructions(persona, opts), inputBudget);
+    tryAddSystemPart(systemParts, turns, buildMultimediaInstructions(persona), inputBudget);
     if (opts.capabilityNotes.length > 0) {
       tryAddSystemPart(systemParts, turns, `当前能力状态：${opts.capabilityNotes.join('；')}。不要承诺做不到的事。`, inputBudget);
     }
@@ -607,36 +604,16 @@ function mergeContextMessages(primary: ChatMessage[], additional: ChatMessage[])
   return [...byId.values()].sort((a, b) => a.seq - b.seq);
 }
 
-function buildMultimediaInstructions(persona: Persona, opts: ContextOptions): string {
+function buildMultimediaInstructions(persona: Persona): string {
   const lines: string[] = [];
-  lines.push('你可以在回复里混合使用文字、表情包、图片和语音。非文字内容由你根据气氛主动决定，不要一直等用户明确要求。使用下面的标记触发，标记本身不会显示给用户：');
+  lines.push('你可以在回复里用表情包补充情绪，由你根据气氛决定，不要一直等主人明确要求。表情包用下面的标记触发，标记本身不会显示给主人：');
   lines.push('文件只有在上下文明确提供正文时才可以阅读；没有正文时不要声称看过文件内容。');
   lines.push('历史消息中的“[用户发送了表情包]”或“[SOOYA发送了表情包]”以及后面的名称、含义、图片文字，是仅供理解上下文的内部消息数据。绝对不要复述、引用或照抄这些字段；想发表情包只使用 [[sticker:...]] 或 [[sticker-only:...]]。');
   if (persona.stickerPolicy.enabled) {
     lines.push('· [[sticker:你想通过表情表达的具体感觉、态度或动作]] 发一个表情包。这里不要写具体图片名称，系统会自动选择。');
     lines.push('· [[sticker-only:你想通过表情表达的具体感觉]] 这一条只发表情包，不发文字。需要多个时可以连续写多个 sticker 标记。');
+    lines.push(`表情包主动频率：${persona.stickerPolicy.frequency}。含义：high=经常在合适时主动使用；medium=每隔几轮遇到自然机会就主动使用；low=只在明显合适时偶尔主动使用；never=不要主动使用。主人明确要求时仍必须照做。标记写在回复最后。`);
   }
-  if (persona.imagePolicy.enabled) {
-    lines.push('· [[image:详细的英文或中文画面描述]] 生成并发送一张图片。');
-    if (persona.referenceImages.length > 0) {
-      lines.push('· [[image-self:画面描述]] 生成并发送一张你自己的照片/自拍。系统会自动附上你的形象参考图，保证长相与平时一致——生成你自己的形象时务必用这个标记，普通内容仍用 [[image:...]]。画面描述里写明拍摄视角（如正面半身、全身站姿、侧脸），系统会据此选择对应的参考图。');
-    }
-    lines.push('硬规则：图片/照片/自拍只有写了上述标记才会真正生成。如果你在文字里说“给你拍了”“看这张图”“拍好了”之类，却没写标记，用户只会看到文字而看不到图，等于欺骗用户。所以只要提到要发图/拍照/自拍，就必须同时写上对应标记；如果这条回复不打算真的发图，就不要在文字里声称发了图。');
-  }
-  if (persona.videoPolicy.enabled && opts.videoAvailable) lines.push(...videoMarkerInstructions(persona));
-  if (persona.voicePolicy.enabled) {
-    lines.push('· [[voice]] 把这条文字同时用语音发出来。');
-    lines.push('· [[voice-only]] 这一条只发语音，不显示文字（文字会作为语音文稿保留）。');
-    if (opts.voiceMoods) {
-      lines.push(`· [[voice:emotion=情绪]] 或 [[voice-only:emotion=情绪]] 用指定情绪说。可用情绪：${opts.voiceMoods}`);
-      lines.push('不加 emotion 时由系统根据文字自动判断，通常不用特意指定；只在语气和字面意思不一致时才写。');
-    }
-  }
-  lines.push('主动选择建议：情绪回应、调侃、晚安、安慰和短互动适合表情包；需要温度、亲密感或语气表达时适合语音；用户在描述、想象、设计或需要直观看效果时适合图片。');
-  lines.push('不要机械等待关键词，也不要为了展示能力强行添加媒体。通常一条回复主动选择一种最合适的媒体即可，除非同时使用确实更自然。');
-  lines.push(
-    `当前主动频率：表情包=${persona.stickerPolicy.frequency}，图片=${persona.imagePolicy.frequency}，语音=${persona.voicePolicy.frequency}。` +
-      '频率含义：high=经常在合适时主动使用；medium=每隔几轮遇到自然机会就主动使用；low=只在明显合适时偶尔主动使用；never=不要主动使用。用户明确要求时仍必须照做。标记写在回复最后。'
-  );
+  lines.push('图片、视频和语音不用标记，它们是工具箱里的 send_image / send_video / send_voice：主人要的时候调用，正文里自然说一句就行。');
   return lines.join('\n');
 }

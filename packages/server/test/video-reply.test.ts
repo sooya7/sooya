@@ -125,19 +125,18 @@ describe('[[video]] in a reply', () => {
     expect(text).toContain('用完了');
   });
 
-  it('teaches the markers only when a video model is configured', async () => {
-    h = await boot('好');
+  it('offers the send_video tool only when a video model is configured', async () => {
+    const opts = { chatSupportsTools: true, env: { MEDIA_TOOLS_ENABLED: 'true' }, chat: { script: [['好'], ['好']] } };
+    h = await createHarness({ video: 'ok', ...opts });
     await say('你好');
-    // The dynamic instruction block (core/video/instructions.ts), not the persona's own prose.
-    const taught = '生成并发送一段几秒钟的短视频';
-    expect(JSON.stringify(h.state.chatCalls[0]!.body)).toContain(taught);
-    expect(JSON.stringify(h.state.chatCalls[0]!.body)).toContain('[[video-self:画面意图]] 生成一段你自己出镜');
+    expect(JSON.stringify(h.state.chatCalls[0]!.body)).toContain('"name":"send_video"');
     await h.cleanup();
 
-    h = await createHarness({ video: 'off', chat: { script: [['好']] } });
+    h = await createHarness({ video: 'off', ...opts });
     await say('你好');
-    expect(JSON.stringify(h.state.chatCalls[0]!.body)).not.toContain(taught);
-    expect(JSON.stringify(h.state.chatCalls[0]!.body)).toContain('视频生成不可用');
+    const withoutVideo = JSON.stringify(h.state.chatCalls[0]!.body);
+    expect(withoutVideo).not.toContain('"name":"send_video"');
+    expect(withoutVideo).toContain('视频生成不可用');
   });
 
   it('supplies a placeholder note when the model generated video without accompanying text', async () => {

@@ -433,6 +433,7 @@ export async function createHarness(opts: HarnessOptions = {}): Promise<Harness>
       // exercise them opt in, the rest keep the plain one-request flow.
       FILE_TOOLS_ENABLED: 'false',
       READ_URL_ENABLED: 'false',
+      MEDIA_TOOLS_ENABLED: 'false',
       ...(opts.env ?? {})
     },
     logger: pino({ level: 'silent' }),

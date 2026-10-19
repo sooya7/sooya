@@ -1,11 +1,28 @@
 import type { ChatProvider, ChatRequest, ChatToolCall, ModelTurn } from '../providers/types.js';
+import { detectFlattenedToolCalls } from '../core/directives.js';
 import { clipUtf8, normalizeToolError, normalizeToolResult, byteLength } from './tool-history.js';
 import { ToolPolicy } from './tool-policy.js';
 import type { ToolDescriptor, ToolPhase, ToolRegistry } from './registry.js';
 
+export interface FlattenedToolCallReport {
+  phase: ToolPhase;
+  batchId?: string;
+  revision?: number;
+  names: string[];
+  sawDsmlMarkup: boolean;
+  /** Bounded copy of the offending text; never the whole provider payload. */
+  sample: string;
+}
+
 export interface ToolCallRuntimeOptions {
   registry: ToolRegistry;
   policy: ToolPolicy;
+  /**
+   * Called when a round came back with no structured call but with tool-call
+   * markup in its text. The call is NOT executed (an unstructured call cannot be
+   * trusted); the host just records that it happened.
+   */
+  onFlattenedToolCall?: (report: FlattenedToolCallReport) => void;
   maxRounds?: number;
   maxCallsPerRound?: number;
   timeoutMs?: number;
@@ -36,6 +53,37 @@ const DEFAULTS = {
   resultMaxBytes: 32 * 1024,
   totalResultMaxBytes: 64 * 1024
 } as const;
+
+export interface ToolRuntimeEnv {
+  TOOL_MAX_ROUNDS: number;
+  TOOL_MAX_CALLS_PER_ROUND: number;
+  TOOL_CALL_TIMEOUT_MS: number;
+  TOOL_RESULT_MAX_BYTES: number;
+  TOOL_TOTAL_RESULT_MAX_BYTES: number;
+}
+
+/**
+ * Builds the reply tool runtime from the parsed environment. It lives here, not
+ * in app.ts (which has a size budget), because reporting a flattened call is
+ * part of this runtime's own contract.
+ */
+export function toolRuntimeFromEnv(input: {
+  registry: ToolRegistry;
+  policy: ToolPolicy;
+  env: ToolRuntimeEnv;
+  onFlattenedToolCall?: (report: FlattenedToolCallReport) => void;
+}): ToolCallRuntime {
+  return new ToolCallRuntime({
+    registry: input.registry,
+    policy: input.policy,
+    maxRounds: input.env.TOOL_MAX_ROUNDS,
+    maxCallsPerRound: input.env.TOOL_MAX_CALLS_PER_ROUND,
+    timeoutMs: input.env.TOOL_CALL_TIMEOUT_MS,
+    resultMaxBytes: input.env.TOOL_RESULT_MAX_BYTES,
+    totalResultMaxBytes: input.env.TOOL_TOTAL_RESULT_MAX_BYTES,
+    ...(input.onFlattenedToolCall ? { onFlattenedToolCall: input.onFlattenedToolCall } : {})
+  });
+}
 
 export class ToolCallRuntime {
   private readonly maxRounds: number;
@@ -90,7 +138,20 @@ export class ToolCallRuntime {
         toolChoice: 'auto'
       });
       const calls = result.toolCalls ?? [];
-      if (calls.length === 0) break;
+      if (calls.length === 0) {
+        const flattened = detectFlattenedToolCalls(result.text ?? '');
+        if (flattened.names.length > 0 || flattened.sawToolCallMarkup || flattened.sawDsmlMarkup) {
+          this.options.onFlattenedToolCall?.({
+            phase: context.phase,
+            batchId: context.batchId,
+            revision: context.revision,
+            names: flattened.names,
+            sawDsmlMarkup: flattened.sawDsmlMarkup,
+            sample: (result.text ?? '').slice(0, 400)
+          });
+        }
+        break;
+      }
       rounds += 1;
       turns.push({ role: 'assistant_tool_call', calls });
       const boundedCalls = calls.slice(0, this.maxCallsPerRound);

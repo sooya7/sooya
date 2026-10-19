@@ -52,6 +52,9 @@ export function voiceMoodCatalogue(saved: VoiceEmotionMap): string {
  */
 export const VOICE_MOOD_INTENTS = 'neutral / warm / happy / gentle / sleepy / playful / serious / shy / reassuring';
 
+/** The same moods as a list: the media tool schema and its whitelist need them one by one. */
+export const VOICE_MOOD_LIST: string[] = VOICE_MOOD_INTENTS.split('/').map((mood) => mood.trim()).filter(Boolean);
+
 export function resolveVoiceDelivery(
   text: string,
   requestedEmotion: string | null | undefined,

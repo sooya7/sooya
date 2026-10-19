@@ -330,6 +330,35 @@ function trailingPseudoToolPrefixIndex(text: string): number {
   return open?.index ?? -1;
 }
 
+/**
+ * Reports flattened tool-call protocol found in provider text. Nothing is
+ * stripped here: some gateways hand a model's tool attempt back as prose
+ * instead of `tool_calls`, and a call that cannot be vouched for is never
+ * executed. The host records it so the silent failure is visible.
+ */
+export interface FlattenedToolCallHint {
+  /** `<function=name>` names found in the text, in order, deduplicated. */
+  names: string[];
+  /** A `<tool_call>` block was present. */
+  sawToolCallMarkup: boolean;
+  /** DeepSeek-native `<|DSML|…>` markup, which this bridge does not parse. */
+  sawDsmlMarkup: boolean;
+}
+
+const FLATTENED_FUNCTION_NAME_RE = /<function\s*=\s*["']?([A-Za-z0-9_.:-]{1,64})["']?\s*>/gi;
+const DSML_MARKER_RE = /<\|DSML\|/i;
+
+export function detectFlattenedToolCalls(text: string): FlattenedToolCallHint {
+  const raw = text ?? '';
+  const names: string[] = [];
+  for (const match of raw.matchAll(FLATTENED_FUNCTION_NAME_RE)) names.push(match[1]!);
+  return {
+    names: [...new Set(names)],
+    sawToolCallMarkup: PSEUDO_TOOL_OPEN_RE.test(raw),
+    sawDsmlMarkup: DSML_MARKER_RE.test(raw)
+  };
+}
+
 /** Removes reasoning traces from a completed text. */
 export function stripThinking(raw: string): string {
   return raw.replace(THINK_BLOCK_RE, ' ').replace(THINK_TAG_RE, ' ').replace(OPEN_THINK_RE, ' ');

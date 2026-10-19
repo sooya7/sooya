@@ -33,6 +33,7 @@ import { parseVoiceIntent } from './voice/intent.js';
 import { decideVoiceMode } from './voice/planner.js';
 import type { VoiceService } from './voice/service.js';
 import type { MediaDirector } from './mediaDirector.js';
+import { mergeStagedMediaIntent, type StagedMediaIntent } from './media-tools/stage.js';
 import { BehaviorDecisionService, applyBehaviorDecision, decisionPrompt, type BehaviorDecision } from './behavior-decision.js';
 import type {
   ImageContinuityService,
@@ -140,6 +141,13 @@ export interface TextGenerationResult {
   hiddenDraft?: boolean;
   /** User explicitly requested a sticker-only reply; hold text until sticker selection completes. */
   hiddenStickerOnly?: boolean;
+  /**
+   * The media tools asked for voice this generation (send_voice). That is an
+   * explicit request and stands like the user asking: it is not subject to the
+   * auto-voice frequency limits, and voice_only may replace the text exactly
+   * like a user saying 只发语音.
+   */
+  toolVoice?: { voiceOnly: boolean };
   /** Bounded citation metadata only; raw provider payloads never enter this object. */
   webSearch?: WebSearchResult;
 }
@@ -187,6 +195,11 @@ export class Replier {
       worldSnapshot?: () => WorldSnapshot;
       toolRuntime?: ToolCallRuntime;
       ombreMemory?: OmbreMemoryBridge;
+      /** Media intents staged by send_image / send_video / send_voice during this reply's tool round. */
+      mediaIntents?: {
+        peek(ctx: { batchId?: string; revision?: number }): StagedMediaIntent | null;
+        take(ctx: { batchId?: string; revision?: number }): StagedMediaIntent | null;
+      } | null;
       /** Text-to-video / image-to-video tasks; absent means the marker is ignored. */
       video?: VideoGenerationService | null;
       /** Files staged by file_write / file_edit during this reply's tool round. */
@@ -249,7 +262,11 @@ export class Replier {
       const pendingDecision = new BehaviorDecisionService(() => this.deps.config.getModels().decision)
         .evaluate(userText, this.recentPlainContext(6), signal);
       pendingDecision.catch(() => { /* awaited below; avoids an unhandled rejection if context building fails first */ });
-      const holdDraft = hiddenDraft || hiddenStickerOnly || visualTime.mode === 'retrospective';
+      let holdDraft = hiddenDraft || hiddenStickerOnly || visualTime.mode === 'retrospective';
+      // Filled in once the reply's tool round is done: a send_voice call asking
+      // for voice-only hides the draft exactly like the user asking for it. The
+      // round runs before the first token, so this lands before the barrier.
+      let toolVoice: { voiceOnly: boolean } | null = null;
 
       const allowVision = caps.visionProvider() !== null;
       const chatModel = this.deps.config.chatModelFor('chat');
@@ -272,8 +289,7 @@ export class Replier {
         contextWindow,
         maxOutputTokens,
         visualTime,
-        worldSnapshot: world,
-        videoAvailable: Boolean(this.deps.video) && caps.has('video')
+        worldSnapshot: world
       });
       const behaviorDecision = await pendingDecision;
       if (behaviorDecision.status === 'ok') {
@@ -465,6 +481,12 @@ export class Replier {
         }
       }
 
+      const stagedIntent = this.deps.mediaIntents?.peek({ batchId, revision }) ?? null;
+      if (stagedIntent && this.deps.voiceV2Enabled !== false && this.deps.voice != null && caps.has('tts')) {
+        toolVoice = { voiceOnly: stagedIntent.voiceOnly === true };
+        if (toolVoice.voiceOnly) holdDraft = true;
+      }
+
       const streamTurns = async (turns: ModelTurn[]): Promise<void> => {
         const result = await provider.stream(
           {
@@ -541,7 +563,14 @@ export class Replier {
       }
 
       const stripped = stripModelDirectives(rawText);
-      const modelDirectives = applyBehaviorDecision(stripped.directives, userDirectives, behaviorDecision);
+      // The tool's staged intent wins; a legacy [[image:...]] the model also wrote
+      // stays the compatibility fallback (see mergeStagedMediaIntent).
+      const stagedMedia = this.deps.mediaIntents?.take({ batchId, revision }) ?? null;
+      const modelDirectives = applyBehaviorDecision(
+        mergeStagedMediaIntent(stripped.directives, stagedMedia),
+        userDirectives,
+        behaviorDecision
+      );
       const rawFinalText = stripSpeakerPrefix(stripped.text || visibleText.trim(), [persona.name]);
       const mediaPlan = this.planMedia(persona, userDirectives, modelDirectives, rawFinalText);
       const hasImageDirective = Boolean(mediaPlan.selfImagePrompt ?? mediaPlan.imagePrompt);
@@ -595,8 +624,10 @@ export class Replier {
         worldSnapshot: world,
         interrupted,
         ...(modelReasoning ? { reasoning: modelReasoning } : {}),
-        hiddenDraft,
+        // A tool-requested voice-only reply was never visible: phase 2 owns it.
+        hiddenDraft: hiddenDraft || toolVoice?.voiceOnly === true,
         hiddenStickerOnly,
+        ...(toolVoice ? { toolVoice } : {}),
         webSearch: webSearchResult
       };
     } finally {
@@ -979,14 +1010,17 @@ export class Replier {
 
     // 3c. Voice — independent expression system (Part 4): intent → mode →
     // spoken script → naturalness guard → delivery → TTS → publication.
+    // A media tool asking for voice counts as an explicit request: the voice policy
+    // means "don't volunteer it", not "ignore a call she just made for the user".
+    const toolAskedVoice = generated.toolVoice !== undefined;
     if (this.deps.voice && this.deps.voiceV2Enabled !== false &&
-      (generated.behaviorDecision?.media.voice !== false || userDirectives.wantVoice === true || ['voice_only', 'voice_reply', 'read_aloud'].includes(parseVoiceIntent(userText)))) {
+      (toolAskedVoice || generated.behaviorDecision?.media.voice !== false || userDirectives.wantVoice === true || ['voice_only', 'voice_reply', 'read_aloud'].includes(parseVoiceIntent(userText)))) {
       const userIntent = parseVoiceIntent(userText);
       // P0-3: replace/voice-only is reserved for EXPLICIT user intent. A model
       // that emits [[voice-only]] on its own is downgraded to complement — the
       // user never asked for the text to be replaced, and a visible text that
       // suddenly vanishes is a broken experience.
-      const userWantsReplace = userIntent === 'voice_only' || userIntent === 'voice_reply';
+      const userWantsReplace = userIntent === 'voice_only' || userIntent === 'voice_reply' || generated.toolVoice?.voiceOnly === true;
       const modelMarker = generated.directives.voiceOnly
         ? (userWantsReplace ? 'replace' : 'complement')
         : generated.directives.voice

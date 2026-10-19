@@ -151,6 +151,8 @@ const EnvSchema = z.object({
   FILE_RETENTION_MS: intish(3 * 24 * 60 * 60 * 1000),
   /* read_url: open a link the user shared and read its main text (no browser). */
   READ_URL_ENABLED: boolish(true),
+  /* send_image / send_video / send_voice: media she makes only when the user asks for it. */
+  MEDIA_TOOLS_ENABLED: boolish(true),
   TOOL_MAX_CALLS_PER_ROUND: intish(4),
   TOOL_CALL_TIMEOUT_MS: intish(15_000),
   TOOL_RESULT_MAX_BYTES: intish(32 * 1024),
