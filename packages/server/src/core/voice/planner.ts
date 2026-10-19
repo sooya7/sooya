@@ -1,11 +1,11 @@
-import type { ChatProvider } from '../../providers/types.js';
-import type { PersonaSpeechStyle } from './style.js';
 import type { VoiceIntent, VoiceMode, VoiceRequestedBy } from './types.js';
 
 /**
- * Auto voice decision (§96-97): whether an inline reply gets voice at all,
- * and in which mode. User intent always wins; the model marker is a strong
- * hint; the auto path is conservative (rare, emotional, short, capped).
+ * Voice decision for an inline reply: whether it gets voice at all, and in
+ * which mode. User intent always wins; otherwise her [[voice]] marker (or a
+ * send_voice call, folded into the same marker) decides. Whether a marker she
+ * wrote on her own is allowed through at all - auto frequency, daily cap - is
+ * checked by the replier before this runs.
  */
 
 export interface VoiceDecision {
@@ -19,19 +19,12 @@ export interface VoiceDecisionInput {
   userIntent: VoiceIntent;
   /** The model's [[voice]]-family marker, already normalized. */
   modelVoice?: 'replace' | 'complement' | 'summary' | 'read_aloud' | boolean | string | null;
-  text: string;
   persona: {
     name: string;
     voicePolicy: { enabled: boolean; maxCharsPerClip: number };
   };
   preferences: { enabled: boolean; autoVoiceFrequency: 'never' | 'rare' | 'sometimes'; preferredModes: VoiceMode[]; maxVoiceSeconds: number };
   ttsConfigured: boolean;
-  recentAutoCount: number;
-  dailyAutoCap: number;
-  inSilentHours: boolean;
-  style?: PersonaSpeechStyle | null;
-  /** VOICE_AUTO_COMPLEMENT_ENABLED: when false the auto path never picks complement. */
-  autoComplementEnabled?: boolean;
   /** VOICE_READ_ALOUD_ENABLED: when false read-aloud intents/markers are ignored. */
   readAloudEnabled?: boolean;
 }
@@ -64,9 +57,7 @@ export function decideVoiceMode(input: VoiceDecisionInput): VoiceDecision {
     return { mode: 'complement', requestedBy: 'model', emotion: null, reason: `model:${mv}` };
   }
 
-  // Nothing is volunteered any more. Voice goes out when the user asks for it,
-  // when the reply model calls send_voice, or when a legacy marker asks and the
-  // auto frequency is not 'never'. The old auto branch (silent hours, text
-  // cues, daily cap, long-reply summaries) is gone.
+  // Nothing is volunteered beyond the marker: no user intent and no marker
+  // means no voice.
   return { mode: null, requestedBy: 'auto', emotion: null, reason: 'not_requested' };
 }

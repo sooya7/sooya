@@ -129,11 +129,15 @@ export class VoiceGenerationRepo {
     ).run(nowIso(), nowIso());
   }
 
-  /** Recent published/attempted auto voices, for frequency control. */
+  /**
+   * Recent published/attempted voices the user did not ask for, for frequency
+   * control. The auto path is gone, so these are the ones she started herself
+   * ('model'); 'auto' rows from before that change still count for their day.
+   */
   countAutoSince(sinceIso: string): number {
     return (this.db.prepare(
       `SELECT COUNT(*) AS n FROM voice_generations
-       WHERE requested_by = 'auto' AND created_at >= ? AND status IN ('published','synthesizing','scripted','planned')`
+       WHERE requested_by IN ('auto','model') AND created_at >= ? AND status IN ('published','synthesizing','scripted','planned')`
     ).get(sinceIso) as { n: number }).n;
   }
 
