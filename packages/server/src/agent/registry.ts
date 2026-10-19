@@ -64,6 +64,12 @@ export interface ToolDescriptor<I = unknown, O = unknown> {
    * generation leaves nothing behind). Such a tool may run in the reply phase.
    */
   deferredEffects?: boolean;
+  /**
+   * MCP only: the host explicitly lets this non-read tool run in the reply
+   * phase (mcp.json toolPolicy `allowInReply`). Its effect is immediate, not
+   * staged: a generation that is later superseded may already have called it.
+   */
+  allowInReply?: boolean;
   /** Raise the 16 KiB argument cap for a tool that legitimately carries a document. */
   maxArgumentBytes?: number;
   handler: (input: I, context?: ToolExecutionContext) => Promise<O>;

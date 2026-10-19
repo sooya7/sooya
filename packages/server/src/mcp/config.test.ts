@@ -23,4 +23,20 @@ describe('MCP config loading', () => {
     expect(result.servers.ombre?.url).toBe('http://ombre-brain:8000/mcp');
     expect(result.servers.ombre?.auth).toEqual({ type: 'bearer-env', env: 'OMBRE_MCP_TOKEN' });
   });
+
+  it('keeps allowInReply only when it is literally true', async () => {
+    const file = `${process.cwd()}/.tmp-mcp-config-reply-${Date.now()}.json`;
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(file, JSON.stringify({ servers: { knowledge: { url: 'http://127.0.0.1:18101/mcp', auth: { type: 'none' }, toolPolicy: {
+      knowledge_write: { risk: 'write', phases: ['reply', 'memory_commit'], authorized: true, allowInReply: true },
+      knowledge_append: { risk: 'write', phases: ['reply'], authorized: true, allowInReply: 'yes' }
+    } } } }), 'utf8');
+    try {
+      const policy = loadMcpConfig(file, {}).servers.knowledge!.toolPolicy!;
+      expect(policy.knowledge_write).toEqual({ risk: 'write', phases: ['reply', 'memory_commit'], authorized: true, allowInReply: true });
+      expect(policy.knowledge_append!.allowInReply).toBeUndefined();
+    } finally {
+      await fs.unlink(file);
+    }
+  });
 });
