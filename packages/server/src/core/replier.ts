@@ -467,7 +467,9 @@ export class Replier {
       }
 
       const stagedIntent = this.deps.mediaIntents?.peek({ batchId, revision }) ?? null;
-      if (stagedIntent && this.deps.voiceV2Enabled !== false && this.deps.voice != null && caps.has('tts')) {
+      // Only a send_voice call asks for voice; an image or video call alone does not.
+      const stagedVoice = stagedIntent?.voice === true || stagedIntent?.voiceOnly === true;
+      if (stagedIntent && stagedVoice && this.deps.voiceV2Enabled !== false && this.deps.voice != null && caps.has('tts')) {
         toolVoice = { voiceOnly: stagedIntent.voiceOnly === true };
         if (toolVoice.voiceOnly) holdDraft = true;
       }
@@ -997,33 +999,32 @@ export class Replier {
     // The auto-voice limits used to arrive through the behaviour decision. They
     // live here now: with auto frequency 'never' (or the daily cap reached) a
     // marker she wrote on her own is not enough - the user or a media tool has
-    // to ask for it.
-    const voiceAutoBlocked = this.deps.voice != null
-      && (this.deps.voice.preferences.autoVoiceFrequency === 'never' || this.deps.voice.autoCountToday() >= this.deps.voice.dailyAutoCap);
-    if (this.deps.voice && this.deps.voiceV2Enabled !== false &&
-      (toolAskedVoice || userDirectives.wantVoice === true || !voiceAutoBlocked || ['voice_only', 'voice_reply', 'read_aloud'].includes(parseVoiceIntent(userText)))) {
+    // to ask for it. The check lives inside the V2 branch, because skipping the
+    // branch falls through to the legacy read-back path, which voices any marker.
+    if (this.deps.voice && this.deps.voiceV2Enabled !== false) {
       const userIntent = parseVoiceIntent(userText);
+      const askedForVoice = toolAskedVoice || userDirectives.wantVoice === true
+        || userIntent === 'voice_only' || userIntent === 'voice_reply' || userIntent === 'read_aloud';
+      const voiceAutoBlocked = !askedForVoice
+        && (this.deps.voice.preferences.autoVoiceFrequency === 'never' || this.deps.voice.autoCountToday() >= this.deps.voice.dailyAutoCap);
       // P0-3: replace/voice-only is reserved for EXPLICIT user intent. A model
       // that emits [[voice-only]] on its own is downgraded to complement — the
       // user never asked for the text to be replaced, and a visible text that
       // suddenly vanishes is a broken experience.
       const userWantsReplace = userIntent === 'voice_only' || userIntent === 'voice_reply' || generated.toolVoice?.voiceOnly === true;
-      const modelMarker = generated.directives.voiceOnly
-        ? (userWantsReplace ? 'replace' : 'complement')
-        : generated.directives.voice
-          ? 'complement'
-          : null;
+      const modelMarker = voiceAutoBlocked
+        ? null
+        : generated.directives.voiceOnly
+          ? (userWantsReplace ? 'replace' : 'complement')
+          : generated.directives.voice
+            ? 'complement'
+            : null;
       const decision = decideVoiceMode({
         userIntent,
         modelVoice: modelMarker,
-        text: finalText || '',
         persona: { name: persona.name, voicePolicy: persona.voicePolicy },
         preferences: this.deps.voice.preferences,
-        ttsConfigured: this.deps.capabilities.has('tts'),
-        recentAutoCount: this.deps.voice.autoCountToday(),
-        dailyAutoCap: this.deps.voice.dailyAutoCap,
-        inSilentHours: false,
-        style: this.deps.voice.speechStyle
+        ttsConfigured: this.deps.capabilities.has('tts')
       });
       if (decision.mode) {
         this.deps.bus.publish('voice.plan.created', {
