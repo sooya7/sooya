@@ -33,7 +33,7 @@ function normalizeServer(id: string, value: unknown): McpServerConfig | null {
   if (!isRecord(value)) return null;
   const url = typeof value.url === 'string' ? value.url.trim() : '';
   if (!url) return null;
-  const transport = value.transport === 'sse' ? 'sse' : 'streamable-http';
+  const transport = value.transport === 'sse' ? 'sse' : value.transport === 'post-jsonrpc' ? 'post-jsonrpc' : 'streamable-http';
   const auth = normalizeAuth(value.auth);
   const toolPolicy = normalizeToolPolicy(value.toolPolicy);
   return {
@@ -72,7 +72,8 @@ function normalizeToolPolicy(value: unknown): Record<string, McpToolPolicy> | un
       risk,
       phases: phases.length > 0 ? phases : ['maintenance'],
       authorized: item.authorized === true,
-      ...(item.allowInReply === true ? { allowInReply: true } : {})
+      ...(item.allowInReply === true ? { allowInReply: true } : {}),
+      ...(typeof item.timeoutMs === 'number' ? { timeoutMs: boundedInt(item.timeoutMs, 15_000, 500, 120_000) } : {})
     };
   }
   return Object.keys(out).length > 0 ? out : undefined;

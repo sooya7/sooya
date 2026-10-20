@@ -67,6 +67,7 @@ import { ThoughtPresenter } from './core/thoughts/presenter.js';
 import { ThoughtSafetyFilter } from './core/thoughts/safety.js';
 import { readThoughtsFlags } from './core/thoughts/flags.js';
 import { KNOWLEDGE_SAVE_JOB, registerFileJobs, setupFilesAndLinks } from './core/files/wiring.js';
+import { setupOps } from './core/ops/wiring.js';
 import { mediaWiring } from './core/media-tools/wiring.js';
 import { LifeSimEngine } from './core/life2/engine.js';
 import { ProactiveAttemptRepo } from './db/repos/proactive.repo.js';
@@ -319,10 +320,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     ? path.resolve(env.MCP_CONFIG_PATH)
     : fs.existsSync(sharedMcpConfigPath) ? sharedMcpConfigPath : bundledMcpConfigPath;
   const mcpConfig = loadMcpConfig(mcpConfigPath, runtimeEnv);
+  const ops = setupOps({ logDir: env.logDir, repos, flowTrace, logger });
   const mcpManager = new McpManager({
     servers: Object.values(mcpConfig.servers),
     registry: tools,
     env: runtimeEnv,
+    decorate: ops.decorateMcpTools,
     onEvent: (event) => {
       logger.info({ serverId: event.serverId, detail: event.detail }, `mcp.${event.event}`);
       const eventType = `mcp.${event.event}` as import('./core/types.js').StreamEventType;
@@ -346,9 +349,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<SooyaApp> {
     policy: toolPolicy,
     repos,
     mediaStore,
-    flags: { filesEnabled: env.FILE_TOOLS_ENABLED, readUrlEnabled: env.READ_URL_ENABLED, retentionMs: env.FILE_RETENTION_MS },
+    flags: { filesEnabled: env.FILE_TOOLS_ENABLED, readUrlEnabled: env.READ_URL_ENABLED, httpRequestEnabled: env.HTTP_REQUEST_TOOL_ENABLED, retentionMs: env.FILE_RETENTION_MS },
     directFetchImpl,
     fetchImpl,
+    onHttpRequest: ops.onHttpRequest,
     tavily: () => config.getModels().webSearch.tavily
   });
   const toolRuntime = toolRuntimeFromEnv({

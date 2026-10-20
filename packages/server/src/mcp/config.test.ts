@@ -39,4 +39,23 @@ describe('MCP config loading', () => {
       await fs.unlink(file);
     }
   });
+
+  it('carries a per-tool timeoutMs, clamped to the same ceiling as toolTimeoutMs', async () => {
+    const file = `${process.cwd()}/.tmp-mcp-config-timeout-${Date.now()}.json`;
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(file, JSON.stringify({ servers: { srv: { url: 'http://127.0.0.1:18201/mcp', auth: { type: 'none' }, toolTimeoutMs: 120000, toolPolicy: {
+      run_command: { risk: 'maintenance', phases: ['reply'], authorized: true, allowInReply: true, timeoutMs: 120000 },
+      docker_restart: { risk: 'maintenance', phases: ['reply'], authorized: true, timeoutMs: 999999 },
+      docker_ps: { risk: 'read', phases: ['reply'], authorized: true }
+    } } } }), 'utf8');
+    try {
+      const server = loadMcpConfig(file, {}).servers.srv!;
+      expect(server.toolTimeoutMs).toBe(120_000);
+      expect(server.toolPolicy!.run_command!.timeoutMs).toBe(120_000);
+      expect(server.toolPolicy!.docker_restart!.timeoutMs).toBe(120_000);
+      expect(server.toolPolicy!.docker_ps!.timeoutMs).toBeUndefined();
+    } finally {
+      await fs.unlink(file);
+    }
+  });
 });

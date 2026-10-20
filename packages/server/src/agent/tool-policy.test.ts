@@ -103,4 +103,15 @@ describe('ToolPolicy', () => {
     expect(new ToolPolicy(registry, { writeEnabled: false }).check(write, 'reply')).toMatchObject({ allowed: false, reason: 'write-disabled' });
     expect(new ToolPolicy(registry, { maintenanceEnabled: false }).check(store, 'reply')).toMatchObject({ allowed: false, reason: 'maintenance-disabled' });
   });
+
+  it('lets a local tool that declares allowInReply run while replying, gated by the write switch', () => {
+    const registry = new ToolRegistry();
+    const http = tool({ name: 'web.http_request', modelName: 'http_request', source: 'local', serverId: undefined, authorized: undefined, risk: 'external_side_effect', phases: ['reply'], allowInReply: true });
+    const plain = tool({ name: 'web.post_thing', modelName: 'post_thing', source: 'local', serverId: undefined, authorized: undefined, risk: 'external_side_effect', phases: ['reply'] });
+    for (const item of [http, plain]) registry.register(item);
+    expect(new ToolPolicy(registry).check(http, 'reply')).toEqual({ allowed: true });
+    expect(new ToolPolicy(registry, { writeEnabled: false }).check(http, 'reply')).toMatchObject({ allowed: false, reason: 'write-disabled' });
+    expect(new ToolPolicy(registry).check(plain, 'reply')).toMatchObject({ allowed: false, reason: 'non-read-tool-in-visible-phase' });
+    expect(new ToolPolicy(registry).check({ ...http, phases: ['proactive'] }, 'proactive').allowed).toBe(false);
+  });
 });

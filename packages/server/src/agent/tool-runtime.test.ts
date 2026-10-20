@@ -97,4 +97,22 @@ describe('ToolCallRuntime', () => {
     expect(bytes).toBeLessThanOrEqual(768);
     expect(results[1]?.content).toContain('total result limit reached');
   });
+
+  it('honours a per-tool timeout over the runtime default', async () => {
+    const registry = new ToolRegistry();
+    const slow = (ms: number) => (_input: unknown, context?: { signal?: AbortSignal }) => new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => resolve('done'), ms);
+      context?.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(context.signal?.reason); }, { once: true });
+    });
+    registry.register(tool({ name: 'srv.restart', modelName: 'srv__restart', handler: slow(60), timeoutMs: 500 }));
+    registry.register(tool({ name: 'srv.other', modelName: 'srv__other', handler: slow(60) }));
+    const runtime = new ToolCallRuntime({ registry, policy: new ToolPolicy(registry), maxRounds: 1, timeoutMs: 20 });
+    const prepared = await runtime.prepare(provider([{ text: '', model: 'fake', toolCalls: [
+      { id: 'c1', name: 'srv__restart', arguments: { query: '1' } },
+      { id: 'c2', name: 'srv__other', arguments: { query: '2' } }
+    ] }]), { messages: [{ role: 'user', content: [{ type: 'text', text: 'restart' }] }] }, { phase: 'reply' });
+    const results = prepared.messages.filter((turn) => turn.role === 'tool_result');
+    expect(results[0]).toMatchObject({ callId: 'c1', content: 'done' });
+    expect(results[1]).toMatchObject({ callId: 'c2', isError: true });
+  });
 });

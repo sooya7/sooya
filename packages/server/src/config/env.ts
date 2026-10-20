@@ -149,6 +149,8 @@ const EnvSchema = z.object({
   FILE_RETENTION_MS: intish(3 * 24 * 60 * 60 * 1000),
   /* read_url: open a link the user shared and read its main text (no browser). */
   READ_URL_ENABLED: boolish(true),
+  /* http_request: she can call any public API, keys filled in from the vault by the server. */
+  HTTP_REQUEST_TOOL_ENABLED: boolish(true),
   /* send_image / send_video / send_voice: media she makes only when the user asks for it. */
   MEDIA_TOOLS_ENABLED: boolish(true),
   TOOL_MAX_CALLS_PER_ROUND: intish(4),

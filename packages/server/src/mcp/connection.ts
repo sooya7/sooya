@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolveMcpAuth, redactMcpError } from './auth.js';
+import { createPostJsonRpcClient } from './post-client.js';
 import type {
   McpClientFactory,
   McpClientLike,
@@ -138,6 +139,7 @@ export class McpConnection {
 }
 
 const defaultClientFactory: McpClientFactory = async (config, headers) => {
+  if (config.transport === 'post-jsonrpc') return { client: createPostJsonRpcClient(config, headers) };
   const client = new Client({ name: 'sooya-mcp-host', version: '1.0.0' });
   const requestInit: RequestInit | undefined = Object.keys(headers).length > 0 ? { headers } : undefined;
   const url = new URL(config.url);

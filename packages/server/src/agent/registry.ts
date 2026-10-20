@@ -65,11 +65,13 @@ export interface ToolDescriptor<I = unknown, O = unknown> {
    */
   deferredEffects?: boolean;
   /**
-   * MCP only: the host explicitly lets this non-read tool run in the reply
-   * phase (mcp.json toolPolicy `allowInReply`). Its effect is immediate, not
+   * The host explicitly lets this non-read tool run in the reply phase (for
+   * MCP: mcp.json toolPolicy `allowInReply`). Its effect is immediate, not
    * staged: a generation that is later superseded may already have called it.
    */
   allowInReply?: boolean;
+  /** Per-tool override of the runtime's call timeout (a restart can outlast 15 s). */
+  timeoutMs?: number;
   /** Raise the 16 KiB argument cap for a tool that legitimately carries a document. */
   maxArgumentBytes?: number;
   handler: (input: I, context?: ToolExecutionContext) => Promise<O>;

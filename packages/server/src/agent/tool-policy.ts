@@ -53,8 +53,8 @@ export class ToolPolicy {
       if (phase === 'reply' && tool.risk === 'write' && tool.source === 'local' && tool.deferredEffects === true) {
         return writeEnabled ? { allowed: true } : { allowed: false, reason: 'write-disabled' };
       }
-      // An MCP tool the host explicitly opened for replies (mcp.json allowInReply).
-      if (phase === 'reply' && tool.source === 'mcp' && tool.allowInReply === true) {
+      // A tool the host explicitly opened for replies (local flag, or mcp.json allowInReply).
+      if (phase === 'reply' && tool.allowInReply === true) {
         if (tool.risk === 'maintenance') return maintenanceEnabled ? { allowed: true } : { allowed: false, reason: 'maintenance-disabled' };
         return writeEnabled ? { allowed: true } : { allowed: false, reason: 'write-disabled' };
       }
