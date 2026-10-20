@@ -1,16 +1,35 @@
 # 交接：联网工具 `http_request` 与服务器运维工具
 
-> 状态截至 2026-10-20 04:15（服务器时间）。工作**暂停**，没有上线。
-> 分支 `claude/new-session-5jb950`，PR [#170](https://github.com/sooya7/sooya/pull/170)（未合并）。
+> 最新决定：2026-10-21（Asia/Shanghai），**项目已弃用；完成仓库收尾后只读归档，不再安排上线或持续运行**。
+> PR [#170](https://github.com/sooya7/sooya/pull/170) 已合并，功能提交 `59a8866f769d4779b84af751df8ec7d69630aad7`。
 > 原始需求见用户提供的《SOOYA 联网与运维工具 · 实施方案》，本文只记录实际做到哪一步。
 
 ---
 
-## 1. 一句话现状
+## 1. 归档收尾
 
-- **代码**：全部写完，本地和 CI 都在跑绿（交接时 9 项 CI 已有 7 项通过，剩 e2e 和 release smoke 还在跑）。**没合并，没部署**，线上的 SOOYA 还是旧版本，行为不变。
-- **服务器**：`server.py` 已经加上三个新工具并生效。**SOOYA 的 `mcp.json` 和 `.env` 都还没改**。
-- **⚠️ 遗留故障**：`srv-mcp-bridge` 目前**卡死**，所有 srv 工具调用都超时，需要有人 SSH 执行一次 `systemctl restart srv-mcp-bridge`（原因见 §4）。
+- PR #170 的功能改动已合并；本文和 README 记录最终状态，部署与验收细节作为历史证据保留。
+- 用户明确归档意图前已经发生的功能部署保留记录；随后停止并禁用 `sooya-auto-update.timer`，避免文档合并再次触发部署。
+- 本次额外启动的 Ombre 容器已恢复为停止状态，重启策略恢复为 `no`。其他原有业务服务未停止或重启。
+- 原 `backup/huawei2-20261020` 的完整提交快照保留为标签 `archive/huawei2-20261020`，不把旧分支代码合入主分支；归档时分支只保留 `main`。
+
+### 归档前的历史核验（不代表当前运行状态）
+
+- **代码**：合并前、合并后的 9 项 CI 均通过；功能版本已部署至 `/opt/sooya/releases/20261020170707`。
+- **配置**：`http_request` 已注册；`srv` 使用 `post-jsonrpc`，发现 39 个工具，reply 明确授权其中 20 个。未列入策略的工具仍不授权。
+- **连接**：SOOYA `/health/ready` 返回 200；srv、knowledge、Ombre 均为 ready，分别发现 39、10、14 个工具。
+- **记忆服务**：曾恢复原容器并验证 `breath_search`，随后按归档决定恢复停止和 `restart=no`；镜像和持久化卷未变。bridge 通知死锁已于 10 月 20 日修复。
+
+### 本次验收与回滚
+
+- 线上 8 组验收通过：reply 权限；公网直连；代理 API；真实 New API 密钥代填；合成响应密钥脱敏；文件原文读取/编辑/覆盖及备份和权限保留；命令审计、100 秒上限和受保护服务拒绝；luker 日志读取与 200 行上限。
+- 验收调用已部署的工具执行层并连接真实 MCP/API；响应脱敏使用合成密钥回显。没有额外生成模型回复或发送 QQ 消息，未执行真实容器/服务重启工具。
+- `secret_read` 的 phases 已改为 `maintenance`，不再直接提供给 reply；宿主仍可读取指定密钥供 `http_request` 代填。
+- 以当前 SOOYA 配置的 6 个凭据值精确检查现有聊天正文/转写，匹配数为 0，未改写聊天。没有实现未来消息自动脱敏，也没有清除历史备份中的凭据。
+- 数据库 `quick_check=ok`，保留 35 条消息、46 个内容段、458 条媒体记录；临时验收文件已清理。
+- 备份及 JSON 验收报告：`/opt/backups/sooya-ops-finish-20261020T170259Z/`（仅管理员可读）。旧版本保留在 `/opt/sooya/releases/20261019120201`。
+- 配置回滚：用备份 `env.before`、`mcp.before.json` 恢复 `.env`、`config/mcp.json` 后重启 SOOYA。备份文件为 0600；恢复时 `.env` 保持 root 0600，`mcp.json` 设置 root 0644，确保服务可读。首次回退时的权限错误曾导致短暂启动失败，现已纠正并验收。
+- Ombre 重启策略回滚：`docker update --restart=no sooya-ombre-brain`；无须重建容器或恢复卷。
 
 ---
 
@@ -49,21 +68,23 @@
 
 ---
 
-## 4. 遗留故障：srv-bridge 的通知死锁
+## 4. 已修复故障：srv-bridge 的通知死锁
+
+以下为历史故障说明。2026-10-20 已修复：通知仅转发，不等待响应，返回 HTTP 202；本次连接与工具调用正常。
 
 `/opt/mcp-gateway/srv-bridge.py` 处理 POST 时，对没有 `id` 的消息（通知）也调用 `_rpc()`，会在 `stdout.readline()` 上一直等回包。MCP 的通知按规范没有回包，所以 bridge 会**永远占着全局 `_lock`**，后面所有请求都会挂住，只能重启 bridge。
 
 - 触发：交接前我用 SDK 的 streamable-http 客户端探测兼容性，客户端连接时发出了 `notifications/initialized`。
 - 影响：所有经过 srv-bridge 的工具（包括网页端 Claude 等其他 Agent 用的）都超时。
 - **恢复**：`systemctl restart srv-mcp-bridge`。
-- **对 SOOYA 的意义**：正因为这个 bug，SOOYA 连 srv **必须**用 `"transport": "post-jsonrpc"`，不能用默认的 streamable-http（SDK 连接时会发 initialized，中断请求时会发 cancelled，都会把 bridge 卡死）。
-- 根治建议（等用户决定，**还没做**）：bridge 收到通知时只写给子进程，不再 `readline`。这只是修 bug，不改协议。
+- **当前配置**：SOOYA 保留 `"transport": "post-jsonrpc"`。bridge 已修复，因此“SDK 通知一定导致死锁”不再是当前限制。
+- **已实施修复**：bridge 收到通知时只写给子进程，不再 `readline`；原鉴权和工具定义保留。
 
 另一个小坑：在 srv 的 `run_command` 里**不要**再去 curl 这个 bridge 自己的 `/mcp`，会自己等自己（要等 60 秒命令超时才会解开）。查 `/health`（GET）没问题，它不走锁。
 
 ---
 
-## 5. 继续做的步骤（顺序不能反）
+## 5. 历史上线步骤（本次已完成，无须重复执行）
 
 1. 重启 srv-mcp-bridge，确认 `curl -s http://127.0.0.1:18201/health` 返回 `{"ok": true}`。
 2. 等 PR #170 的 CI 全绿 → 合并 → auto-update 计时器（每 5 分钟）自动部署 → 核对 `/opt/sooya/shared/.deployed-commit` 是否为合并后的 commit。
@@ -110,8 +131,8 @@
 
 ---
 
-## 6. 待用户拍板
+## 6. 原待决事项的处理结果
 
-1. `secret_read` 要不要从 reply 阶段关掉（原方案 §2.5）？关掉以后 `http_request` 照样能用：宿主直接调 handler，不看 phases，只要这个工具还注册着就行。所以改 `phases` 即可，**不要**把它从 toolPolicy 里删掉。删掉也能用，只是会退回默认策略。
-2. 用户发 Key 的那条 QQ 消息要不要在本地聊天记录里打码（原方案 §2.6）？
-3. 要不要修 srv-bridge 的通知死锁（§4）？
+1. 已从 reply 关闭 `secret_read`，保留注册及宿主读取；真实 API 代填验收通过。
+2. 已执行当前 SOOYA 凭据的精确检查，没有命中；聊天内容保留。未来消息自动脱敏不在本次实现内。
+3. 通知死锁已修复并上线，详见 §4。
